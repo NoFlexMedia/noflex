@@ -1,0 +1,11 @@
+manifest_version = 1
+plugin_id = "oidc"
+display_name = "OpenID Connect"
+version = "0.0.1"
+noflex_api_version = "0.8"
+hooks = ["external-auth"]
+# Self-hosted IdPs (Authentik, Keycloak, ...) commonly live on the LAN or
+# loopback; without `http.private-network` the host refuses those addresses.
+capabilities = ["http.egress", "http.private-network", "secrets.read"]
+http_egress_hosts = ["*"]
+secrets_read = ["client_secret"]

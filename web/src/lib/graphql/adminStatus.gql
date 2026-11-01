@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Admin diagnostics: the live host/server sample (query + subscription
+# share one fragment), transcoder and indexing state, active streams,
+# and the in-memory log and plugin-event rings.
+
+fragment SystemStatusFields on SystemStatus {
+  sampledAt
+  activeScans
+  server {
+    version
+    startedAt
+    uptimeSeconds
+    bind
+    publicUrl
+    dataDir
+    cacheDir
+    config { key value redacted }
+    database { backend engineVersion schemaVersion healthy notes path sizeBytes walSizeBytes error }
+  }
+  host { hostname osName osVersion kernelVersion arch bootedAt uptimeSeconds }
+  cpu { usagePercent brand physicalCores logicalCores loadAverage { one five fifteen } cores { index usagePercent frequencyMhz } }
+  memory { totalBytes usedBytes availableBytes swapTotalBytes swapUsedBytes cgroupLimitBytes }
+  process { pid cpuPercent cpuPercentOfHost rssBytes virtualBytes threads openFiles openFilesLimit }
+  network { name loopback state macAddress addresses rxBytesPerSec txBytesPerSec rxTotalBytes txTotalBytes rxErrorsTotal txErrorsTotal }
+  networkTotal { rxBytesPerSec txBytesPerSec }
+  storage { kind path libraryId libraryName exists mountPoint fileSystem totalBytes availableBytes usedBytes contentBytes error }
+  plugins { loaded circuitOpen instanceRestarts loadFailures traps }
+  logs { warnings errors lastError { id at level target message } }
+}
+
+query AdminSystemStatus @cache(policy: NetworkOnly) {
+  systemStatus { ...SystemStatusFields }
+  systemStatusHistory { at cpuPercent memoryUsedBytes processCpuPercent processRssBytes rxBytesPerSec txBytesPerSec loadOne }
+}
+
+subscription AdminStatusUpdates {
+  systemStatusUpdates { ...SystemStatusFields }
+}
+
+query AdminTranscoder {
+  transcoderInfo {
+    ffmpeg { command overrideEnv path version buildFlags error }
+    ffprobe { command overrideEnv path version buildFlags error }
+    configuredHwaccel
+    fallback
+    resolvedBackend
+    hardwareAccelerated
+    fellBack
+    hwaccels
+    vaapiDevice
+    encoders { name media backend available }
+    decoders { name media backend available }
+    ladder { maxHeight videoCodec audioCodec container bitrateKbps encoder encoderAvailable }
+    transcodeDir
+  }
+}
+
+fragment IndexRunFields on IndexScanRun { startedAt finishedAt added updated removed failures }
+
+query AdminIndexing @cache(policy: NetworkOnly) {
+  scannerStatus {
+    library { ...LibraryFields }
+    scan { ...ScanStatusFields }
+    activeScan { ...IndexRunFields }
+    lastScan { ...IndexRunFields }
+    watcher { state since error }
+    roots { path exists isDir readable error }
+    recentFailures { at path stage error }
+    failureCount
+  }
+  searchIndexStatus { embedderPlugins namespace modelId dimensions pendingWorks pendingIsLowerBound }
+}
+
+fragment StreamSummaryFields on StreamSummary {
+  container videoCodec videoProfile videoLevel bitDepth width height videoRange audioCodec audioChannels bitrateBps
+}
+
+query AdminActiveStreams @cache(policy: NetworkOnly) {
+  activeStreams {
+    id
+    user { id name }
+    work { id title kind year runtimeMs parentId }
+    mediaFileId
+    channelId
+    device
+    startedAt
+    lastActiveAt
+    positionMs
+    decision {
+      route
+      plan
+      reasons { code description }
+      source { ...StreamSummaryFields }
+      target { ...StreamSummaryFields }
+      encoder
+      audioEncoder
+      hardware
+      tonemap
+    }
+    transcode { jobId status encoder hardware fps speed outTimeMs error }
+  }
+}
+
+query AdminLogs($minLevel: LogLevel, $target: String, $contains: String) @cache(policy: NetworkOnly) {
+  recentLogs(first: 200, minLevel: $minLevel, target: $target, contains: $contains) @paginate(mode: Infinite) {
+    edges { node { id at level target message fields { name value } spans } }
+  }
+}
+
+query AdminPluginEvents @cache(policy: NetworkOnly) {
+  pluginEvents(first: 30) @paginate(mode: Infinite) {
+    edges { node { id at event { kind pluginId path sha256 hooks reason trap } } }
+  }
+}
+
+mutation ClearPluginOverride($plugin: String!, $hook: HookKind!, $kind: WorkKindFilter!) {
+  clearPluginOverride(pluginId: $plugin, hook: $hook, workKind: $kind) { pluginId hook workKind priority adminSet }
+}

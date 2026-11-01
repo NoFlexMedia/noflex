@@ -1,0 +1,14 @@
+manifest_version = 1
+plugin_id = "tvdb"
+display_name = "TheTVDB"
+version = "0.0.1"
+noflex_api_version = "0.8"
+hooks = ["metadata", "image"]
+capabilities = ["http.egress", "secrets.read"]
+http_egress_hosts = ["api4.thetvdb.com", "artworks.thetvdb.com"]
+secrets_read = ["tvdb.api_key", "tvdb.pin"]
+license = "AGPL-3.0-only"
+
+[priority]
+metadata = 90
+image    = 90

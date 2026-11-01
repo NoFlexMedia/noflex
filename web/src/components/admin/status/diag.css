@@ -1,0 +1,83 @@
+/*! SPDX-License-Identifier: AGPL-3.0-only */
+/* Shared layout for the admin diagnostics tabs: dense, tabular, and
+   fixed-size where values tick so live updates never shift layout. */
+
+.diag { display: grid; gap: 18px; min-width: 0; }
+/* Grid items default to min-width: auto, so a wide table would stretch
+   the page instead of scrolling inside its wrapper. */
+.diag > *, .diag-cols > *, .tiles > *, .panel.dense > * { min-width: 0; }
+.diag-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 32px; }
+.diag-bar .meta { color: var(--text-3); font-size: 0.84rem; }
+.diag-bar .meta strong { color: var(--text-2); font-weight: 600; }
+
+.diag-cols { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); align-items: start; }
+.diag-cols.three { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+
+/* Tiles: a label, a big tabular number, a sub-line and an optional sparkline. */
+.tiles { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); }
+.tiles.small { grid-template-columns: repeat(auto-fill, minmax(min(100%, 160px), 1fr)); }
+.tile { position: relative; display: grid; gap: 4px; align-content: start; padding: 14px 16px; border-radius: var(--r-l); background: var(--surface); border: 1px solid var(--line); min-width: 0; text-align: left; color: inherit; transition: border-color var(--t), background var(--t); }
+button.tile:hover, a.tile:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.tile-label { display: flex; align-items: center; gap: 7px; font-size: 0.74rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+.tile-value { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-value small { font-size: 0.85rem; font-weight: 550; color: var(--text-3); letter-spacing: 0; margin-left: 4px; }
+.tile.small .tile-value { font-size: 1.2rem; }
+.tile-sub { font-size: 0.8rem; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.tile .spark-slot { margin-top: 6px; height: 36px; }
+.tile.warn .tile-value { color: var(--warning); }
+.tile.bad .tile-value { color: var(--danger); }
+.tile.skeleton { height: 128px; }
+.tiles.small .tile.skeleton { height: 78px; }
+
+/* Key/value facts. */
+.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr)); gap: 14px 20px; }
+.kv.wide { grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+.kv > div { min-width: 0; }
+.kv dt { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); margin-bottom: 3px; }
+.kv dd { font-size: 0.9rem; font-weight: 550; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.kv dd.mono { font-weight: 450; font-size: 0.82rem; }
+.kv .full { grid-column: 1 / -1; }
+
+/* Dense tables. Scroll sideways inside their panel on narrow screens. */
+.dtable-wrap { overflow-x: auto; margin: 0 -8px; padding: 0 8px; }
+.dtable { width: 100%; border-collapse: collapse; font-size: 0.86rem; font-variant-numeric: tabular-nums; }
+.dtable th { text-align: left; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); padding: 7px 8px; white-space: nowrap; }
+.dtable td { padding: 8px; border-top: 1px solid var(--line); color: var(--text-2); vertical-align: middle; }
+.dtable td.strong, .dtable td strong { color: var(--text); font-weight: 600; }
+.dtable .num { text-align: right; white-space: nowrap; }
+.dtable .nowrap { white-space: nowrap; }
+.dtable .mono { font-size: 0.8rem; }
+.dtable tr.dim td { opacity: 0.5; }
+.dtable .wrap { overflow-wrap: anywhere; min-width: 160px; }
+
+/* State pills. */
+.state { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 0.74rem; font-weight: 650; white-space: nowrap; background: var(--surface-2); color: var(--text-2); }
+.state.ok { background: rgb(110 231 168 / 0.12); color: var(--success); }
+.state.warn { background: rgb(255 193 100 / 0.12); color: var(--warning); }
+.state.bad { background: var(--danger-soft); color: var(--danger); }
+.state.accent { background: var(--accent-soft); color: var(--accent); }
+.state.info { background: rgb(165 220 255 / 0.12); color: var(--focus); }
+
+.yes { color: var(--success); }
+.no { color: var(--text-3); }
+
+.panel.dense { padding: 18px; }
+.panel.dense .panel-head { margin-bottom: 14px; align-items: center; }
+.panel-head .spacer + * { flex: none; }
+.sub-head { display: flex; align-items: baseline; gap: 10px; margin: 18px 0 8px; }
+.sub-head h3 { font-size: 0.92rem; }
+.sub-head small { color: var(--text-3); font-size: 0.8rem; }
+
+.search-input { min-height: 36px !important; padding: 7px 12px !important; border-radius: 999px !important; width: min(100%, 260px) !important; font-size: 0.86rem !important; }
+
+@media (max-width: 560px) {
+  .panel.dense { padding: 14px; }
+  .kv { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
+  .kv.wide { grid-template-columns: minmax(0, 1fr); }
+  .tile-value small { display: block; margin: 0; font-size: 0.78rem; }
+  .search-input { width: 100% !important; }
+  .tile-value { font-size: 1.3rem; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .tiles .tile { padding: 12px; }
+  .tiles.small { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

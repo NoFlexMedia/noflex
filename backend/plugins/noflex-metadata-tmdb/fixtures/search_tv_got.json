@@ -1,0 +1,10 @@
+{
+  "page": 1,
+  "results": [
+    { "id": 1399, "name": "Game of Thrones", "original_name": "Game of Thrones", "first_air_date": "2011-04-17", "origin_country": ["US"], "popularity": 300.5 },
+    { "id": 250000, "name": "A Knight of the Seven Kingdoms", "original_name": "A Knight of the Seven Kingdoms", "first_air_date": "2026-01-18", "origin_country": ["US"], "popularity": 90.0 },
+    { "id": 1400, "name": "", "first_air_date": "" }
+  ],
+  "total_pages": 1,
+  "total_results": 3
+}

@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+query LiveTv {
+  liveTvChannels(first: 100) { nodes { id sourceId externalId name number logoUrl group enabled } }
+  recordingSchedules(first: 40) { nodes { id ownerId channelId programId startAt endAt paddingBeforeSecs paddingAfterSecs status } }
+  recordings(first: 40) { nodes { id scheduleId ownerId channelId status error sizeBytes startedAt completedAt createdAt } }
+}
+
+# A 12-hour grid across 100 channels runs past one page; the guide loads them all.
+query LiveTvGuide($channelIds: [ID!]!, $start: DateTime!, $end: DateTime!) {
+  liveTvGuide(channelIds: $channelIds, start: $start, end: $end, first: 1000) @paginate {
+    edges { node { id channelId title subtitle description category startAt endAt } }
+  }
+}
+
+mutation StartLiveChannel($id: ID!) {
+  startLiveTvChannel(channelId: $id) { route url jobId }
+}
+
+mutation ScheduleRecording($channel: ID!, $program: ID, $start: DateTime!, $end: DateTime!, $before: Int!, $after: Int!) {
+  scheduleRecording(channelId: $channel, programId: $program, startAt: $start, endAt: $end, paddingBeforeSecs: $before, paddingAfterSecs: $after) { id status startAt endAt }
+}
+
+query LiveTvSources {
+  liveTvSources @list(name: "LiveTvSources") { ...LiveTvSourceFields }
+}

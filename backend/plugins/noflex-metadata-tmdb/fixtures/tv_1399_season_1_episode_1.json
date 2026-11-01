@@ -1,0 +1,32 @@
+{
+  "air_date": "2011-04-17",
+  "episode_number": 1,
+  "name": "Winter Is Coming",
+  "overview": "Jon Arryn, the Hand of the King, is dead. King Robert Baratheon plans to ask his oldest friend, Eddard Stark, to take Jon's place.",
+  "id": 63056,
+  "runtime": 62,
+  "season_number": 1,
+  "still_path": "/still-1.jpg",
+  "vote_average": 7.8,
+  "credits": {
+    "cast": [
+      { "id": 22970, "name": "Peter Dinklage", "character": "Tyrion Lannister", "profile_path": "/peter.jpg" }
+    ],
+    "guest_stars": [
+      { "id": 117642, "name": "Jason Momoa", "character": "Khal Drogo", "profile_path": null }
+    ],
+    "crew": [
+      { "id": 44797, "name": "Tim Van Patten", "job": "Director", "profile_path": null },
+      { "id": 9813, "name": "David Benioff", "job": "Writer", "profile_path": null }
+    ]
+  },
+  "images": {
+    "stills": [
+      { "file_path": "/still-1.jpg", "iso_639_1": null, "width": 1920, "height": 1080, "vote_average": 5.2, "vote_count": 3 }
+    ]
+  },
+  "external_ids": {
+    "imdb_id": "tt1480055",
+    "tvdb_id": 3254641
+  }
+}

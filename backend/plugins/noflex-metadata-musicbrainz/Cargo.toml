@@ -1,0 +1,28 @@
+[package]
+name = "noflex-metadata-musicbrainz"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "MusicBrainz metadata provider for NoFlex (WASM plugin)"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+noflex-plugin-sdk = { path = "../../crates/noflex-plugin-sdk" }
+wit-bindgen = { version = "0.60", default-features = false, features = ["macros", "realloc", "bitflags", "async"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[package.metadata.noflex-plugin]
+plugin_id = "musicbrainz"
+display_name = "MusicBrainz"
+hooks = ["metadata"]
+# MusicBrainz prefers Cover Art Archive for images; this plugin is
+# metadata-only and pairs with a separate `noflex-image-coverart` later.
+capabilities = ["http.egress"]
+http_egress_hosts = ["musicbrainz.org"]
+
+[package.metadata.noflex-plugin.priority]
+metadata = 100

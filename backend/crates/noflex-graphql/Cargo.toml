@@ -1,0 +1,36 @@
+[package]
+name = "noflex-graphql"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "GraphQL schema (canonical API surface) for NoFlex"
+
+[dependencies]
+noflex-core = { workspace = true }
+noflex-storage = { workspace = true }
+noflex-auth = { workspace = true }
+noflex-plugin-host = { workspace = true }
+noflex-scanner = { workspace = true }
+noflex-transcoder = { workspace = true }
+anyhow = { workspace = true }
+url = { workspace = true }
+async-graphql = { workspace = true }
+async-graphql-axum = { workspace = true }
+async-stream = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+noflex-storage-turso = { workspace = true }
+axum = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }

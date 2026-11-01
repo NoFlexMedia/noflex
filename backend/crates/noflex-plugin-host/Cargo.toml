@@ -1,0 +1,44 @@
+[package]
+name = "noflex-plugin-host"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "WASM plugin runtime for NoFlex (host side)"
+
+[dependencies]
+noflex-core = { workspace = true }
+noflex-storage = { workspace = true }
+noflex-plugin-wit = { workspace = true }
+noflex-metadata = { workspace = true }
+
+anyhow = { workspace = true }
+async-graphql = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+uuid = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
+
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
+sha2 = { workspace = true }
+directories = { workspace = true }
+notify = { workspace = true }
+time = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
+noflex-storage-turso = { workspace = true }
+uuid = { workspace = true }
+axum = { workspace = true }

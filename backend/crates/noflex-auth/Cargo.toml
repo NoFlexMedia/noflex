@@ -1,0 +1,32 @@
+[package]
+name = "noflex-auth"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Built-in auth provider: Argon2id password hashing, Jellyfin-SHA1 fallback, JWT, and the axum middleware that injects a Principal"
+
+[dependencies]
+noflex-core = { workspace = true }
+noflex-storage = { workspace = true }
+
+argon2 = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+hex = { workspace = true }
+jsonwebtoken = { workspace = true }
+rand = "0.8"
+serde = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+subtle = "2.6"
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+noflex-storage-turso = { workspace = true }
+tower = { workspace = true, features = ["util"] }

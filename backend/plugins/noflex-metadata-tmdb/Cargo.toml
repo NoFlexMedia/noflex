@@ -1,0 +1,45 @@
+[package]
+name = "noflex-metadata-tmdb"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "TMDb metadata + image provider for NoFlex (WASM plugin)"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+noflex-plugin-sdk = { path = "../../crates/noflex-plugin-sdk" }
+
+# Async wasip2 stack (WASI 0.3 native async + streams; `async-spawn` for
+# writing `image::fetch` streams after returning). Single direct
+# wit-bindgen dep — no transitive copies via wasip3 etc., which would
+# otherwise cause duplicate `cabi_realloc_wit_bindgen_*` symbol collisions.
+wit-bindgen = { version = "0.60", default-features = false, features = ["macros", "realloc", "bitflags", "async", "async-spawn"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Keep debug info in the released `.wasm` so trap backtraces include
+# the source-level function names and (with WASMTIME_BACKTRACE_DETAILS=1)
+# panic messages — invaluable for diagnosing the cabi_realloc-class traps.
+[profile.release]
+debug = true
+strip = "none"
+
+[package.metadata.noflex-plugin]
+# The xtask reads this section to know what manifest to embed in the
+# `noflex:manifest` custom section of the final `.wasm`. See
+# `xtask/src/plugin_build.rs`.
+plugin_id = "tmdb"
+display_name = "The Movie Database"
+hooks = ["metadata", "image"]
+capabilities = ["http.egress", "secrets.read"]
+http_egress_hosts = ["api.themoviedb.org", "image.tmdb.org"]
+secrets_read = ["api_key"]
+
+[package.metadata.noflex-plugin.priority]
+metadata = 100
+image    = 80
+

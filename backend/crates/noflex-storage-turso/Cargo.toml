@@ -1,0 +1,25 @@
+[package]
+name = "noflex-storage-turso"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Rust Turso (in-process SQLite-compatible) backend for noflex-storage"
+
+[dependencies]
+noflex-core = { workspace = true }
+noflex-storage = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+turso = { workspace = true }
+uuid = { workspace = true }
+time = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }

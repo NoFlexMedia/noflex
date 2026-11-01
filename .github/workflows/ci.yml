@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# CI for noflex. The Cargo workspace lives in
+# backend/, so cargo commands run there; the flake
+# stays at the repo root and `nix develop` resolves
+# it from the invocation directory.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v24
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      # The dev shell points sccache at `.cache/sccache` under the project
+      # root; persist it across runs.
+      - name: Restore sccache cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cache/sccache
+          key: sccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock') }}-
+            sccache-${{ runner.os }}-${{ runner.arch }}-
+      - run: nix develop --command sh -c 'cd backend && cargo fmt --all -- --check'
+      - run: nix develop --command sh -c 'cd backend && cargo clippy --workspace --all-targets -- -D warnings'
+      - run: nix develop --command sh -c 'cd backend && cargo test --workspace'
+      - run: nix flake check
+      - name: Print sccache stats
+        if: always()
+        run: nix develop --command sccache --show-stats

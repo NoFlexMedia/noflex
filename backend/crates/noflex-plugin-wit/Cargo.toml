@@ -1,0 +1,15 @@
+[package]
+name = "noflex-plugin-wit"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "WIT world for NoFlex plugins (v0.1)"
+
+# Ship the wit/ directory in the published crate so downstream consumers
+# (noflex-plugin-host, noflex-plugin-sdk) can locate it relative to this
+# crate's manifest dir.
+include = ["src/**/*", "wit/**/*", "README.md"]
+
+[dependencies]

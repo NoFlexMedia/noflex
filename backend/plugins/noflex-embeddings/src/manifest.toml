@@ -1,0 +1,16 @@
+manifest_version = 1
+plugin_id = "embeddings"
+display_name = "Local Embeddings (potion-base-8M)"
+version = "0.1.0"
+noflex_api_version = "0.8"
+hooks = ["embedder"]
+capabilities = ["assets.read"]
+# 30MB of f32 weights + tokenizer + tokenization working set blow past
+# the 64MB default.
+memory_limit_mb = 128
+license = "AGPL-3.0-only"
+
+[embedding]
+namespace = "potion-base-8m"
+model_id = "minishlab/potion-base-8M"
+dimensions = 256

@@ -1,0 +1,259 @@
+package noflex:plugin@0.8.0;
+
+/// Shared types used by every hook interface and several host imports.
+///
+/// IDs are passed as hyphenated-UUID strings, not byte tuples — the wire is
+/// slightly fatter but the WIT is dramatically simpler and there is no hot
+/// path in v1 that bottlenecks on this. Plugins parse with `uuid::Uuid::parse_str`.
+interface types {
+    /// UUIDv7 identifiers, hyphenated form (e.g. "01956c1f-b8a3-77a1-...").
+    type work-id = string;
+    type edition-id = string;
+    type media-file-id = string;
+    type user-id = string;
+    type library-id = string;
+
+    enum work-kind {
+        movie,
+        series,
+        season,
+        episode,
+        album,
+        track,
+        artist,
+        audio-book,
+        photo,
+    }
+
+    enum image-kind {
+        primary,
+        backdrop,
+        banner,
+        thumb,
+        logo,
+        disc,
+        /// `%box` because `box` is a reserved word in WIT.
+        %box,
+        menu,
+        chapter,
+        art,
+    }
+
+    enum external-id-kind {
+        tmdb,
+        tvdb,
+        imdb,
+        music-brainz-release-group,
+        music-brainz-artist,
+        music-brainz-recording,
+        ani-db,
+        /// Plugin-defined; pair with a namespace prefix in `value`
+        /// (e.g. "fanart:tv:81189") to avoid collisions across plugins.
+        custom,
+    }
+
+    record external-id {
+        kind: external-id-kind,
+        value: string,
+    }
+
+    record search-query {
+        title: string,
+        year: option<s32>,
+        kind: work-kind,
+        /// Hints from the scanner (e.g., parsed folder path) to disambiguate
+        /// matches. Plugin authors should treat these as advisory. For
+        /// season and episode searches the host sends
+        /// `parent-external-id:<kind>:<value>` (one per id of the parent
+        /// series, `<kind>` spelled as in `external-id-kind`, e.g. `tmdb`),
+        /// `season:<n>`, and for episodes `episode:<n>`, so a provider can
+        /// derive the child's id.
+        hints: list<string>,
+    }
+
+    record metadata-match {
+        external-id: external-id,
+        title: string,
+        year: option<s32>,
+        /// Confidence in [0.0, 1.0]. Below ~0.6 the scanner flags for manual
+        /// review. Tunable in server config.
+        confidence: f32,
+    }
+
+    record metadata-image {
+        kind: image-kind,
+        url: string,
+        language: option<string>,
+        width: option<u32>,
+        height: option<u32>,
+    }
+
+    record metadata-person {
+        name: string,
+        role: option<string>,
+        character: option<string>,
+        photo-url: option<string>,
+    }
+
+    record metadata-payload {
+        external-ids: list<external-id>,
+        title: string,
+        sort-title: option<string>,
+        original-title: option<string>,
+        year: option<s32>,
+        release-date: option<string>,
+        overview: option<string>,
+        tagline: option<string>,
+        runtime-ms: option<s64>,
+        genres: list<string>,
+        studios: list<string>,
+        people: list<metadata-person>,
+        images: list<metadata-image>,
+        rating: option<string>,
+        community-rating: option<f32>,
+    }
+
+    record image-meta {
+        kind: image-kind,
+        language: option<string>,
+        mime: string,
+        width: option<u32>,
+        height: option<u32>,
+    }
+
+    record subtitle-match {
+        provider: string,
+        language: string,
+        /// Best-effort BCP-47 (e.g. "en-US"); falls back to ISO-639.
+        locale-hint: option<string>,
+        /// "srt", "vtt", "ass", ...
+        format: string,
+        score: f32,
+        /// Provider-internal handle used to retrieve the actual subtitle bytes.
+        handle: string,
+    }
+
+    record work-added-event {
+        work: work-id,
+        title: string,
+    }
+
+    record work-played-event {
+        user: user-id,
+        work: work-id,
+        title: string,
+    }
+
+    record scan-started-event {
+        library-name: string,
+    }
+
+    record scan-completed-event {
+        library-name: string,
+        added: u64,
+        updated: u64,
+        removed: u64,
+    }
+
+    record favorite-event {
+        user: user-id,
+        work: work-id,
+        title: string,
+        /// True when favorited, false when unfavorited.
+        favorite: bool,
+    }
+
+    record progress-event {
+        user: user-id,
+        work: work-id,
+        title: string,
+        /// Playback position when the user stopped.
+        position-ms: u64,
+    }
+
+    record playback-event {
+        user: user-id,
+        work: work-id,
+        title: string,
+        /// The concrete media file the session plays (a work can have
+        /// several editions and files; scrobblers want the exact one).
+        media-file: media-file-id,
+    }
+
+    record custom-event {
+        event: string,
+        /// JSON-encoded payload; structured types cross the boundary as text.
+        payload-json: string,
+    }
+
+    variant notify-event {
+        work-added(work-added-event),
+        work-played(work-played-event),
+        scan-started(scan-started-event),
+        scan-completed(scan-completed-event),
+        favorite(favorite-event),
+        /// Emitted only when playback stops — Playing/Paused heartbeats
+        /// are far too hot to broadcast to every notifier.
+        progress-at-stop(progress-event),
+        /// A playback session began (direct play or transcode).
+        playback-started(playback-event),
+        /// A playback session was explicitly stopped.
+        playback-stopped(playback-event),
+        custom(custom-event),
+    }
+
+    /// Scrobble state machine (the Trakt `/scrobble/start|pause|stop`
+    /// shape). `paused` is on the wire but not emitted yet —
+    /// Playing/Paused heartbeats are too hot to broadcast.
+    enum scrobble-action {
+        started,
+        paused,
+        stopped,
+    }
+
+    /// One scrobble occurrence. The host enriches it from storage
+    /// (kind, year, external ids, runtime) so scrobbler plugins need
+    /// no library lookups of their own.
+    record scrobble-event {
+        user: user-id,
+        work: work-id,
+        kind: work-kind,
+        title: string,
+        year: option<s32>,
+        /// Provider ids the work carries (tmdb, tvdb, imdb, ...) —
+        /// scrobblers match on these, never on titles.
+        external-ids: list<external-id>,
+        action: scrobble-action,
+        /// Playback position when known (progress-at-stop); none on
+        /// session start/stop, which carry no position.
+        position-ms: option<u64>,
+        /// Edition runtime when known; the plugin derives its own
+        /// progress percent and watched threshold.
+        runtime-ms: option<u64>,
+    }
+
+    /// Outcome of one `background.run-task` invocation.
+    variant task-outcome {
+        /// The work is finished (or nothing was pending). For scheduled
+        /// tasks the interval timer restarts from this invocation.
+        done,
+        /// More work remains; the guest-owned cursor is persisted host-side
+        /// and handed back on the next invocation, which the host schedules
+        /// promptly rather than waiting for the interval. Long sweeps chunk
+        /// across invocations so every call stays inside the shared epoch
+        /// budget. The cursor survives instance recycling and host restarts.
+        more(string),
+    }
+
+    /// Mirror of `noflex_core::PluginError` for the WIT boundary. Every hook
+    /// returns `result<T, plugin-error>`.
+    variant plugin-error {
+        unavailable(string),
+        bad-input(string),
+        not-found,
+        rate-limited(u32),
+        internal(string),
+        trapped(string),
+        capability-denied(string),
+    }
+}

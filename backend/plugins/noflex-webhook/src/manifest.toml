@@ -1,0 +1,17 @@
+manifest_version = 1
+plugin_id = "webhook"
+display_name = "Webhook Notifier"
+version = "0.1.0"
+noflex_api_version = "0.8"
+hooks = ["notifier"]
+capabilities = ["http.egress", "http.private-network", "secrets.read"]
+# Unrestricted egress is deliberate here: the operator's configured URL
+# IS the grant — a webhook bridge cannot enumerate its destinations at
+# build time (any Gotify/ntfy/Discord/Slack endpoint, LAN hosts
+# included). The host warns at load about the unrestricted grant and
+# audit-logs every request, so the audit log is the record of where
+# events actually went.
+http_egress_hosts = ["*"]
+secrets_read = ["webhook.auth"]
+license = "AGPL-3.0-only"
+# No `events` key: subscribe to every event kind.

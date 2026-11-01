@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+mutation StartPlayback($media: ID!, $capabilities: ClientCapabilities!, $subtitle: Int, $start: Int) {
+  startPlaybackSession(mediaFileId: $media, capabilities: $capabilities, burnSubtitle: $subtitle, startPositionMs: $start) {
+    sessionId
+    route
+    url
+    jobId
+    startPositionMs
+    subtitles { index language title forced default url }
+    decision {
+      route
+      plan
+      reasons { code description }
+      source { container videoCodec videoProfile videoLevel bitDepth width height videoRange audioCodec audioChannels bitrateBps }
+      target { container videoCodec videoProfile videoLevel bitDepth width height videoRange audioCodec audioChannels bitrateBps }
+      encoder
+      audioEncoder
+      hardware
+      tonemap
+    }
+  }
+}
+
+mutation StopPlayback($session: ID!) {
+  stopPlaybackSession(sessionId: $session)
+}
+
+mutation ReportProgress($id: ID!, $position: Int!, $state: PlaybackState!) {
+  reportProgress(target: { kind: WORK, id: $id }, positionMs: $position, state: $state) { ...UserDataFields }
+}
+
+mutation SetFavorite($id: ID!, $favorite: Boolean!) {
+  setFavorite(target: { kind: WORK, id: $id }, favorite: $favorite) { ...UserDataFields }
+}
+
+mutation MarkPlayed($id: ID!) {
+  markPlayed(target: { kind: WORK, id: $id }) { ...UserDataFields }
+}
+
+mutation MarkUnplayed($id: ID!) {
+  markUnplayed(target: { kind: WORK, id: $id }) { ...UserDataFields }
+}
+
+query WatchRooms {
+  watchRooms @list(name: "WatchRooms") { ...WatchRoomFields }
+}
+
+query WatchRoom($id: ID!) @cache(policy: NetworkOnly) {
+  watchRoom(id: $id) { ...WatchRoomFields }
+}
+
+mutation CreateWatchRoom($media: ID!) {
+  createWatchRoom(mediaFileId: $media) { ...WatchRoomFields ...WatchRooms_upsert }
+}
+
+mutation JoinWatchRoom($id: ID!) {
+  joinWatchRoom(roomId: $id) { ...WatchRoomFields ...WatchRooms_upsert }
+}
+
+mutation ControlWatchRoom($id: ID!, $action: WatchRoomAction!, $position: Int) {
+  controlWatchRoom(roomId: $id, action: $action, positionMs: $position) { ...WatchRoomFields }
+}
+
+subscription WatchRoomEvents($room: ID!) {
+  watchRoomEvents(roomId: $room) {
+    action
+    sequence
+    serverTimestamp
+    room { ...WatchRoomFields }
+  }
+}

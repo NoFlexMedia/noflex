@@ -1,0 +1,3645 @@
+"""
+An active playback, for the admin dashboard.
+"""
+type ActiveStream {
+	"""
+	Job id for transcodes; a generated id for direct sessions.
+	"""
+	id: ID!
+	user: User!
+	work: Work
+	mediaFileId: ID!
+	"""
+	Set for live TV streams.
+	"""
+	channelId: ID
+	"""
+	Client/device name from the caller's auth session, if known.
+	"""
+	device: String
+	startedAt: DateTime!
+	"""
+	Bumped by progress reports and segment fetches.
+	"""
+	lastActiveAt: DateTime!
+	positionMs: Int
+	decision: PlaybackDecisionInfo!
+	"""
+	`None` for direct play.
+	"""
+	transcode: TranscodeProgress
+}
+
+"""
+Append-only activity log entry. Server actions, scan
+events, and play events all funnel through this shape.
+"""
+type ActivityEntry {
+	id: ID!
+	kind: ActivityKind!
+	actor: String
+	subject: String
+	detail: String
+	occurredAt: DateTime!
+}
+
+type ActivityEntryConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [ActivityEntryEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [ActivityEntry!]!
+}
+
+"""
+An edge in a connection.
+"""
+type ActivityEntryEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: ActivityEntry!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+Taxonomy of append-only activity log entries. The
+GraphQL `Activity.kind` field renders this as a GQL enum
+(`SCAN_COMPLETED`, `PLAY_PROGRESS`, …). `Custom` is the
+catch-all for plugins that emit their own event names —
+the GQL `From<String>` falls through to it.
+"""
+enum ActivityKind {
+	SCAN_STARTED
+	SCAN_COMPLETED
+	PLAY_STARTED
+	PLAY_PROGRESS
+	PLAY_COMPLETED
+	ITEM_ADDED
+	ITEM_UPDATED
+	ITEM_REMOVED
+	LIBRARY_CREATED
+	LIBRARY_UPDATED
+	LIBRARY_DELETED
+	"""
+	A rotated-away refresh token was presented; its session was
+	revoked. `actor` is the session's user, `subject` the session.
+	"""
+	REFRESH_TOKEN_REUSE
+	CUSTOM
+}
+
+"""
+A long-lived programmatic credential. The key hash never leaves the
+backend, so it isn't on this type — authentication resolves a row by
+hash and the caller checks `revoked_at`.
+"""
+type ApiKey {
+	id: ID!
+	userId: ID!
+	name: String!
+	createdAt: DateTime!
+	"""
+	`None` while the key is active; `Some` stamps the revocation.
+	"""
+	revokedAt: DateTime
+}
+
+"""
+Library-level choice between metadata-provider artwork and artwork
+found next to the media. Either way the other source fills kinds the
+preferred one lacks, and generated art comes last.
+"""
+enum ArtworkPreference {
+	PREFER_PROVIDER
+	PREFER_LOCAL
+}
+
+"""
+Audio codec carried by a `MediaFile`/`Edition` and requested by
+client capability declarations. Closed set, same contract as
+[`VideoCodec`]; probe-side audio codec names stay `String`
+because ffprobe reports an open-ended set.
+"""
+enum AudioCodec {
+	AAC
+	AC3
+	EAC3
+	MP3
+	OPUS
+	VORBIS
+	FLAC
+	TRUEHD
+	DTS
+	PCM
+}
+
+"""
+Decoder limits for one audio codec. Without an entry, any channel
+count is accepted.
+"""
+input AudioCodecSupport {
+	codec: AudioCodec!
+	maxChannels: Int
+}
+
+type AudioTrack {
+	language: String
+	codec: String!
+	channels: Int!
+	default: Boolean!
+	"""
+	Sample bit depth (16 for AAC/Opus/AC-3, 24 for FLAC/TrueHD/MLP).
+	"""
+	bitDepth: Int
+	"""
+	Sample rate in Hz; affects DTS-HD MA downmix decisions.
+	"""
+	sampleRate: Int
+	"""
+	Speaker / channel layout. `ObjectBased` for JOC/Atmos.
+	"""
+	channelLayout: ChannelLayout
+	"""
+	Codec profile (e.g. `"LC-AAC"`, `"HE-AAC"`, `"xHE-AAC"`,
+	`"DTS-HD MA"`, `"DTS-HD HRA"`, `"DTS:X"`).
+	"""
+	codecProfile: String
+	"""
+	JOC/Atmos metadata: `"joc"` for Atmos, `"none"` otherwise.
+	"""
+	audioObjectType: String
+	"""
+	`true` for sidecar files, `false` for muxed-in.
+	"""
+	external: Boolean!
+	"""
+	Independent of `default` — a track can be default-non-forced
+	OR default-forced (foreign-language subs for non-default audio).
+	"""
+	forced: Boolean!
+	"""
+	Human-readable label, e.g. `"Director's Commentary"`.
+	"""
+	title: String
+}
+
+type BinaryInfo {
+	"""
+	What NoFlex invokes: the configured override or the bare name.
+	"""
+	command: String!
+	"""
+	The environment variable that overrides `command`.
+	"""
+	overrideEnv: String!
+	"""
+	Absolute path `command` resolves to, when found.
+	"""
+	path: String
+	"""
+	First line of `-version`.
+	"""
+	version: String
+	"""
+	`--enable-*` flags from the build configuration.
+	"""
+	buildFlags: [String!]!
+	error: String
+}
+
+"""
+Speaker / channel layout of an audio track. `ObjectBased` is the
+JOC / Atmos case (bed+objects rather than a fixed channel count).
+"""
+enum ChannelLayout {
+	MONO
+	STEREO
+	THREE
+	FOUR
+	FIVE
+	SIX
+	SEVEN_ONE
+	EIGHT
+	OBJECT_BASED
+}
+
+type Chapter {
+	positionMs: Int!
+	title: String
+}
+
+"""
+What a playback client can play, as the client itself measured it.
+The canonical `startPlaybackSession` input type.
+"""
+input ClientCapabilities {
+	"""
+	Progressive profiles, tried in order.
+	"""
+	directPlay: [DirectPlayProfile!]!
+	"""
+	HLS segment formats, in preference order; ties go to the earlier.
+	"""
+	hls: [HlsProfile!]!
+	videoCodecs: [VideoCodecSupport!]!
+	audioCodecs: [AudioCodecSupport!]!
+	"""
+	Text subtitle formats the client renders itself. Sidecar tracks
+	convertible to one of these are delivered out of band rather
+	than forcing a transcode.
+	"""
+	subtitleCodecs: [SubtitleCodec!]!
+	"""
+	Display ceiling: taller sources are scaled down.
+	"""
+	maxHeight: Int
+	"""
+	The restrictions policy clamps this server-side.
+	"""
+	maxBitrateBps: Int
+}
+
+enum CodecMediaKind {
+	VIDEO
+	AUDIO
+}
+
+type CodecSupport {
+	"""
+	ffmpeg codec name (`hevc_vaapi`, `libx264`, `h264_cuvid`, …).
+	"""
+	name: String!
+	media: CodecMediaKind!
+	"""
+	`software`, or the hardware backend the codec runs on.
+	"""
+	backend: String!
+	available: Boolean!
+}
+
+"""
+An admin-curated grouping of works within one library. The ordered
+membership is exposed on GQL as the complex `items` field below,
+resolved through `Storage::collection_items` — not part of this
+row type.
+"""
+type Collection {
+	id: ID!
+	libraryId: ID!
+	title: String!
+	sortTitle: String!
+	overview: String
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	"""
+	Visible members in membership order. `first` defaults to
+	`ITEM_PAGE_DEFAULT` (50), max `ITEM_PAGE_MAX` (100).
+	"""
+	items(first: Int, after: String): WorkConnection!
+}
+
+type CollectionConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [CollectionEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Collection!]!
+}
+
+"""
+An edge in a connection.
+"""
+type CollectionEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Collection!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+Color primaries (a.k.a. color space). Defines the gamut; the
+HDR10 / Dolby Vision static-metadata path uses `Bt2020`.
+"""
+enum ColorPrimaries {
+	BT_709
+	BT_2020
+	BT_601_NTSC
+	BT_601_PAL
+	SMPTE_C
+	DCI_P3
+	DISPLAY_P3
+	BT_470M
+	BT_470_BG
+	XYZ
+	FILM
+}
+
+type ConfigEntry {
+	"""
+	Dotted path, arrays indexed: `transcoder.ladder[0].max_height`.
+	"""
+	key: String!
+	"""
+	Scalar rendered as text; `null` for unset options.
+	"""
+	value: String
+	redacted: Boolean!
+}
+
+type CpuCore {
+	index: Int!
+	"""
+	0–100.
+	"""
+	usagePercent: Float!
+	frequencyMhz: Int!
+}
+
+type CpuStatus {
+	"""
+	Whole-machine utilisation, 0–100.
+	"""
+	usagePercent: Float!
+	brand: String!
+	physicalCores: Int
+	logicalCores: Int!
+	cores: [CpuCore!]!
+	"""
+	`None` where the OS has no load average (Windows).
+	"""
+	loadAverage: LoadAverage
+}
+
+input CreateLiveTvSourceInput {
+	name: String!
+	playlistUrl: String!
+	epgUrl: String
+	enabled: Boolean! = true
+}
+
+"""
+An API key at the only moment its plaintext exists: the create
+response. Listings show the `api_key` row, never `key`.
+"""
+type CreatedApiKey {
+	key: String!
+	apiKey: ApiKey!
+}
+
+type DatabaseStatus {
+	backend: String!
+	engineVersion: String!
+	schemaVersion: Int!
+	healthy: Boolean!
+	notes: [String!]!
+	"""
+	Main database file. `None` for engines without a local file.
+	"""
+	path: String
+	"""
+	Main file plus write-ahead log, in bytes.
+	"""
+	sizeBytes: Int
+	walSizeBytes: Int
+	"""
+	Set when the health probe itself failed.
+	"""
+	error: String
+}
+
+"""
+A datetime with timezone offset.
+
+The input is a string in RFC3339 format, e.g. "2022-01-12T04:00:19.12345Z"
+or "2022-01-12T04:00:19+03:00". The output is also a string in RFC3339
+format, but it is always normalized to the UTC (Z) offset, e.g.
+"2022-01-12T04:00:19.12345Z".
+"""
+scalar DateTime
+
+"""
+The device's half of the link flow: show `pin` on screen, then
+poll `pollDevicePin` until it yields a session or `expires_at`
+passes.
+"""
+type DevicePinInfo {
+	pin: String!
+	expiresAt: DateTime!
+}
+
+"""
+Progressive (`<video src>`) playback of the file as stored.
+"""
+input DirectPlayProfile {
+	"""
+	Container family: `mp4` matches every ISO-BMFF file (ffprobe
+	calls them all `mov`), `mkv`/`webm`/`matroska` match Matroska,
+	`ts` matches MPEG-TS; anything else compares as ffprobe names it.
+	"""
+	container: String!
+	videoCodecs: [VideoCodec!]!
+	audioCodecs: [AudioCodec!]!
+}
+
+"""
+Dolby Vision profile tag. Stored as the integer profile number
+(5, 7, 8, 9) in the `editions.dovi_profile` INTEGER column.
+"""
+enum DolbyVisionProfile {
+	PROFILE_5
+	PROFILE_7
+	PROFILE_8
+	PROFILE_9
+}
+
+"""
+An edition is a specific cut/version of a work. Most works have one
+("Default"); collector-grade libraries have multiple ("Theatrical",
+"Director's Cut", "Extended").
+"""
+type Edition {
+	id: ID!
+	workId: ID!
+	name: String!
+	runtimeMs: Int
+	introStartMs: Int
+	introEndMs: Int
+	creditsStartMs: Int
+	chapters: [Chapter!]!
+	"""
+	Codec and dimension metadata are promoted off
+	`media_files.probe_json` so the direct-play decision can read
+	them without a join. Populated by the post_scan ffprobe task; `None` for editions whose
+	media files have never been probed.
+	"""
+	codecVideo: String
+	codecAudio: String
+	width: Int
+	height: Int
+	bitDepth: Int
+	"""
+	Loose free-form HDR description (e.g. "HDR10", "HLG"). Kept
+	for back-compat with legacy rows; the typed
+	`transfer_characteristics` + `dovi_profile` fields below carry
+	the v2 truth. `#[serde(default, skip_serializing_if =
+	"Option::is_none")]` so a missing field is invisible on the
+	wire — only the typed fields appear once we promote them.
+	"""
+	hdrFormat: String
+	"""
+	Per-track audio metadata (language, channels, codec, default).
+	`Option<>` here so the legacy case of "no probe yet" round-trips
+	without an empty-array column write.
+	"""
+	audioTracks: [AudioTrack!]
+	subtitleTracks: [SubtitleTrack!]
+	"""
+	Typed video codec (replaces the loose `codec_video` string in
+	the new probe pipeline; the string field stays for back-compat).
+	"""
+	videoCodec: VideoCodec
+	"""
+	H.264/H.265/AV1/VP9 profile tier.
+	"""
+	videoProfile: VideoProfile
+	"""
+	Codec level × 10 (H.264) or × 30 (HEVC). `f32` so we can carry
+	the half-step bumps ffmpeg occasionally reports.
+	"""
+	videoLevel: Float
+	"""
+	Pixel format / chroma subsampling.
+	"""
+	pixelFormat: PixelFormat
+	"""
+	Color primaries (gamut).
+	"""
+	colorPrimaries: ColorPrimaries
+	"""
+	Transfer characteristics. The v2 truth; `hdr_format` is the
+	legacy free-form string for older rows.
+	"""
+	transferCharacteristics: HdrTransfer
+	"""
+	YCbCr ↔ RGB matrix coefficients.
+	"""
+	matrixCoefficients: MatrixCoefficients
+	"""
+	Dolby Vision profile tag (5/7/8/9). Stored as INTEGER in SQL.
+	"""
+	doviProfile: DolbyVisionProfile
+	"""
+	Max Content Light Level (cd/m²). HDR10 / DV static metadata.
+	"""
+	maxCll: Int
+	"""
+	Max Frame-Average Light Level (cd/m²).
+	"""
+	maxFall: Int
+	"""
+	Minimum mastering-display luminance, 0.0001 cd/m² resolution
+	(stored × 10000 = 0..max). `0.0001` is the SMPTE ST 2086 floor.
+	"""
+	masteringDisplayMinLuminance: Int
+	"""
+	Maximum mastering-display luminance, 1 cd/m² resolution.
+	"""
+	masteringDisplayMaxLuminance: Int
+	"""
+	Source frame rate (fps). Drives bitrate-vs-resolution math in
+	the transcoder's ladder.
+	"""
+	frameRate: Float
+	trickplay: TrickplayAsset
+}
+
+"""
+One bounded electronic programme guide entry.
+"""
+type EpgProgram {
+	id: ID!
+	channelId: ID!
+	externalId: String!
+	title: String!
+	subtitle: String
+	description: String
+	category: String
+	startAt: DateTime!
+	endAt: DateTime!
+}
+
+type EpgProgramConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [EpgProgramEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [EpgProgram!]!
+}
+
+"""
+An edge in a connection.
+"""
+type EpgProgramEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: EpgProgram!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+Container the user asked the worker to produce. MP4 is the
+only "fast" target — copy-remux with `+faststart` for direct
+browser playback. MKV is allowed for users who want lossless
+archival; it goes through the same remux path.
+"""
+enum ExportFormat {
+	MP4
+	MKV
+}
+
+type ExportJob {
+	id: ID!
+	userId: ID!
+	editionId: ID!
+	format: ExportFormat!
+	status: ExportJobStatus!
+	"""
+	0.0..1.0; the worker updates this every progress tick
+	(every ~5s) by reading ffmpeg's `time=` stderr field.
+	"""
+	progress: Float!
+	"""
+	Absolute path to the produced file. Set by the worker on
+	successful completion; `None` while queued/running.
+	"""
+	outputPath: String
+	"""
+	Worker-stamped failure message. `None` unless status is
+	`Failed`. Truncated stderr from the ffmpeg subprocess.
+	"""
+	error: String
+	createdAt: DateTime!
+	startedAt: DateTime
+	finishedAt: DateTime
+}
+
+type ExportJobConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [ExportJobEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [ExportJob!]!
+}
+
+"""
+An edge in a connection.
+"""
+type ExportJobEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: ExportJob!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+Closed set of durable queue states. `CancelRequested` keeps cancellation
+observable until the worker holding the lease has stopped its subprocess.
+"""
+enum ExportJobStatus {
+	QUEUED
+	RUNNING
+	CANCEL_REQUESTED
+	COMPLETED
+	FAILED
+	CANCELLED
+}
+
+"""
+Per-job status updates streamed to the `Downloads` UI. The
+`DownloadWorker` calls
+`ExportEventBroadcaster::emit_status` on every state
+transition; this subscription filters the broadcast
+channel by job id and yields the matching events.
+
+Filtering happens in the subscription body itself
+(rather than in the worker) so the worker can be
+fire-and-forget: a slow client doesn't back-pressure the
+queue, and an event for a different job never even
+crosses the wire.
+"""
+type ExportStatusEvent {
+	id: ID!
+	status: ExportJobStatus!
+	progress: Float!
+}
+
+type ExternalAuthProvider {
+	id: String!
+	displayName: String!
+}
+
+"""
+Where to send the browser to begin an external login or link.
+"""
+type ExternalAuthStart {
+	authorizationUrl: String!
+}
+
+type ExternalId {
+	kind: ExternalIdKind!
+	value: String!
+}
+
+input ExternalIdInput {
+	kind: ExternalIdKind!
+	value: String!
+}
+
+"""
+Cross-references to external metadata sources.
+"""
+enum ExternalIdKind {
+	TMDB
+	TVDB
+	IMDB
+	MUSIC_BRAINZ_RELEASE_GROUP
+	MUSIC_BRAINZ_ARTIST
+	MUSIC_BRAINZ_RECORDING
+	ANI_DB
+	CUSTOM
+}
+
+"""
+A verified identity owned by an external-auth plugin. Identity lookup is
+exclusively by `(plugin_id, issuer, subject)`; profile fields are display
+metadata and never participate in account matching.
+"""
+type ExternalIdentity {
+	pluginId: String!
+	issuer: String!
+	subject: String!
+	userId: ID!
+	username: String
+	displayName: String
+	email: String
+	linkedAt: DateTime!
+}
+
+"""
+Transfer characteristics (a.k.a. transfer function, "gamma curve").
+`Sdr` is the Rec.709 / sRGB default; the rest are the HDR and
+log-curve variants the probe pipeline distinguishes.
+"""
+enum HdrTransfer {
+	SDR
+	PQ
+	HLG
+	SLOG3
+	SLOG2
+	LOG_C
+	BT_2100
+	BT_1886
+}
+
+"""
+One row of a per-user play history page. `target_kind`
+and `target_id` together identify the Edition or Work the play
+attached to (split for GQL-friendliness); `data` is the full
+`UserData` snapshot at page-read time.
+"""
+type HistoryRow {
+	targetKind: PlayTargetKind!
+	targetId: ID!
+	data: UserData!
+	"""
+	The work this row refers to — for an edition target, that
+	edition's work. Null when it no longer exists or the viewer
+	can't access it.
+	"""
+	work: Work
+}
+
+type HistoryRowConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [HistoryRowEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [HistoryRow!]!
+}
+
+"""
+An edge in a connection.
+"""
+type HistoryRowEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: HistoryRow!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+What the client's HLS player accepts in one segment format, for
+stream-copied and encoded streams alike.
+"""
+input HlsProfile {
+	segmentContainer: HlsSegmentContainer!
+	videoCodecs: [VideoCodec!]!
+	audioCodecs: [AudioCodec!]!
+}
+
+"""
+Segment format of an HLS rendition. fMP4 is what MSE consumes
+natively and the only one that carries HEVC/AV1/VP9; MPEG-TS stays
+for clients (and audio codecs) that need it.
+"""
+enum HlsSegmentContainer {
+	FMP4
+	TS
+}
+
+enum HookKind {
+	METADATA
+	IMAGE
+	SUBTITLE
+	POST_SCAN
+	NOTIFIER
+	USER_LINK
+	AUTH
+	SCROBBLER
+	INTRO_DETECTOR
+	EMBEDDER
+	BACKGROUND
+}
+
+type HostInfo {
+	hostname: String
+	osName: String
+	osVersion: String
+	kernelVersion: String
+	arch: String!
+	bootedAt: DateTime
+	uptimeSeconds: Int
+}
+
+type Image {
+	kind: ImageKind!
+	source: ImageSource!
+	path: String!
+	width: Int
+	height: Int
+	language: String
+	"""
+	Serving route for this image, pinned to its source with
+	`?source=` (so the URL changes when the effective source does)
+	and carrying a `&token=` that authenticates the caller without a
+	header (so `<img src>` works) and stays identical for about an
+	hour so browsers can cache it. Clients append `&w=`/`&h=` (and
+	optionally `&fill=true`) to resize server-side. Without a
+	configured signer the token is omitted and the route needs a
+	header credential.
+	"""
+	url: String!
+}
+
+"""
+Image kinds that can be attached to a target (work, edition, or person).
+"""
+enum ImageKind {
+	PRIMARY
+	BACKDROP
+	BANNER
+	THUMB
+	LOGO
+	DISC
+	BOX
+	MENU
+	CHAPTER
+	ART
+}
+
+"""
+Where an image came from. A target holds at most one image per
+(kind, source), so local and provider artwork of one kind coexist and
+readers pick between them by a source order.
+"""
+enum ImageSource {
+	"""
+	Found next to the media by the scanner; owned by scan reconcile.
+	"""
+	LOCAL
+	"""
+	Fetched from a metadata provider plugin into the image cache.
+	"""
+	PROVIDER
+	"""
+	Rendered by the server (e.g. episode frame grabs) as a last resort.
+	"""
+	GENERATED
+}
+
+"""
+Closed set of image-target kinds, mirroring [`ImageTarget`]'s
+variants — kept separate so the query takes a flat
+`(kind, id)` pair instead of a tagged input union.
+"""
+enum ImageTargetKind {
+	WORK
+	EDITION
+	TAG
+}
+
+type IndexScanRun {
+	startedAt: DateTime
+	"""
+	`None` while running.
+	"""
+	finishedAt: DateTime
+	"""
+	Final counts once finished; works created so far while running.
+	"""
+	added: Int!
+	updated: Int!
+	removed: Int!
+	"""
+	Per-file failures logged during the run.
+	"""
+	failures: Int!
+}
+
+"""
+A scalar that can represent any JSON value.
+"""
+scalar JSON
+
+type LadderRung {
+	maxHeight: Int!
+	videoCodec: VideoCodec!
+	audioCodec: AudioCodec!
+	container: String!
+	bitrateKbps: Int!
+	"""
+	The video encoder this rung runs on the resolved backend.
+	"""
+	encoder: String!
+	"""
+	`encoder` is present in this ffmpeg build.
+	"""
+	encoderAvailable: Boolean!
+}
+
+type Library {
+	id: ID!
+	name: String!
+	kind: LibraryKind!
+	paths: [String!]!
+	config: LibraryConfig!
+}
+
+type LibraryConfig {
+	"""
+	BCP-47 language tags in priority order (e.g. `["en", "ja"]`).
+	"""
+	preferredLanguages: [String!]!
+	"""
+	Provider plugin ids in priority order (e.g. `["tmdb", "tvdb"]`).
+	"""
+	preferredProviders: [String!]!
+	"""
+	Normalized relative paths under each library root that the scanner
+	skips recursively (e.g. `["incoming/.staging", "failed"]`).
+	"""
+	excludedFolders: [String!]!
+	"""
+	When true the long-lived watcher runs against the library roots.
+	"""
+	watchEnabled: Boolean!
+	scanSchedule: ScanSchedule!
+	"""
+	Which artwork readers see when a work has both provider and
+	local images of a kind. Read on every image lookup, so changing
+	it needs no rescan.
+	"""
+	artworkPreference: ArtworkPreference!
+}
+
+type LibraryIndexStatus {
+	library: Library!
+	"""
+	Manual (`scanLibrary`) scan status from the scan registry.
+	"""
+	scan: LibraryScanStatus!
+	activeScan: IndexScanRun
+	"""
+	Most recent finished run; survives restarts via the activity log.
+	"""
+	lastScan: IndexScanRun
+	watcher: LibraryWatcherStatus!
+	roots: [LibraryRootStatus!]!
+	recentFailures: [ScanFailure!]!
+	failureCount: Int!
+}
+
+enum LibraryKind {
+	MOVIES
+	SHOWS
+	MUSIC
+	AUDIOBOOKS
+	PHOTOS
+	MIXED
+}
+
+type LibraryPlayStats {
+	plays: Int!
+	watchedMs: Int!
+	library: Library
+}
+
+type LibraryRootStatus {
+	path: String!
+	exists: Boolean!
+	isDir: Boolean!
+	readable: Boolean!
+	error: String
+}
+
+"""
+Canonical representation of a library scan's status. Rendered
+as a flat GQL object with the closed [`ScanState`] enum, RFC 3339
+timestamp strings, and an optional [`ScanSummary`].
+"""
+type LibraryScanStatus {
+	state: ScanState!
+	startedAt: String
+	finishedAt: String
+	summary: ScanSummary
+	error: String
+}
+
+type LibraryWatcherStatus {
+	state: WatcherState!
+	since: DateTime
+	error: String
+}
+
+"""
+A channel discovered from a Live TV source.
+"""
+type LiveTvChannel {
+	id: ID!
+	sourceId: ID!
+	externalId: String!
+	name: String!
+	number: String
+	group: String
+	enabled: Boolean!
+	"""
+	Same-origin URL of the channel's logo (proxied and cached by the
+	server, so the strict image CSP allows it); null without a logo.
+	"""
+	logoUrl: String
+}
+
+type LiveTvChannelConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [LiveTvChannelEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [LiveTvChannel!]!
+}
+
+"""
+An edge in a connection.
+"""
+type LiveTvChannelEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: LiveTvChannel!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+An administrator-configured M3U playlist and optional XMLTV guide.
+"""
+type LiveTvSource {
+	id: ID!
+	name: String!
+	enabled: Boolean!
+	lastRefreshAt: DateTime
+	lastError: String
+}
+
+type LoadAverage {
+	one: Float!
+	five: Float!
+	fifteen: Float!
+}
+
+"""
+One captured tracing event.
+"""
+type LogEntry {
+	"""
+	Monotonic capture sequence; also the pagination cursor.
+	"""
+	id: ID!
+	at: DateTime!
+	level: LogLevel!
+	"""
+	Emitting module path (`noflex_scanner::scan`, …).
+	"""
+	target: String!
+	message: String!
+	fields: [LogField!]!
+	"""
+	Enclosing spans, outermost first, as `name{k=v …}`.
+	"""
+	spans: [String!]!
+}
+
+type LogEntryConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [LogEntryEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [LogEntry!]!
+}
+
+"""
+An edge in a connection.
+"""
+type LogEntryEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: LogEntry!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type LogField {
+	name: String!
+	value: String!
+}
+
+"""
+Ordered least to most severe.
+"""
+enum LogLevel {
+	TRACE
+	DEBUG
+	INFO
+	WARN
+	ERROR
+}
+
+type LogSummary {
+	"""
+	WARN events since startup, including ones evicted from the ring.
+	"""
+	warnings: Int!
+	"""
+	ERROR events since startup, including ones evicted from the ring.
+	"""
+	errors: Int!
+	lastError: LogEntry
+}
+
+"""
+The token-pair-plus-user payload `login`, `refreshSession`, and
+`pollDevicePin` all return — one shape regardless of which flow
+minted the session.
+"""
+type LoginResult {
+	token: String!
+	refreshToken: String!
+	user: User!
+}
+
+"""
+Matrix coefficients. Defines YCbCr ↔ RGB conversion. `Bt2020Ncl`
+is the non-constant-luminance variant the HDR path uses.
+"""
+enum MatrixCoefficients {
+	BT_709
+	BT_470_BG
+	BT_601_NTSC
+	BT_601_PAL
+	SMPTE_240M
+	Y_CG_CO
+	BT_2020_NCL
+	BT_2020_CL
+	SMPTE_2085
+	CHROMA_DERIVED_NC
+	CHROMA_DERIVED_CL
+	ICTCP
+}
+
+"""
+A physical media file on disk. Multiple files per edition = multi-part
+(CD1/CD2). Multiple editions per work = the multi-version case.
+"""
+type MediaFile {
+	id: ID!
+	editionId: ID!
+	path: String!
+	partIndex: Int!
+	sizeBytes: Int!
+	mtime: DateTime!
+	container: String
+	"""
+	ffprobe output (codec, tracks, HDR profile, etc.) as opaque JSON.
+	`Json` is `#[serde(transparent)]`, so the stored column shape is
+	unchanged.
+	"""
+	probe: JSON!
+	"""
+	External subtitle sidecars the scanner discovered next to
+	this file. Muxed-in subtitle streams are not duplicated
+	here — they stay in `probe`.
+	"""
+	subtitleTracks: [SubtitleTrack!]!
+}
+
+type MemoryStatus {
+	totalBytes: Int!
+	usedBytes: Int!
+	availableBytes: Int!
+	swapTotalBytes: Int!
+	swapUsedBytes: Int!
+	"""
+	Memory ceiling of the enclosing cgroup (containers), when one
+	applies.
+	"""
+	cgroupLimitBytes: Int
+}
+
+type MetadataMatch {
+	externalId: ExternalId!
+	title: String!
+	year: Int
+	"""
+	Confidence in [0.0, 1.0]. Below ~0.6 the scanner flags for manual review.
+	"""
+	confidence: Float!
+	"""
+	Provider id that produced this match (e.g. "tmdb", "tvdb", or a
+	plugin id for WASM providers).
+	"""
+	provider: String!
+}
+
+"""
+Confidence level on a Work's canonical metadata (`title`, `year`,
+`overview`, …). The scanner always lands at [`Unconfirmed`]; metadata
+providers escalate to [`Confirmed`]; users escalate to [`UserEdited`].
+
+Frontends use this to:
+- badge unconfirmed items so end users know they're filesystem
+heuristics, not verified metadata;
+- decide whether a provider refresh should overwrite the row.
+
+Note that the variants form a precedence ladder, not a state machine:
+`UserEdited` outranks `Confirmed` (a manual edit beats a provider
+refresh) and `Confirmed` outranks `Unconfirmed` (a provider beats the
+scanner). Downgrading is always a deliberate caller decision, never a
+scanner side-effect.
+
+[`Unconfirmed`]: MetadataStatus::Unconfirmed
+[`Confirmed`]: MetadataStatus::Confirmed
+[`UserEdited`]: MetadataStatus::UserEdited
+"""
+enum MetadataStatus {
+	UNCONFIRMED
+	CONFIRMED
+	USER_EDITED
+}
+
+type Mutation {
+	completeSetupWizard(username: String!, password: String!): SetupResult!
+	createLibrary(name: String!, kind: LibraryKind!, paths: [String!]!): Library!
+	updateLibrary(id: ID!, name: String, kind: LibraryKind, paths: [String!]): Library!
+	deleteLibrary(id: ID!): Boolean!
+	updateLibraryConfig(id: ID!, preferredLanguages: [String!], preferredProviders: [String!], excludedFolders: [String!], watchEnabled: Boolean, scanSchedule: ScanSchedule, artworkPreference: ArtworkPreference): Library!
+	"""
+	Persist a per-(plugin, hook, work_kind) priority override
+	to the storage. Returns the full active table after the write
+	so the admin UI can re-render without a follow-up query.
+	"""
+	setPluginOverride(pluginId: String!, hook: HookKind!, workKind: WorkKindFilter!, priority: Int!): [PluginOverrideEntry!]!
+	"""
+	Remove an admin priority override (persisted and live), reverting
+	that (plugin, hook, work kind) to its manifest/config priority.
+	Clearing an override that doesn't exist is a no-op. Admin only.
+	"""
+	clearPluginOverride(pluginId: String!, hook: HookKind!, workKind: WorkKindFilter!): [PluginOverrideEntry!]!
+	triggerLibraryScan(id: ID!): LibraryScanStatus!
+	"""
+	Enqueue a new export job. The worker
+	(`DownloadWorker` in `noflex-server`) picks it up on its
+	next poll, runs ffmpeg, and stamps the row through
+	`Completed` / `Failed` / `Cancelled`. The mutation
+	returns the freshly-created `ExportJob` with `status =
+	Queued` so the caller can `subscribe` to its progress.
+	"""
+	createExportJob(editionId: ID!, format: ExportFormat!): ExportJob!
+	cancelExportJob(id: ID!): ExportJob!
+	"""
+	Report the current playback position for a work or edition.
+	`state: STOPPED` additionally logs a `play.progress` activity
+	row so the activity feed reflects the session end.
+	"""
+	reportProgress(target: PlayTargetInput!, positionMs: Int!, state: PlaybackState!): UserData!
+	"""
+	Flag a work or edition as fully played.
+	"""
+	markPlayed(target: PlayTargetInput!): UserData!
+	"""
+	Clear the played flag on a work or edition.
+	"""
+	markUnplayed(target: PlayTargetInput!): UserData!
+	"""
+	Start a playback session for a media file. The server decides
+	direct play vs. HLS from the stored probe and the client's
+	self-measured `capabilities`, spawning an HLS job when needed.
+	`burnSubtitle` indexes the media file's subtitle tracks and
+	forces a video re-encode; text tracks are otherwise delivered
+	out of band through `subtitles`. `decision` explains the route.
+	`startPositionMs` starts a transcode at that source position, so
+	resuming or seeking far ahead doesn't wait for ffmpeg to catch
+	up; the session's `startPositionMs` is the offset actually used.
+	"""
+	startPlaybackSession(mediaFileId: ID!, capabilities: ClientCapabilities!, burnSubtitle: Int, startPositionMs: Int): PlaybackSession!
+	"""
+	End a session started by `startPlaybackSession`, stopping its
+	transcode job if it has one.
+	"""
+	stopPlaybackSession(sessionId: ID!): Boolean!
+	"""
+	Set or clear the favorite flag on a work or edition.
+	"""
+	setFavorite(target: PlayTargetInput!, favorite: Boolean!): UserData!
+	login(username: String!, password: String!, client: String, device: String): LoginResult!
+	"""
+	Exchange a live refresh token for a fresh token pair. The
+	session row is rotated in place — same id, new hash, new
+	expiry — so the presented token dies the moment it succeeds,
+	and a revoked or expired session can never refresh again. Expiry
+	slides by the refresh TTL but never past the session's absolute
+	lifetime, after which the user must sign in again.
+	
+	Every rejection carries the message "invalid refresh token" and
+	an `extensions.code`: `REFRESH_TOKEN_INVALID` (unknown, expired,
+	or revoked), `REFRESH_TOKEN_SUPERSEDED` (a concurrent refresh with
+	the same token won; the session lives on under the winner's
+	token), or `REFRESH_TOKEN_REUSED` (a rotated-away token was
+	replayed; the whole session has been revoked).
+	"""
+	refreshSession(refreshToken: String!): LoginResult!
+	"""
+	Revoke the session backing the caller's token, killing its access
+	and refresh tokens. Returns `true` when a session was revoked,
+	`false` for an API-key caller (no session to revoke). Requires
+	authentication.
+	"""
+	logout: Boolean!
+	"""
+	Create a user. `is_admin` is derived from `role` so the two
+	never drift apart. Admin only.
+	"""
+	createUser(username: String!, password: String!, role: UserRole!): User!
+	"""
+	Update a user's role and/or library grants. Both optional;
+	`libraryIds` is the full desired set, diffed against the
+	stored grants. Admin only.
+	"""
+	updateUser(id: ID!, role: UserRole, libraryIds: [ID!]): User!
+	"""
+	Delete a user. Refuses the caller's own account and the last
+	administrator; sessions cascade away with the row. Admin only.
+	"""
+	deleteUser(id: ID!): Boolean!
+	"""
+	Change the caller's own password. Revokes every session except
+	the caller's current one, signing other devices out on their next
+	request. API keys are not revoked.
+	"""
+	changePassword(currentPassword: String!, newPassword: String!): Boolean!
+	setPreference(key: String!, value: JSON!): UserPreference!
+	deletePreference(key: String!): Boolean!
+	"""
+	Create a collection in a library. `sortTitle` defaults to
+	`title`. Admin only.
+	"""
+	createCollection(libraryId: ID!, title: String!, sortTitle: String, overview: String): Collection!
+	"""
+	Rename / re-annotate a collection. Unpassed fields keep their
+	current values. Admin only.
+	"""
+	updateCollection(id: ID!, title: String, sortTitle: String, overview: String): Collection!
+	"""
+	Delete a collection and its membership list. False when the id
+	didn't exist. Admin only.
+	"""
+	deleteCollection(id: ID!): Boolean!
+	"""
+	Replace a collection's membership wholesale. Every id must
+	resolve and belong to the collection's library; the error
+	names the first id that doesn't. Admin only.
+	"""
+	setCollectionItems(id: ID!, workIds: [ID!]!): Collection!
+	"""
+	Create a playlist owned by the caller.
+	"""
+	createPlaylist(title: String!, overview: String): Playlist!
+	"""
+	Rename / re-annotate a playlist. Owner or admin only.
+	"""
+	updatePlaylist(id: ID!, title: String, overview: String): Playlist!
+	"""
+	Delete a playlist and its entries. False when the id didn't
+	exist. Owner or admin only.
+	"""
+	deletePlaylist(id: ID!): Boolean!
+	"""
+	Replace a playlist's entries wholesale. Every target must
+	resolve; the error names the first id that doesn't. Owner or
+	admin only.
+	"""
+	setPlaylistItems(id: ID!, items: [PlayTargetInput!]!): Playlist!
+	"""
+	Append entries to the end of a playlist. Same validation as
+	`setPlaylistItems`. Owner or admin only.
+	"""
+	addPlaylistItems(id: ID!, items: [PlayTargetInput!]!): Playlist!
+	"""
+	Mint an API key for the calling user. The plaintext `key`
+	appears in this response and nowhere else, ever.
+	"""
+	createApiKey(name: String!): CreatedApiKey!
+	"""
+	Revoke an API key. `false` when the id was unknown or already
+	revoked. Non-admins can only reach their own keys and get a
+	uniform "not found" otherwise, so keys aren't enumerable;
+	admins revoke by id directly.
+	"""
+	revokeApiKey(id: ID!): Boolean!
+	"""
+	Begin the device-link flow: an unauthenticated device (a TV
+	with no credentials yet) asks for a PIN to show on screen.
+	"""
+	createDevicePin(client: String, device: String): DevicePinInfo!
+	"""
+	Attach the calling user to a pending PIN. `false` for unknown,
+	expired, or already-authorized codes — deliberately
+	indistinguishable.
+	"""
+	authorizeDevicePin(pin: String!): Boolean!
+	"""
+	The device side of the link flow, unauthenticated. Null while
+	the PIN is pending, unknown, or expired. Once authorized, the
+	first poll mints a session for the bound user (carrying the
+	PIN's client/device), consumes the PIN, and returns the same
+	token pair `login` issues — later polls see null again.
+	"""
+	pollDevicePin(pin: String!): LoginResult
+	"""
+	Delete a work and its editions and media-file rows. Admin only.
+	With `deleteFile`, also removes every backing file from disk;
+	without it, the row-only cleanup resurrects on the next library
+	scan while the files remain on disk and is not media removal.
+	"""
+	deleteWork(id: ID!, deleteFile: Boolean!): Boolean!
+	"""
+	Delete an edition and its media-file rows. Admin only. With
+	`deleteFile`, also removes every backing file from disk; without
+	it, the row-only cleanup resurrects on the next library scan while
+	the files remain on disk and is not media removal.
+	"""
+	deleteEdition(id: ID!, deleteFile: Boolean!): Boolean!
+	"""
+	Delete a media-file row. Admin only. With `deleteFile`, also
+	removes its backing file from disk; without it, the row-only
+	cleanup resurrects on the next library scan while the file remains
+	on disk and is not media removal.
+	"""
+	deleteMediaFile(id: ID!, deleteFile: Boolean!): Boolean!
+	"""
+	Re-fetch metadata from the first candidate provider that can serve
+	one of the work's external ids — the library's preferred providers
+	when set, else the priority ranking — and refresh its provider
+	artwork. Locked fields and user-assigned tags survive; a work with
+	user edits needs `force: true`. Admin only.
+	"""
+	refreshMetadata(workId: ID!, force: Boolean! = false): Work!
+	"""
+	Re-match a work against one provider's id explicitly — the fix
+	for a wrong auto-match — and fetch that provider's artwork. Skips
+	the user-edits guard (the user just told us the right match);
+	locked fields still win. Admin only.
+	"""
+	identifyWork(workId: ID!, provider: String!, externalId: ExternalIdInput!): Work!
+	"""
+	Manually edit a work's fields. Each provided field is written
+	and locked against provider refreshes; the work's metadata
+	status flips to `USER_EDITED`. Admin only.
+	"""
+	updateWorkFields(workId: ID!, fields: WorkFieldsInput!): Work!
+	"""
+	Lock or unlock one field against provider refreshes. Values and
+	metadata status are untouched. Admin only.
+	"""
+	setWorkFieldLock(workId: ID!, field: WorkField!, locked: Boolean!): Work!
+	"""
+	Begin an external login. `clientNonce` is a fresh random secret
+	(at least 32 characters) the browser keeps until
+	`completeExternalLogin`. The provider callback redirects to
+	`/#external-code=<code>`.
+	"""
+	startExternalLogin(provider: String!, clientNonce: String!): ExternalAuthStart!
+	completeExternalLogin(code: String!, clientNonce: String!, client: String, device: String): LoginResult!
+	"""
+	Begin linking an external identity to the caller. The provider
+	callback redirects to `/#external-link-code=<code>`; nothing is
+	linked until `completeExternalIdentityLink`.
+	"""
+	startExternalIdentityLink(provider: String!, clientNonce: String!): ExternalAuthStart!
+	completeExternalIdentityLink(code: String!, clientNonce: String!): ExternalIdentity!
+	revokeExternalIdentity(provider: String!): Boolean!
+	"""
+	Begin linking the calling user's account with a plugin
+	(Trakt-style OAuth). Returns the provider auth URL to open; the
+	flow completes when the provider redirects to the server's
+	`/plugins/{pluginId}/link/callback` route.
+	"""
+	startPluginLink(pluginId: String!): PluginLinkChallenge!
+	"""
+	Unlink the calling user's account from a plugin by dropping
+	every stored credential. Silent: the plugin is not called — it
+	finds out on its next `read-for-user`, which starts missing.
+	`false` when nothing was linked.
+	"""
+	unlinkPluginAccount(pluginId: String!): Boolean!
+	"""
+	Enqueue a dynamic payload for one of a plugin's
+	manifest-registered background tasks. Admin only. User-initiated
+	"sync now" flows put the initiating user id in the payload by
+	convention, so the task knows whose data to pull.
+	"""
+	enqueuePluginTask(pluginId: String!, task: String!, payload: String): Boolean!
+	"""
+	Revoke one session: the caller's own, or anyone's as admin. Its
+	refresh token and every access token minted from it stop working
+	on their next request, since each request re-checks the session.
+	"""
+	revokeSession(id: ID!): Boolean!
+	"""
+	Revoke every session a user holds; returns the revoked count.
+	Admin only.
+	"""
+	revokeUserSessions(userId: ID!): Int!
+	setUserRestrictions(userId: ID!, input: UserRestrictionsInput!): UserRestrictions!
+	createWatchRoom(mediaFileId: ID!): WatchRoom!
+	joinWatchRoom(roomId: ID!): WatchRoom!
+	leaveWatchRoom(roomId: ID!): Boolean!
+	controlWatchRoom(roomId: ID!, action: WatchRoomAction!, positionMs: Int): WatchRoom!
+	createLiveTvSource(input: CreateLiveTvSourceInput!): LiveTvSource!
+	updateLiveTvSource(id: ID!, input: UpdateLiveTvSourceInput!): LiveTvSource!
+	deleteLiveTvSource(id: ID!): Boolean!
+	refreshLiveTvSource(id: ID!): LiveTvSource!
+	startLiveTvChannel(channelId: ID!): PlaybackSession!
+	scheduleRecording(channelId: ID!, programId: ID, startAt: DateTime!, endAt: DateTime!, paddingBeforeSecs: Int! = 0, paddingAfterSecs: Int! = 0): RecordingSchedule!
+	cancelRecordingSchedule(id: ID!): RecordingSchedule!
+	deleteRecording(id: ID!, deleteFile: Boolean!): Recording!
+}
+
+type NetworkInterface {
+	name: String!
+	loopback: Boolean!
+	"""
+	OS operational state (`up`, `down`, `unknown`, …).
+	"""
+	state: String!
+	macAddress: String
+	addresses: [String!]!
+	rxBytesPerSec: Float!
+	txBytesPerSec: Float!
+	rxTotalBytes: Int!
+	txTotalBytes: Int!
+	rxErrorsTotal: Int!
+	txErrorsTotal: Int!
+}
+
+type NetworkTotals {
+	rxBytesPerSec: Float!
+	txBytesPerSec: Float!
+}
+
+"""
+Information about pagination in a connection
+"""
+type PageInfo {
+	"""
+	When paginating backwards, are there more items?
+	"""
+	hasPreviousPage: Boolean!
+	"""
+	When paginating forwards, are there more items?
+	"""
+	hasNextPage: Boolean!
+	"""
+	When paginating backwards, the cursor to continue.
+	"""
+	startCursor: String
+	"""
+	When paginating forwards, the cursor to continue.
+	"""
+	endCursor: String
+}
+
+"""
+Pixel format / chroma subsampling carried by a video stream.
+Matched to the FFmpeg pix_fmt names so the probe pipeline can
+hand back a value directly via `as_str()`.
+"""
+enum PixelFormat {
+	YUV420P
+	YUV420P10LE
+	YUV422P
+	YUV422P10LE
+	YUV444P
+	YUV444P10LE
+	GRAY
+	YUV420P12LE
+	YUV422P12LE
+	YUV444P12LE
+}
+
+type PlayHistoryChart {
+	bucket: StatsBucket!
+	"""
+	Every bucket in the window in order, empty ones included.
+	"""
+	points: [PlayHistoryPoint!]!
+	totalPlays: Int!
+	totalWatchedMs: Int!
+}
+
+type PlayHistoryPoint {
+	"""
+	Bucket start, in the requested offset.
+	"""
+	start: DateTime!
+	plays: Int!
+	watchedMs: Int!
+}
+
+"""
+One viewing of a work, assembled from the player's progress
+heartbeats. `watched_ms` is wall-clock time spent playing, not the
+distance the playhead moved, so seeking doesn't inflate it.
+"""
+type PlaySession {
+	id: ID!
+	userId: ID!
+	"""
+	The work that played: a movie, an episode, a track.
+	"""
+	workId: ID!
+	"""
+	Top of `work_id`'s parent chain (the series of an episode, the
+	artist of a track); `work_id` itself for a movie.
+	"""
+	rootWorkId: ID!
+	libraryId: ID!
+	startedAt: DateTime!
+	lastSeenAt: DateTime!
+	watchedMs: Int!
+	positionMs: Int!
+	"""
+	Whether the last heartbeat reported playback (not paused).
+	"""
+	playing: Boolean!
+	"""
+	The player reported a stop; later heartbeats open a new viewing.
+	"""
+	ended: Boolean!
+	device: String
+	user: User
+	library: Library
+	"""
+	Null when the work is gone or the viewer can't access it.
+	"""
+	work: Work
+	"""
+	Null when the work is gone or the viewer can't access it.
+	"""
+	rootWork: Work
+}
+
+type PlaySessionConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [PlaySessionEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [PlaySession!]!
+}
+
+"""
+An edge in a connection.
+"""
+type PlaySessionEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: PlaySession!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+What a playback write attaches to. Split into `kind` + `id` because
+GraphQL has no tagged unions; converts to the canonical
+[`PlayTarget`] before hitting storage.
+"""
+input PlayTargetInput {
+	kind: PlayTargetKind!
+	id: ID!
+}
+
+"""
+Closed enum of [`PlayTarget`]'s variant tag. Exposed as a separate
+type so storage rows and the GQL `HistoryRow.targetKind` field can
+use it directly without round-tripping through the enum.
+"""
+enum PlayTargetKind {
+	WORK
+	EDITION
+}
+
+type PlaybackDecisionInfo {
+	route: PlaybackRouteKind!
+	plan: PlaybackPlanKind!
+	"""
+	Empty only for direct play.
+	"""
+	reasons: [PlaybackReason!]!
+	source: StreamSummary!
+	target: StreamSummary!
+	"""
+	ffmpeg video encoder (`libx264`, `h264_vaapi`), `copy` when the
+	video is stream-copied, `None` for direct play.
+	"""
+	encoder: String
+	"""
+	ffmpeg audio encoder or `copy`; `None` for direct play or no audio.
+	"""
+	audioEncoder: String
+	"""
+	Whether the video encoder runs on a GPU / media engine.
+	"""
+	hardware: Boolean!
+	"""
+	HDR is being tonemapped to SDR.
+	"""
+	tonemap: Boolean!
+}
+
+"""
+The per-stream shape of the work done.
+"""
+enum PlaybackPlanKind {
+	"""
+	The file as stored.
+	"""
+	DIRECT_PLAY
+	"""
+	Both streams copied into HLS segments.
+	"""
+	REMUX
+	"""
+	Video copied, audio re-encoded.
+	"""
+	TRANSCODE_AUDIO
+	"""
+	Video re-encoded, audio copied (or absent).
+	"""
+	TRANSCODE_VIDEO
+	"""
+	Both re-encoded.
+	"""
+	TRANSCODE
+}
+
+type PlaybackReason {
+	code: TranscodeReason!
+	description: String!
+}
+
+"""
+How a started session serves its bytes.
+"""
+enum PlaybackRouteKind {
+	DIRECT
+	TRANSCODE
+}
+
+"""
+What `startPlaybackSession` hands the client.
+"""
+type PlaybackSession {
+	"""
+	Handle for `stopPlaybackSession`; equals `jobId` on the
+	transcode route.
+	"""
+	sessionId: ID!
+	route: PlaybackRouteKind!
+	"""
+	Where to point the player.
+	"""
+	url: String!
+	"""
+	The HLS job, on the transcode route only.
+	"""
+	jobId: ID
+	"""
+	Source position of the stream's time zero: the transcode's start
+	offset, `0` for direct play. Player time + this = media time.
+	"""
+	startPositionMs: Int!
+	decision: PlaybackDecisionInfo!
+	"""
+	Empty when the client declared no subtitle format the server
+	can convert to, or a subtitle is burned in.
+	"""
+	subtitles: [SubtitleDelivery!]!
+}
+
+"""
+Client-reported playback state. `Stopped` is the only variant the
+server treats specially (it closes out the session in the activity
+log); `Playing`/`Paused` are recorded as-is for future session
+analytics.
+"""
+enum PlaybackState {
+	PLAYING
+	PAUSED
+	STOPPED
+}
+
+"""
+A user-owned ordered list of play targets. Like [`Collection`], the
+items live outside the row and surface on GQL as a complex field.
+"""
+type Playlist {
+	id: ID!
+	ownerId: ID!
+	title: String!
+	overview: String
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	"""
+	Visible entries in playlist order, hydrated. `first` defaults to
+	`ITEM_PAGE_DEFAULT` (50), max `ITEM_PAGE_MAX` (100).
+	"""
+	items(first: Int, after: String): PlaylistItemConnection!
+}
+
+type PlaylistConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [PlaylistEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Playlist!]!
+}
+
+"""
+An edge in a connection.
+"""
+type PlaylistEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Playlist!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+One resolved playlist entry. Exactly one of `work` / `edition` is
+set; `kind` says which, so clients don't have to probe both.
+Items live as bare play targets in storage; this is the hydrated
+GQL read shape.
+"""
+type PlaylistItem {
+	kind: PlayTargetKind!
+	work: Work
+	edition: Edition
+}
+
+type PlaylistItemConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [PlaylistItemEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [PlaylistItem!]!
+}
+
+"""
+An edge in a connection.
+"""
+type PlaylistItemEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: PlaylistItem!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+Public, owned snapshot of one plugin's state. Used by GraphQL and CLI to
+answer "what's loaded right now?" without exposing internal Wasmtime
+objects. The internal [`LoadedPlugin`] is not `Clone` (Components aren't),
+so the registry returns these snapshots instead.
+"""
+type Plugin {
+	id: String!
+	displayName: String!
+	version: String!
+	apiVersion: String!
+	"""
+	Path to the loaded `.wasm` component on disk.
+	"""
+	path: String!
+	"""
+	SHA-256 of the component binary. Stable across hot-reloads only when
+	the file contents are unchanged; used by future tiered-trust mode to
+	pin acknowledged plugins.
+	"""
+	binarySha256: String!
+	hooks: [HookKind!]!
+	capabilities: [String!]!
+	license: String
+	author: String
+	homepage: String
+	"""
+	Live health of the plugin's manifest-registered background tasks.
+	"""
+	tasks: [PluginTaskHealth!]!
+	"""
+	Times the instance was recycled after a trap.
+	"""
+	instanceRestarts: Int!
+	"""
+	Circuit breaker: the instance is disabled after repeated traps
+	and stays down until the plugin is reloaded.
+	"""
+	circuitOpen: Boolean!
+}
+
+"""
+A retained plugin lifecycle event with its capture time.
+"""
+type PluginEventEntry {
+	id: ID!
+	at: DateTime!
+	event: PluginLifecycleEvent!
+}
+
+type PluginEventEntryConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [PluginEventEntryEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [PluginEventEntry!]!
+}
+
+"""
+An edge in a connection.
+"""
+type PluginEventEntryEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: PluginEventEntry!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type PluginHealthSummary {
+	loaded: Int!
+	"""
+	Plugins whose trap circuit breaker is open.
+	"""
+	circuitOpen: Int!
+	"""
+	Instance recycles after traps, summed over loaded plugins.
+	"""
+	instanceRestarts: Int!
+	"""
+	`LOAD_FAILED` events since startup.
+	"""
+	loadFailures: Int!
+	"""
+	`TRAPPED` events since startup.
+	"""
+	traps: Int!
+}
+
+"""
+A single lifecycle event the GQL client receives.
+`kind` is the discriminator; the other fields are filled in
+per-variant. Any field not applicable to the variant is `None`
+(or empty for the `hooks` list).
+
+The GQL type shares the name of the canonical Rust enum
+(`noflex_plugin_host::PluginLifecycleEvent`) by design: the
+canonical enum is a Rust tagged union whose variants have
+different shapes, so `async_graphql::SimpleObject` can't
+derive on it directly. The flat `struct` form here is the
+GQL wire shape; the `From` impl below is a wire-format
+conversion (enum → discriminated struct), not a mirror.
+"""
+type PluginLifecycleEvent {
+	kind: PluginLifecycleKind!
+	pluginId: String
+	path: String
+	sha256: String
+	hooks: [HookKind!]!
+	reason: String
+	trap: String
+}
+
+"""
+Tagged kind for a [`PluginLifecycleEvent`]. Mirrors
+the 5-variant canonical `PluginLifecycleEvent` enum; the GQL
+client uses this as the discriminator when rendering the
+lifecycle log.
+"""
+enum PluginLifecycleKind {
+	DISCOVERED
+	LOADED
+	LOAD_FAILED
+	UNLOADED
+	TRAPPED
+}
+
+"""
+The calling user's link to one plugin: which credential keys are
+stored and when the newest was written. Values are deliberately
+absent — secrets must never cross the GraphQL surface, only the
+fact that a key exists.
+"""
+type PluginLink {
+	pluginId: String!
+	keys: [String!]!
+	updatedAt: DateTime!
+}
+
+"""
+The start of a plugin link flow: send the user to `auth_url`, then
+wait for the provider to redirect back carrying `state`. The state
+doubles as the single-use credential on the callback route.
+"""
+type PluginLinkChallenge {
+	authUrl: String!
+	state: String!
+}
+
+"""
+One row of the active priority table as exposed to GraphQL
+(`pluginOverrides` query, `setPluginOverride` mutation result).
+"""
+type PluginOverrideEntry {
+	pluginId: String!
+	hook: HookKind!
+	workKind: WorkKindFilter!
+	priority: Int!
+	"""
+	Set by an admin (`setPluginOverride`) rather than by a manifest or
+	the server config; `clearPluginOverride` reverts it.
+	"""
+	adminSet: Boolean!
+}
+
+"""
+GraphQL view of one background task's scheduler health.
+"""
+type PluginTaskHealth {
+	name: String!
+	intervalMs: Int!
+	"""
+	When the last invocation finished (success or failure).
+	"""
+	lastRunAt: DateTime
+	consecutiveFailures: Int!
+	totalRuns: Int!
+}
+
+"""
+The NoFlex server process itself.
+"""
+type ProcessStatus {
+	pid: Int!
+	"""
+	Summed across cores: 200 means two cores fully busy.
+	"""
+	cpuPercent: Float!
+	"""
+	`cpu_percent` divided by the logical core count, 0–100.
+	"""
+	cpuPercentOfHost: Float!
+	rssBytes: Int!
+	virtualBytes: Int!
+	threads: Int
+	openFiles: Int
+	openFilesLimit: Int
+}
+
+type Query {
+	serverInfo: ServerInfo!
+	"""
+	List all plugins currently loaded by the WASM plugin runtime.
+	Returns an empty list if no PluginRegistry has been wired into the
+	schema context (e.g. a build without the plugin runtime enabled).
+	"""
+	plugins: [Plugin!]!
+	libraries: [Library!]!
+	library(id: ID!): Library
+	libraryScanStatus(id: ID!): LibraryScanStatus!
+	searchMetadata(query: String!, kind: WorkKind!, year: Int): [MetadataMatch!]!
+	"""
+	Snapshot the active priority table for the admin UI. Returns
+	the full set of (plugin, hook, work_kind) entries the
+	dispatcher consults at request time.
+	"""
+	pluginOverrides: [PluginOverrideEntry!]!
+	"""
+	The activity log, newest first. `kinds` filters by kind (empty
+	= all); `since` is an inclusive floor on `occurredAt`, RFC 3339.
+	Admins see every row; other users see only rows whose subject is
+	a work or edition they can access, minus other users' playback,
+	with `actor` nulled unless it is the caller. `first` defaults to
+	50, max 500. Requires authentication.
+	"""
+	activity(kinds: [ActivityKind!], since: String, first: Int, after: String): ActivityEntryConnection!
+	"""
+	"Continue Watching": the caller's works with a saved position
+	(`played=false` + `position_ms>0`). Mapped to Jellyfin's
+	`/Users/{userId}/Items/Resume`. Ranked; `first` defaults to 20,
+	max 100, at most 200 deep.
+	"""
+	continueWatching(first: Int, after: String): WorkConnection!
+	"""
+	"Next Up": series the caller has started but not finished.
+	Mapped to Jellyfin's `/Shows/NextUp`. Ranked; `first` defaults to
+	20, max 100, at most 200 deep.
+	"""
+	nextUp(first: Int, after: String): WorkConnection!
+	"""
+	"Recently Added": top-level works the caller can see, newest
+	`addedAt` first — the default landing shelf of every Jellyfin
+	client. `first` defaults to 20, max 100.
+	"""
+	recentlyAdded(first: Int, after: String): WorkConnection!
+	"""
+	"More like this": works the caller is most likely to enjoy,
+	from the genre overlap of their recently played works. Empty
+	for users with no plays or no genre tags. Ranked; `first`
+	defaults to 20, max 100, at most 200 deep.
+	"""
+	moreLikeThis(first: Int, after: String): WorkConnection!
+	"""
+	"Recently Played": the caller's played works, newest
+	`lastPlayed` first. Ranked; `first` defaults to 20, max 100, at
+	most 200 deep.
+	"""
+	recentlyPlayed(first: Int, after: String): WorkConnection!
+	"""
+	The caller's full play history, newest `lastPlayed` first; rows
+	whose target the caller can no longer see are skipped. `first`
+	defaults to 50, max 200.
+	"""
+	playHistory(first: Int, after: String): HistoryRowConnection!
+	"""
+	A single export job of the caller's; null when it was deleted,
+	never existed, or belongs to someone else. The "Downloads" UI
+	drives progress/completion off `status`.
+	"""
+	exportJob(id: ID!): ExportJob
+	"""
+	The caller's export jobs, newest `createdAt` first. The UI's
+	"Downloads" view reads this on mount; the `exportJobStatus`
+	subscription pushes status updates. `first` defaults to 50, max
+	100.
+	"""
+	exportJobs(first: Int, after: String): ExportJobConnection!
+	"""
+	Latest host, process and server sample. Administrator only.
+	"""
+	systemStatus: SystemStatus!
+	"""
+	Retained samples for sparklines, oldest first. Administrator only.
+	"""
+	systemStatusHistory: [StatusSample!]!
+	"""
+	ffmpeg, hardware acceleration and codec capabilities.
+	Administrator only.
+	"""
+	transcoderInfo: TranscoderInfo!
+	"""
+	Indexing health of every library. Administrator only.
+	"""
+	scannerStatus: [LibraryIndexStatus!]!
+	"""
+	Vector-index coverage for the active embedder. Administrator only.
+	"""
+	searchIndexStatus: SearchIndexStatus!
+	"""
+	Recent server log events, newest first, from an in-memory ring
+	(INFO and above; WARN/ERROR are retained longer). `minLevel` is
+	an inclusive floor, `target` a module-path prefix, `contains` a
+	case-insensitive match on message and field values. Lost on
+	restart. Administrator only.
+	"""
+	recentLogs(first: Int, after: String, minLevel: LogLevel, target: String, contains: String): LogEntryConnection!
+	"""
+	Recent plugin lifecycle events (discovery, loads, load failures,
+	unloads, traps), newest first. Lost on restart. Administrator
+	only.
+	"""
+	pluginEvents(first: Int, after: String): PluginEventEntryConnection!
+	"""
+	The calling user's playback state (position, played, favorite,
+	play count) for a work or edition.
+	"""
+	userData(target: PlayTargetInput!): UserData!
+	"""
+	Every playback in progress, direct and transcoded, for the admin
+	dashboard. Administrators only. Streams whose user no longer
+	exists are omitted.
+	"""
+	activeStreams: [ActiveStream!]!
+	"""
+	A library's works, optionally filtered and sorted. `first`
+	defaults to 50, max 200. A `RANDOM` sort is a single page.
+	"""
+	works(libraryId: ID!, filter: WorkFilterInput, sort: SortOrder, first: Int, after: String): WorkConnection!
+	"""
+	A single work by id; null when it doesn't exist.
+	"""
+	work(id: ID!): Work
+	"""
+	Tags across the given namespaces (empty = all), each with its
+	work count, ordered by display name. `first` defaults to 50, max
+	200.
+	"""
+	tags(namespaces: [String!]!, first: Int, after: String): TagSummaryConnection!
+	"""
+	A single tag by id; null when it doesn't exist. Its `works`
+	field lists the works carrying it (a person's filmography).
+	"""
+	tag(id: ID!): Tag
+	"""
+	Every edition (cut/version) of a work.
+	"""
+	editions(workId: ID!): [Edition!]!
+	"""
+	Every physical file backing an edition (multi-part media has
+	more than one).
+	"""
+	mediaFiles(editionId: ID!): [MediaFile!]!
+	"""
+	The effective image of each kind attached to a work/edition/tag
+	target, under the owning library's artwork preference. Each
+	image's `url` is the serving route; append `&w=`/`&h=` to resize.
+	"""
+	images(targetKind: ImageTargetKind!, targetId: ID!): [Image!]!
+	"""
+	Every user account. Admin only.
+	"""
+	users: [User!]!
+	"""
+	The calling user's own row, freshly read from storage rather
+	than echoed back from token claims. Pair with
+	`viewer { libraryAccess }` for the self-serve grant list.
+	"""
+	viewer: User!
+	"""
+	The libraries a user has been explicitly granted. Admin only.
+	"""
+	userLibraryAccess(userId: ID!): [Library!]!
+	preferences: [UserPreference!]!
+	"""
+	Collections in a library, ordered by sort title. `first`
+	defaults to 50, max 100.
+	"""
+	collections(libraryId: ID!, first: Int, after: String): CollectionConnection!
+	"""
+	A single collection by id; null when it doesn't exist.
+	"""
+	collection(id: ID!): Collection
+	"""
+	The calling user's playlists, ordered by title. `first`
+	defaults to 50, max 100.
+	"""
+	playlists(first: Int, after: String): PlaylistConnection!
+	"""
+	A single playlist by id. Null when it doesn't exist or belongs
+	to someone else (admins see all).
+	"""
+	playlist(id: ID!): Playlist
+	"""
+	Every API key the caller owns, active and revoked alike,
+	newest first. Filter on `revokedAt`.
+	"""
+	apiKeys: [ApiKey!]!
+	externalAuthProviders: [ExternalAuthProvider!]!
+	myExternalIdentities: [ExternalIdentity!]!
+	"""
+	Every loaded plugin the calling user has stored credentials
+	for, with the credential key names. Plugins never linked — or
+	since unlinked — are absent, as are stored secrets for plugins
+	no longer loaded.
+	"""
+	myPluginLinks: [PluginLink!]!
+	"""
+	The caller's own active sessions/devices.
+	"""
+	mySessions: [Session!]!
+	"""
+	Active sessions across users — the admin active-device view.
+	`userId` narrows to one user; omitted lists everyone.
+	"""
+	sessions(userId: ID): [Session!]!
+	"""
+	Search every library by title/overview text and, when an
+	embedder plugin is loaded, semantic similarity. Hits are
+	score-ranked, best first; cursors are rank positions, so paging
+	re-runs the search and reaches at most the top 100 hits. `first`
+	defaults to 20, max 100. `kinds` omitted or empty searches all
+	work kinds.
+	"""
+	search(text: String!, mode: SearchMode! = HYBRID, kinds: [WorkKind!], first: Int, after: String): SearchHitConnection!
+	myRestrictions: UserRestrictions!
+	userRestrictions(userId: ID!): UserRestrictions!
+	watchRooms: [WatchRoom!]!
+	watchRoom(id: ID!): WatchRoom
+	liveTvSources: [LiveTvSource!]!
+	"""
+	Enabled channels, optionally of one source, in id order.
+	`first` defaults to 50, max 100.
+	"""
+	liveTvChannels(sourceId: ID, first: Int, after: String): LiveTvChannelConnection!
+	"""
+	Programmes on `channelIds` overlapping `[start, end)`, ordered by
+	start time. At most 200 channels and a 14-day window per request;
+	`first` defaults to 500, max 2000.
+	"""
+	liveTvGuide(channelIds: [ID!]!, start: DateTime!, end: DateTime!, first: Int, after: String): EpgProgramConnection!
+	"""
+	A user's recording schedules, newest first. `owner` defaults to
+	the caller; naming anyone else requires admin. `first` defaults
+	to 50, max 100.
+	"""
+	recordingSchedules(owner: ID, first: Int, after: String): RecordingScheduleConnection!
+	"""
+	A user's recordings, newest first. `owner` defaults to the
+	caller; naming anyone else requires admin. `first` defaults to
+	50, max 100.
+	"""
+	recordings(owner: ID, first: Int, after: String): RecordingConnection!
+	"""
+	Users ranked by watched time over `range`. Admin only.
+	`utcOffsetMinutes` aligns the window to the viewer's day.
+	"""
+	topUsers(range: StatsRange!, utcOffsetMinutes: Int): [UserPlayStats!]!
+	"""
+	Plays and watched time per bucket over `range`, optionally for one
+	library and/or one user. Admin only. The bucket size follows the
+	range: hours for a day, days up to a month, weeks for 90 days,
+	months beyond. All time starts at the first recorded play.
+	"""
+	playHistoryChart(range: StatsRange!, libraryId: ID, userId: ID, utcOffsetMinutes: Int): PlayHistoryChart!
+	"""
+	The most played movies, series and artists per library over
+	`range`. Episodes and tracks count toward their series or
+	artist. Admin only.
+	"""
+	topPlayed(range: StatsRange!, libraryId: ID, utcOffsetMinutes: Int, limit: Int! = 10): [TopPlayedLibrary!]!
+	"""
+	Viewings newest first. Admins may filter by any user; everyone
+	else sees only their own, and passing another `userId` is an
+	error.
+	"""
+	playSessions(range: StatsRange, userId: ID, libraryId: ID, rootWorkId: ID, utcOffsetMinutes: Int, first: Int, after: String): PlaySessionConnection!
+}
+
+type Recording {
+	id: ID!
+	scheduleId: ID
+	ownerId: ID!
+	channelId: ID
+	status: RecordingStatus!
+	error: String
+	sizeBytes: Int
+	startedAt: DateTime
+	completedAt: DateTime
+	createdAt: DateTime!
+	updatedAt: DateTime!
+}
+
+type RecordingConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [RecordingEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Recording!]!
+}
+
+"""
+An edge in a connection.
+"""
+type RecordingEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Recording!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type RecordingSchedule {
+	id: ID!
+	ownerId: ID!
+	channelId: ID!
+	programId: ID
+	startAt: DateTime!
+	endAt: DateTime!
+	paddingBeforeSecs: Int!
+	paddingAfterSecs: Int!
+	status: RecordingScheduleStatus!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+}
+
+type RecordingScheduleConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [RecordingScheduleEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [RecordingSchedule!]!
+}
+
+"""
+An edge in a connection.
+"""
+type RecordingScheduleEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: RecordingSchedule!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+enum RecordingScheduleStatus {
+	SCHEDULED
+	CANCELLED
+	TRIGGERED
+}
+
+enum RecordingStatus {
+	SCHEDULED
+	RUNNING
+	COMPLETED
+	FAILED
+	CANCELLED
+}
+
+"""
+A media file the scanner failed on.
+"""
+type ScanFailure {
+	at: DateTime!
+	path: String!
+	"""
+	Scanner stage message (`scan: ffprobe failed`, …).
+	"""
+	stage: String!
+	error: String
+}
+
+enum ScanSchedule {
+	DISABLED
+	HOURLY
+	DAILY
+	WEEKLY
+}
+
+"""
+GraphQL mirror of [`noflex_scanner::ScanStatus`]'s variant
+tag. The full status (timestamps, summary, error message)
+is rendered on `LibraryScanStatus` itself; this enum is
+the closed set of legal values for the `state` field.
+"""
+enum ScanState {
+	IDLE
+	RUNNING
+	COMPLETED
+	FAILED
+}
+
+"""
+Per-scan delta counts.
+"""
+type ScanSummary {
+	added: Int!
+	updated: Int!
+	removed: Int!
+	errored: Int!
+}
+
+type SearchHit {
+	score: Float!
+	matchedFields: [String!]!
+	"""
+	Id of the matching work. Returned alongside the hydrated
+	`work` so clients can correlate hits to cached/known ids
+	without a follow-up lookup.
+	"""
+	workId: ID!
+	"""
+	Hydrated work for this hit. `None` when the work was
+	deleted between the search and the hydration read — a real
+	race in the delete-during-scan window — so the field is
+	null rather than erroring the whole page.
+	"""
+	work: Work
+}
+
+type SearchHitConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [SearchHitEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [SearchHit!]!
+}
+
+"""
+An edge in a connection.
+"""
+type SearchHitEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: SearchHit!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type SearchIndexStatus {
+	"""
+	Plugins exporting the embedder hook; the first is active.
+	"""
+	embedderPlugins: [String!]!
+	namespace: String
+	modelId: String
+	dimensions: Int
+	"""
+	Works with no vector in `namespace`.
+	"""
+	pendingWorks: Int!
+	"""
+	`pending_works` hit the counting cap; the true backlog is larger.
+	"""
+	pendingIsLowerBound: Boolean!
+}
+
+enum SearchMode {
+	LEXICAL
+	VECTOR
+	HYBRID
+}
+
+type ServerInfo {
+	name: String!
+	version: String!
+	backend: String!
+	isConfigured: Boolean!
+}
+
+type ServerRuntime {
+	version: String!
+	startedAt: DateTime!
+	uptimeSeconds: Int!
+	bind: String!
+	publicUrl: String
+	dataDir: String!
+	cacheDir: String!
+	"""
+	Resolved configuration, flattened to dotted keys. Secret-looking
+	values are replaced and flagged `redacted`.
+	"""
+	config: [ConfigEntry!]!
+	database: DatabaseStatus!
+}
+
+type Session {
+	id: ID!
+	userId: ID!
+	client: String
+	device: String
+	deviceId: String
+	appVersion: String
+	remoteAddr: String
+	createdAt: DateTime!
+	lastSeenAt: DateTime!
+	"""
+	Absolute expiry of the session's refresh token; past this the
+	session is dead even if nobody explicitly revoked it.
+	"""
+	expiresAt: DateTime!
+}
+
+type SetupResult {
+	userId: ID!
+	accessToken: String!
+	refreshToken: String!
+}
+
+enum SortOrder {
+	DATE_ADDED_DESC
+	DATE_ADDED_ASC
+	TITLE_ASC
+	TITLE_DESC
+	YEAR_DESC
+	YEAR_ASC
+	DATE_RELEASED_DESC
+	RANDOM
+}
+
+enum StatsBucket {
+	HOUR
+	DAY
+	WEEK
+	MONTH
+}
+
+"""
+A reporting window ending now. Windows are aligned to the chart's
+buckets in the caller's offset, so "last 7 days" is today plus the
+six days before it rather than a rolling 168 hours.
+"""
+enum StatsRange {
+	LAST_24_HOURS
+	LAST_7_DAYS
+	LAST_30_DAYS
+	LAST_90_DAYS
+	LAST_YEAR
+	ALL_TIME
+}
+
+"""
+A compact point for sparklines.
+"""
+type StatusSample {
+	at: DateTime!
+	cpuPercent: Float!
+	memoryUsedBytes: Int!
+	processCpuPercent: Float!
+	processRssBytes: Int!
+	rxBytesPerSec: Float!
+	txBytesPerSec: Float!
+	loadOne: Float
+}
+
+"""
+A directory NoFlex depends on and the filesystem holding it.
+"""
+type StorageLocation {
+	kind: StorageLocationKind!
+	path: String!
+	"""
+	Set for `LIBRARY_ROOT`.
+	"""
+	libraryId: ID
+	libraryName: String
+	exists: Boolean!
+	mountPoint: String
+	fileSystem: String
+	totalBytes: Int
+	availableBytes: Int
+	usedBytes: Int
+	"""
+	Bytes under the directory itself. Measured only for caches, on a
+	slower cadence than the filesystem figures.
+	"""
+	contentBytes: Int
+	"""
+	Why the filesystem figures are missing.
+	"""
+	error: String
+}
+
+enum StorageLocationKind {
+	DATA
+	CACHE
+	TRANSCODE_CACHE
+	IMAGE_CACHE
+	EMBED_CACHE
+	RECORDINGS
+	LIBRARY_ROOT
+}
+
+"""
+One side of the pipeline. Fields are `None` when unknown or when
+the stream is absent.
+"""
+type StreamSummary {
+	"""
+	ffprobe's container name for the source; `fmp4` / `mpegts`
+	segments for an HLS target.
+	"""
+	container: String
+	videoCodec: VideoCodec
+	videoProfile: VideoProfile
+	"""
+	ffprobe units (see `VideoCodecSupport.maxLevel`).
+	"""
+	videoLevel: Float
+	bitDepth: Int
+	width: Int
+	height: Int
+	videoRange: VideoRange
+	"""
+	ffprobe's audio codec name (open-ended: `truehd`, `pcm_s24le`, …).
+	"""
+	audioCodec: String
+	audioChannels: Int
+	bitrateBps: Int
+}
+
+type Subscription {
+	exportJobStatus(id: ID!): ExportStatusEvent!
+	watchRoomEvents(roomId: ID!): WatchRoomEvent!
+	"""
+	Stream every plugin lifecycle event the host emits.
+	Subscribers receive a flat, tagged event with
+	`kind` as the discriminator; per-variant fields
+	(`path`, `reason`, `trap`, …) are `None` when not
+	applicable. The stream only terminates when the
+	bus is closed (server shutdown).
+	"""
+	pluginLifecycle: PluginLifecycleEvent!
+	"""
+	Live host/process samples for admin gauges: the latest sample
+	on subscribe, then one per sampler tick. Administrator only.
+	"""
+	systemStatusUpdates: SystemStatus!
+}
+
+"""
+Subtitle codec carried by a `SubtitleTrack`. Covers text subs
+(WebVTT, TTML, SRT, ASS/SSA) and image-based subs (PGS, DVB).
+"""
+enum SubtitleCodec {
+	WEB_VTT
+	TTML
+	SRT
+	SUB_RIP
+	ASS
+	SSA
+	PGS_IMAGE
+	DVB_SUB
+	MOV_TEXT
+}
+
+"""
+A text subtitle track the client renders itself, converted
+server-side to a format it declared in `subtitleCodecs`.
+"""
+type SubtitleDelivery {
+	"""
+	Index into the media file's `subtitleTracks`; the same index
+	`burnSubtitle` takes.
+	"""
+	index: Int!
+	language: String
+	title: String
+	forced: Boolean!
+	default: Boolean!
+	"""
+	Format the `url` serves.
+	"""
+	codec: SubtitleCodec!
+	"""
+	Token-bearing, so `<track src>` works without headers.
+	"""
+	url: String!
+}
+
+type SubtitleTrack {
+	language: String
+	codec: String!
+	default: Boolean!
+	forced: Boolean!
+	"""
+	`true` for sidecar files, `false` for muxed-in.
+	"""
+	external: Boolean!
+	"""
+	Codec profile (e.g. `"ssa"`, `"ass"`, `"hdmv-pgs"`).
+	"""
+	codecProfile: String
+	"""
+	Precomputed: `true` if the track can be remuxed to fmp4 WebVTT
+	directly, `false` if it must be transcoded from a bitmap
+	format.
+	"""
+	srtCompatible: Boolean!
+	"""
+	PGS image count (image-based subs only).
+	"""
+	imageCount: Int
+	"""
+	Human-readable label, e.g. `"SDH"` or `"Signs/Songs"`.
+	"""
+	title: String
+	"""
+	Absolute path of the sidecar file for external tracks;
+	`None` for muxed-in streams.
+	"""
+	path: String
+	"""
+	Position among the container's subtitle streams (ffmpeg's
+	`0:s:N`) for muxed-in tracks; `None` for sidecars.
+	"""
+	streamIndex: Int
+}
+
+"""
+One sample of host, process and server state.
+"""
+type SystemStatus {
+	sampledAt: DateTime!
+	server: ServerRuntime!
+	host: HostInfo!
+	cpu: CpuStatus!
+	memory: MemoryStatus!
+	process: ProcessStatus!
+	"""
+	Every interface the OS reports, loopback included.
+	"""
+	network: [NetworkInterface!]!
+	"""
+	Aggregate rates across non-loopback interfaces.
+	"""
+	networkTotal: NetworkTotals!
+	"""
+	Usage of the filesystems backing NoFlex's directories and every
+	library root.
+	"""
+	storage: [StorageLocation!]!
+	plugins: PluginHealthSummary!
+	logs: LogSummary!
+	"""
+	Libraries with a scan in flight (manual or watcher-triggered).
+	"""
+	activeScans: Int!
+}
+
+type Tag {
+	id: ID!
+	namespace: String!
+	parentId: ID
+	slug: String!
+	display: String!
+	"""
+	Free-form per-tag metadata (e.g., role/character for people, photo URL).
+	"""
+	metadata: JSON!
+	"""
+	Works carrying this tag (a person's filmography, a genre's
+	members, …), newest `addedAt` first like the top-level `works`
+	query. `first` defaults to 50, max 200.
+	"""
+	works(first: Int, after: String): WorkConnection!
+}
+
+"""
+A tag with its work-assignment count — the browse surface for one
+namespace (genres, people, …). `work_count` counts only
+`target_kind = 'work'` assignments.
+"""
+type TagSummary {
+	tag: Tag!
+	workCount: Int!
+}
+
+type TagSummaryConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [TagSummaryEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [TagSummary!]!
+}
+
+"""
+An edge in a connection.
+"""
+type TagSummaryEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: TagSummary!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+type TopPlayedItem {
+	plays: Int!
+	watchedMs: Int!
+	"""
+	Distinct users who played it.
+	"""
+	users: Int!
+	"""
+	The movie, series or artist; null once deleted or hidden from
+	the viewer.
+	"""
+	work: Work
+}
+
+type TopPlayedLibrary {
+	plays: Int!
+	"""
+	Most played first, rolled up to the top of each parent chain.
+	"""
+	items: [TopPlayedItem!]!
+	library: Library
+}
+
+"""
+Live state of a transcode job.
+"""
+type TranscodeProgress {
+	jobId: ID!
+	"""
+	`running`, `completed`, `failed` or `cancelled`.
+	"""
+	status: String!
+	"""
+	ffmpeg video encoder, or `copy`.
+	"""
+	encoder: String!
+	hardware: Boolean!
+	fps: Float
+	"""
+	Realtime multiple; below 1.0 the client will stall.
+	"""
+	speed: Float
+	"""
+	Output timestamp reached, in milliseconds.
+	"""
+	outTimeMs: Int
+	error: String
+}
+
+"""
+One [`TranscodeReasons`] bit as a GraphQL enum value.
+"""
+enum TranscodeReason {
+	CONTAINER_NOT_SUPPORTED
+	VIDEO_CODEC_NOT_SUPPORTED
+	VIDEO_PROFILE_NOT_SUPPORTED
+	VIDEO_LEVEL_NOT_SUPPORTED
+	VIDEO_BIT_DEPTH_NOT_SUPPORTED
+	PIXEL_FORMAT_NOT_SUPPORTED
+	VIDEO_RESOLUTION_NOT_SUPPORTED
+	VIDEO_RANGE_TYPE_NOT_SUPPORTED
+	AUDIO_CODEC_NOT_SUPPORTED
+	AUDIO_CHANNELS_NOT_SUPPORTED
+	CONTAINER_BITRATE_EXCEEDS_LIMIT
+	SUBTITLE_BURN_IN
+	LIVE_SOURCE
+}
+
+type TranscoderInfo {
+	ffmpeg: BinaryInfo!
+	ffprobe: BinaryInfo!
+	"""
+	`transcoder.hwaccel` as configured (`auto`, `none`, `vaapi`, …).
+	"""
+	configuredHwaccel: String!
+	"""
+	`transcoder.fallback` as configured.
+	"""
+	fallback: String!
+	"""
+	Backend every transcode uses (`software`, `vaapi`, `nvenc`, …).
+	"""
+	resolvedBackend: String!
+	hardwareAccelerated: Boolean!
+	"""
+	An explicitly configured backend was unavailable at startup and
+	`fallback` picked `resolved_backend` instead.
+	"""
+	fellBack: Boolean!
+	"""
+	`ffmpeg -hwaccels`.
+	"""
+	hwaccels: [String!]!
+	vaapiDevice: String
+	"""
+	Encoders the ladder can map to, with availability in this ffmpeg.
+	"""
+	encoders: [CodecSupport!]!
+	"""
+	Decoders for common source codecs, including hardware variants.
+	"""
+	decoders: [CodecSupport!]!
+	ladder: [LadderRung!]!
+	transcodeDir: String!
+}
+
+"""
+Durable sprite manifest for one edition. Paths are server-internal;
+clients receive the authenticated serving URLs instead.
+"""
+type TrickplayAsset {
+	editionId: ID!
+	thumbWidth: Int!
+	thumbHeight: Int!
+	tileColumns: Int!
+	tileRows: Int!
+	intervalMs: Int!
+	sourceMediaMtime: DateTime!
+	"""
+	Identity of the source media file: `"{path}\n{size_bytes}\n{mtime}"`
+	with `mtime` rendered as UTC RFC 3339 with exactly nine fractional
+	digits and a `Z` suffix. Producers must build it with
+	`noflex_storage::canonical::trickplay_source_fingerprint`; backends
+	may recompute it from stored media columns to detect staleness.
+	"""
+	sourceFingerprint: String!
+	generatedAt: DateTime!
+	sheets: [TrickplaySheet!]!
+	chapterCues: [TrickplayChapterCue!]!
+	vttUrl: String!
+}
+
+type TrickplayChapterCue {
+	positionMs: Int!
+	title: String
+	cueStartMs: Int!
+	cueEndMs: Int!
+	sheetIndex: Int!
+	x: Int!
+	y: Int!
+	width: Int!
+	height: Int!
+	sheetUrl: String!
+}
+
+type TrickplaySheet {
+	index: Int!
+	tileCount: Int!
+	url: String!
+}
+
+input UpdateLiveTvSourceInput {
+	name: String
+	playlistUrl: String
+	epgUrl: String
+	clearEpgUrl: Boolean
+	enabled: Boolean
+}
+
+type User {
+	id: ID!
+	name: String!
+	isAdmin: Boolean!
+	role: UserRole!
+	createdAt: DateTime!
+	"""
+	Libraries this user has been explicitly granted, by id.
+	Self-serve via `viewer { libraryAccess }`; admins get the same
+	grants joined to full rows through `userLibraryAccess`.
+	"""
+	libraryAccess: [ID!]!
+}
+
+type UserData {
+	played: Boolean!
+	positionMs: Int
+	playCount: Int!
+	rating: Float
+	favorite: Boolean!
+	lastPlayed: DateTime
+}
+
+"""
+One user's viewing in a window, with a per-library split.
+"""
+type UserPlayStats {
+	plays: Int!
+	watchedMs: Int!
+	lastPlayedAt: DateTime!
+	"""
+	Busiest library first.
+	"""
+	libraries: [LibraryPlayStats!]!
+	user: User
+}
+
+type UserPreference {
+	userId: ID!
+	key: String!
+	value: JSON!
+	updatedAt: DateTime!
+}
+
+"""
+Per-user content and playback policy. A user with no stored policy is
+unrestricted. Library grants apply independently, and administrators
+bypass this policy entirely.
+"""
+type UserRestrictions {
+	userId: ID!
+	"""
+	Ids of `parental`-namespace tags the user may watch. A rated work is
+	visible only if every parental tag on it is listed. Empty means
+	every rating is allowed; unrated works are governed by
+	`allow_unrated` alone.
+	"""
+	allowedParentalRatingIds: [ID!]!
+	"""
+	Whether works without any parental tag are visible.
+	"""
+	allowUnrated: Boolean!
+	maxStreamBitrateBps: Int
+	maxConcurrentTranscodes: Int
+}
+
+input UserRestrictionsInput {
+	allowedParentalRatingIds: [ID!]!
+	allowUnrated: Boolean!
+	maxStreamBitrateBps: Int
+	maxConcurrentTranscodes: Int
+}
+
+"""
+Server-side user role. Admin sees every library and can manage
+other users; User is the standard interactive role with per-library
+access gating; Guest is read-only and defaults to no library
+access unless explicitly granted.
+"""
+enum UserRole {
+	USER
+	ADMIN
+	GUEST
+}
+
+"""
+Video codec carried by a `MediaFile`/`Edition`. Closed set; the
+transcoder's `decide()` function in `noflex-transcoder` reads these
+directly to pick a direct-play vs. transcode route.
+"""
+enum VideoCodec {
+	H264
+	H265
+	AV1
+	VP9
+	VP8
+	MPEG2
+	PRORES
+	THEORA
+}
+
+"""
+Decoder limits for one video codec, applied wherever the codec is
+listed. A codec with no entry is unconstrained except for range,
+which defaults to SDR only.
+"""
+input VideoCodecSupport {
+	codec: VideoCodec!
+	"""
+	Decodable profiles. Empty accepts any; a source whose profile
+	ffprobe couldn't name is accepted.
+	"""
+	profiles: [VideoProfile!]!
+	"""
+	In ffprobe's `level` units: H.264 level×10, HEVC level×30
+	(`general_level_idc`), AV1 `seq_level_idx`, VP9 level×10.
+	"""
+	maxLevel: Float
+	maxBitDepth: Int
+	maxWidth: Int
+	maxHeight: Int
+	"""
+	Ranges decoder and display can present; SDR is implied.
+	"""
+	videoRanges: [VideoRange!]!
+}
+
+"""
+H.264/H.265/AV1/VP9 codec profile tier. Drives direct-play
+decisions (e.g. a 10-bit HEVC Main stream on a Main10-only client).
+"""
+enum VideoProfile {
+	H264_BASELINE
+	H264_CONSTRAINED_BASELINE
+	H264_MAIN
+	H264_HIGH
+	H264_HIGH10
+	HEVC_MAIN
+	HEVC_MAIN10
+	HEVC_HIGH
+	HEVC_HIGH10
+	AV1_MAIN
+	AV1_HIGH
+	AV1_PROFESSIONAL
+	VP9_PROFILE0
+	VP9_PROFILE1
+	VP9_PROFILE2
+	VP9_PROFILE3
+}
+
+"""
+Dynamic-range type of a video stream; mirrors Jellyfin's
+`VideoRangeType`. The `DoviWith*` variants are Dolby Vision streams
+whose base layer is independently presentable as the named range
+(profile 8.x, 7, 9), so a client without Dolby Vision can still
+play the base layer untouched.
+"""
+enum VideoRange {
+	SDR
+	HDR10
+	HDR10_PLUS
+	HLG
+	DOVI
+	DOVI_WITH_SDR
+	DOVI_WITH_HDR10
+	DOVI_WITH_HLG
+}
+
+type WatchRoom {
+	id: ID!
+	hostUserId: ID!
+	mediaFileId: ID!
+	state: WatchRoomState!
+	positionMs: Int!
+	sequence: Int!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	"""
+	The work behind this room's media file. Null when it no longer
+	exists or the viewer can't access it.
+	"""
+	work: Work
+}
+
+enum WatchRoomAction {
+	PLAY
+	PAUSE
+	SEEK
+	STOP
+}
+
+type WatchRoomEvent {
+	room: WatchRoom!
+	action: WatchRoomAction!
+	sequence: Int!
+	serverTimestamp: DateTime!
+}
+
+enum WatchRoomState {
+	WAITING
+	PLAYING
+	PAUSED
+	ENDED
+}
+
+"""
+Watched-state filter for one user. `watched` defaults to true;
+pass `watched: false` for works the user has not completed
+(including never-played).
+"""
+input WatchedFilterInput {
+	"""
+	The user whose played state is consulted.
+	"""
+	userId: ID!
+	watched: Boolean
+}
+
+enum WatcherState {
+	"""
+	No watcher is running: watching is disabled, or the library is gone.
+	"""
+	NOT_STARTED
+	ACTIVE
+	FAILED
+}
+
+"""
+A logical work — the abstract thing a user thinks of as "the movie" or
+"the episode," regardless of how many files it's stored as.
+"""
+type Work {
+	id: ID!
+	kind: WorkKind!
+	parentId: ID
+	libraryId: ID!
+	title: String!
+	sortTitle: String!
+	year: Int
+	releaseDate: String
+	overview: String
+	tagline: String
+	originalTitle: String
+	communityRating: Float
+	externalIds: [ExternalId!]!
+	indexNumber: Int
+	"""
+	Inclusive last index in a range. `None` for a normal single-indexed
+	Work (e.g. one Episode = one number). `Some(end)` when this Work
+	represents a range — multi-episode files like `s01e01-e02` land here
+	with `index_number = 1, index_end = Some(2)`.
+	"""
+	indexEnd: Int
+	parentIndex: Int
+	"""
+	Confidence on the canonical fields (`title`, `year`, `overview`).
+	Scanner-created rows are always [`MetadataStatus::Unconfirmed`];
+	providers and user edits escalate.
+	"""
+	metadataStatus: MetadataStatus!
+	"""
+	Fields the user has locked; provider refreshes must not
+	overwrite them. Invariant: sorted + deduped (enforced by
+	writers, not the type).
+	"""
+	lockedFields: [WorkField!]!
+	addedAt: DateTime!
+	updatedAt: DateTime!
+	"""
+	The effective image of each kind attached to this work (posters,
+	backdrops, logos, …) under its library's artwork preference,
+	ordered by kind.
+	"""
+	images: [Image!]!
+	"""
+	The requesting user's play state for this work itself (not its
+	editions). Null when the request is unauthenticated.
+	"""
+	userData: UserData
+	"""
+	Runtime of the work's first edition (in `editions` order), so
+	clients can render `userData.positionMs / runtimeMs`. Null when
+	the work has no edition or the first has no known runtime.
+	"""
+	runtimeMs: Int
+}
+
+type WorkConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [WorkEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Work!]!
+}
+
+"""
+An edge in a connection.
+"""
+type WorkEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Work!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+The per-work metadata fields a user can lock against provider
+refreshes: once locked, a refresh must not overwrite that field.
+[`ExternalId`] is deliberately absent — external IDs are always
+merged, never overwritten.
+"""
+enum WorkField {
+	TITLE
+	SORT_TITLE
+	ORIGINAL_TITLE
+	YEAR
+	RELEASE_DATE
+	OVERVIEW
+	TAGLINE
+	COMMUNITY_RATING
+	GENRES
+	STUDIOS
+	PEOPLE
+	PARENTAL_RATING
+}
+
+"""
+Manual field edits for a work. Every field left `null` keeps its
+current value — clearing a field is not supported. Each provided
+field is also locked against future provider refreshes and flips the
+work's metadata status to `USER_EDITED`.
+"""
+input WorkFieldsInput {
+	title: String
+	sortTitle: String
+	originalTitle: String
+	year: Int
+	"""
+	ISO 8601 date string (e.g. `1999-03-31`).
+	"""
+	releaseDate: String
+	overview: String
+	tagline: String
+	communityRating: Float
+}
+
+input WorkFilterInput {
+	"""
+	Restrict to children of this work (e.g. episodes of a season).
+	"""
+	parentId: ID
+	"""
+	Restrict to works carrying this tag.
+	"""
+	tag: ID
+	kinds: [WorkKind!]
+	yearMin: Int
+	yearMax: Int
+	"""
+	Only works this user has favorited.
+	"""
+	favoriteFor: ID
+	"""
+	Filter by one user's watched state.
+	"""
+	watched: WatchedFilterInput
+	"""
+	Inclusive bounds on community rating; unrated works are
+	excluded whenever a bound is set.
+	"""
+	ratingMin: Float
+	ratingMax: Float
+	"""
+	Inclusive bounds on when the work was added to the library.
+	"""
+	addedAfter: DateTime
+	addedBefore: DateTime
+	"""
+	Include descendant works (episodes under seasons, …); defaults
+	to true.
+	"""
+	recursive: Boolean
+}
+
+"""
+What a Work *is*. Drives scanner heuristics and metadata provider selection.
+"""
+enum WorkKind {
+	MOVIE
+	SERIES
+	SEASON
+	EPISODE
+	ALBUM
+	TRACK
+	ARTIST
+	AUDIO_BOOK
+	PHOTO
+}
+
+enum WorkKindFilter {
+	MOVIE
+	SERIES
+	SEASON
+	EPISODE
+	ALBUM
+	TRACK
+	ARTIST
+	AUDIO_BOOK
+	PHOTO
+}
+
+"""
+Directs the executor to include this field or fragment only when the `if` argument is true.
+"""
+directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Directs the executor to skip this field or fragment when the `if` argument is true.
+"""
+directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Provides a scalar specification URL for specifying the behavior of custom scalar types.
+"""
+directive @specifiedBy(url: String!) on SCALAR
+schema {
+	query: Query
+	mutation: Mutation
+	subscription: Subscription
+}
+

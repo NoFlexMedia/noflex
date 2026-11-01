@@ -1,0 +1,65 @@
+[package]
+name = "noflex-server"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "NoFlex media server binary"
+default-run = "noflex-server"
+
+[lib]
+name = "noflex_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "noflex-server"
+path = "src/main.rs"
+
+[dependencies]
+noflex-core = { workspace = true }
+noflex-storage = { workspace = true }
+noflex-storage-turso = { workspace = true }
+noflex-graphql = { workspace = true }
+noflex-scanner = { workspace = true }
+noflex-plugin-host = { workspace = true }
+noflex-transcoder = { workspace = true }
+noflex-auth = { workspace = true }
+
+axum = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+async-graphql = { workspace = true }
+async-graphql-axum = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+time = { workspace = true }
+anyhow = { workspace = true }
+figment = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }
+directories = { workspace = true }
+toml = { workspace = true }
+uuid = { workspace = true }
+url = { workspace = true }
+reqwest = { workspace = true }
+quick-xml = { workspace = true }
+futures = { workspace = true }
+libc = { workspace = true }
+sysinfo = { workspace = true }
+
+[build-dependencies]
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tokio-tungstenite = { workspace = true }
+tempfile = { workspace = true }
+uuid = { workspace = true }
+futures = { workspace = true }

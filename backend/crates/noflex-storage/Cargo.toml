@@ -1,0 +1,22 @@
+[package]
+name = "noflex-storage"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Backend-agnostic Storage trait + domain types + conformance suite"
+
+[dependencies]
+noflex-core = { workspace = true }
+async-graphql = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

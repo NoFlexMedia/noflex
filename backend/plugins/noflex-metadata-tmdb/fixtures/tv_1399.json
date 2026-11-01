@@ -1,0 +1,52 @@
+{
+  "backdrop_path": "/got-backdrop.jpg",
+  "episode_run_time": [60],
+  "first_air_date": "2011-04-17",
+  "genres": [
+    { "id": 10765, "name": "Sci-Fi & Fantasy" },
+    { "id": 18, "name": "Drama" }
+  ],
+  "id": 1399,
+  "name": "Game of Thrones",
+  "networks": [ { "id": 49, "name": "HBO", "logo_path": "/hbo.png", "origin_country": "US" } ],
+  "number_of_episodes": 73,
+  "number_of_seasons": 8,
+  "original_name": "Game of Thrones",
+  "overview": "Seven noble families fight for control of the mythical land of Westeros.",
+  "poster_path": "/got-poster.jpg",
+  "production_companies": [
+    { "id": 76043, "name": "Revolution Sun Studios" },
+    { "id": 12525, "name": "Television 360" },
+    { "id": 49, "name": "HBO" }
+  ],
+  "seasons": [
+    { "air_date": "2010-12-05", "episode_count": 3, "id": 3627, "name": "Specials", "overview": "", "poster_path": "/specials.jpg", "season_number": 0 },
+    { "air_date": "2011-04-17", "episode_count": 10, "id": 3624, "name": "Season 1", "overview": "Trouble is brewing in the Seven Kingdoms.", "poster_path": "/s1.jpg", "season_number": 1 }
+  ],
+  "tagline": "Winter is coming.",
+  "vote_average": 8.4,
+  "credits": {
+    "cast": [
+      { "id": 1223786, "name": "Emilia Clarke", "character": "Daenerys Targaryen", "profile_path": "/emilia.jpg" }
+    ],
+    "crew": [
+      { "id": 9813, "name": "David Benioff", "job": "Executive Producer", "profile_path": null }
+    ]
+  },
+  "images": {
+    "backdrops": [ { "file_path": "/got-backdrop.jpg", "iso_639_1": null, "width": 3840, "height": 2160, "vote_average": 5.5, "vote_count": 10 } ],
+    "logos": [],
+    "posters": [ { "file_path": "/got-poster.jpg", "iso_639_1": "en", "width": 2000, "height": 3000, "vote_average": 5.6, "vote_count": 30 } ]
+  },
+  "content_ratings": {
+    "results": [
+      { "iso_3166_1": "DE", "rating": "16" },
+      { "iso_3166_1": "US", "rating": "TV-MA" }
+    ]
+  },
+  "external_ids": {
+    "imdb_id": "tt0944947",
+    "tvdb_id": 121361,
+    "freebase_mid": "/m/0524b41"
+  }
+}

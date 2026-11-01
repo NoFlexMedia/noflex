@@ -1,0 +1,307 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+use noflex_core::{EmbeddingTarget, WorkId, WorkKind};
+use noflex_storage::{
+    domain::Work,
+    error::{StorageError, StorageResult},
+    query::{Page, PageCursor},
+    search::{SearchHit, VectorHit},
+};
+use turso::{Connection, Value};
+use uuid::Uuid;
+
+use crate::{
+    convert::{blob_to_uuid, col_blob, col_int, col_text, dt_to_text, uuid_to_blob},
+    error::map_turso,
+    repo::works::row_to_work,
+};
+
+const SEARCH_LEXICAL: &str = "SELECT id, kind, parent_id, library_id, title, sort_title, \
+    year, release_date, overview, external_ids_json, index_number, index_end, parent_index, \
+    metadata_status, added_at, updated_at, tagline, original_title, community_rating, \
+    locked_fields_json \
+    FROM works \
+    WHERE (LOWER(title) LIKE ?1 ESCAPE '\\' \
+       OR LOWER(sort_title) LIKE ?1 ESCAPE '\\' \
+       OR LOWER(COALESCE(overview, '')) LIKE ?1 ESCAPE '\\')";
+
+const EMB_UPSERT: &str = "INSERT INTO embeddings (target_kind, target_id, namespace, model_id, dimensions, vector_blob, updated_at) \
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+    ON CONFLICT(target_kind, target_id, namespace, model_id) DO UPDATE SET \
+        dimensions = excluded.dimensions, \
+        vector_blob = excluded.vector_blob, \
+        updated_at = excluded.updated_at";
+
+const EMB_FETCH: &str = "SELECT target_kind, target_id, namespace, model_id, dimensions, vector_blob \
+    FROM embeddings WHERE namespace = ?1 AND target_kind = 'work'";
+
+// Kind-filtered variant: joins `works` so the filter applies before
+// scoring/truncation. Column order matches EMB_FETCH so the row
+// decoding below is shared.
+const EMB_FETCH_BY_KIND: &str = "SELECT e.target_kind, e.target_id, e.namespace, e.model_id, e.dimensions, e.vector_blob \
+    FROM embeddings e JOIN works w ON e.target_kind = 'work' AND e.target_id = w.id \
+    WHERE e.namespace = ?1";
+
+// Anti-join on `embeddings` for the backfill sweep. Ordering by `w.id`
+// keeps the keyset cursor stable: a work's id is fixed at upsert, so
+// the same page can be re-resumed after a crash.
+const MISSING_EMBEDDING: &str = "SELECT w.id, w.kind, w.parent_id, w.library_id, w.title, w.sort_title, \
+    w.year, w.release_date, w.overview, w.external_ids_json, w.index_number, w.index_end, \
+    w.parent_index, w.metadata_status, w.added_at, w.updated_at, w.tagline, w.original_title, \
+    w.community_rating, w.locked_fields_json \
+    FROM works w \
+    WHERE NOT EXISTS (SELECT 1 FROM embeddings e \
+        WHERE e.target_kind = 'work' AND e.target_id = w.id AND e.namespace = ?1)";
+
+pub(crate) async fn search_lexical(
+    conn: &Connection,
+    query: &str,
+    kinds: &[WorkKind],
+    access_user_id: Option<noflex_core::UserId>,
+    limit: u32,
+) -> StorageResult<Vec<SearchHit>> {
+    let pattern = format!("%{}%", escape_like(query));
+    let mut sql = String::from(SEARCH_LEXICAL);
+    let mut params = vec![Value::Text(pattern)];
+    push_kind_filter(&mut sql, &mut params, kinds, "kind");
+    if let Some(user) = access_user_id {
+        push_access_filter(&mut sql, &mut params, user, "works");
+    }
+    sql.push_str(&format!(
+        " ORDER BY added_at DESC LIMIT ?{}",
+        params.len() + 1
+    ));
+    params.push(Value::Integer(limit as i64));
+    let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        let id = row.get_value(0).map_err(map_turso)?;
+        out.push(SearchHit {
+            work: WorkId::from_uuid(blob_to_uuid(col_blob(&id)?)?),
+            access_checked: access_user_id.is_some(),
+            score: 0.0,
+            matched_fields: vec!["title".to_string()],
+        });
+    }
+    Ok(out)
+}
+
+pub(crate) async fn upsert_embedding(
+    conn: &Connection,
+    target: EmbeddingTarget,
+    namespace: &str,
+    model_id: &str,
+    vector: &[f32],
+) -> StorageResult<()> {
+    let (kind, id) = emb_target_parts(&target);
+    let mut bytes = Vec::with_capacity(vector.len() * 4);
+    for f in vector {
+        bytes.extend_from_slice(&f.to_le_bytes());
+    }
+    let params: Vec<Value> = vec![
+        Value::Text(kind.to_string()),
+        Value::Blob(uuid_to_blob(id)),
+        Value::Text(namespace.to_string()),
+        Value::Text(model_id.to_string()),
+        Value::Integer(vector.len() as i64),
+        Value::Blob(bytes),
+        Value::Text(dt_to_text(time::OffsetDateTime::now_utc())?),
+    ];
+    conn.execute(EMB_UPSERT, params).await.map_err(map_turso)?;
+    Ok(())
+}
+
+pub(crate) async fn search_vector(
+    conn: &Connection,
+    namespace: &str,
+    query_vector: &[f32],
+    kinds: &[WorkKind],
+    access_user_id: Option<noflex_core::UserId>,
+    limit: u32,
+) -> StorageResult<Vec<VectorHit>> {
+    let mut params = vec![Value::Text(namespace.to_string())];
+    let sql = if kinds.is_empty() && access_user_id.is_none() {
+        EMB_FETCH.to_string()
+    } else {
+        let mut sql = String::from(EMB_FETCH_BY_KIND);
+        push_kind_filter(&mut sql, &mut params, kinds, "w.kind");
+        if let Some(user) = access_user_id {
+            push_access_filter(&mut sql, &mut params, user, "w");
+        }
+        sql
+    };
+    let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
+    let mut scored: Vec<(Uuid, f32)> = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        let target_kind = row.get_value(0).map_err(map_turso)?;
+        let target_id_blob = row.get_value(1).map_err(map_turso)?;
+        let dims = row.get_value(4).map_err(map_turso)?;
+        let vec_blob = row.get_value(5).map_err(map_turso)?;
+        let _ = col_text(&target_kind)?;
+        let target_id = blob_to_uuid(col_blob(&target_id_blob)?)?;
+        let stored_dims = col_int(&dims)?;
+        if stored_dims != query_vector.len() as i64 {
+            continue;
+        }
+        let stored_bytes = match vec_blob {
+            Value::Blob(b) => b,
+            _ => continue,
+        };
+        let Some(stored) = decode_embedding(&stored_bytes, stored_dims) else {
+            tracing::warn!(%target_id, stored_dims, "skipping corrupt embedding");
+            continue;
+        };
+        scored.push((target_id, l2_to_similarity(&stored, query_vector)));
+    }
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(limit as usize);
+    Ok(scored
+        .into_iter()
+        .map(|(id, sim)| VectorHit {
+            work: WorkId::from_uuid(id),
+            similarity: sim,
+        })
+        .collect())
+}
+
+pub(crate) async fn works_missing_embedding(
+    conn: &Connection,
+    namespace: &str,
+    limit: u32,
+    cursor: Option<&PageCursor>,
+) -> StorageResult<Page<Work>> {
+    let mut sql = String::from(MISSING_EMBEDDING);
+    let mut params: Vec<Value> = vec![Value::Text(namespace.to_string())];
+    if let Some(c) = cursor {
+        let id = parse_missing_cursor(c, "embedding")?;
+        sql.push_str(&format!(" AND w.id > ?{}", params.len() + 1));
+        params.push(Value::Blob(id));
+    }
+    sql.push_str(" ORDER BY w.id ASC");
+    let limit = limit.max(1) as i64;
+    sql.push_str(&format!(" LIMIT {}", limit + 1));
+
+    let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
+    let mut items: Vec<Work> = Vec::new();
+    let mut ids: Vec<Vec<u8>> = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        let id = row.get_value(0).map_err(map_turso)?;
+        ids.push(col_blob(&id)?.to_vec());
+        items.push(row_to_work(&row)?);
+    }
+    let next_cursor = if items.len() as i64 > limit {
+        // Drop the look-ahead row; the cursor keys off the last row
+        // the caller actually receives, not the extra one.
+        items.pop();
+        ids.pop();
+        ids.last().map(|id| {
+            let hex: String = id.iter().map(|b| format!("{:02x}", b)).collect();
+            PageCursor(hex)
+        })
+    } else {
+        None
+    };
+    Ok(Page { items, next_cursor })
+}
+
+/// Cursors are client-supplied: a UUID can't be encoded any other way
+/// here, so anything that isn't exactly 32 hex chars is rejected
+/// outright — silently dropping a bad cursor would re-serve page one.
+pub(crate) fn parse_missing_cursor(c: &PageCursor, kind: &str) -> StorageResult<Vec<u8>> {
+    let malformed = || StorageError::InvalidInput(format!("malformed {kind} cursor: {:?}", c.0));
+    if c.0.len() != 32 || !c.0.is_ascii() {
+        return Err(malformed());
+    }
+    (0..c.0.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&c.0[i..i + 2], 16).map_err(|_| malformed()))
+        .collect()
+}
+
+fn emb_target_parts(target: &EmbeddingTarget) -> (&'static str, Uuid) {
+    match target {
+        EmbeddingTarget::Work(id) => ("work", id.into_uuid()),
+        EmbeddingTarget::Edition(id) => ("edition", id.into_uuid()),
+        EmbeddingTarget::MediaFile(id) => ("media_file", id.into_uuid()),
+    }
+}
+
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// Append `AND <column> IN (?,…)` for a non-empty kinds filter, using
+/// the same placeholder convention as `list_works`. Empty kinds means
+/// "all kinds", so nothing is appended.
+fn push_kind_filter(sql: &mut String, params: &mut Vec<Value>, kinds: &[WorkKind], column: &str) {
+    if kinds.is_empty() {
+        return;
+    }
+    let placeholders: Vec<String> = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", params.len() + 1 + i))
+        .collect();
+    for k in kinds {
+        params.push(Value::Text(
+            crate::convert::work_kind_to_text(*k).to_string(),
+        ));
+    }
+    sql.push_str(&format!(" AND {column} IN ({})", placeholders.join(",")));
+}
+
+fn push_access_filter(
+    sql: &mut String,
+    params: &mut Vec<Value>,
+    user: noflex_core::UserId,
+    works: &str,
+) {
+    let p = params.len() + 1;
+    sql.push_str(" AND ");
+    sql.push_str(&crate::repo::restrictions::accessible_work_predicate(
+        works, p,
+    ));
+    params.push(Value::Blob(uuid_to_blob(user.into_uuid())));
+}
+
+fn decode_embedding(bytes: &[u8], dimensions: i64) -> Option<Vec<f32>> {
+    let dimensions = usize::try_from(dimensions).ok()?;
+    if dimensions.checked_mul(std::mem::size_of::<f32>())? != bytes.len() {
+        return None;
+    }
+    let values: Vec<f32> = bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+        .collect();
+    values
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(values)
+}
+
+/// `1 / (1 + d)` so the RRF fuser doesn't need to know per-backend scale.
+fn l2_to_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let sum: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
+    1.0 / (1.0 + sum.sqrt())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_embedding;
+
+    #[test]
+    fn embedding_decoder_rejects_corrupt_shapes_and_values() {
+        assert!(decode_embedding(&[0; 3], 1).is_none());
+        assert!(decode_embedding(&[0; 4], 2).is_none());
+        assert!(decode_embedding(&[0; 4], -1).is_none());
+        assert!(decode_embedding(&f32::NAN.to_le_bytes(), 1).is_none());
+    }
+
+    #[test]
+    fn embedding_decoder_reads_little_endian_values() {
+        let bytes = [1.25_f32.to_le_bytes(), (-2.5_f32).to_le_bytes()].concat();
+        assert_eq!(decode_embedding(&bytes, 2), Some(vec![1.25, -2.5]));
+    }
+}

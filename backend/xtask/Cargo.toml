@@ -1,0 +1,16 @@
+[package]
+name = "xtask"
+version = "0.0.1"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Repo-local task runner (cargo xtask plugin-build, etc.)"
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+toml = { workspace = true }
+serde = { workspace = true }

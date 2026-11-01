@@ -1,0 +1,16 @@
+[package]
+name = "noflex-metadata"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Shared metadata helpers: applying provider payloads to works under per-field locks"
+
+[dependencies]
+noflex-core = { workspace = true }
+noflex-storage = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+time = { workspace = true }

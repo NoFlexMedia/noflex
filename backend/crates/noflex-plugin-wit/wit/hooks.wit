@@ -1,0 +1,251 @@
+package noflex:plugin@0.8.0;
+
+/// Remote metadata provider — fetches metadata from external sources
+/// (TMDb, TVDB, MusicBrainz, AniDB, ...). Multiple providers compete via the
+/// host's priority registry; the highest-priority candidate's `fetch` is used
+/// in full. Lower-priority providers are *only* consulted as fallbacks when
+/// the primary `fetch` fails. Provider-exclusive — fields are never merged
+/// across providers in v1.
+interface metadata {
+    use types.{
+        search-query, metadata-match, metadata-payload,
+        external-id, work-id, work-kind, plugin-error,
+    };
+
+    /// Capability claim — does this provider produce metadata for the
+    /// given kind? Called at registration time, not per request. Pure and
+    /// non-blocking, so deliberately not `async`.
+    supports: func(kind: work-kind) -> bool;
+
+    search: async func(query: search-query) -> result<list<metadata-match>, plugin-error>;
+
+    fetch: async func(id: external-id) -> result<metadata-payload, plugin-error>;
+
+    /// Fetch metadata for the children of a work (seasons for a series,
+    /// episodes for a season). Default: return empty so providers can opt out.
+    fetch-children: async func(parent: external-id, parent-work: work-id)
+        -> result<list<metadata-payload>, plugin-error>;
+}
+
+/// Image provider — returns binary image bytes plus metadata.
+///
+/// The payload crosses the boundary as a `stream<u8>`; the host reads the
+/// stream to completion into a contiguous buffer because upper layers
+/// (cache, GraphQL) keep `Vec<u8>`. The host enforces a per-call memory cap
+/// (manifest-overridable) so a misbehaving plugin streaming a multi-GB blob
+/// is killed by the resource limiter rather than OOMing the server.
+interface image {
+    use types.{external-id, image-kind, image-meta, plugin-error};
+
+    fetch: async func(
+        id: external-id,
+        kind: image-kind,
+        language: option<string>,
+    ) -> result<tuple<image-meta, stream<u8>>, plugin-error>;
+}
+
+/// Subtitle provider — searches external subtitle sources (OpenSubtitles,
+/// Wizdom, ...) and returns subtitle bytes on demand.
+interface subtitle {
+    use types.{subtitle-match, plugin-error};
+
+    search: async func(
+        media-hash: string,
+        languages: list<string>,
+    ) -> result<list<subtitle-match>, plugin-error>;
+
+    /// Streams the subtitle bytes for a previously-returned match handle.
+    /// The host reads the stream to completion into a contiguous buffer.
+    download: async func(handle: string) -> result<stream<u8>, plugin-error>;
+}
+
+/// Runs after a library scan completes. Use for: rebuilding caches, computing
+/// embeddings, sending notifications, running an intro detector on new
+/// episodes, etc.
+interface post-scan {
+    use types.{library-id, work-id, plugin-error};
+
+    on-scan-complete: async func(
+        library: library-id,
+        added: list<work-id>,
+        updated: list<work-id>,
+        removed: list<work-id>,
+    ) -> result<_, plugin-error>;
+}
+
+/// Per-user account linking (Trakt-style OAuth). The plugin owns the
+/// provider dance; the host owns token storage — plugins never persist
+/// per-user tokens themselves, they hand them to the host at link time
+/// and read them back through `host-secrets.read-for-user`.
+interface user-link {
+    use types.{user-id, plugin-error};
+
+    record link-challenge {
+        /// URL the user opens out-of-band to authorize access
+        /// (OAuth authorize or device-code page).
+        auth-url: string,
+        /// Opaque state the host echoes back to `link-complete` when the
+        /// provider redirects. The host binds it to the linking user.
+        state: string,
+    }
+
+    record user-secret {
+        key: string,
+        value: string,
+    }
+
+    /// Begin a link for `user`; the host shows `auth-url` to them.
+    link-start: async func(user: user-id) -> result<link-challenge, plugin-error>;
+
+    /// Finish a link. `callback-query` is the raw query string the
+    /// provider's redirect delivered to the host's callback route, so the
+    /// plugin can do its code exchange. The returned secrets are persisted
+    /// host-side under this user; an empty list means "linked, nothing to
+    /// store" (e.g. device-flow plugins that poll out-of-band and hand the
+    /// tokens over later).
+    link-complete: async func(
+        user: user-id,
+        state: string,
+        callback-query: string,
+    ) -> result<list<user-secret>, plugin-error>;
+}
+
+/// Interactive authentication through a verified external identity provider.
+/// The host owns state and PKCE material; the guest owns provider discovery,
+/// token exchange, and the HTTPS UserInfo request.
+interface external-auth {
+    use types.{plugin-error};
+
+    record verified-identity {
+        issuer: string,
+        subject: string,
+        preferred-username: option<string>,
+        display-name: option<string>,
+        email: option<string>,
+    }
+
+    start: async func(
+        callback-uri: string,
+        state: string,
+        pkce-challenge: string,
+    ) -> result<string, plugin-error>;
+
+    complete: async func(
+        callback-uri: string,
+        code: string,
+        pkce-verifier: string,
+    ) -> result<verified-identity, plugin-error>;
+}
+
+/// Receives lifecycle and library events. Notifier plugins re-emit as
+/// user-facing notifications (Gotify, Slack, Discord, etc.). They also see
+/// plugin-lifecycle events so a Discord notifier can ping admins when a new
+/// plugin appears in the search path.
+interface notifier {
+    use types.{notify-event, plugin-error};
+
+    notify: async func(event: notify-event) -> result<_, plugin-error>;
+}
+
+/// Per-user watch-history sync (Trakt, ...). Events derive from the
+/// domain bus: playback-session start/stop, progress-at-stop, and
+/// manual mark-played. The host enriches each event from storage, so
+/// the plugin's only lookup is `host-secrets.read-for-user` for the
+/// acting user's token; users who never linked are skipped.
+interface scrobbler {
+    use types.{scrobble-event, plugin-error};
+
+    scrobble: async func(event: scrobble-event) -> result<_, plugin-error>;
+}
+
+/// Intro / credits marker detection. Host-driven like the embedder:
+/// a host worker sweeps editions that have never been through
+/// detection, calls `detect`, and persists the outcome itself —
+/// plugins never see storage. Detection inputs arrive through narrow
+/// host imports (`host-library.lookup-edition-by-id`).
+interface intro-detector {
+    use types.{edition-id, plugin-error};
+
+    record intro-detection {
+        intro-start-ms: option<s64>,
+        intro-end-ms: option<s64>,
+        credits-start-ms: option<s64>,
+        /// Detector-specific confidence in [0.0, 1.0]; informational —
+        /// the host persists any returned detection regardless.
+        confidence: f32,
+    }
+
+    /// Returns none when the detector finds nothing worth marking.
+    detect: async func(edition: edition-id)
+        -> result<option<intro-detection>, plugin-error>;
+}
+
+/// Host-scheduled background work. Guests cannot run unprompted — a
+/// component only executes while the host is driving a call — so periodic
+/// work is registered declaratively in the manifest (`[[tasks]]`: name,
+/// interval, optional static payload) and the host invokes `run-task` on
+/// the plugin's single instance. Background calls ride the same instance
+/// as foreground hooks: plugin state stays single-threaded-coherent and
+/// there is no second dispatch path.
+interface background {
+    use types.{plugin-error, task-outcome};
+
+    /// `cursor` is the guest-owned value the previous invocation returned
+    /// via `more(...)` (`none` on the first run). `payload` is the
+    /// manifest's static payload for scheduled invocations, or the value a
+    /// hook passed to `host-tasks.enqueue` for dynamic ones.
+    run-task: async func(
+        task: string,
+        cursor: option<string>,
+        payload: option<string>,
+    ) -> result<task-outcome, plugin-error>;
+}
+
+/// Text embedding provider — local inference only (the self-hosted
+/// invariant rules out external inference APIs). The host embeds work
+/// texts at scan time and query text at search time and persists the
+/// vectors itself — plugins still never see storage, so no host import
+/// is needed. The vector namespace, model id, and dimensionality are
+/// claimed statically in the manifest's `[embedding]` table, not
+/// negotiated per call.
+interface embedder {
+    use types.{plugin-error};
+
+    /// One vector per input text, in input order; every vector must have
+    /// the manifest-claimed dimensionality (the host rejects the call
+    /// otherwise). Batch size is host-capped.
+    embed: async func(texts: list<string>) -> result<list<list<f32>>, plugin-error>;
+}
+
+/// Recommendation provider. The host calls `recommend` with
+/// the user + a set of seed works (the user's most-recently-played
+/// for "more like this", or the partially-watched series for
+/// "continue series") and gets a ranked list back. The plugin
+/// can also return upstream "because you watched X" rules.
+interface recommendation {
+    use types.{
+        external-id, work-kind, plugin-error,
+    };
+
+    record recommendation-row {
+        external-id: external-id,
+        title: string,
+        year: option<s32>,
+        /// Plugin-assigned score in [0.0, 1.0]. The host sorts the
+        /// merged fan-out by this descending.
+        score: f32,
+        /// Short label the UI shows next to the row, e.g.
+        /// "more-like-this", "continue-series",
+        /// "because-you-watched".
+        rationale: string,
+    }
+
+    supports: func(kind: work-kind) -> bool;
+
+    recommend: func(
+        user: option<string>,
+        kind: work-kind,
+        seed: list<external-id>,
+        limit: u32,
+    ) -> result<list<recommendation-row>, plugin-error>;
+}

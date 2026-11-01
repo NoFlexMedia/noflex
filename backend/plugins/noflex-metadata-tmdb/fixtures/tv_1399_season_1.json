@@ -1,0 +1,19 @@
+{
+  "_id": "5256c89f19c2956ff6046d47",
+  "air_date": "2011-04-17",
+  "episodes": [
+    { "air_date": "2011-04-17", "episode_number": 1, "id": 63056, "name": "Winter Is Coming", "overview": "Jon Arryn, the Hand of the King, is dead.", "runtime": 62, "season_number": 1, "still_path": "/still-1.jpg", "vote_average": 7.8 },
+    { "air_date": "2011-04-24", "episode_number": 2, "id": 63057, "name": "The Kingsroad", "overview": "The Lannisters plot.", "runtime": 56, "season_number": 1, "still_path": null, "vote_average": 7.6 }
+  ],
+  "name": "Season 1",
+  "overview": "Trouble is brewing in the Seven Kingdoms.",
+  "id": 3624,
+  "poster_path": "/s1.jpg",
+  "season_number": 1,
+  "images": {
+    "posters": [
+      { "file_path": "/s1-en.jpg", "iso_639_1": "en", "width": 1000, "height": 1500, "vote_average": 5.3, "vote_count": 4 },
+      { "file_path": "/s1-textless.jpg", "iso_639_1": null, "width": 1000, "height": 1500, "vote_average": 5.0, "vote_count": 1 }
+    ]
+  }
+}

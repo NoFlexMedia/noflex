@@ -1,0 +1,152 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# What a poster card, rail or row needs.
+fragment WorkCard on Work {
+  id
+  kind
+  parentId
+  libraryId
+  title
+  year
+  communityRating
+  indexNumber
+  indexEnd
+  parentIndex
+  runtimeMs
+  images { kind url }
+  userData { played positionMs favorite }
+}
+
+fragment UserDataFields on UserData {
+  played
+  positionMs
+  playCount
+  rating
+  favorite
+  lastPlayed
+}
+
+# Written into the cache after a playback-state mutation, which returns
+# the bare UserData rather than its work.
+fragment WorkUserData on Work {
+  userData { ...UserDataFields }
+}
+
+fragment WorkFull on Work {
+  ...WorkCard
+  sortTitle
+  releaseDate
+  overview
+  tagline
+  originalTitle
+  metadataStatus
+  lockedFields
+  addedAt
+  externalIds { kind value }
+  userData { ...UserDataFields }
+}
+
+fragment EditionFull on Edition {
+  id
+  workId
+  name
+  runtimeMs
+  introStartMs
+  introEndMs
+  creditsStartMs
+  chapters { positionMs title }
+  codecVideo
+  codecAudio
+  width
+  height
+  bitDepth
+  hdrFormat
+  videoCodec
+  videoProfile
+  videoLevel
+  pixelFormat
+  transferCharacteristics
+  frameRate
+  audioTracks { language codec channels default title external forced }
+  subtitleTracks { language codec default forced external title srtCompatible }
+  trickplay {
+    intervalMs
+    thumbWidth
+    thumbHeight
+    tileColumns
+    tileRows
+    sheets { index tileCount url }
+    chapterCues { positionMs title x y width height sheetUrl }
+  }
+}
+
+fragment MediaFileFull on MediaFile {
+  id
+  editionId
+  path
+  partIndex
+  sizeBytes
+  mtime
+  container
+  probe
+  subtitleTracks { language codec default forced external title srtCompatible path }
+}
+
+fragment LibraryFields on Library {
+  id
+  name
+  kind
+  paths
+  config { preferredLanguages preferredProviders excludedFolders watchEnabled scanSchedule artworkPreference }
+}
+
+fragment UserFields on User {
+  id
+  name
+  isAdmin
+  role
+  createdAt
+  libraryAccess
+}
+
+fragment WatchRoomFields on WatchRoom {
+  id
+  hostUserId
+  mediaFileId
+  state
+  positionMs
+  sequence
+  createdAt
+  updatedAt
+  work { ...WorkCard }
+}
+
+fragment ExportJobFields on ExportJob {
+  id
+  userId
+  editionId
+  format
+  status
+  progress
+  outputPath
+  error
+  createdAt
+  startedAt
+  finishedAt
+}
+
+fragment LiveTvSourceFields on LiveTvSource {
+  id
+  name
+  enabled
+  lastRefreshAt
+  lastError
+}
+
+fragment ScanStatusFields on LibraryScanStatus {
+  state
+  startedAt
+  finishedAt
+  error
+  summary { added updated removed errored }
+}

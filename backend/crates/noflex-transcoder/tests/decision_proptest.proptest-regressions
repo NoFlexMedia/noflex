@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4217dc6174156bde98e6fac127a42a76d900f32917dc7c8ee2942f741037ac6d # shrinks to probe = ProbeReport { container: None, video: Some(VideoStreamProbe { codec: H264, profile: None, level: None, width: 853, height: 480, bit_depth: None, pixel_format: None, frame_rate: Some(24.0), color_space: Some(Bt709), transfer: Some(Sdr), matrix: Some(Bt709), dovi_profile: None, side_data: ProbeSideData { max_cll: None, max_fall: None, mastering: None } }), audio: [], subtitle: [], format_bit_rate: Some(17631315) }, client = ClientCapabilities { direct_play: [], hls: [], video_codecs: [], audio_codecs: [], subtitle_codecs: [WebVtt], max_height: None, max_bitrate_bps: Some(1000000) }

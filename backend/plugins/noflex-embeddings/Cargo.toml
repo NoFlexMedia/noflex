@@ -1,0 +1,51 @@
+[package]
+name = "noflex-embeddings"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Local static-embedding provider (Model2Vec potion-base-8M) for NoFlex (WASM plugin)"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+noflex-plugin-sdk = { path = "../../crates/noflex-plugin-sdk" }
+
+# See noflex-metadata-tmdb for why this must stay a single direct
+# wit-bindgen dep with exactly these features.
+wit-bindgen = { version = "0.60", default-features = false, features = ["macros", "realloc", "bitflags", "async"] }
+
+# Pure-Rust static embeddings. NOT the `wasm` feature: that pulls
+# tokenizers/unstable_wasm -> getrandom/wasm_js -> wasm-bindgen, none of
+# which link on wasm32-wasip2. getrandom 0.3+ has a native wasip2 backend,
+# so the plain `local-only` set compiles clean.
+model2vec-rs = { version = "0.2.1", default-features = false, features = ["local-only"] }
+
+# tokenizers requires exactly one regex backend; model2vec-rs declares it
+# `default-features = false` and only turns a backend on through its own
+# `onig`/`fancy-regex`/`wasm` features — each of which also force-enables
+# `tokenizers/esaxx_fast`, a C++ suffix-array build that cannot link on
+# wasm32-wasip2 (no wasi libc++). Enable the pure-Rust backend directly:
+# features unify across the graph, so model2vec-rs sees the same
+# fancy-regex tokenizer without esaxx_fast.
+tokenizers = { version = "0.21", default-features = false, features = ["fancy-regex"] }
+
+# Keep debug info in the released `.wasm` so trap backtraces include
+# the source-level function names and (with WASMTIME_BACKTRACE_DETAILS=1)
+# panic messages — invaluable for diagnosing the cabi_realloc-class traps.
+[profile.release]
+debug = true
+strip = "none"
+
+[package.metadata.noflex-plugin]
+# The xtask reads this section to know what manifest to embed in the
+# `noflex:manifest` custom section of the final `.wasm`. See
+# `xtask/src/main.rs` (PluginManifestSnippet) — its schema has no
+# `[embedding]` table, so the namespace/model/dimensions claim lives
+# only in `src/manifest.toml`.
+plugin_id = "embeddings"
+display_name = "Local Embeddings (potion-base-8M)"
+hooks = ["embedder"]
+capabilities = ["assets.read"]
+memory_limit_mb = 128

@@ -1,0 +1,43 @@
+# Rust
+**/target/
+**/*.rs.bk
+Cargo.lock.bak
+.cargo/
+
+# Nix
+/result
+/result-*
+
+# Local runtime data
+data.db
+data.db-*
+data.tantivy/
+cache/
+
+# Local env / secrets
+.env
+.env.local
+.envrc.local
+*.env.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Frontend
+**/node_modules/
+**/dist/
+**/.vite/
+/web/build/
+/web/.svelte-kit/
+/web/.houdini/
+
+# Sccache / Nix dev shell artifacts
+.direnv/
+.cache/
+
+# AI related
+.plans/

@@ -1,0 +1,34 @@
+[package]
+name = "noflex-plugin-sdk"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "SDK for authoring NoFlex WASM plugins"
+
+# Targets `wasm32-wasip2` when building a plugin; also compiles on the host
+# so the workspace's normal `cargo build` keeps the crate honest (the host
+# build only exercises the type signatures + helpers, not the WIT bindings).
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+noflex-plugin-wit = { workspace = true }
+
+# Caching + request-coalescing helpers that first-party plugins use to
+# share TMDb-id-keyed responses across metadata+image calls (the user's
+# caching/batching concern). v1 ships an in-memory `lru` + a singleflight
+# guard; v2 may add persistence.
+#
+# Important: do *not* depend on `wit-bindgen` here. Each plugin pulls in
+# its own pinned wit-bindgen with the exact features it needs; if the SDK
+# also depends on it the linker ends up with two copies of `libwit_bindgen`
+# under different feature sets, which duplicates `cabi_realloc_wit_bindgen_*`
+# at the WASM symbol level.
+lru = "0.12"
+hashbrown = "0.14"
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

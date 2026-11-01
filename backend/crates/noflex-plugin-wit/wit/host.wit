@@ -1,0 +1,209 @@
+package noflex:plugin@0.8.0;
+
+/// Structured logging from the plugin into the host's tracing subscriber.
+/// Logs appear in the same process output as the rest of the server,
+/// namespaced as `noflex_plugin::<plugin_id>::<namespace>`. Standard
+/// `RUST_LOG` filter syntax applies.
+///
+/// `audit` is special: it routes to a dedicated audit-log appender regardless
+/// of namespace, so security-relevant events stay grep-able even when
+/// operational logs are filtered down.
+/// `log` is sync on purpose: it feeds the host's tracing subscriber, which
+/// never blocks the caller. `host-secrets` (file I/O) and `host-library`
+/// (storage round-trip) are the imports that can block and are `async`.
+interface host-log {
+    enum level {
+        trace,
+        debug,
+        info,
+        warn,
+        error,
+        audit,
+    }
+
+    log: func(
+        level: level,
+        namespace: string,
+        message: string,
+        fields: list<tuple<string, string>>,
+    );
+}
+
+/// Read a secret declared in the plugin manifest. The host enforces that
+/// only keys listed in the manifest's `secrets_read` array are accessible;
+/// anything else returns `plugin-error::capability-denied`. Secret values
+/// are opaque strings; the plugin parses as it sees fit.
+///
+/// Storage location (v1, cleartext):
+///   - System tier: /etc/noflex/secrets/<plugin_id>.toml
+///   - State tier:  /var/lib/noflex/secrets/<plugin_id>.toml
+///   - User tier:   $XDG_CONFIG_HOME/noflex/secrets/<plugin_id>.toml
+///
+/// v2 replaces the cleartext store with age or the system keyring.
+interface host-secrets {
+    use types.{user-id, plugin-error};
+
+    read: async func(key: string) -> result<string, plugin-error>;
+
+    /// Read a per-user secret stored at `user-link` time (e.g. a Trakt
+    /// access token). Keys must be listed in the manifest's
+    /// `user_secrets_read` array; anything else is `capability-denied`.
+    /// Every read is audit-logged with the user id. There is deliberately
+    /// no user-enumeration import — plugins only learn user ids from the
+    /// events and task payloads the host hands them.
+    ///
+    /// Per-user access is bound to the hook call it happens in: `user`
+    /// must equal the user that call acts for (`capability-denied`
+    /// otherwise), and calls that act for no user get `unavailable`.
+    /// `user-link` calls act for their `user` argument, `scrobbler` calls
+    /// for the event's user, and a `background` run for the user whose
+    /// call enqueued its payload via `host-tasks.enqueue` (continuing
+    /// through that run's `more(...)` chain); everything else acts for no
+    /// one. Futures a call spawns share its binding.
+    read-for-user: async func(user: user-id, key: string) -> result<string, plugin-error>;
+
+    /// Write a per-user secret (e.g. a refreshed OAuth access token).
+    /// Keys must be listed in the manifest's `user_secrets_write`
+    /// array; anything else is `capability-denied`. The same call-bound
+    /// principal rule as `read-for-user` applies. Every write is
+    /// audit-logged with the user id and key — never the value.
+    write-for-user: async func(user: user-id, key: string, value: string)
+        -> result<_, plugin-error>;
+}
+
+/// Returns the plugin's own config stanza from the server's `config.toml`,
+/// as an opaque TOML string. The plugin parses with whatever TOML library
+/// it bundles.
+///
+/// Config is read-only at instantiation; if the server config changes, the
+/// plugin host drains in-flight calls and re-instantiates with the new
+/// config — the plugin never sees a config change in flight.
+interface host-config {
+    read: func() -> string;
+}
+
+/// Narrow read-only access to library data. Plugins **never** see the
+/// `Storage` trait directly; each query they need is a separate, named host
+/// import that the host implements over `Storage`. More are added as
+/// concrete use cases arise.
+interface host-library {
+    use types.{work-id, work-kind, edition-id};
+
+    record work-summary {
+        id: work-id,
+        kind: work-kind,
+        title: string,
+        year: option<s32>,
+    }
+
+    record chapter {
+        position-ms: s64,
+        title: option<string>,
+    }
+
+    record edition-summary {
+        id: edition-id,
+        work-id: work-id,
+        name: string,
+        runtime-ms: option<s64>,
+        chapters: list<chapter>,
+        /// Already-persisted markers, so detectors can skip or refine.
+        intro-start-ms: option<s64>,
+        intro-end-ms: option<s64>,
+        credits-start-ms: option<s64>,
+    }
+
+    lookup-work-by-id: async func(id: work-id) -> option<work-summary>;
+
+    lookup-edition-by-id: async func(id: edition-id) -> option<edition-summary>;
+}
+
+/// Dynamic follow-up work. Any hook call may enqueue a `background`
+/// invocation for its own plugin (post-scan → intro sweep over the added
+/// works); the host persists the payload and drains the queue on the
+/// plugin's instance, FIFO per task. Payloads are opaque strings (JSON by
+/// convention) and survive instance recycling and host restarts. The host
+/// also records which user, if any, the enqueuing call acted for, and runs
+/// the task bound to that user (see `host-secrets.read-for-user`).
+interface host-tasks {
+    use types.{plugin-error};
+
+    enqueue: async func(task: string, payload: option<string>) -> result<_, plugin-error>;
+}
+
+/// Plugin-emitted metrics. Bridged into whatever metrics exporter the server
+/// is configured with (Prometheus, OTLP, ...). No-op when no exporter is
+/// configured.
+///
+/// Metric names are namespaced by the host as `noflex_plugin_<plugin_id>_<name>`
+/// to prevent collisions across plugins.
+interface host-metrics {
+    histogram: func(name: string, value: f64);
+    counter: func(name: string, delta: u64);
+}
+
+/// Read-only access to host-managed asset files (embedding models,
+/// tokenizers, vocabularies, ...). Narrow and named like every other
+/// host import: the guest requests a file by relative name, the host
+/// resolves it under the configured plugin-assets directory (absolute
+/// paths and `..` traversal are rejected), caps the size, and
+/// audit-logs reads. Requires the `assets.read` capability.
+interface host-assets {
+    use types.{plugin-error};
+
+    /// Returns the full file contents. Large assets (model weights) are
+    /// expected — guests should request them once and cache in instance
+    /// state rather than re-reading per call.
+    read-file: async func(name: string) -> result<list<u8>, plugin-error>;
+}
+
+/// Host-performed HTTP egress. Guests on `wasm32-wasip2` have no socket
+/// access, so outbound HTTP (webhooks, scrobblers, upstream metadata
+/// APIs) goes through the host, which performs the request on the
+/// plugin's behalf. Requires the `http.egress` capability; the URL's
+/// host must also match the manifest's `http_egress_hosts` allowlist —
+/// exact case-insensitive match, a `*.suffix` entry matching subdomains
+/// of `suffix` (not the apex), or a bare `*` matching anything (the host
+/// warns at load when a plugin requests unrestricted egress).
+///
+/// Only `http` and `https` URLs are accepted. Redirects are never
+/// followed — a 3xx is returned to the guest as-is, so the plugin sees
+/// exactly what the upstream answered. Request bodies are host-capped
+/// (4 MiB) and response bodies are truncated at a host cap (16 MiB,
+/// an `internal` error past it), so one call can't OOM the host.
+/// Every request — allowed or denied — is audit-logged with the final
+/// status code (origin plus a digest of path and query; never the full
+/// URL, which may carry webhook tokens).
+///
+/// Destination addresses are vetted at connect time, after DNS: unless
+/// the manifest also declares `http.private-network`, the host refuses
+/// loopback, private, link-local, CGNAT, and other special-purpose ranges
+/// (including IPv6 forms embedding such IPv4 addresses) with
+/// `capability-denied`, and refuses a name whose answers mix public and
+/// forbidden addresses. IP-literal URLs get the same check. Proxy
+/// environment variables are ignored.
+interface host-net {
+    use types.{plugin-error};
+
+    record http-request {
+        /// One of GET, POST, PUT, PATCH, DELETE, HEAD.
+        method: string,
+        url: string,
+        /// Hop-by-hop and host-override headers (`host`,
+        /// `content-length`, `connection`, `transfer-encoding`,
+        /// `keep-alive`, `upgrade`) are stripped by the host.
+        headers: list<tuple<string, string>>,
+        body: option<list<u8>>,
+        /// Per-request timeout in milliseconds. Default 30s when unset;
+        /// values above the 120s host ceiling are clamped to it.
+        timeout-ms: option<u32>,
+    }
+
+    record http-response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    request: async func(req: http-request) -> result<http-response, plugin-error>;
+}

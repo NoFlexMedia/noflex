@@ -1,0 +1,30 @@
+# Fixture guests for noflex-plugin-host's integration tests. Detached
+# from the backend workspace: they target wasm32-wasip2 and the tests
+# build them on demand. One workspace so they share a lockfile and a
+# target directory instead of each compiling wit-bindgen on its own.
+[workspace]
+resolver = "3"
+members = [
+    "concurrency",
+    "artwork",
+    "embedder",
+    "external-auth",
+    "intro-detector",
+    "net",
+    "net-denied",
+    "notifier",
+    "notifier-events",
+    "post-scan",
+    "scrobbler",
+    "tasks",
+    "user-link",
+]
+
+[workspace.dependencies]
+# Same single-wit-bindgen rule as the shipped plugins: a second copy in
+# the dep tree would duplicate `cabi_realloc_wit_bindgen_*` symbols.
+wit-bindgen = { version = "0.60", default-features = false, features = ["macros", "realloc", "bitflags", "async", "async-spawn"] }
+
+[profile.release]
+debug = true
+strip = "none"

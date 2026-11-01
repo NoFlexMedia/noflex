@@ -1,0 +1,130 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/noflex-core",
+    "crates/noflex-storage",
+    "crates/noflex-storage-turso",
+    "crates/noflex-graphql",
+    "crates/noflex-metadata",
+    "crates/noflex-scanner",
+    "crates/noflex-transcoder",
+    "crates/noflex-plugin-wit",
+    "crates/noflex-plugin-host",
+    "crates/noflex-plugin-sdk",
+    "crates/noflex-auth",
+    "crates/noflex-server",
+    "xtask",
+]
+exclude = [
+    # First-party WASM plugins live outside the main workspace because
+    # they target `wasm32-wasip2`; the host workspace builds for the
+    # native triple. Build them via `cargo xtask plugin-build`.
+    "plugins",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.0.1"
+license = "AGPL-3.0-only"
+repository = "https://github.com/godtamit/noflex"
+rust-version = "1.85"
+
+# Crane reads workspace.metadata.crane.name to label the workspace build.
+# Without it, crane emits an evaluation warning and falls back to a placeholder.
+[workspace.metadata.crane]
+name = "noflex"
+
+[workspace.dependencies]
+# Workspace-internal
+noflex-core = { path = "crates/noflex-core" }
+noflex-storage = { path = "crates/noflex-storage" }
+noflex-storage-turso = { path = "crates/noflex-storage-turso" }
+noflex-graphql = { path = "crates/noflex-graphql" }
+noflex-metadata = { path = "crates/noflex-metadata" }
+noflex-scanner = { path = "crates/noflex-scanner" }
+noflex-transcoder = { path = "crates/noflex-transcoder" }
+noflex-auth = { path = "crates/noflex-auth" }
+noflex-plugin-wit = { path = "crates/noflex-plugin-wit" }
+noflex-plugin-host = { path = "crates/noflex-plugin-host" }
+noflex-plugin-sdk = { path = "crates/noflex-plugin-sdk" }
+
+# Async / runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+async-stream = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
+tokio-tungstenite = "0.29"
+
+# Serde / data
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bytes = { version = "1", features = ["serde"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+toml = "0.8"
+
+# Errors / logging
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+
+# HTTP / web
+axum = { version = "0.8", features = ["macros", "ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip", "fs"] }
+hyper = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip", "stream"] }
+url = "2"
+quick-xml = "0.38"
+
+# GraphQL — pin both halves to the same minor so the derive macro stays in sync
+async-graphql = { version = "7.2", features = ["dataloader", "time", "uuid"] }
+async-graphql-axum = "7.2"
+
+# Storage engines
+turso = "0.6"
+
+# Config
+figment = { version = "0.10", features = ["toml", "env"] }
+
+# Filesystem / scanning
+walkdir = "2"
+notify = "8"
+regex = "1"
+libc = "0.2"
+# Host resource sampling for the admin status surface.
+sysinfo = { version = "0.40", default-features = false, features = ["system", "network"] }
+
+# Media processing
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+
+# WASM plugin runtime (host side). Pins to WASIp3-capable wasmtime — the
+# `component-model-async` + `p3` feature combo lights up native WASI 0.3
+# async at both the engine and standard-library layers.
+wasmtime = { version = "47", default-features = false, features = ["async", "component-model", "component-model-async", "cranelift", "runtime", "std", "addr2line", "demangle", "parallel-compilation"] }
+wasmtime-wasi = { version = "47", default-features = false, features = ["p2", "p3"] }
+sha2 = "0.10"
+directories = "5"
+
+# Crypto / auth
+argon2 = "0.5"
+jsonwebtoken = "9"
+sha1 = "0.10"
+hex = "0.4"
+
+# Dev
+tempfile = "3"
+tokio-test = "0.4"
+bitflags = { version = "2", features = ["serde"] }
+proptest = "1"
+
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

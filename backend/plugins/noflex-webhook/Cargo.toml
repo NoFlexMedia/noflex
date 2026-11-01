@@ -1,0 +1,43 @@
+[package]
+name = "noflex-webhook"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Generic outbound webhook notifier (Gotify/ntfy/Discord/Slack-style) for NoFlex (WASM plugin)"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+noflex-plugin-sdk = { path = "../../crates/noflex-plugin-sdk" }
+
+# See noflex-metadata-tmdb for why this must stay a single direct
+# wit-bindgen dep with exactly these features.
+wit-bindgen = { version = "0.60", default-features = false, features = ["macros", "realloc", "bitflags", "async"] }
+
+# serde_json/toml also back the host-runnable unit tests in
+# `payload.rs`; both are pure Rust and compile clean for wasm32-wasip2.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Keep debug info in the released `.wasm` so trap backtraces include
+# the source-level function names and (with WASMTIME_BACKTRACE_DETAILS=1)
+# panic messages — invaluable for diagnosing the cabi_realloc-class traps.
+[profile.release]
+debug = true
+strip = "none"
+
+[package.metadata.noflex-plugin]
+# The xtask reads this section to know what manifest to embed in the
+# `noflex:manifest` custom section of the final `.wasm`. The canonical
+# manifest is `src/manifest.toml`; keep the two in sync.
+plugin_id = "webhook"
+display_name = "Webhook Notifier"
+hooks = ["notifier"]
+capabilities = ["http.egress", "http.private-network", "secrets.read"]
+# The destination is operator-configured, so the allowlist cannot be
+# enumerated at build time — see src/manifest.toml for the full comment.
+http_egress_hosts = ["*"]
+secrets_read = ["webhook.auth"]

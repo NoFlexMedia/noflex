@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+query Home {
+  continueWatching(first: 16) { nodes { ...WorkCard } }
+  nextUp(first: 16) { nodes { ...WorkCard } }
+  recentlyAdded(first: 24) { nodes { ...WorkFull } }
+  recentlyPlayed(first: 16) { nodes { ...WorkCard } }
+  moreLikeThis(first: 16) { nodes { ...WorkCard } }
+}
+
+query LibraryWorks($library: ID!, $filter: WorkFilterInput, $sort: SortOrder) {
+  works(libraryId: $library, filter: $filter, sort: $sort, first: 48) @paginate {
+    edges { node { ...WorkCard } }
+  }
+}
+
+query WorkDetail($id: ID!) {
+  work(id: $id) { ...WorkFull }
+  editions(workId: $id) { ...EditionFull }
+}
+
+query MediaFiles($edition: ID!) {
+  mediaFiles(editionId: $edition) { ...MediaFileFull }
+}
+
+# A container's children, every page loaded, for browsing.
+query WorkChildren($library: ID!, $parent: ID!) {
+  works(libraryId: $library, filter: { parentId: $parent, recursive: false }, sort: TITLE_ASC, first: 60) @paginate {
+    edges { node { ...WorkCard overview } }
+  }
+}
+
+# The same for a season beside its series: paginated stores dedupe by
+# document, so two live instances of one document would cancel each other.
+query SeasonEpisodes($library: ID!, $parent: ID!) {
+  works(libraryId: $library, filter: { parentId: $parent, recursive: false }, sort: TITLE_ASC, first: 60) @paginate {
+    edges { node { ...WorkCard overview } }
+  }
+}
+
+# One page of a container's children, for walking them in code.
+query ChildPage($library: ID!, $parent: ID!, $after: String) {
+  works(libraryId: $library, filter: { parentId: $parent, recursive: false }, sort: TITLE_ASC, first: 60, after: $after) {
+    nodes { ...WorkCard overview }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+
+# A newer keystroke supersedes the search in flight.
+query Search($text: String!, $mode: SearchMode!, $kinds: [WorkKind!]) @dedupe(cancelFirst: true, match: Operation) {
+  search(text: $text, mode: $mode, kinds: $kinds, first: 48) @paginate {
+    edges { node { score matchedFields workId work { ...WorkCard overview } } }
+  }
+}
+
+query WorkCrumb($id: ID!) @cache(policy: CacheOrNetwork) {
+  work(id: $id) { ...WorkCard }
+}

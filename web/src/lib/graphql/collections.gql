@@ -1,0 +1,76 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Shelves stay lean: a page of collections, each with a page of posters,
+# has to fit the server's per-query complexity budget.
+fragment WorkShelf on Work {
+  id
+  kind
+  title
+  year
+  parentIndex
+  indexNumber
+  images { kind url }
+}
+
+fragment CollectionShelf on Collection {
+  id
+  title
+  overview
+  items(first: 12) {
+    nodes { ...WorkShelf }
+    pageInfo { hasNextPage }
+  }
+}
+
+fragment PlaylistShelf on Playlist {
+  id
+  title
+  overview
+  items(first: 8) {
+    nodes { kind work { ...WorkShelf } edition { id name workId } }
+    pageInfo { hasNextPage }
+  }
+}
+
+query PlaylistMenu {
+  playlists(first: 100) @list(name: "PlaylistMenu") {
+    edges { node { id title } }
+  }
+}
+
+query CollectionMenu($library: ID!) {
+  collections(libraryId: $library, first: 100) @list(name: "CollectionMenu") {
+    edges { node { id title } }
+  }
+}
+
+# Every member, a page at a time: the set mutations replace the whole list.
+query CollectionItemIds($id: ID!, $after: String) {
+  collection(id: $id) {
+    items(first: 100, after: $after) {
+      nodes { id }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+
+query PlaylistTargets($id: ID!, $after: String) {
+  playlist(id: $id) {
+    items(first: 100, after: $after) {
+      nodes { kind work { id } edition { id } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+
+mutation SetCollectionItems($id: ID!, $items: [ID!]!) {
+  setCollectionItems(id: $id, workIds: $items) { ...CollectionShelf }
+}
+
+mutation SetPlaylistItems($id: ID!, $items: [PlayTargetInput!]!) {
+  setPlaylistItems(id: $id, items: $items) { ...PlaylistShelf }
+}
+
+mutation AddToPlaylist($id: ID!, $items: [PlayTargetInput!]!) {
+  addPlaylistItems(id: $id, items: $items) { ...PlaylistShelf }
+}

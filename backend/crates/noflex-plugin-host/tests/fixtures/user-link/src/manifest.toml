@@ -1,0 +1,16 @@
+manifest_version = 1
+plugin_id = "fixture-user-link"
+display_name = "User Link Test Fixture"
+version = "0.0.1"
+noflex_api_version = "0.8"
+hooks = ["user-link"]
+capabilities = ["user-secrets.read", "user-secrets.write", "background"]
+user_secrets_read = ["access-token"]
+user_secrets_write = ["access-token", "refresh-token"]
+license = "AGPL-3.0-only"
+
+# Drained only by dynamic enqueues during the tests; the long interval
+# keeps scheduled ticks out of the way.
+[[tasks]]
+name = "write-token"
+interval_ms = 600000

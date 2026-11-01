@@ -1,0 +1,175 @@
+package noflex:plugin@0.8.0;
+
+/// The umbrella world a NoFlex plugin targets. Plugins implement any subset
+/// of the hook exports; the host introspects the resulting `.wasm`
+/// component at load time to populate the dispatch registry.
+///
+/// Pairing this world with the WASI 0.3 imports (native async I/O, futures,
+/// streams) means a single plugin instance can service many concurrent
+/// calls — no host-side instance pool is needed. Plugins handle their own
+/// concurrency (queueing, rate limits, time-window batching to upstream APIs).
+/// The `metadata-plugin` / `metadata-image-plugin` convenience worlds below
+/// are what first-party plugins actually target; every world exports
+/// `background` (plugins without tasks stub it — the host only calls
+/// `run-task` for manifest-registered `[[tasks]]`) and imports `host-tasks`
+/// so any hook can enqueue follow-up work.
+world plugin {
+    // ----- NoFlex host imports (every plugin sees these) -----
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    import host-assets;
+
+    // ----- All hook exports (only useful for "everything-plugins") -----
+    export metadata;
+    export image;
+    export subtitle;
+    export post-scan;
+    export notifier;
+    export user-link;
+    export external-auth;
+    export scrobbler;
+    export intro-detector;
+    export embedder;
+    export background;
+}
+
+/// Convenience world for external identity providers.
+world external-auth-plugin {
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    export external-auth;
+    export background;
+}
+
+/// Convenience world for plugins implementing only `metadata`.
+world metadata-plugin {
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    export metadata;
+    export background;
+}
+
+/// Convenience world for the common case of "metadata + image"
+/// (the TMDb / TVDB pattern).
+world metadata-image-plugin {
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    export metadata;
+    export image;
+    export background;
+}
+
+/// Convenience world for event consumers (notifiers, scrobbler
+/// front-ends). Pairs with `background` so a notifier can enqueue durable
+/// follow-up work from `notify`.
+world notifier-plugin {
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    export notifier;
+    export background;
+}
+
+/// Convenience world for local embedding providers (model2vec-style
+/// static embedding models, ...). The manifest `[embedding]` table
+/// claims the namespace / model id / dimensions; `host-assets` delivers
+/// the model files. Pairs with `background` so the plugin can schedule
+/// its own maintenance (e.g. cache warm-up).
+world embedder-plugin {
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    import host-assets;
+    export embedder;
+    export background;
+}
+
+/// Convenience world for providers whose only surface is per-user account
+/// linking. A plugin that both links accounts and consumes events (the
+/// Trakt pattern) targets `scrobbler-plugin` below.
+world user-link-plugin {
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    export user-link;
+    export background;
+}
+
+/// Convenience world for scan-following consumers (cache rebuilders,
+/// intro detectors, embedding refreshers, webhook senders). Pairs with
+/// `background` so the plugin can enqueue durable follow-up work from
+/// `on-scan-complete`.
+world post-scan-plugin {
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    export post-scan;
+    export background;
+}
+
+/// Convenience world for scrobbler plugins — the Trakt pattern:
+/// account linking plus the scrobble event stream, with `host-net`
+/// for the upstream API and `host-secrets` for client and per-user
+/// tokens.
+world scrobbler-plugin {
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    export scrobbler;
+    export user-link;
+    export background;
+}
+
+/// Convenience world for intro/credits detectors. `host-library`
+/// carries the detection inputs (chapters, runtime, existing markers).
+world intro-detector-plugin {
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    export intro-detector;
+    export background;
+}

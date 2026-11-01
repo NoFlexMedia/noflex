@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Play history and viewing statistics for the admin Activity tab.
+
+query AdminTopUsers($range: StatsRange!, $offset: Int) @cache(policy: CacheAndNetwork) {
+  topUsers(range: $range, utcOffsetMinutes: $offset) {
+    plays
+    watchedMs
+    lastPlayedAt
+    user { id name isAdmin }
+    libraries { plays watchedMs library { id name kind } }
+  }
+}
+
+query AdminPlayChart($range: StatsRange!, $library: ID, $user: ID, $offset: Int) @cache(policy: CacheAndNetwork) {
+  playHistoryChart(range: $range, libraryId: $library, userId: $user, utcOffsetMinutes: $offset) {
+    bucket
+    totalPlays
+    totalWatchedMs
+    points { start plays watchedMs }
+  }
+}
+
+query AdminTopPlayed($range: StatsRange!, $offset: Int) @cache(policy: CacheAndNetwork) {
+  topPlayed(range: $range, utcOffsetMinutes: $offset, limit: 8) {
+    plays
+    library { id name kind }
+    items { plays watchedMs users work { ...WorkCard } }
+  }
+}
+
+query AdminPlaySessions($range: StatsRange, $user: ID, $library: ID, $offset: Int) @cache(policy: NetworkOnly) {
+  playSessions(range: $range, userId: $user, libraryId: $library, utcOffsetMinutes: $offset, first: 30) @paginate(mode: Infinite) {
+    edges {
+      node {
+        id
+        startedAt
+        lastSeenAt
+        watchedMs
+        positionMs
+        ended
+        device
+        work { id kind title parentIndex indexNumber runtimeMs images { kind url } }
+        rootWork { id title }
+      }
+    }
+  }
+}

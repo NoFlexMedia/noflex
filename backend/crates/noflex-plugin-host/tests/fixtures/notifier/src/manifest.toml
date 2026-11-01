@@ -1,0 +1,8 @@
+manifest_version = 1
+plugin_id = "fixture-notifier"
+display_name = "Notifier Test Fixture"
+version = "0.0.1"
+noflex_api_version = "0.8"
+hooks = ["notifier"]
+capabilities = []
+license = "AGPL-3.0-only"

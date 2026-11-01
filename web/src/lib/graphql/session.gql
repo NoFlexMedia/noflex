@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+query ServerInfo @cache(policy: NetworkOnly) {
+  serverInfo { name version backend isConfigured }
+}
+
+query Bootstrap @cache(policy: NetworkOnly) {
+  viewer { ...UserFields }
+  libraries { ...LibraryFields }
+  serverInfo { name version backend isConfigured }
+}
+
+# Watched for the whole session (see session.svelte.ts), so the list stays
+# registered for library mutations to insert into and every reader of the
+# cached libraries field follows along.
+query Libraries @cache(policy: CacheOnly) {
+  libraries @list(name: "Libraries") { ...LibraryFields }
+}
+
+mutation Login($username: String!, $password: String!, $device: String!) {
+  login(username: $username, password: $password, client: "NoFlex Web", device: $device) { token refreshToken }
+}
+
+mutation CompleteSetup($username: String!, $password: String!) {
+  completeSetupWizard(username: $username, password: $password) { accessToken refreshToken }
+}
+
+mutation Logout {
+  logout
+}
+
+query ExternalProviders @cache(policy: NetworkOnly) {
+  externalAuthProviders { id displayName }
+}
+
+mutation StartExternalLogin($provider: String!, $nonce: String!) {
+  startExternalLogin(provider: $provider, clientNonce: $nonce) { authorizationUrl }
+}
+
+mutation CompleteExternalLogin($code: String!, $nonce: String!, $device: String!) {
+  completeExternalLogin(code: $code, clientNonce: $nonce, client: "NoFlex Web", device: $device) { token refreshToken }
+}
+
+mutation CompleteIdentityLink($code: String!, $nonce: String!) {
+  completeExternalIdentityLink(code: $code, clientNonce: $nonce) { pluginId displayName }
+}

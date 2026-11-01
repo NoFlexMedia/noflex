@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// Background metadata worker: after every scan (and at startup and
+// hourly) it matches unidentified works against the metadata providers
+// and backfills provider artwork for identified works that have none.
+// Mirrors the intro-detector worker's shape — a startup sweep, a
+// `ScanCompleted` trigger, an hourly backstop — so scans never wait on
+// provider round trips. Works that found no match or no art are parked
+// in memory for a day rather than re-asked every sweep.
+
+use std::{collections::HashMap, sync::Arc};
+
+use noflex_core::{
+    WorkId, WorkKind,
+    events::{DomainEvent, DomainEventBus},
+};
+use noflex_storage::{
+    ListWorksQuery, SortOrder,
+    domain::{ImageSource, Work},
+};
+use tokio::{
+    sync::{broadcast::error::RecvError, mpsc},
+    task::JoinHandle,
+    time::{Duration, Instant, interval_at},
+};
+
+use crate::{
+    HookKind,
+    metadata_service::{AutoIdentify, MetadataService, auto_eligible},
+};
+
+const SWEEP_PAGE: u32 = 200;
+const SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const FAILURE_BACKOFF: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Identification order: a season or episode matches through its
+/// series, so parents go first.
+const TIERS: [&[WorkKind]; 3] = [
+    &[
+        WorkKind::Movie,
+        WorkKind::Series,
+        WorkKind::Artist,
+        WorkKind::Album,
+        WorkKind::AudioBook,
+    ],
+    &[WorkKind::Season],
+    &[WorkKind::Episode],
+];
+
+/// Spawn the worker and its bus forwarder. Both live until aborted; a
+/// closed bus only ends event triggering. Every pass re-checks for
+/// metadata/image plugins, so a hot-reloaded provider is picked up
+/// without a restart.
+pub fn spawn_metadata_worker(
+    service: Arc<MetadataService>,
+    events: &DomainEventBus,
+) -> JoinHandle<()> {
+    let (tx, rx) = mpsc::channel::<()>(8);
+    tokio::spawn(forward_events(events.clone(), tx.clone()));
+    tokio::spawn(worker(MetadataWorker::new(service), rx, tx))
+}
+
+async fn forward_events(bus: DomainEventBus, tx: mpsc::Sender<()>) {
+    let mut rx = bus.subscribe();
+    loop {
+        match rx.recv().await {
+            Ok(DomainEvent::ScanCompleted { .. }) => {
+                // A full channel already holds a pending sweep.
+                let _ = tx.try_send(());
+            }
+            Ok(_) => {}
+            Err(RecvError::Lagged(missed)) => {
+                tracing::warn!(missed, "metadata worker lagged; events dropped");
+            }
+            Err(RecvError::Closed) => break,
+        }
+    }
+}
+
+async fn worker(
+    worker: MetadataWorker,
+    mut rx: mpsc::Receiver<()>,
+    // Keeps `rx` open after the forwarder exits so the hourly tick lives on.
+    _keepalive: mpsc::Sender<()>,
+) {
+    let mut tick = interval_at(Instant::now() + SWEEP_INTERVAL, SWEEP_INTERVAL);
+    worker.run_sweep().await;
+    loop {
+        tokio::select! {
+            message = rx.recv() => match message {
+                Some(()) => {
+                    worker.run_sweep().await;
+                }
+                None => break,
+            },
+            _ = tick.tick() => {
+                worker.run_sweep().await;
+            }
+        }
+    }
+}
+
+/// Totals of one [`MetadataWorker::run_sweep`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SweepReport {
+    /// Works matched, fetched and applied.
+    pub identified: u32,
+    /// Works searched without a confident match (then parked).
+    pub unmatched: u32,
+    /// Provider images stored by the artwork backfill.
+    pub artwork_written: u32,
+}
+
+/// One sweep's logic, separate from the scheduling so tests can drive it.
+pub struct MetadataWorker {
+    service: Arc<MetadataService>,
+    identify_backoff: std::sync::Mutex<HashMap<WorkId, Instant>>,
+    art_backoff: std::sync::Mutex<HashMap<WorkId, Instant>>,
+}
+
+impl MetadataWorker {
+    /// A worker with empty backoff memory.
+    pub fn new(service: Arc<MetadataService>) -> Self {
+        Self {
+            service,
+            identify_backoff: Default::default(),
+            art_backoff: Default::default(),
+        }
+    }
+
+    /// Identify what can be identified, then backfill missing provider
+    /// art. Storage errors end the affected pass early and are logged.
+    pub async fn run_sweep(&self) -> SweepReport {
+        let mut report = SweepReport::default();
+        if self.service.has_exporters(HookKind::Metadata) {
+            self.identify_pass(&mut report).await;
+        }
+        if self.service.has_exporters(HookKind::Image) {
+            self.artwork_pass(&mut report).await;
+        }
+        if report != SweepReport::default() {
+            tracing::info!(
+                identified = report.identified,
+                unmatched = report.unmatched,
+                artwork = report.artwork_written,
+                "metadata sweep finished"
+            );
+        }
+        report
+    }
+
+    async fn identify_pass(&self, report: &mut SweepReport) {
+        let storage = self.service.storage().clone();
+        let libraries = match storage.list_libraries().await {
+            Ok(libraries) => libraries,
+            Err(error) => {
+                tracing::warn!(%error, "metadata sweep: listing libraries failed");
+                return;
+            }
+        };
+        for library in libraries {
+            for kinds in TIERS {
+                let mut cursor = None;
+                loop {
+                    let page = match storage
+                        .list_works(&ListWorksQuery {
+                            library: Some(library.id),
+                            kinds: kinds.to_vec(),
+                            recursive: true,
+                            sort: SortOrder::DateAddedAsc,
+                            limit: SWEEP_PAGE,
+                            cursor,
+                            ..Default::default()
+                        })
+                        .await
+                    {
+                        Ok(page) => page,
+                        Err(error) => {
+                            tracing::warn!(library = %library.id, %error, "metadata sweep: listing works failed");
+                            break;
+                        }
+                    };
+                    for work in page.items.iter().filter(|w| auto_eligible(w)) {
+                        self.identify_one(work, report).await;
+                    }
+                    cursor = page.next_cursor();
+                    if cursor.is_none() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn identify_one(&self, work: &Work, report: &mut SweepReport) {
+        if backed_off(&self.identify_backoff, work.id) {
+            return;
+        }
+        match self.service.auto_identify(work.id).await {
+            Ok(AutoIdentify::Matched { provider, .. }) => {
+                tracing::debug!(work = %work.id, provider = %provider.0, "auto-identified");
+                report.identified += 1;
+            }
+            // The series isn't identified yet; it may be next sweep.
+            Ok(AutoIdentify::Skipped) => {}
+            Ok(AutoIdentify::NoMatch) => {
+                report.unmatched += 1;
+                park(&self.identify_backoff, work.id);
+            }
+            Err(error) => {
+                tracing::warn!(work = %work.id, %error, "auto-identify failed");
+                park(&self.identify_backoff, work.id);
+            }
+        }
+    }
+
+    async fn artwork_pass(&self, report: &mut SweepReport) {
+        let storage = self.service.storage().clone();
+        let mut cursor = None;
+        loop {
+            let page = match storage
+                .identified_works_missing_image_source(ImageSource::Provider, SWEEP_PAGE, cursor)
+                .await
+            {
+                Ok(page) => page,
+                Err(error) => {
+                    tracing::warn!(%error, "artwork sweep listing failed");
+                    return;
+                }
+            };
+            for work in &page.items {
+                if backed_off(&self.art_backoff, work.id) {
+                    continue;
+                }
+                match self.service.backfill_artwork(work).await {
+                    Ok(0) => park(&self.art_backoff, work.id),
+                    Ok(written) => report.artwork_written += written,
+                    Err(error) => {
+                        tracing::warn!(work = %work.id, %error, "artwork backfill failed");
+                        park(&self.art_backoff, work.id);
+                    }
+                }
+            }
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => return,
+            }
+        }
+    }
+}
+
+fn backed_off(map: &std::sync::Mutex<HashMap<WorkId, Instant>>, work: WorkId) -> bool {
+    let Ok(mut map) = map.lock() else {
+        return false;
+    };
+    match map.get(&work) {
+        Some(until) if *until > Instant::now() => true,
+        Some(_) => {
+            map.remove(&work);
+            false
+        }
+        None => false,
+    }
+}
+
+fn park(map: &std::sync::Mutex<HashMap<WorkId, Instant>>, work: WorkId) {
+    if let Ok(mut map) = map.lock() {
+        map.insert(work, Instant::now() + FAILURE_BACKOFF);
+    }
+}

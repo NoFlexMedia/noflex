@@ -1,0 +1,13 @@
+[package]
+name = "noflex-fixture-notifier"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Test fixture WASM plugin for noflex-plugin-host's domain-event dispatcher tests"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { workspace = true }

@@ -1,0 +1,14 @@
+manifest_version = 1
+plugin_id = "tmdb"
+display_name = "The Movie Database"
+version = "0.0.1"
+noflex_api_version = "0.8"
+hooks = ["metadata", "image"]
+capabilities = ["http.egress", "secrets.read"]
+http_egress_hosts = ["api.themoviedb.org", "image.tmdb.org"]
+secrets_read = ["api_key"]
+license = "AGPL-3.0-only"
+
+[priority]
+metadata = 100
+image    = 80

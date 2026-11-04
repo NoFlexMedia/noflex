@@ -10,14 +10,39 @@
   import Television from "phosphor-svelte/lib/Television";
   import { cache, graphql } from "$houdini";
   import { accessClaims, deviceName } from "$lib/api.js";
+  import { deviceId } from "$lib/device.js";
   import { date } from "$lib/format.js";
   import { refetch, request } from "$lib/graphql.js";
   import { logout } from "$lib/session.svelte.js";
   import { attempt, confirmAction, poll, toast } from "$lib/ui.svelte.js";
   import Dialog from "$components/ui/Dialog.svelte";
+  import Select from "$components/ui/Select.svelte";
   import { ago } from "./relative.js";
 
   let { account } = $props();
+
+  const updateDevice = graphql(`
+    mutation UpdateDeviceSmart($id: ID!, $smart: Boolean, $limit: Int, $clear: Boolean) {
+      updateDevice(id: $id, smartTranscode: $smart, maxBitrateBps: $limit, clearMaxBitrate: $clear) { id name smartTranscode maxBitrateBps lastSeenAt }
+    }
+  `);
+  const removeDevice = graphql(`
+    mutation RemoveDevice($id: ID!) { removeDevice(id: $id) }
+  `);
+  const QUALITY = [
+    { value: "", label: "Best it can play" },
+    { value: "20000000", label: "Up to 20 Mbps" },
+    { value: "8000000", label: "Up to 8 Mbps" },
+    { value: "4000000", label: "Up to 4 Mbps" },
+  ];
+  const thisDevice = deviceId();
+  let devices = $derived($account.data?.myDevices ?? []);
+  const setSmart = (device, smart) => attempt(() => updateDevice.mutate({ id: device.id, smart }), smart ? `Preparing titles for ${device.name} while the server is idle` : "Stopped preparing titles for this device");
+  const setLimit = (device, value) => attempt(() => updateDevice.mutate(value ? { id: device.id, limit: Number(value) } : { id: device.id, clear: true }), "Quality limit saved");
+  async function forget(device) {
+    if (!(await confirmAction({ title: `Forget “${device.name}”?`, message: "The server stops preparing titles for it. It registers again the next time it signs in.", confirmLabel: "Forget device", danger: true }))) return;
+    if (await attempt(() => removeDevice.mutate({ id: device.id }), "Device forgotten")) { cache.get("Device", { id: device.id }).delete(); refetch(account); }
+  }
 
   const revokeSession = graphql(`
     mutation RevokeSession($id: ID!) { revokeSession(id: $id) }
@@ -145,6 +170,28 @@
     <section class="panel wide" style:--i={0}>
       <header class="panel-head">
         <span class="panel-icon"><Devices size={19} /></span>
+        <div><h2>Smart transcoding</h2><p>The server can prepare what you’re likely to watch next while it’s idle, so playback starts without a live transcode</p></div>
+      </header>
+      {#if devices.length}
+        <ul class="smart-devices">
+          {#each devices as device (device.id)}
+            <li>
+              <label class="toggle"><input type="checkbox" class="switch" checked={device.smartTranscode} onchange={(event) => setSmart(device, event.currentTarget.checked)} /><span><strong>{device.name}{#if device.id === thisDevice} <small class="faint">· this device</small>{/if}</strong><small>Last seen {ago(device.lastSeenAt)}</small></span></label>
+              <div class="smart-actions">
+                <Select value={device.maxBitrateBps ? String(device.maxBitrateBps) : ""} items={QUALITY} label="Quality limit for {device.name}" onchange={(value) => setLimit(device, value)} />
+                {#if device.id !== thisDevice}<button class="btn ghost sm" onclick={() => forget(device)}>Forget</button>{/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="faint">This device registers itself once it has measured what it can play.</p>
+      {/if}
+    </section>
+
+    <section class="panel wide" style:--i={0}>
+      <header class="panel-head">
+        <span class="panel-icon"><Devices size={19} /></span>
         <div><h2>Signed-in devices</h2><p>{sessions.length} active {sessions.length === 1 ? "session" : "sessions"}</p></div>
         <span class="spacer"></span>
         {#if others.length}<button class="btn ghost sm" onclick={revokeOthers}>Sign out all others</button>{/if}
@@ -243,6 +290,9 @@
 </Dialog>
 
 <style>
+  .smart-devices { display: grid; gap: 14px; list-style: none; margin: 0; padding: 0; }
+  .smart-devices li { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; justify-content: space-between; }
+  .smart-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 18px; align-items: start; }
   .wide { grid-column: 1 / -1; }
   .row-skel { height: 44px; margin-top: 12px; border-radius: 10px; }

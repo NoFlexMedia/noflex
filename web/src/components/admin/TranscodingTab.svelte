@@ -7,13 +7,26 @@
   import Stack from "phosphor-svelte/lib/Stack";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
   import X from "phosphor-svelte/lib/X";
-  import { AdminTranscoderStore } from "$houdini";
+  import { AdminTranscoderStore, graphql } from "$houdini";
   import { failure, fetchQuery, refetch } from "$lib/graphql.js";
+  import { poll } from "$lib/ui.svelte.js";
   import State from "$components/State.svelte";
   import { codec } from "./status/fmt.js";
 
   const transcoder = new AdminTranscoderStore();
   $effect(() => { fetchQuery(transcoder); });
+
+  const versions = graphql(`
+    query AdminOptimizedVersions {
+      optimizedVersions { id variantKey status progress sizeBytes error }
+    }
+  `);
+  $effect(() => { fetchQuery(versions); });
+  $effect(() => poll(() => refetch(versions), 5000));
+  let versionList = $derived($versions.data?.optimizedVersions ?? []);
+  let versionCount = (status) => versionList.filter((version) => version.status === status).length;
+  let preparedGb = $derived(versionList.reduce((total, version) => total + (version.status === "READY" ? version.sizeBytes ?? 0 : 0), 0) / 1024 ** 3);
+  let activeVersions = $derived(versionList.filter((version) => version.status === "RUNNING" || version.status === "FAILED"));
 
   let info = $derived($transcoder.data?.transcoderInfo);
   let onlyAvailable = $state(false);
@@ -67,6 +80,23 @@
         </section>
       {/each}
     </div>
+
+    <section class="panel dense">
+      <header class="panel-head">
+        <span class="panel-icon"><Stack size={18} /></span>
+        <div><h2>Smart transcoding</h2><p>{versionCount("READY")} ready · {preparedGb.toFixed(1)} GB · {versionCount("QUEUED")} queued</p></div>
+      </header>
+      {#if activeVersions.length}
+        <ul class="versions">
+          {#each activeVersions as version (version.id)}
+            <li>
+              <code>{version.variantKey}</code>
+              {#if version.status === "RUNNING"}<span>{Math.round(version.progress * 100)}%</span>{:else}<span class="failed"><WarningCircle size={15} />{version.error ?? "Failed"}</span>{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
 
     <section class="panel dense">
       <header class="panel-head">
@@ -140,6 +170,10 @@
 {/if}
 
 <style>
+  .versions { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; font-size: 0.86rem; }
+  .versions li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; }
+  .versions code { overflow-wrap: anywhere; }
+  .versions .failed { display: inline-flex; align-items: center; gap: 6px; color: var(--danger); }
   .tall { height: 220px; }
   .error { display: flex; align-items: flex-start; gap: 8px; color: var(--danger); font-size: 0.86rem; margin-bottom: 14px; }
   .error.warn { color: var(--warning); }

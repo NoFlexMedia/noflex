@@ -22,6 +22,8 @@ pub mod ffmpeg_argv;
 pub mod hls;
 pub mod hwdetect;
 pub mod job;
+pub mod optimize;
+pub mod package;
 pub mod probe;
 pub mod reasons;
 pub mod spawn;

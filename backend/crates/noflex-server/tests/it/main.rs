@@ -9,7 +9,6 @@
 
 mod channel_logos;
 mod download;
-#[cfg(unix)]
 mod episode_thumbs;
 mod external_auth;
 mod fixtures;
@@ -17,9 +16,9 @@ mod graphql_ws;
 mod images;
 mod library_watchers;
 mod live_tv_dvr;
+mod optimize;
 mod plugin_lifecycle;
 mod plugin_links;
 mod restrictions;
 mod stream;
-#[cfg(unix)]
 mod trickplay;

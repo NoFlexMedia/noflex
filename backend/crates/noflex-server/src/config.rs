@@ -66,6 +66,43 @@ pub struct TranscoderConfig {
     pub hwaccel: HwAccel,
     pub fallback: TranscodeFallback,
     pub ladder: Vec<LadderEntry>,
+    pub optimize: OptimizeConfig,
+}
+
+/// Preparing versions ahead of time for registered devices.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizeConfig {
+    pub enabled: bool,
+    /// Finished versions; unset means `optimized/` under `data_dir`.
+    pub dir: Option<PathBuf>,
+    pub max_storage_gb: u64,
+    /// Jobs start only below this much CPU use. They also wait for playback
+    /// to end, whatever this says.
+    pub max_cpu_percent: f32,
+    /// How often to work out what's likely to be watched next.
+    pub plan_interval_secs: u64,
+    /// Episodes to prepare beyond each next episode.
+    pub lookahead_episodes: u32,
+    /// Top recommendations to prepare.
+    pub recommendations: u32,
+    /// Codecs to encode to, preferred first; a device gets the first it
+    /// decodes.
+    pub encode_video: Vec<noflex_core::VideoCodec>,
+}
+
+impl Default for OptimizeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            dir: None,
+            max_storage_gb: 200,
+            max_cpu_percent: 40.0,
+            plan_interval_secs: 900,
+            lookahead_episodes: 3,
+            recommendations: 5,
+            encode_video: vec![noflex_core::VideoCodec::H265, noflex_core::VideoCodec::H264],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -173,6 +210,7 @@ impl Default for Config {
                     container: "mp4".to_string(),
                     bitrate_kbps: 8000,
                 }],
+                optimize: OptimizeConfig::default(),
             },
             plugin: PluginConfig {
                 search_path: default_search_path(),
@@ -270,6 +308,28 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("LOG_FILE", "log.file"),
     ("TRANSCODER_HWACCEL", "transcoder.hwaccel"),
     ("TRANSCODER_FALLBACK", "transcoder.fallback"),
+    ("TRANSCODER_OPTIMIZE_ENABLED", "transcoder.optimize.enabled"),
+    ("TRANSCODER_OPTIMIZE_DIR", "transcoder.optimize.dir"),
+    (
+        "TRANSCODER_OPTIMIZE_MAX_STORAGE_GB",
+        "transcoder.optimize.max_storage_gb",
+    ),
+    (
+        "TRANSCODER_OPTIMIZE_MAX_CPU_PERCENT",
+        "transcoder.optimize.max_cpu_percent",
+    ),
+    (
+        "TRANSCODER_OPTIMIZE_PLAN_INTERVAL_SECS",
+        "transcoder.optimize.plan_interval_secs",
+    ),
+    (
+        "TRANSCODER_OPTIMIZE_LOOKAHEAD_EPISODES",
+        "transcoder.optimize.lookahead_episodes",
+    ),
+    (
+        "TRANSCODER_OPTIMIZE_RECOMMENDATIONS",
+        "transcoder.optimize.recommendations",
+    ),
     ("PLUGIN_ASSETS_DIR", "plugin.assets_dir"),
     ("SCANNER_DEBOUNCE_MS", "scanner.debounce_ms"),
     ("SCANNER_CONCURRENCY", "scanner.concurrency"),

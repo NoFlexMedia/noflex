@@ -27,15 +27,19 @@ use noflex_core::{
 };
 use noflex_graphql::{
     ActiveStreamRecord, PlaybackRouteKind, PlaybackSession, PlaybackSessionService, PlaybackStart,
-    SubtitleDelivery, TranscodeProgress,
+    SmartDownloadFile, SubtitleDelivery, TranscodeProgress,
 };
-use noflex_storage::{Storage, domain::MediaFile};
+use noflex_storage::{
+    Storage,
+    domain::{MediaFile, OptimizedVersion, OptimizedVersionStatus},
+};
 use noflex_transcoder::{
     AudioPlan, ClientCapabilities, DecideOptions, EncodedVideo, Encoder, FfmpegJobManager,
     HlsSegmentContainer, HwBackend, JobHandle, JobStatus, LadderEntry, PlaybackDecisionInfo,
     PlaybackRoute, PlaylistType, SegmentConfig, SubtitleBurnSource, TranscodeInput,
     TranscodeJobRegistry, TranscodePlan, TranscodeReasons, TranscodeRequest, Transcoder, VideoPlan,
-    decide, hls::HlsVariant, probe::ProbeReport, scaled_bitrate_kbps, subtitles,
+    decide, hls::HlsVariant, optimize::version_plays, probe::ProbeReport, scaled_bitrate_kbps,
+    subtitles,
 };
 use time::OffsetDateTime;
 use tokio::io::AsyncReadExt;
@@ -533,6 +537,34 @@ pub trait PlaybackJobAuthorizer: Send + Sync {
 }
 
 impl ServerPlaybackSessions {
+    /// A ready version of `media` that `capabilities` can play without any
+    /// re-encoding. A version of an older copy of the file doesn't count.
+    async fn playable_version(
+        &self,
+        media: &MediaFile,
+        capabilities: &ClientCapabilities,
+    ) -> anyhow::Result<Option<OptimizedVersion>> {
+        let mut playable = self
+            .storage
+            .optimized_versions_for_media(media.id)
+            .await?
+            .into_iter()
+            .filter(|version| {
+                version.status == OptimizedVersionStatus::Ready
+                    && version.source_size == media.size_bytes
+                    && version.source_mtime == media.mtime
+                    && version
+                        .probe
+                        .clone()
+                        .and_then(|probe| serde_json::from_value::<ProbeReport>(probe).ok())
+                        .is_some_and(|probe| version_plays(&probe, capabilities))
+            })
+            .collect::<Vec<_>>();
+        // The largest is the highest quality this client can play.
+        playable.sort_by_key(|version| std::cmp::Reverse(version.size_bytes));
+        Ok(playable.into_iter().next())
+    }
+
     pub fn new(
         storage: Arc<dyn Storage>,
         transcoder: Arc<FfmpegJobManager>,
@@ -1041,8 +1073,30 @@ impl PlaybackSessionService for ServerPlaybackSessions {
             decision: PlaybackDecisionInfo::new(&probe, &decision, Encoder::Software264, None),
             job: None,
         };
-        let session = match &decision.route {
-            PlaybackRoute::Direct => {
+        // Burned-in subtitles are the one thing a prepared version can't offer.
+        let prepared = match (&decision.route, &burn_source) {
+            (PlaybackRoute::Transcoding { .. }, None) => {
+                self.playable_version(&media, &capabilities).await?
+            }
+            _ => None,
+        };
+        let session = match (&decision.route, prepared) {
+            (_, Some(version)) => {
+                let session_id = uuid::Uuid::now_v7().to_string();
+                let token = self.media_token(user, login, &format!("optimized:{}", version.id))?;
+                active.decision.route = PlaybackRouteKind::Optimized;
+                self.register(session_id.clone(), active.clone()).await;
+                PlaybackSession {
+                    session_id: ID::from(session_id),
+                    route: PlaybackRouteKind::Optimized,
+                    url: format!("/optimized/{}/master.m3u8?token={token}", version.id),
+                    job_id: None,
+                    start_position_ms: 0,
+                    decision: active.decision,
+                    subtitles,
+                }
+            }
+            (PlaybackRoute::Direct, None) => {
                 let session_id = uuid::Uuid::now_v7().to_string();
                 let token = self.media_token(user, login, &format!("file:{media_file_id}"))?;
                 self.register(session_id.clone(), active.clone()).await;
@@ -1056,7 +1110,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                     subtitles,
                 }
             }
-            PlaybackRoute::Transcoding { plan, reasons } => {
+            (PlaybackRoute::Transcoding { plan, reasons }, None) => {
                 self.reserve_transcode(user, policy.max_concurrent_transcodes)
                     .await?;
                 let (encoder, encoded, ladder) = match plan.video {
@@ -1260,6 +1314,43 @@ impl PlaybackSessionService for ServerPlaybackSessions {
         }
     }
 
+    async fn smart_download(
+        &self,
+        user: UserId,
+        login: Option<SessionId>,
+        media: &MediaFile,
+        capabilities: &ClientCapabilities,
+    ) -> anyhow::Result<Option<SmartDownloadFile>> {
+        let Ok(probe) = serde_json::from_value::<ProbeReport>(media.probe.0.clone()) else {
+            return Ok(None);
+        };
+        let decision = decide(&probe, capabilities, &self.decide_options(false));
+        let (url, size_bytes, optimized) = if matches!(decision.route, PlaybackRoute::Direct) {
+            let token = self.media_token(user, login, &format!("file:{}", media.id))?;
+            (
+                format!("/stream/{}/file?token={token}", media.id),
+                media.size_bytes,
+                false,
+            )
+        } else {
+            let Some(version) = self.playable_version(media, capabilities).await? else {
+                return Ok(None);
+            };
+            let token = self.media_token(user, login, &format!("optimized:{}", version.id))?;
+            (
+                format!("/optimized/{}/file?token={token}", version.id),
+                version.size_bytes.unwrap_or(0),
+                true,
+            )
+        };
+        Ok(Some(SmartDownloadFile {
+            url,
+            size_bytes,
+            optimized,
+            subtitles: self.subtitle_deliveries(user, login, media, capabilities)?,
+        }))
+    }
+
     async fn active_streams(&self) -> anyhow::Result<Vec<ActiveStreamRecord>> {
         self.prune().await;
         let sessions: Vec<(String, ActiveSession)> = self
@@ -1361,7 +1452,21 @@ fn pick_ladder(
 /// VideoToolbox and MediaFoundation have no AV1 encoder, so AV1
 /// falls back to software there; codecs outside h264/hevc/av1 have
 /// no hardware mapping at all and always encode as software h264.
-fn pick_encoder(backend: HwBackend, codec: VideoCodec) -> Encoder {
+/// `configured` in the transcoder crate's shape.
+pub(crate) fn runtime_ladder(configured: &[crate::config::LadderEntry]) -> Vec<LadderEntry> {
+    configured
+        .iter()
+        .map(|entry| LadderEntry {
+            max_height: entry.max_height,
+            video_codec: entry.video_codec,
+            audio_codec: entry.audio_codec,
+            container: entry.container.clone(),
+            bitrate_kbps: entry.bitrate_kbps,
+        })
+        .collect()
+}
+
+pub(crate) fn pick_encoder(backend: HwBackend, codec: VideoCodec) -> Encoder {
     match backend {
         HwBackend::Software => software_for(codec),
         HwBackend::Vaapi => match codec {

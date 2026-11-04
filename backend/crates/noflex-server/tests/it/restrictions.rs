@@ -387,6 +387,7 @@ fn config() -> Arc<TranscoderConfig> {
     Arc::new(TranscoderConfig {
         hwaccel: HwAccel::None,
         fallback: TranscodeFallback::Auto,
+        optimize: Default::default(),
         ladder: vec![ladder(480, 2_000), ladder(720, 4_000), ladder(1080, 8_000)],
     })
 }
@@ -428,6 +429,7 @@ fn router(
         transcode_cache_dir: fixture.root.path().join("jobs"),
         image_cache_dir: fixture.root.path().join("image"),
         recordings_dir: fixture.root.path().join("recordings"),
+        optimized_dir: fixture.root.path().join("optimized"),
     })
 }
 

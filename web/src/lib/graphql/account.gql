@@ -3,6 +3,7 @@
 query Account {
   preferences @list(name: "Preferences") { userId key value updatedAt }
   apiKeys @list(name: "ApiKeys") { id userId name createdAt revokedAt }
+  myDevices { id name smartTranscode maxBitrateBps lastSeenAt }
   mySessions { id userId client device deviceId appVersion remoteAddr createdAt lastSeenAt expiresAt }
   myRestrictions { userId allowedParentalRatingIds allowUnrated maxStreamBitrateBps maxConcurrentTranscodes }
   myExternalIdentities { pluginId issuer subject userId username displayName email linkedAt }

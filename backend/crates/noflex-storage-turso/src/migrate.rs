@@ -34,6 +34,10 @@ pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
         "0006_library_content_category.sql",
         include_str!("../migrations/0006_library_content_category.sql"),
     ),
+    (
+        "0007_smart_transcoding.sql",
+        include_str!("../migrations/0007_smart_transcoding.sql"),
+    ),
 ];
 
 const META_KEY_PREFIX: &str = "migration:";

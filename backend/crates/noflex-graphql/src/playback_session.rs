@@ -107,6 +107,15 @@ pub struct ActiveStream {
     pub transcode: Option<TranscodeProgress>,
 }
 
+/// See [`PlaybackSessionService::smart_download`].
+#[derive(Debug, Clone)]
+pub struct SmartDownloadFile {
+    pub url: String,
+    pub size_bytes: u64,
+    pub optimized: bool,
+    pub subtitles: Vec<SubtitleDelivery>,
+}
+
 /// What a client asks [`PlaybackSessionService::start`] for.
 #[derive(Debug, Clone)]
 pub struct PlaybackStart {
@@ -168,4 +177,19 @@ pub trait PlaybackSessionService: Send + Sync {
 
     /// Every session still active, idle ones pruned first.
     async fn active_streams(&self) -> anyhow::Result<Vec<ActiveStreamRecord>>;
+
+    /// What a device with `capabilities` should download for `media`: the file
+    /// itself when it plays directly, otherwise a ready optimized version it can
+    /// play. `None` when neither exists yet. The URL's media token is bound to
+    /// `login`, as for playback.
+    async fn smart_download(
+        &self,
+        user: UserId,
+        login: Option<SessionId>,
+        media: &noflex_storage::domain::MediaFile,
+        capabilities: &ClientCapabilities,
+    ) -> anyhow::Result<Option<SmartDownloadFile>> {
+        let _ = (user, login, media, capabilities);
+        Ok(None)
+    }
 }

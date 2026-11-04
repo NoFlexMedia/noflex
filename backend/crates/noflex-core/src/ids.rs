@@ -62,6 +62,14 @@ typed_id!(
 typed_id!(MediaFileId, "Identifier for a physical media file on disk.");
 typed_id!(UserId, "Identifier for a user account.");
 typed_id!(
+    DeviceId,
+    "Identifier for a registered client device, chosen by the client so it survives sign-outs."
+);
+typed_id!(
+    OptimizedVersionId,
+    "Identifier for a prepared copy of a media file, derived from it and never a media file itself."
+);
+typed_id!(
     LibraryId,
     "Identifier for a library (a configured root of media)."
 );

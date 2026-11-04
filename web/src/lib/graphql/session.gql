@@ -19,6 +19,10 @@ query Libraries @cache(policy: CacheOnly) {
   libraries @list(name: "Libraries") { ...LibraryFields }
 }
 
+mutation RegisterDevice($id: ID!, $name: String!, $capabilities: ClientCapabilities!) {
+  registerDevice(id: $id, name: $name, capabilities: $capabilities) { id }
+}
+
 mutation Login($username: String!, $password: String!, $device: String!) {
   login(username: $username, password: $password, client: "NoFlex Web", device: $device) { token refreshToken }
 }

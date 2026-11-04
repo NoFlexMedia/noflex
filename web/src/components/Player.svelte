@@ -17,12 +17,13 @@
   import SkipForward from "phosphor-svelte/lib/SkipForward";
   import Stack from "phosphor-svelte/lib/Stack";
   import Subtitles from "phosphor-svelte/lib/Subtitles";
+  import Translate from "phosphor-svelte/lib/Translate";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
   import X from "phosphor-svelte/lib/X";
   import { Slider } from "bits-ui";
   import { CachePolicy, ControlWatchRoomStore, MarkPlayedStore, MediaFilesStore, ReportProgressStore, StopPlaybackStore, WatchRoomEventsStore, WatchRoomStore } from "$houdini";
   import { reportOnExit } from "$lib/api.js";
-  import { timecode } from "$lib/format.js";
+  import { languageName, timecode } from "$lib/format.js";
   import { request, writeUserData } from "$lib/graphql.js";
   import { onReconnect } from "$lib/live.js";
   import { closePlayer, nextSibling, player, playWork, restartSession, stopSession } from "$lib/playback.svelte.js";
@@ -37,6 +38,9 @@
   let root = $state();
   let video = $state();
   let hls = null;
+  // Only prepared versions offer these: a live transcode carries one track.
+  let audioTracks = $state([]);
+  let audioTrack = $state(-1);
   let current = $state(0);
   let duration = $state(0);
   let buffered = $state(0);
@@ -121,7 +125,7 @@
     // Prefer hls.js wherever MSE exists: it retries playlists the transcoder
     // hasn't finished writing, which native HLS (Safari, newer Chrome) won't.
     const native = video.canPlayType("application/vnd.apple.mpegurl");
-    if (playback.route === "TRANSCODE") {
+    if (playback.route !== "DIRECT") {
       import("hls.js").then(({ default: Hls }) => {
         if (disposed) return;
         if (!Hls.isSupported()) {
@@ -135,6 +139,8 @@
         hls.loadSource(url);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+        hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_event, data) => { audioTracks = data.audioTracks.map((track) => ({ id: track.id, label: languageName(track.lang) || track.name })); });
+        hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_event, data) => { audioTrack = data.id; });
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (!data.fatal) return;
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
@@ -150,6 +156,8 @@
       disposed = true;
       hls?.destroy();
       hls = null;
+      audioTracks = [];
+      audioTrack = -1;
       video?.removeAttribute("src");
       video?.load();
     };
@@ -539,7 +547,7 @@
       <strong>{playback.title}</strong>
       {#if playback.subtitle || playback.room}<small>{#if playback.room}<span class="dot live"></span>Watch room · {playback.room.isHost ? "you’re hosting" : "synced to host"}{#if playback.subtitle} · {/if}{/if}{playback.subtitle ?? ""}</small>{/if}
     </div>
-    <button class="route" aria-pressed={infoOpen} aria-label="Playback info" onclick={() => (infoOpen = !infoOpen)}>{playback.route === "TRANSCODE" ? "Adaptive" : "Direct"}</button>
+    <button class="route" aria-pressed={infoOpen} aria-label="Playback info" onclick={() => (infoOpen = !infoOpen)}>{playback.route === "TRANSCODE" ? "Adaptive" : playback.route === "OPTIMIZED" ? "Optimized" : "Direct"}</button>
   </header>
 
   {#if infoOpen}
@@ -622,6 +630,13 @@
           {#snippet trigger(props)}<button {...props} class="ctl" aria-label="Chapters"><Stack size={20} /></button>{/snippet}
           <div class="nf-menu-label">Chapters</div>
           {#each chapters as chapter, index}<MenuItem onSelect={() => seekTo(chapter.positionMs / 1000)} hint={timecode(chapter.positionMs)}>{chapter.title || `Chapter ${index + 1}`}</MenuItem>{/each}
+        </Menu>
+      {/if}
+      {#if audioTracks.length > 1}
+        <Menu portal={root} side="top" width={220}>
+          {#snippet trigger(props)}<button {...props} class="ctl" aria-label="Audio language"><Translate size={20} /></button>{/snippet}
+          <div class="nf-menu-label">Audio</div>
+          {#each audioTracks as track (track.id)}<MenuItem icon={audioTrack === track.id ? Check : null} onSelect={() => { if (hls) hls.audioTrack = track.id; }}>{track.label}</MenuItem>{/each}
         </Menu>
       {/if}
       {#if (delivered.length || burnable.length) && !isGuest}

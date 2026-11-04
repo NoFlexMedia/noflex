@@ -4,24 +4,24 @@ use std::future::Future;
 
 use async_trait::async_trait;
 use noflex_core::{
-    ApiKeyId, ChannelId, CollectionId, DevicePinId, EditionId, EmbeddingTarget, EpgProgramId,
-    ExportJobId, ExternalIdKind, ImageKind, LibraryId, LiveTvSourceId, MediaFileId, PlaySessionId,
-    PlayTarget, PlaylistId, RecordingId, RecordingScheduleId, SessionId, TagId, TagTarget, UserId,
-    WatchRoomId, WorkId, WorkKind,
+    ApiKeyId, ChannelId, CollectionId, DeviceId, DevicePinId, EditionId, EmbeddingTarget,
+    EpgProgramId, ExportJobId, ExternalIdKind, ImageKind, LibraryId, LiveTvSourceId, MediaFileId,
+    OptimizedVersionId, PlaySessionId, PlayTarget, PlaylistId, RecordingId, RecordingScheduleId,
+    SessionId, TagId, TagTarget, UserId, WatchRoomId, WorkId, WorkKind,
 };
 use time::OffsetDateTime;
 use tokio::io::AsyncWrite;
 
 use crate::{
     domain::{
-        ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount, DevicePin, Edition,
-        EpgProgram, ExportJob, ExportJobStatus, ExternalIdentity, HistoryPage, Image, ImageSource,
-        ImageTarget, IntroMarkers, Library, LiveTvChannel, LiveTvSource, MediaFile, PlaySession,
-        Playlist, PluginOverrideRow, PluginTaskPayload, PluginTaskState, Recording,
-        RecordingSchedule, RecordingStatus, RefreshTokenLookup, ScanEvent, Session, Tag,
-        TagAssignment, TagSummary, TrickplayAsset, User, UserData, UserPluginSecret,
-        UserPreference, UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork,
-        Work, WorkFeatures,
+        ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount, Device, DevicePin,
+        Edition, EpgProgram, ExportJob, ExportJobStatus, ExternalIdentity, HistoryPage, Image,
+        ImageSource, ImageTarget, IntroMarkers, Library, LiveTvChannel, LiveTvSource, MediaFile,
+        OptimizedVersion, PlaySession, Playlist, PluginOverrideRow, PluginTaskPayload,
+        PluginTaskState, Recording, RecordingSchedule, RecordingStatus, RefreshTokenLookup,
+        ScanEvent, Session, Tag, TagAssignment, TagSummary, TrickplayAsset, User, UserData,
+        UserPluginSecret, UserPreference, UserRestrictions, WatchRoom, WatchRoomMember,
+        WatchRoomState, WatchedWork, Work, WorkFeatures,
     },
     error::StorageResult,
     query::{
@@ -405,6 +405,50 @@ pub trait Storage: Send + Sync + 'static {
         active_since: OffsetDateTime,
         limit: u32,
     ) -> StorageResult<Vec<Work>>;
+
+    /// Up to `limit` regular episodes of `series` after season `season` and
+    /// episode `number`, in viewing order; pass `(0, 0)` for the first ones.
+    /// Specials are never included.
+    async fn episodes_after(
+        &self,
+        series: WorkId,
+        season: i32,
+        number: i32,
+        limit: u32,
+    ) -> StorageResult<Vec<Work>>;
+
+    /// Register or refresh a device. A device id already registered to another
+    /// user is [`StorageError::NotFound`][crate::error::StorageError::NotFound]
+    /// and changes nothing; `created_at` of an existing device is kept.
+    async fn upsert_device(&self, device: &Device) -> StorageResult<()>;
+    async fn get_device(&self, id: DeviceId) -> StorageResult<Option<Device>>;
+    async fn devices_for_user(&self, user: UserId) -> StorageResult<Vec<Device>>;
+    /// Devices with smart transcoding or smart downloads on, across users.
+    async fn devices_wanting_versions(&self) -> StorageResult<Vec<Device>>;
+    /// Whether `user` had such a device to remove.
+    async fn delete_device(&self, user: UserId, id: DeviceId) -> StorageResult<bool>;
+
+    /// Queue a version, or re-prioritize one that's still waiting. A version
+    /// of the same media file and key in any other state is left alone.
+    async fn enqueue_optimized_version(&self, version: &OptimizedVersion) -> StorageResult<()>;
+    async fn get_optimized_version(
+        &self,
+        id: OptimizedVersionId,
+    ) -> StorageResult<Option<OptimizedVersion>>;
+    async fn optimized_versions_for_media(
+        &self,
+        media: MediaFileId,
+    ) -> StorageResult<Vec<OptimizedVersion>>;
+    async fn list_optimized_versions(&self) -> StorageResult<Vec<OptimizedVersion>>;
+    /// Move the most urgent queued version to running and return it, counting
+    /// the attempt. `None` when nothing is queued.
+    async fn claim_optimized_version(&self) -> StorageResult<Option<OptimizedVersion>>;
+    /// Save a version's mutable fields.
+    async fn update_optimized_version(&self, version: &OptimizedVersion) -> StorageResult<()>;
+    async fn delete_optimized_version(&self, id: OptimizedVersionId) -> StorageResult<()>;
+    /// Return running versions to the queue, for after a restart: nothing can
+    /// still be working on them. Returns how many moved.
+    async fn requeue_running_optimized_versions(&self) -> StorageResult<u64>;
 
     /// The categories with at least one top-level work, in
     /// [`ContentCategory::ALL`][crate::domain::ContentCategory::ALL] order.

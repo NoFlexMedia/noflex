@@ -22,6 +22,9 @@ use crate::{
 pub enum PlaybackRouteKind {
     Direct,
     Transcode,
+    /// HLS over a version prepared ahead of time: no job to manage, and seeking
+    /// is ordinary, with no restart.
+    Optimized,
 }
 
 /// The per-stream shape of the work done.

@@ -409,6 +409,26 @@ async fn main() -> anyhow::Result<()> {
             .with_events(export_events.clone()),
     );
     let _download_handle = download_worker.spawn();
+    let optimized_dir = cfg
+        .transcoder
+        .optimize
+        .dir
+        .clone()
+        .unwrap_or_else(|| cfg.data_dir.join("optimized"));
+    std::fs::create_dir_all(&optimized_dir)
+        .with_context(|| format!("create optimized dir {}", optimized_dir.display()))?;
+    let _optimize_worker = Arc::new(noflex_server::optimize_worker::OptimizeWorker {
+        storage: storage.clone(),
+        playback: playback_sessions.clone(),
+        plugins: Some(plugin_registry.clone()),
+        config: cfg.transcoder.optimize.clone(),
+        ladder: cfg.transcoder.ladder.clone(),
+        ffmpeg_path: ffmpeg_path.clone(),
+        backend: resolved_hwaccel,
+        vaapi_device: hw_detect.vaapi_device.clone(),
+        dir: optimized_dir.clone(),
+    })
+    .spawn();
     let recordings_dir = cfg.data_dir.join("recordings");
     std::fs::create_dir_all(&recordings_dir)
         .with_context(|| format!("create recordings dir {}", recordings_dir.display()))?;
@@ -421,6 +441,7 @@ async fn main() -> anyhow::Result<()> {
             transcode_cache_dir: transcode_dir,
             image_cache_dir,
             recordings_dir,
+            optimized_dir,
         },
     );
     let state = AppState {

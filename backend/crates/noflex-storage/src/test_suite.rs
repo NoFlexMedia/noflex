@@ -74,6 +74,9 @@ where
     work_embeddings_round_trip(store).await;
     content_categories_split_by_kind_and_anime(store).await;
     work_features_collect_comparison_facts(store).await;
+    episodes_after_lists_regular_episodes_in_order(store).await;
+    devices_belong_to_their_user(store).await;
+    optimized_versions_queue_by_priority(store).await;
     tag_namespace_uniqueness(store).await;
     tag_assign_unassign(store).await;
     tag_assignments_carry_source_and_weight(store).await;
@@ -3133,6 +3136,260 @@ async fn work_features_collect_comparison_facts<S: Storage + ?Sized>(store: &S) 
     store.delete_user(user.id).await.ok();
     store.delete_library(library.id).await.ok();
     store.delete_library(hidden_library.id).await.ok();
+}
+
+async fn episodes_after_lists_regular_episodes_in_order<S: Storage + ?Sized>(store: &S) {
+    let library = test_library("Episodes After Lib");
+    store.upsert_library(&library).await.expect("library");
+    let show = ContinueSeries::create(store, library.id, "Show").await;
+    show.episode(store, 0, 1).await;
+    let s1e1 = show.episode(store, 1, 1).await;
+    let s1e2 = show.episode(store, 1, 2).await;
+    let s2e1 = show.episode(store, 2, 1).await;
+
+    let ids = |works: Vec<Work>| works.into_iter().map(|work| work.id).collect::<Vec<_>>();
+    assert_eq!(
+        ids(store
+            .episodes_after(show.series, 0, 0, 10)
+            .await
+            .expect("from the start")),
+        [s1e1, s1e2, s2e1],
+        "specials are left out"
+    );
+    assert_eq!(
+        ids(store
+            .episodes_after(show.series, 1, 2, 1)
+            .await
+            .expect("across seasons")),
+        [s2e1]
+    );
+
+    store.delete_library(library.id).await.ok();
+}
+
+fn make_device(user: UserId, name: &str) -> crate::domain::Device {
+    let now = OffsetDateTime::now_utc();
+    crate::domain::Device {
+        id: noflex_core::DeviceId::new(),
+        user_id: user,
+        name: name.to_string(),
+        capabilities: async_graphql::Json(serde_json::json!({"max_height": 1080})),
+        smart_transcode: false,
+        max_bitrate_bps: None,
+        allowed_video_codecs: Vec::new(),
+        smart_downloads: false,
+        download_budget_bytes: None,
+        downloads_wifi_only: true,
+        created_at: now,
+        last_seen_at: now,
+    }
+}
+
+async fn devices_belong_to_their_user<S: Storage + ?Sized>(store: &S) {
+    let owner = make_user("device-owner", false);
+    let other = make_user("device-other", false);
+    store.upsert_user(&owner).await.expect("owner");
+    store.upsert_user(&other).await.expect("other");
+
+    let mut device = make_device(owner.id, "Phone");
+    store.upsert_device(&device).await.expect("register");
+    let registered = store
+        .get_device(device.id)
+        .await
+        .expect("get")
+        .expect("device")
+        .created_at;
+
+    device.smart_transcode = true;
+    device.max_bitrate_bps = Some(8_000_000);
+    device.allowed_video_codecs = vec![noflex_core::VideoCodec::H264];
+    device.created_at = registered + time::Duration::days(1);
+    store.upsert_device(&device).await.expect("refresh");
+    let found = store
+        .get_device(device.id)
+        .await
+        .expect("get")
+        .expect("device");
+    assert_eq!(found.max_bitrate_bps, Some(8_000_000));
+    assert_eq!(found.allowed_video_codecs, [noflex_core::VideoCodec::H264]);
+    assert_eq!(found.capabilities.0["max_height"], 1080);
+    assert_eq!(
+        found.created_at, registered,
+        "refreshing keeps the registration date"
+    );
+    assert!(
+        store
+            .devices_wanting_versions()
+            .await
+            .expect("wanting")
+            .iter()
+            .any(|entry| entry.id == device.id)
+    );
+
+    // Another user can't take over the id.
+    let mut stolen = device.clone();
+    stolen.user_id = other.id;
+    stolen.name = "Stolen".to_string();
+    assert!(matches!(
+        store.upsert_device(&stolen).await,
+        Err(StorageError::NotFound)
+    ));
+    assert_eq!(
+        store
+            .get_device(device.id)
+            .await
+            .expect("get")
+            .expect("device")
+            .name,
+        "Phone"
+    );
+    assert!(
+        !store
+            .delete_device(other.id, device.id)
+            .await
+            .expect("delete")
+    );
+    assert_eq!(
+        store.devices_for_user(owner.id).await.expect("list").len(),
+        1
+    );
+    assert!(
+        store
+            .delete_device(owner.id, device.id)
+            .await
+            .expect("delete")
+    );
+
+    store.delete_user(owner.id).await.ok();
+    store.delete_user(other.id).await.ok();
+}
+
+async fn optimized_versions_queue_by_priority<S: Storage + ?Sized>(store: &S) {
+    use crate::domain::{OptimizedVersion, OptimizedVersionStatus};
+
+    let now = OffsetDateTime::now_utc();
+    let library = test_library("Versions Lib");
+    store.upsert_library(&library).await.expect("library");
+    let work = make_work(library.id, "Versions", now);
+    store.upsert_work(&work).await.expect("work");
+    let edition = make_edition(work.id, "Default");
+    store.upsert_edition(&edition).await.expect("edition");
+    let media = make_media(edition.id, "/versions/source.mkv", now);
+    store.upsert_media_file(&media).await.expect("media");
+
+    let version = |key: &str, priority| OptimizedVersion {
+        id: noflex_core::OptimizedVersionId::new(),
+        media_file_id: media.id,
+        variant_key: key.to_string(),
+        status: OptimizedVersionStatus::Queued,
+        priority,
+        plan: serde_json::json!({"key": key}),
+        source_size: 10,
+        source_mtime: now,
+        progress: 0.0,
+        attempts: 0,
+        path: None,
+        size_bytes: None,
+        index: None,
+        probe: None,
+        error: None,
+        created_at: now,
+        finished_at: None,
+        last_used_at: None,
+    };
+    let later = version("later", 2);
+    let sooner = version("sooner", 1);
+    store
+        .enqueue_optimized_version(&later)
+        .await
+        .expect("later");
+    store
+        .enqueue_optimized_version(&sooner)
+        .await
+        .expect("sooner");
+
+    // Re-planning moves a waiting job and doesn't duplicate it.
+    store
+        .enqueue_optimized_version(&version("later", 0))
+        .await
+        .expect("re-plan");
+    assert_eq!(
+        store
+            .optimized_versions_for_media(media.id)
+            .await
+            .expect("list")
+            .len(),
+        2
+    );
+
+    let claimed = store
+        .claim_optimized_version()
+        .await
+        .expect("claim")
+        .expect("queued");
+    assert_eq!(claimed.variant_key, "later", "re-planned to the front");
+    assert_eq!(claimed.status, OptimizedVersionStatus::Running);
+    assert_eq!(claimed.attempts, 1);
+
+    // A restart finds it running with nobody working on it.
+    assert_eq!(
+        store
+            .requeue_running_optimized_versions()
+            .await
+            .expect("requeue"),
+        1
+    );
+    let mut finished = store
+        .claim_optimized_version()
+        .await
+        .expect("claim")
+        .expect("queued");
+    assert_eq!(finished.id, claimed.id);
+    assert_eq!(finished.attempts, 2);
+
+    // Finished versions keep their outputs, and re-planning leaves them be.
+    finished.status = OptimizedVersionStatus::Ready;
+    finished.path = Some("/optimized/out.mp4".to_string());
+    finished.size_bytes = Some(5_000_000_000);
+    finished.index = Some(serde_json::json!({"tracks": []}));
+    finished.probe = Some(serde_json::json!({"video": null}));
+    finished.finished_at = Some(now);
+    finished.last_used_at = Some(now);
+    store
+        .update_optimized_version(&finished)
+        .await
+        .expect("finish");
+    store
+        .enqueue_optimized_version(&version("later", 5))
+        .await
+        .expect("re-plan a finished version");
+    let found = store
+        .get_optimized_version(finished.id)
+        .await
+        .expect("get")
+        .expect("version");
+    assert_eq!(found.status, OptimizedVersionStatus::Ready);
+    assert_eq!(found.priority, 0);
+    assert_eq!(found.size_bytes, Some(5_000_000_000));
+    assert_eq!(found.index, Some(serde_json::json!({"tracks": []})));
+    assert!(found.finished_at.is_some());
+
+    assert_eq!(store.list_optimized_versions().await.expect("all").len(), 2);
+    store
+        .delete_optimized_version(sooner.id)
+        .await
+        .expect("delete");
+    assert_eq!(store.list_optimized_versions().await.expect("all").len(), 1);
+
+    // Versions go with their source.
+    store.delete_library(library.id).await.ok();
+    assert!(
+        store
+            .list_optimized_versions()
+            .await
+            .expect("all")
+            .is_empty()
+    );
 }
 
 async fn watched_top_level_works_roll_up<S: Storage + ?Sized>(store: &S) {

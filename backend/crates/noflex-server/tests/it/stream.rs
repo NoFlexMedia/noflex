@@ -245,6 +245,7 @@ fn test_transcoder_cfg() -> noflex_server::config::TranscoderConfig {
     noflex_server::config::TranscoderConfig {
         hwaccel: noflex_server::config::HwAccel::None,
         fallback: noflex_server::config::TranscodeFallback::Auto,
+        optimize: Default::default(),
         ladder: vec![noflex_server::config::LadderEntry {
             max_height: 480,
             video_codec: VideoCodec::H264,

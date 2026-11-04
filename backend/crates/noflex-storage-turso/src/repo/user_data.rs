@@ -57,6 +57,13 @@ const NEXT_EPISODE: &str = "SELECT e.id, e.added_at \
         AND (e.parent_index > ?3 OR (e.parent_index = ?3 AND e.index_number > ?4)) \
     ORDER BY e.parent_index, e.index_number LIMIT 1";
 
+const EPISODES_AFTER: &str = "SELECT e.id \
+    FROM works e \
+    JOIN works season ON season.id = e.parent_id \
+    WHERE season.parent_id = ?1 AND e.kind = 'episode' AND e.parent_index > 0 \
+        AND (e.parent_index > ?2 OR (e.parent_index = ?2 AND e.index_number > ?3)) \
+    ORDER BY e.parent_index, e.index_number LIMIT ?4";
+
 const WATCHED_WORKS: &str = "SELECT w.id, parent.id, grandparent.id, ud.last_played, \
     ud.played, ud.position_ms, ud.favorite, ud.rating \
     FROM user_data ud \
@@ -173,6 +180,34 @@ pub(crate) async fn continue_watching(
     entries.sort_by_key(|(_, at)| std::cmp::Reverse(*at));
     entries.truncate(limit as usize);
     Ok(entries.into_iter().map(|(id, _)| id).collect())
+}
+
+pub(crate) async fn episodes_after(
+    conn: &Connection,
+    series: WorkId,
+    season: i32,
+    number: i32,
+    limit: u32,
+) -> StorageResult<Vec<WorkId>> {
+    let mut rows = conn
+        .query(
+            EPISODES_AFTER,
+            vec![
+                Value::Blob(uuid_to_blob(series.into_uuid())),
+                Value::Integer(season.into()),
+                Value::Integer(number.into()),
+                Value::Integer(limit.into()),
+            ],
+        )
+        .await
+        .map_err(map_turso)?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        out.push(WorkId::from_uuid(blob_to_uuid(col_blob(
+            &row.get_value(0).map_err(map_turso)?,
+        )?)?));
+    }
+    Ok(out)
 }
 
 async fn latest_episode_per_series(

@@ -11,6 +11,7 @@ import {
   ServerInfoStore,
 } from "$houdini";
 import { deviceName, takeExternalCallback } from "$lib/api.js";
+import { registerThisDevice } from "$lib/device.js";
 import { request } from "$lib/graphql.js";
 import { onLiveRefused } from "$lib/live.js";
 import { ApiError, clearSession, hasSession, onSessionExpired, saveSession, SessionExpiredError, type SessionResult } from "$lib/tokens.js";
@@ -75,6 +76,7 @@ export async function bootstrap(): Promise<void> {
     await watchLibraries();
     app.authError = "";
     app.phase = "app";
+    void registerThisDevice();
   } catch (cause) {
     // An unreachable server is not a sign-out; `start` shows a retry.
     if (!(cause instanceof ApiError) && !(cause instanceof SessionExpiredError)) throw cause;

@@ -470,6 +470,39 @@ format, but it is always normalized to the UTC (Z) offset, e.g.
 scalar DateTime
 
 """
+A client registered for smart transcoding and downloads. `id` is chosen by
+the client, so it survives signing out.
+"""
+type Device {
+	id: ID!
+	name: String!
+	"""
+	Prepare optimized versions for this device while the server is idle.
+	"""
+	smartTranscode: Boolean!
+	"""
+	Lowers what's prepared for this device; unset means its best.
+	"""
+	maxBitrateBps: Int
+	"""
+	Restricts the codecs prepared for this device; empty means any it
+	supports.
+	"""
+	allowedVideoCodecs: [VideoCodec!]!
+	"""
+	Keep likely-watched titles on this device.
+	"""
+	smartDownloads: Boolean!
+	downloadBudgetBytes: Int
+	"""
+	Enforced by the client, which alone knows its connection.
+	"""
+	downloadsWifiOnly: Boolean!
+	createdAt: DateTime!
+	lastSeenAt: DateTime!
+}
+
+"""
 The device's half of the link flow: show `pin` on screen, then
 poll `pollDevicePin` until it yields a session or `expires_at`
 passes.
@@ -1447,6 +1480,21 @@ type Mutation {
 	Set or clear the favorite flag on a work or edition.
 	"""
 	setFavorite(target: PlayTargetInput!, favorite: Boolean!): UserData!
+	"""
+	Register this client, or refresh what it can play. Clients choose
+	`id` once and keep it across sign-ins; re-registering keeps the
+	device's settings. An id already registered to someone else fails.
+	"""
+	registerDevice(id: ID!, name: String!, capabilities: ClientCapabilities!): Device!
+	"""
+	Change one of the caller's devices; omitted settings stay. Pass
+	`clearMaxBitrate` or `clearDownloadBudget` to remove a limit.
+	"""
+	updateDevice(id: ID!, smartTranscode: Boolean, maxBitrateBps: Int, clearMaxBitrate: Boolean, allowedVideoCodecs: [VideoCodec!], smartDownloads: Boolean, downloadBudgetBytes: Int, clearDownloadBudget: Boolean, downloadsWifiOnly: Boolean): Device!
+	"""
+	Forget one of the caller's devices. Returns whether there was one.
+	"""
+	removeDevice(id: ID!): Boolean!
 	login(username: String!, password: String!, client: String, device: String): LoginResult!
 	"""
 	Exchange a live refresh token for a fresh token pair. The
@@ -1704,6 +1752,44 @@ type NetworkTotals {
 }
 
 """
+A prepared copy of a media file, derived from it and never a media file
+itself. `plan`, `index` and `probe` are the transcoder's types, opaque here.
+"""
+type OptimizedVersion {
+	id: ID!
+	mediaFileId: ID!
+	"""
+	What the version contains; unique per media file.
+	"""
+	variantKey: String!
+	status: OptimizedVersionStatus!
+	"""
+	Lower runs sooner.
+	"""
+	priority: Int!
+	"""
+	0.0 to 1.0 while running.
+	"""
+	progress: Float!
+	attempts: Int!
+	sizeBytes: Int
+	error: String
+	createdAt: DateTime!
+	finishedAt: DateTime
+	lastUsedAt: DateTime
+}
+
+"""
+Where an [`OptimizedVersion`] is in its life.
+"""
+enum OptimizedVersionStatus {
+	QUEUED
+	RUNNING
+	READY
+	FAILED
+}
+
+"""
 Information about pagination in a connection
 """
 type PageInfo {
@@ -1919,6 +2005,11 @@ How a started session serves its bytes.
 enum PlaybackRouteKind {
 	DIRECT
 	TRANSCODE
+	"""
+	HLS over a version prepared ahead of time: no job to manage, and seeking
+	is ordinary, with no restart.
+	"""
+	OPTIMIZED
 }
 
 """
@@ -2424,6 +2515,22 @@ type Query {
 	"""
 	images(targetKind: ImageTargetKind!, targetId: ID!): [Image!]!
 	"""
+	The caller's registered devices.
+	"""
+	myDevices: [Device!]!
+	"""
+	Every optimized version the server knows about, in or out of the queue.
+	Administrator only.
+	"""
+	optimizedVersions: [OptimizedVersion!]!
+	"""
+	What the caller's device should hold, most important first and within
+	its download budget. Empty unless the device has smart downloads on.
+	Titles still being prepared appear once they're ready, so poll this.
+	Whether to fetch now, such as only on Wi-Fi, is the client's call.
+	"""
+	smartDownloads(deviceId: ID!): [SmartDownload!]!
+	"""
 	Every user account. Admin only.
 	"""
 	users: [User!]!
@@ -2801,6 +2908,29 @@ type SetupResult {
 	userId: ID!
 	accessToken: String!
 	refreshToken: String!
+}
+
+"""
+One file a device should hold.
+"""
+type SmartDownload {
+	work: Work!
+	"""
+	Parts of a multi-file title each get their own entry.
+	"""
+	partIndex: Int!
+	"""
+	HTTP range requests work, so an interrupted download can resume, and a
+	partial file already plays.
+	"""
+	url: String!
+	sizeBytes: Int!
+	"""
+	Whether this is a version prepared for the device rather than the
+	original file.
+	"""
+	optimized: Boolean!
+	subtitles: [SubtitleDelivery!]!
 }
 
 enum SortOrder {

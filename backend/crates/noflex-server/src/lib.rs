@@ -27,6 +27,8 @@ pub mod library_watchers;
 pub mod live_tv;
 pub mod live_tv_runtime;
 pub mod metrics;
+pub mod optimize_worker;
+pub mod optimized_serve;
 pub mod plugin_links;
 pub mod restricted_routes;
 pub mod scan_scheduler;

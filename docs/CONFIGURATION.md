@@ -154,6 +154,23 @@ The bitrate ladder offered to clients during a transcode session. The
 direct-play decision picks the highest rung the client supports;
 lower rungs kick in when the client is on a slow network.
 
+### `transcoder.optimize`
+- **Type:** table
+- **Env:** `NOFLEX_TRANSCODER_OPTIMIZE_<KEY>`, except `encode_video` (use TOML)
+
+Smart transcoding: preparing versions in the background for titles users are likely to watch next, for devices that opt in from their account settings.
+
+| Key | Default | |
+|---|---|---|
+| `enabled` | `true` | Nothing is prepared until a device opts in. |
+| `dir` | `optimized/` under `data_dir` | Where finished versions live. They take real disk, so don't point this at a cache volume. |
+| `max_storage_gb` | `200` | Versions nobody is likely to watch are evicted past this, least recently used first, and no new job starts while over it. |
+| `max_cpu_percent` | `40` | Jobs start only below this CPU use. Jobs also wait for playback to end, and running jobs pause while anyone is watching. |
+| `plan_interval_secs` | `900` | How often to work out what's likely to be watched next. |
+| `lookahead_episodes` | `3` | Episodes to prepare beyond each next episode. |
+| `recommendations` | `5` | Top recommendations to prepare. |
+| `encode_video` | `["H265", "H264"]` | Codecs to encode to, preferred first. Each device gets the first it decodes. Encoders must exist in your ffmpeg build. |
+
 ### `plugin.search_path`
 - **Type:** array of paths
 - **Default:** `["/etc/noflex/plugins", "/var/lib/noflex/plugins", "<XDG_CONFIG_HOME>/noflex/plugins"]`

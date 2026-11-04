@@ -6,11 +6,11 @@
 
 use async_graphql::{Enum, SimpleObject, connection::Connection};
 use noflex_core::{
-    ApiKeyId, ChannelId, ChannelLayout, CollectionId, ColorPrimaries, DevicePinId,
+    ApiKeyId, ChannelId, ChannelLayout, CollectionId, ColorPrimaries, DeviceId, DevicePinId,
     DolbyVisionProfile, EditionId, EpgProgramId, ExportJobId, ExternalId, HdrTransfer, ImageKind,
-    LibraryId, LiveTvSourceId, MatrixCoefficients, MediaFileId, MetadataStatus, PixelFormat,
-    PlaySessionId, PlayTargetKind, PlaylistId, RecordingId, RecordingScheduleId, SessionId, TagId,
-    UserId, VideoCodec, VideoProfile, WatchRoomId, WorkField, WorkId, WorkKind,
+    LibraryId, LiveTvSourceId, MatrixCoefficients, MediaFileId, MetadataStatus, OptimizedVersionId,
+    PixelFormat, PlaySessionId, PlayTargetKind, PlaylistId, RecordingId, RecordingScheduleId,
+    SessionId, TagId, UserId, VideoCodec, VideoProfile, WatchRoomId, WorkField, WorkId, WorkKind,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -690,6 +690,79 @@ pub struct WatchedWork {
     pub favorite: bool,
     /// The highest of the user's ratings on the work and its descendants.
     pub rating: Option<f32>,
+}
+
+/// A client registered for smart transcoding and downloads. `id` is chosen by
+/// the client, so it survives signing out.
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+pub struct Device {
+    pub id: DeviceId,
+    #[graphql(skip)]
+    pub user_id: UserId,
+    pub name: String,
+    /// What the client measured it can play, in the shape of the transcoder's
+    /// `ClientCapabilities`. Opaque here, since storage sits below it.
+    #[graphql(skip)]
+    pub capabilities: async_graphql::Json<serde_json::Value>,
+    /// Prepare optimized versions for this device while the server is idle.
+    pub smart_transcode: bool,
+    /// Lowers what's prepared for this device; unset means its best.
+    pub max_bitrate_bps: Option<u64>,
+    /// Restricts the codecs prepared for this device; empty means any it
+    /// supports.
+    pub allowed_video_codecs: Vec<VideoCodec>,
+    /// Keep likely-watched titles on this device.
+    pub smart_downloads: bool,
+    pub download_budget_bytes: Option<u64>,
+    /// Enforced by the client, which alone knows its connection.
+    pub downloads_wifi_only: bool,
+    pub created_at: OffsetDateTime,
+    pub last_seen_at: OffsetDateTime,
+}
+
+/// Where an [`OptimizedVersion`] is in its life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Enum)]
+pub enum OptimizedVersionStatus {
+    Queued,
+    Running,
+    Ready,
+    Failed,
+}
+
+/// A prepared copy of a media file, derived from it and never a media file
+/// itself. `plan`, `index` and `probe` are the transcoder's types, opaque here.
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+pub struct OptimizedVersion {
+    pub id: OptimizedVersionId,
+    pub media_file_id: MediaFileId,
+    /// What the version contains; unique per media file.
+    pub variant_key: String,
+    pub status: OptimizedVersionStatus,
+    /// Lower runs sooner.
+    pub priority: i32,
+    #[graphql(skip)]
+    pub plan: serde_json::Value,
+    /// The source this was made from; a version of an older file is stale.
+    #[graphql(skip)]
+    pub source_size: u64,
+    #[graphql(skip)]
+    pub source_mtime: OffsetDateTime,
+    /// 0.0 to 1.0 while running.
+    pub progress: f32,
+    pub attempts: u32,
+    #[graphql(skip)]
+    pub path: Option<String>,
+    pub size_bytes: Option<u64>,
+    /// Fragment byte ranges, once ready.
+    #[graphql(skip)]
+    pub index: Option<serde_json::Value>,
+    /// What the finished file contains, once ready.
+    #[graphql(skip)]
+    pub probe: Option<serde_json::Value>,
+    pub error: Option<String>,
+    pub created_at: OffsetDateTime,
+    pub finished_at: Option<OffsetDateTime>,
+    pub last_used_at: Option<OffsetDateTime>,
 }
 
 /// The facts recommendations compare a top-level work by.

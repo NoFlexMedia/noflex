@@ -17,7 +17,7 @@ use noflex_transcoder::FfmpegJobManager;
 use crate::{
     channel_logos::ChannelLogos,
     file_serve::{RootCapability, ServeOpts, serve_file},
-    images, stream, trickplay_serve,
+    images, optimized_serve, stream, trickplay_serve,
 };
 
 #[derive(Clone)]
@@ -29,6 +29,7 @@ pub struct RestrictedRouteState {
     pub transcode_cache_dir: PathBuf,
     pub image_cache_dir: PathBuf,
     pub recordings_dir: PathBuf,
+    pub optimized_dir: PathBuf,
 }
 
 pub fn routes(state: RestrictedRouteState) -> Router {
@@ -51,6 +52,8 @@ pub fn routes(state: RestrictedRouteState) -> Router {
         )
         .route("/stream/job/{job_id}/master.m3u8", get(stream_master))
         .route("/stream/job/{job_id}/{filename}", get(stream_job_file))
+        .route("/optimized/{version_id}/master.m3u8", get(optimized_master))
+        .route("/optimized/{version_id}/{name}", get(optimized_part))
         .route("/images/{target_kind}/{target_id}/{kind}", get(serve_image))
         .route("/trickplay/{edition_id}/index.vtt", get(trickplay_vtt))
         .route(
@@ -181,6 +184,73 @@ async fn stream_file(
         .get(header::RANGE)
         .and_then(|value| value.to_str().ok());
     stream::serve_media_file(&state.storage, id, range).await
+}
+
+/// The caller of an optimized-version route and the version, once they're
+/// allowed to read it: its media token, and access to its source.
+async fn authorize_optimized(
+    state: &RestrictedRouteState,
+    principal: &Principal,
+    id: &str,
+    token: Option<&str>,
+) -> Result<(noflex_storage::domain::OptimizedVersion, Option<String>), Response> {
+    let id = parse_path_id(id, noflex_core::OptimizedVersionId::from_uuid)
+        .ok_or_else(|| invalid_id_response(id))?;
+    let (principal, token) = stream::byte_route_principal(
+        state.storage.as_ref(),
+        principal,
+        &state.jwt,
+        token,
+        &format!("optimized:{id}"),
+    )
+    .await
+    .map_err(IntoResponse::into_response)?;
+    let version = optimized_serve::ready_version(&state.storage, id)
+        .await
+        .map_err(IntoResponse::into_response)?;
+    stream::media_access(state.storage.as_ref(), &principal, version.media_file_id)
+        .await
+        .map_err(IntoResponse::into_response)?;
+    Ok((version, token))
+}
+
+async fn optimized_master(
+    State(state): State<RestrictedRouteState>,
+    axum::Extension(principal): axum::Extension<Principal>,
+    Path(id): Path<String>,
+    Query(query): Query<stream::TokenQuery>,
+) -> Response {
+    match authorize_optimized(&state, &principal, &id, query.token.as_deref()).await {
+        Ok((version, token)) => {
+            optimized_serve::serve_master(&state.storage, version, token.as_deref()).await
+        }
+        Err(response) => response,
+    }
+}
+
+async fn optimized_part(
+    State(state): State<RestrictedRouteState>,
+    axum::Extension(principal): axum::Extension<Principal>,
+    Path((id, name)): Path<(String, String)>,
+    Query(query): Query<stream::TokenQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok());
+    let (version, token) =
+        match authorize_optimized(&state, &principal, &id, query.token.as_deref()).await {
+            Ok(authorized) => authorized,
+            Err(response) => return response,
+        };
+    let root = match RootCapability::new(&state.optimized_dir).await {
+        Ok(root) => root,
+        Err(error) => {
+            tracing::warn!(%error, "optimized directory unavailable");
+            return axum::http::StatusCode::NOT_FOUND.into_response();
+        }
+    };
+    optimized_serve::serve_part(&version, &root, &name, token.as_deref(), range).await
 }
 
 async fn stream_subtitle(

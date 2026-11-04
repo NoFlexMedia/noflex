@@ -35,6 +35,7 @@ mod browse;
 mod collections;
 mod credentials;
 mod deletion;
+mod devices;
 mod external_auth;
 mod live_tv;
 mod paging;
@@ -46,6 +47,7 @@ mod recommend;
 mod restrictions;
 mod search;
 mod sessions;
+pub mod smart;
 mod stats;
 pub mod subscriptions;
 mod users;
@@ -55,7 +57,7 @@ pub use external_auth::{ExternalAuthChallenge, ExternalAuthError, ExternalAuthSe
 pub use live_tv::{LiveTvService, LiveTvServiceError};
 pub use playback_session::{
     ActiveStream, ActiveStreamRecord, PlaybackRouteKind, PlaybackSession, PlaybackSessionService,
-    PlaybackStart, SubtitleDelivery, TranscodeProgress,
+    PlaybackStart, SmartDownloadFile, SubtitleDelivery, TranscodeProgress,
 };
 pub use plugin_links::{PluginLink, PluginLinkChallenge, PluginLinkService};
 pub use subscriptions::{ExportEvent, ExportEventBroadcaster};
@@ -80,6 +82,7 @@ pub struct Query(
     admin_status::AdminStatusQuery,
     playback::PlaybackQuery,
     browse::BrowseQuery,
+    devices::DevicesQuery,
     users::UsersQuery,
     preferences::PreferencesQuery,
     collections::CollectionsQuery,
@@ -98,6 +101,7 @@ pub struct Query(
 pub struct Mutation(
     CoreMutation,
     playback::PlaybackMutation,
+    devices::DevicesMutation,
     auth::AuthMutation,
     users::UsersMutation,
     preferences::PreferencesMutation,
@@ -317,7 +321,7 @@ impl CoreQuery {
         let works = storage
             .continue_watching(
                 user.user_id,
-                OffsetDateTime::now_utc() - CONTINUE_WATCHING_DECAY,
+                OffsetDateTime::now_utc() - smart::CONTINUE_WATCHING_DECAY,
                 overfetch(window),
             )
             .await
@@ -371,13 +375,15 @@ impl CoreQuery {
             .ok()
             .and_then(|registry| registry.embedder_claim())
             .map(|claim| claim.namespace);
-        let works = recommend::recommendations(
+        // Boxed because every resolver's future is laid out inside the merged
+        // root's, and this one is large enough to overflow a worker's stack.
+        let works = Box::pin(recommend::recommendations(
             storage.as_ref(),
             namespace.as_deref(),
             user,
             overfetch(window),
             OffsetDateTime::now_utc(),
-        )
+        ))
         .await
         .map_err(gql_err)?;
         Ok(window.connection(visible_works(storage, user, works, window.fetch()).await?))
@@ -471,9 +477,6 @@ impl CoreQuery {
 }
 
 /// Home shelves are ranked lists capped at 200 deep.
-/// How long a "Continue Watching" entry survives without activity.
-const CONTINUE_WATCHING_DECAY: time::Duration = time::Duration::days(90);
-
 fn shelf_window(
     first: Option<i32>,
     after: Option<String>,

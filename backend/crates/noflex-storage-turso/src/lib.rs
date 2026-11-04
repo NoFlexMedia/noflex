@@ -694,6 +694,100 @@ impl Storage for TursoStore {
         }
         Ok(out)
     }
+    async fn episodes_after(
+        &self,
+        series: WorkId,
+        season: i32,
+        number: i32,
+        limit: u32,
+    ) -> StorageResult<Vec<Work>> {
+        let (_schema, conn) = self.reader().await?;
+        let ids = repo::user_data::episodes_after(&conn, series, season, number, limit).await?;
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(work) = repo::works::get(&conn, id).await? {
+                out.push(work);
+            }
+        }
+        Ok(out)
+    }
+    async fn upsert_device(&self, device: &noflex_storage::domain::Device) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::devices::upsert(&conn, device).await
+    }
+    async fn get_device(
+        &self,
+        id: noflex_core::DeviceId,
+    ) -> StorageResult<Option<noflex_storage::domain::Device>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::devices::get(&conn, id).await
+    }
+    async fn devices_for_user(
+        &self,
+        user: UserId,
+    ) -> StorageResult<Vec<noflex_storage::domain::Device>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::devices::for_user(&conn, user).await
+    }
+    async fn devices_wanting_versions(&self) -> StorageResult<Vec<noflex_storage::domain::Device>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::devices::smart_transcode(&conn).await
+    }
+    async fn delete_device(&self, user: UserId, id: noflex_core::DeviceId) -> StorageResult<bool> {
+        let (_schema, conn) = self.writer().await?;
+        repo::devices::delete(&conn, user, id).await
+    }
+    async fn enqueue_optimized_version(
+        &self,
+        version: &noflex_storage::domain::OptimizedVersion,
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::optimized_versions::enqueue(&conn, version).await
+    }
+    async fn get_optimized_version(
+        &self,
+        id: noflex_core::OptimizedVersionId,
+    ) -> StorageResult<Option<noflex_storage::domain::OptimizedVersion>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::optimized_versions::get(&conn, id).await
+    }
+    async fn optimized_versions_for_media(
+        &self,
+        media: MediaFileId,
+    ) -> StorageResult<Vec<noflex_storage::domain::OptimizedVersion>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::optimized_versions::for_media(&conn, media).await
+    }
+    async fn list_optimized_versions(
+        &self,
+    ) -> StorageResult<Vec<noflex_storage::domain::OptimizedVersion>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::optimized_versions::list(&conn).await
+    }
+    async fn claim_optimized_version(
+        &self,
+    ) -> StorageResult<Option<noflex_storage::domain::OptimizedVersion>> {
+        let (_schema, conn) = self.writer().await?;
+        repo::optimized_versions::claim(&conn).await
+    }
+    async fn update_optimized_version(
+        &self,
+        version: &noflex_storage::domain::OptimizedVersion,
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::optimized_versions::update(&conn, version).await
+    }
+    async fn delete_optimized_version(
+        &self,
+        id: noflex_core::OptimizedVersionId,
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::optimized_versions::delete(&conn, id).await
+    }
+    async fn requeue_running_optimized_versions(&self) -> StorageResult<u64> {
+        let (_schema, conn) = self.writer().await?;
+        repo::optimized_versions::requeue_running(&conn).await
+    }
     async fn content_category_counts(
         &self,
         access_user_id: Option<UserId>,

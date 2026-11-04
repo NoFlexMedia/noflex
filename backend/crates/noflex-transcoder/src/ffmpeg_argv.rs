@@ -234,6 +234,41 @@ pub fn build_ffmpeg_argv(req: &TranscodeRequest) -> Vec<String> {
 }
 
 fn push_streams(argv: &mut Vec<String>, req: &TranscodeRequest) {
+    push_video(argv, req);
+    match req.plan.audio {
+        AudioPlan::None => argv.push("-an".to_string()),
+        AudioPlan::Copy { .. } => {
+            argv.extend([
+                "-map".to_string(),
+                audio_map(req),
+                "-c:a".to_string(),
+                "copy".to_string(),
+            ]);
+        }
+        AudioPlan::Encode { codec, channels } => {
+            argv.extend([
+                "-map".to_string(),
+                audio_map(req),
+                "-c:a".to_string(),
+                audio_encoder_flag(codec).to_string(),
+                "-ac".to_string(),
+                channels.to_string(),
+            ]);
+            if !matches!(codec, AudioCodec::Flac | AudioCodec::Pcm) {
+                argv.extend([
+                    "-b:a".to_string(),
+                    format!("{}", audio_bitrate_bps(codec, channels)),
+                ]);
+            }
+        }
+    }
+    // HLS renditions never carry subtitles: text tracks are delivered
+    // out of band, image tracks only via burn-in.
+    argv.push("-sn".to_string());
+}
+
+/// The arguments mapping and encoding `req.plan.video`.
+pub(crate) fn push_video(argv: &mut Vec<String>, req: &TranscodeRequest) {
     let fmp4 = req.plan.segment_container == HlsSegmentContainer::Fmp4;
     match req.plan.video {
         VideoPlan::None => argv.push("-vn".to_string()),
@@ -270,36 +305,6 @@ fn push_streams(argv: &mut Vec<String>, req: &TranscodeRequest) {
             ]);
         }
     }
-    match req.plan.audio {
-        AudioPlan::None => argv.push("-an".to_string()),
-        AudioPlan::Copy { .. } => {
-            argv.extend([
-                "-map".to_string(),
-                audio_map(req),
-                "-c:a".to_string(),
-                "copy".to_string(),
-            ]);
-        }
-        AudioPlan::Encode { codec, channels } => {
-            argv.extend([
-                "-map".to_string(),
-                audio_map(req),
-                "-c:a".to_string(),
-                audio_encoder_flag(codec).to_string(),
-                "-ac".to_string(),
-                channels.to_string(),
-            ]);
-            if !matches!(codec, AudioCodec::Flac | AudioCodec::Pcm) {
-                argv.extend([
-                    "-b:a".to_string(),
-                    format!("{}", audio_bitrate_bps(codec, channels)),
-                ]);
-            }
-        }
-    }
-    // HLS renditions never carry subtitles: text tracks are delivered
-    // out of band, image tracks only via burn-in.
-    argv.push("-sn".to_string());
 }
 
 /// MSE and Safari only accept HEVC in MP4 under the `hvc1` sample entry.

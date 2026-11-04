@@ -38,8 +38,8 @@ use noflex_transcoder::{
     HlsSegmentContainer, HwBackend, JobHandle, JobStatus, LadderEntry, PlaybackDecisionInfo,
     PlaybackRoute, PlaylistType, SegmentConfig, SubtitleBurnSource, TranscodeInput,
     TranscodeJobRegistry, TranscodePlan, TranscodeReasons, TranscodeRequest, Transcoder, VideoPlan,
-    decide, hls::HlsVariant, optimize::version_plays, probe::ProbeReport, scaled_bitrate_kbps,
-    subtitles,
+    decide, fit_pixels, hls::HlsVariant, optimize::version_plays, probe::ProbeReport,
+    scaled_bitrate_kbps, subtitles,
 };
 use time::OffsetDateTime;
 use tokio::io::AsyncReadExt;
@@ -503,6 +503,8 @@ pub struct ServerPlaybackSessions {
     storage: Arc<dyn Storage>,
     transcoder: Arc<FfmpegJobManager>,
     cfg: Arc<TranscoderConfig>,
+    /// Codecs to encode to live, preferred first.
+    encode_video: Vec<VideoCodec>,
     /// Startup-resolved hardware family.
     backend: HwBackend,
     /// Detected VAAPI render node, threaded into the filter graph.
@@ -573,6 +575,14 @@ impl ServerPlaybackSessions {
         vaapi_device: Option<PathBuf>,
         jwt: Arc<JwtConfig>,
     ) -> Self {
+        // Until told what actually works here: H.264 first, the only encoder
+        // sure to keep up, then whatever else the ladder offers.
+        let mut encode_video = vec![VideoCodec::H264];
+        for rung in &cfg.ladder {
+            if !encode_video.contains(&rung.video_codec) {
+                encode_video.push(rung.video_codec);
+            }
+        }
         Self {
             storage,
             transcoder,
@@ -580,10 +590,18 @@ impl ServerPlaybackSessions {
             backend,
             vaapi_device,
             jwt,
+            encode_video,
             events: None,
             transcode_accounting: tokio::sync::Mutex::new(TranscodeAccounting::default()),
             active: tokio::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Codecs to encode to live, preferred first; see
+    /// [`crate::hwaccel::live_codec_order`].
+    pub fn with_encode_video(mut self, encode_video: Vec<VideoCodec>) -> Self {
+        self.encode_video = encode_video;
+        self
     }
 
     /// Domain-event sink for session start/stop. Optional so tests and
@@ -735,21 +753,15 @@ impl ServerPlaybackSessions {
         self.active.lock().await.insert(id, session);
     }
 
-    /// Server-side encode preferences: the configured ladder's codecs
-    /// first, H.264 / AAC as the universal fallback.
+    /// Server-side encode preferences: `encode_video`, then the configured
+    /// ladder's audio codecs, with AAC as the universal fallback.
     fn decide_options(&self, burn_subtitle: bool) -> DecideOptions {
-        let mut encode_video: Vec<VideoCodec> = Vec::new();
+        let encode_video = self.encode_video.clone();
         let mut encode_audio: Vec<AudioCodec> = Vec::new();
         for entry in &self.cfg.ladder {
-            if !encode_video.contains(&entry.video_codec) {
-                encode_video.push(entry.video_codec);
-            }
             if !encode_audio.contains(&entry.audio_codec) {
                 encode_audio.push(entry.audio_codec);
             }
-        }
-        if !encode_video.contains(&VideoCodec::H264) {
-            encode_video.push(VideoCodec::H264);
         }
         if !encode_audio.contains(&AudioCodec::Aac) {
             encode_audio.push(AudioCodec::Aac);
@@ -830,14 +842,21 @@ impl ServerPlaybackSessions {
         };
         self.reserve_transcode(user, policy.max_concurrent_transcodes)
             .await?;
-        let ladder = pick_ladder(&self.cfg.ladder, u32::MAX, policy.max_stream_bitrate_bps);
-        // Tuner feeds are re-encoded to the ladder; their probe isn't
-        // known up front.
+        // Tuner feeds are re-encoded to the ladder; their probe isn't known up
+        // front, and broadcast tops out at 1080p.
+        let ladder = pick_ladder(
+            &self.cfg.ladder,
+            VideoCodec::H264,
+            1920 * 1080,
+            policy.max_stream_bitrate_bps,
+        );
+        let (width, height) = fit_pixels(1920, 1080, ladder.max_pixels);
         let plan = TranscodePlan {
             segment_container: HlsSegmentContainer::Ts,
             video: VideoPlan::Encode {
                 codec: VideoCodec::H264,
-                max_height: ladder.max_height,
+                width,
+                height,
                 tonemap: false,
                 profile: noflex_core::VideoProfile::H264High,
             },
@@ -848,9 +867,12 @@ impl ServerPlaybackSessions {
         };
         let encoder = pick_encoder(self.backend, VideoCodec::H264);
         let encoded = EncodedVideo {
-            width: even(ladder.max_height.saturating_mul(16) / 9),
-            height: ladder.max_height,
-            bitrate_bps: u64::from(ladder.bitrate_kbps) * 1000,
+            width: even(width),
+            height,
+            bitrate_bps: u64::from(scaled_bitrate_kbps(
+                &ladder,
+                u64::from(width) * u64::from(height),
+            )) * 1000,
         };
         let mut request = TranscodeRequest::new(input, "index.m3u8", plan, encoder, ladder);
         request.reasons = TranscodeReasons::LiveSource;
@@ -1049,11 +1071,29 @@ impl PlaybackSessionService for ServerPlaybackSessions {
             None => None,
         };
 
-        let decision = decide(
+        let mut decision = decide(
             &probe,
             &capabilities,
             &self.decide_options(burn_source.is_some()),
         );
+        if let PlaybackRoute::Transcoding { plan, .. } = &mut decision.route
+            && let VideoPlan::Encode {
+                codec,
+                width,
+                height,
+                profile,
+                ..
+            } = &mut plan.video
+        {
+            let rung = pick_ladder(
+                &self.cfg.ladder,
+                *codec,
+                u64::from(*width) * u64::from(*height),
+                capabilities.max_bitrate_bps,
+            );
+            (*width, *height) = fit_pixels(*width, *height, rung.max_pixels);
+            *profile = rung.cap_profile(*profile);
+        }
         let subtitles = if burn_source.is_some() {
             Vec::new()
         } else {
@@ -1115,29 +1155,36 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                     .await?;
                 let (encoder, encoded, ladder) = match plan.video {
                     VideoPlan::Encode {
-                        codec, max_height, ..
+                        codec,
+                        width,
+                        height,
+                        ..
                     } => {
-                        let ladder =
-                            pick_ladder(&self.cfg.ladder, max_height, capabilities.max_bitrate_bps);
-                        let height = max_height.min(ladder.max_height);
-                        let width = probe.video.as_ref().filter(|v| v.height > 0).map_or(
-                            height.saturating_mul(16) / 9,
-                            |v| {
-                                (u64::from(v.width) * u64::from(height) / u64::from(v.height))
-                                    as u32
-                            },
+                        let pixels = u64::from(width) * u64::from(height);
+                        let ladder = pick_ladder(
+                            &self.cfg.ladder,
+                            codec,
+                            pixels,
+                            capabilities.max_bitrate_bps,
                         );
                         let encoded = EncodedVideo {
                             width: even(width),
                             height,
-                            bitrate_bps: u64::from(scaled_bitrate_kbps(&ladder, height)) * 1000,
+                            bitrate_bps: u64::from(scaled_bitrate_kbps(&ladder, pixels)) * 1000,
                         };
                         (pick_encoder(self.backend, codec), Some(encoded), ladder)
                     }
                     _ => {
-                        let height = probe.video.as_ref().map_or(0, |v| v.height);
-                        let ladder =
-                            pick_ladder(&self.cfg.ladder, height, capabilities.max_bitrate_bps);
+                        let pixels = probe
+                            .video
+                            .as_ref()
+                            .map_or(0, |v| u64::from(v.width) * u64::from(v.height));
+                        let ladder = pick_ladder(
+                            &self.cfg.ladder,
+                            VideoCodec::H264,
+                            pixels,
+                            capabilities.max_bitrate_bps,
+                        );
                         (pick_encoder(self.backend, ladder.video_codec), None, ladder)
                     }
                 };
@@ -1405,67 +1452,34 @@ fn even(v: u32) -> u32 {
     (v & !1).max(2)
 }
 
-/// Pick the ladder entry with the greatest `max_height` that
-/// still fits the decision's target height; the smallest entry
-/// when nothing fits (we'd rather upscale than refuse), or a
-/// synthesized default when no ladder is configured.
+/// The rung for a `pixels`-sized encode in `codec`; see [`LadderEntry::pick`].
+/// When a bitrate limit rules out every rung, or none are configured, one is
+/// made up at the limit so a stream can still start.
 fn pick_ladder(
-    configured: &[crate::config::LadderEntry],
-    target_height: u32,
+    configured: &[LadderEntry],
+    codec: VideoCodec,
+    pixels: u64,
     max_bitrate_bps: Option<u64>,
 ) -> LadderEntry {
-    let within_bitrate = |entry: &&crate::config::LadderEntry| {
-        max_bitrate_bps.is_none_or(|max| u64::from(entry.bitrate_kbps).saturating_mul(1000) <= max)
-    };
-    let fitting = configured
-        .iter()
-        .filter(within_bitrate)
-        .filter(|e| e.max_height <= target_height)
-        .max_by_key(|e| e.max_height);
-    let chosen = fitting.or_else(|| {
-        configured
-            .iter()
-            .filter(within_bitrate)
-            .min_by_key(|e| e.max_height)
-    });
-    match chosen {
-        Some(e) => LadderEntry {
-            max_height: e.max_height,
-            video_codec: e.video_codec,
-            audio_codec: e.audio_codec,
-            container: e.container.clone(),
-            bitrate_kbps: e.bitrate_kbps,
-        },
-        None => LadderEntry {
-            max_height: target_height.clamp(480, 2160),
+    LadderEntry::pick(configured, codec, pixels, max_bitrate_bps)
+        .cloned()
+        .unwrap_or_else(|| LadderEntry {
+            // Between 480p and 4K.
+            max_pixels: pixels.clamp(409_920, 8_294_400),
             video_codec: VideoCodec::H264,
+            video_profile: noflex_core::VideoProfile::H264High,
             audio_codec: AudioCodec::Aac,
             container: "mpegts".to_string(),
             bitrate_kbps: max_bitrate_bps
                 .map(|bps| u32::try_from(bps / 1000).unwrap_or(u32::MAX))
                 .unwrap_or(8_000),
-        },
-    }
+        })
 }
 
 /// Map the resolved backend + target codec onto an `Encoder`.
 /// VideoToolbox and MediaFoundation have no AV1 encoder, so AV1
 /// falls back to software there; codecs outside h264/hevc/av1 have
 /// no hardware mapping at all and always encode as software h264.
-/// `configured` in the transcoder crate's shape.
-pub(crate) fn runtime_ladder(configured: &[crate::config::LadderEntry]) -> Vec<LadderEntry> {
-    configured
-        .iter()
-        .map(|entry| LadderEntry {
-            max_height: entry.max_height,
-            video_codec: entry.video_codec,
-            audio_codec: entry.audio_codec,
-            container: entry.container.clone(),
-            bitrate_kbps: entry.bitrate_kbps,
-        })
-        .collect()
-}
-
 pub(crate) fn pick_encoder(backend: HwBackend, codec: VideoCodec) -> Encoder {
     match backend {
         HwBackend::Software => software_for(codec),

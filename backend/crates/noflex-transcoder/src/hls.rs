@@ -564,7 +564,8 @@ mod tests {
             segment_container: HlsSegmentContainer::Ts,
             video: VideoPlan::Encode {
                 codec: VideoCodec::H264,
-                max_height: 1080,
+                width: 1920,
+                height: 1080,
                 tonemap: true,
                 profile: VideoProfile::H264High,
             },

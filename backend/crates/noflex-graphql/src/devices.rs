@@ -9,7 +9,7 @@ use noflex_core::{DeviceId, VideoCodec};
 use noflex_plugin_host::PluginRegistry;
 use noflex_storage::{
     RequestUser, Storage,
-    domain::{Device, OptimizedVersion, Work},
+    domain::{Device, OptimizedVersion, SmartTranscodingSettings, Work},
     error::StorageError,
 };
 use noflex_transcoder::ClientCapabilities;
@@ -23,6 +23,70 @@ use crate::{
 };
 
 const MAX_DEVICE_NAME_CHARS: usize = 100;
+
+/// What smart transcoding does when no administrator has said otherwise.
+#[derive(Debug, Clone)]
+pub struct SmartTranscodingDefaults {
+    pub enabled: bool,
+    pub directory: String,
+    pub max_storage_gb: u64,
+    pub max_version_gb: Option<u64>,
+}
+
+/// Where smart transcoding writes and how much it may use.
+#[derive(SimpleObject, Debug, Clone)]
+pub struct SmartTranscoding {
+    /// Off in the server's configuration, which only that can change.
+    pub enabled: bool,
+    pub directory: String,
+    pub max_storage_gb: u64,
+    /// Skip versions estimated larger than this; null has no limit.
+    pub max_version_gb: Option<u64>,
+    /// What each falls back to when cleared.
+    pub default_directory: String,
+    pub default_max_storage_gb: u64,
+    pub default_max_version_gb: Option<u64>,
+}
+
+async fn smart_transcoding(ctx: &Context<'_>) -> async_graphql::Result<SmartTranscoding> {
+    let defaults = ctx
+        .data::<SmartTranscodingDefaults>()
+        .map_err(|_| async_graphql::Error::new("smart transcoding not configured"))?;
+    let settings = storage(ctx)?
+        .smart_transcoding_settings()
+        .await
+        .map_err(gql_err)?;
+    Ok(SmartTranscoding {
+        enabled: defaults.enabled,
+        directory: settings.dir.unwrap_or_else(|| defaults.directory.clone()),
+        max_storage_gb: settings.max_storage_gb.unwrap_or(defaults.max_storage_gb),
+        max_version_gb: settings.max_version_gb.or(defaults.max_version_gb),
+        default_directory: defaults.directory.clone(),
+        default_max_storage_gb: defaults.max_storage_gb,
+        default_max_version_gb: defaults.max_version_gb,
+    })
+}
+
+/// A folder smart transcoding can use: absolute, and writable now rather than
+/// failing every job later.
+async fn check_directory(directory: &str) -> async_graphql::Result<()> {
+    let path = std::path::Path::new(directory);
+    if !path.is_absolute() {
+        return Err(async_graphql::Error::new(
+            "The folder must be an absolute path",
+        ));
+    }
+    let probe = path.join(format!(".noflex-write-check-{}", uuid::Uuid::now_v7()));
+    let writable = async {
+        tokio::fs::create_dir_all(path).await?;
+        tokio::fs::write(&probe, b"").await?;
+        tokio::fs::remove_file(&probe).await
+    };
+    writable.await.map_err(|error| {
+        tracing::warn!(%error, directory, "smart transcoding folder rejected");
+        async_graphql::Error::new("The server can't write to that folder")
+    })
+}
 /// Bounds the work of one request: titles past this are never the next thing
 /// a budget would reach.
 const SMART_DOWNLOAD_CANDIDATES: LikelyOptions = LikelyOptions {
@@ -67,6 +131,16 @@ impl DevicesQuery {
             .devices_for_user(principal.user_id)
             .await
             .map_err(gql_err)
+    }
+
+    /// Where smart transcoding writes and how much it may use. Administrator
+    /// only.
+    async fn smart_transcoding(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<SmartTranscoding> {
+        access::require_admin(ctx)?;
+        smart_transcoding(ctx).await
     }
 
     /// Every optimized version the server knows about, in or out of the queue.
@@ -227,6 +301,37 @@ impl DevicesMutation {
         device.capabilities = Json(capabilities);
         device.last_seen_at = now;
         store_device(storage, device).await
+    }
+
+    /// Set where smart transcoding writes and how much it may use. Null leaves
+    /// a setting to the server's configuration. Versions already prepared stay
+    /// where they are and keep playing. Administrator only.
+    async fn update_smart_transcoding(
+        &self,
+        ctx: &Context<'_>,
+        directory: Option<String>,
+        max_storage_gb: Option<u64>,
+        max_version_gb: Option<u64>,
+    ) -> async_graphql::Result<SmartTranscoding> {
+        access::require_admin(ctx)?;
+        let directory = directory.filter(|directory| !directory.trim().is_empty());
+        if let Some(directory) = &directory {
+            check_directory(directory).await?;
+        }
+        if max_version_gb == Some(0) {
+            return Err(async_graphql::Error::new(
+                "A version can't be limited to 0 GB; clear the limit instead",
+            ));
+        }
+        storage(ctx)?
+            .set_smart_transcoding_settings(&SmartTranscodingSettings {
+                dir: directory,
+                max_storage_gb,
+                max_version_gb,
+            })
+            .await
+            .map_err(gql_err)?;
+        smart_transcoding(ctx).await
     }
 
     /// Change one of the caller's devices; omitted settings stay. Pass

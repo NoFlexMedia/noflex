@@ -762,6 +762,18 @@ pub enum OptimizedVersionStatus {
     Failed,
 }
 
+/// Smart transcoding limits an administrator set from the web UI. `None` leaves
+/// a limit to the server's configuration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SmartTranscodingSettings {
+    /// Where new versions are written; ones already made stay where they are.
+    pub dir: Option<String>,
+    /// Combined size of finished versions.
+    pub max_storage_gb: Option<u64>,
+    /// Size of any one version, estimated before preparing it.
+    pub max_version_gb: Option<u64>,
+}
+
 /// A prepared copy of a media file, derived from it and never a media file
 /// itself. `plan`, `index` and `probe` are the transcoder's types, opaque here.
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]

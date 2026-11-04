@@ -14,7 +14,7 @@ use async_graphql::{
     connection::{Connection, Edge, EmptyFields},
 };
 use futures::Stream;
-use noflex_core::{AudioCodec, VideoCodec};
+use noflex_core::{AudioCodec, VideoCodec, VideoProfile};
 use noflex_plugin_host::{HookKind, PluginRegistry};
 use noflex_storage::{
     Storage,
@@ -114,7 +114,7 @@ pub struct ServerRuntime {
 
 #[derive(SimpleObject, Debug, Clone, PartialEq, Eq)]
 pub struct ConfigEntry {
-    /// Dotted path, arrays indexed: `transcoder.ladder[0].max_height`.
+    /// Dotted path, arrays indexed: `transcoder.ladder[0].max_pixels`.
     pub key: String,
     /// Scalar rendered as text; `null` for unset options.
     pub value: Option<String>,
@@ -351,8 +351,11 @@ pub struct CodecSupport {
 
 #[derive(SimpleObject, Debug, Clone)]
 pub struct LadderRung {
-    pub max_height: u32,
+    /// Largest picture this rung produces, in luma samples.
+    pub max_pixels: u64,
     pub video_codec: VideoCodec,
+    /// Most capable profile it encodes at; lower when a client decodes less.
+    pub video_profile: VideoProfile,
     pub audio_codec: AudioCodec,
     pub container: String,
     pub bitrate_kbps: u32,

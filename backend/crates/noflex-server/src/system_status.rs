@@ -425,8 +425,9 @@ impl SystemStatusService {
             .map(|rung| {
                 let encoder = hwaccel::pick_encoder(resolved, rung.video_codec).video_flag();
                 LadderRung {
-                    max_height: rung.max_height,
+                    max_pixels: rung.max_pixels,
                     video_codec: rung.video_codec,
+                    video_profile: rung.video_profile,
                     audio_codec: rung.audio_codec,
                     container: rung.container.clone(),
                     bitrate_kbps: rung.bitrate_kbps,

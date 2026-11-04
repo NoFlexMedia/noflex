@@ -313,6 +313,7 @@ fn arb_video_support() -> impl Strategy<Value = VideoCodecSupport> {
                     max_bit_depth,
                     max_width: max_height.map(|h| h * 16 / 9),
                     max_height,
+                    max_pixels: max_height.map(|h| u64::from(h) * u64::from(h) * 16 / 9),
                     video_ranges,
                 }
             },
@@ -461,13 +462,17 @@ proptest! {
     }
 
     #[test]
-    fn encode_height_never_exceeds_source_or_ceiling(probe in arb_probe_report(), client in arb_client_caps()) {
+    fn encode_size_never_exceeds_source_or_limits(probe in arb_probe_report(), client in arb_client_caps()) {
         if let PlaybackRoute::Transcoding { plan, .. } = decide(&probe, &client, &opts()).route
-            && let (VideoPlan::Encode { max_height, .. }, Some(v)) = (plan.video, probe.video.as_ref())
+            && let (VideoPlan::Encode { codec, width, height, .. }, Some(v)) = (plan.video, probe.video.as_ref())
         {
-            prop_assert!(max_height <= v.height);
+            prop_assert!(height <= v.height);
+            prop_assert!(width <= v.width);
             if let Some(max) = client.max_height {
-                prop_assert!(max_height <= max);
+                prop_assert!(height <= max);
+            }
+            if let Some(support) = client.video_support(codec) {
+                prop_assert!(support.fits(width, height), "{width}x{height} over {support:?}");
             }
         }
     }

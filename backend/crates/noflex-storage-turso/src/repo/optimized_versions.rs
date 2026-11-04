@@ -2,7 +2,7 @@
 
 use noflex_core::{MediaFileId, OptimizedVersionId};
 use noflex_storage::{
-    domain::{OptimizedVersion, OptimizedVersionStatus},
+    domain::{OptimizedVersion, OptimizedVersionStatus, SmartTranscodingSettings},
     error::StorageResult,
 };
 use time::OffsetDateTime;
@@ -204,4 +204,43 @@ pub(crate) async fn requeue_running(conn: &Connection) -> StorageResult<u64> {
     )
     .await
     .map_err(map_turso)
+}
+
+pub(crate) async fn settings(conn: &Connection) -> StorageResult<SmartTranscodingSettings> {
+    let mut rows = conn
+        .query(
+            "SELECT dir, max_storage_gb, max_version_gb FROM smart_transcoding_settings",
+            (),
+        )
+        .await
+        .map_err(map_turso)?;
+    let Some(row) = rows.next().await.map_err(map_turso)? else {
+        return Ok(SmartTranscodingSettings::default());
+    };
+    Ok(SmartTranscodingSettings {
+        dir: col_text_opt(&row.get_value(0).map_err(map_turso)?)?,
+        max_storage_gb: col_int_opt(&row.get_value(1).map_err(map_turso)?)?.map(|gb| gb as u64),
+        max_version_gb: col_int_opt(&row.get_value(2).map_err(map_turso)?)?.map(|gb| gb as u64),
+    })
+}
+
+pub(crate) async fn set_settings(
+    conn: &Connection,
+    settings: &SmartTranscodingSettings,
+) -> StorageResult<()> {
+    let gb = |value: Option<u64>| value.map_or(Value::Null, |gb| Value::Integer(gb as i64));
+    conn.execute(
+        "INSERT INTO smart_transcoding_settings (id, dir, max_storage_gb, max_version_gb) \
+         VALUES (1, ?1, ?2, ?3) \
+         ON CONFLICT(id) DO UPDATE SET dir = excluded.dir, \
+             max_storage_gb = excluded.max_storage_gb, max_version_gb = excluded.max_version_gb",
+        vec![
+            settings.dir.clone().map_or(Value::Null, Value::Text),
+            gb(settings.max_storage_gb),
+            gb(settings.max_version_gb),
+        ],
+    )
+    .await
+    .map_err(map_turso)?;
+    Ok(())
 }

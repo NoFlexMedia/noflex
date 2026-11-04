@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 pub enum ConfigError {
     #[error("config parse: {0}")]
     Parse(String),
-    #[allow(dead_code)]
     #[error("invalid value for `{field}`: {reason}")]
     Invalid { field: &'static str, reason: String },
     #[error("I/O: {0}")]
@@ -79,6 +78,8 @@ pub struct OptimizeConfig {
     /// Finished versions; unset means `optimized/` under `data_dir`.
     pub dir: Option<PathBuf>,
     pub max_storage_gb: u64,
+    /// Skip versions estimated larger than this; unset has no limit.
+    pub max_version_gb: Option<u64>,
     /// Jobs start only below this much CPU use. They also wait for playback
     /// to end, whatever this says.
     pub max_cpu_percent: f32,
@@ -99,11 +100,17 @@ impl Default for OptimizeConfig {
             enabled: true,
             dir: None,
             max_storage_gb: 200,
+            max_version_gb: None,
             max_cpu_percent: 40.0,
             plan_interval_secs: 900,
             lookahead_episodes: 3,
             recommendations: 5,
-            encode_video: vec![noflex_core::VideoCodec::H265, noflex_core::VideoCodec::H264],
+            // There's no audience waiting on these, so the slow, small codecs win.
+            encode_video: vec![
+                noflex_core::VideoCodec::Av1,
+                noflex_core::VideoCodec::H265,
+                noflex_core::VideoCodec::H264,
+            ],
         }
     }
 }
@@ -129,13 +136,42 @@ pub enum TranscodeFallback {
     Software,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LadderEntry {
-    pub max_height: u32,
-    pub video_codec: noflex_core::VideoCodec,
-    pub audio_codec: noflex_core::AudioCodec,
-    pub container: String,
-    pub bitrate_kbps: u32,
+pub use noflex_transcoder::LadderEntry;
+
+/// The default transcode ladder, in order of preference: what a client decodes
+/// best first. Each rung's rate is its codec's rate for that area; hardware or
+/// not, see [`crate::hwaccel::live_codec_order`] for what's fast enough to pick.
+fn default_ladder() -> Vec<LadderEntry> {
+    use noflex_core::{AudioCodec, VideoCodec, VideoProfile};
+    const P4K: u64 = 8_294_400;
+    const P1440: u64 = 3_686_400;
+    const P1080: u64 = 2_073_600;
+    const P720: u64 = 921_600;
+    const P480: u64 = 409_920;
+    [
+        (VideoCodec::Av1, VideoProfile::Av1Main, P4K, 12_000),
+        (VideoCodec::Av1, VideoProfile::Av1Main, P1440, 6_000),
+        (VideoCodec::Av1, VideoProfile::Av1Main, P1080, 3_500),
+        (VideoCodec::H265, VideoProfile::HevcMain, P4K, 16_000),
+        (VideoCodec::H265, VideoProfile::HevcMain, P1440, 8_000),
+        (VideoCodec::H265, VideoProfile::HevcMain, P1080, 5_000),
+        (VideoCodec::H264, VideoProfile::H264High, P4K, 24_000),
+        (VideoCodec::H264, VideoProfile::H264High, P1440, 12_000),
+        (VideoCodec::H264, VideoProfile::H264High, P1080, 8_000),
+        (VideoCodec::H264, VideoProfile::H264High, P720, 4_000),
+        (VideoCodec::H264, VideoProfile::H264High, P480, 2_000),
+    ]
+    .map(
+        |(video_codec, video_profile, max_pixels, bitrate_kbps)| LadderEntry {
+            max_pixels,
+            video_codec,
+            video_profile,
+            audio_codec: AudioCodec::Aac,
+            container: "mp4".to_string(),
+            bitrate_kbps,
+        },
+    )
+    .to_vec()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,13 +243,7 @@ impl Default for Config {
             transcoder: TranscoderConfig {
                 hwaccel: HwAccel::Auto,
                 fallback: TranscodeFallback::Auto,
-                ladder: vec![LadderEntry {
-                    max_height: 1080,
-                    video_codec: noflex_core::VideoCodec::H264,
-                    audio_codec: noflex_core::AudioCodec::Aac,
-                    container: "mp4".to_string(),
-                    bitrate_kbps: 8000,
-                }],
+                ladder: default_ladder(),
                 optimize: OptimizeConfig::default(),
             },
             plugin: PluginConfig {
@@ -293,8 +323,50 @@ impl Config {
                 .find(|(env, _)| key.as_str().eq_ignore_ascii_case(env))
                 .map(|(_, path)| (*path).into())
         }));
-        fig.extract::<Config>()
-            .map_err(|e| ConfigError::Parse(e.to_string()))
+        let config = fig
+            .extract::<Config>()
+            .map_err(|e| ConfigError::Parse(e.to_string()))?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        use noflex_core::{VideoCodec, VideoProfile};
+        for rung in &self.transcoder.ladder {
+            let matches = match rung.video_codec {
+                VideoCodec::H264 => matches!(
+                    rung.video_profile,
+                    VideoProfile::H264High
+                        | VideoProfile::H264Main
+                        | VideoProfile::H264Baseline
+                        | VideoProfile::H264ConstrainedBaseline
+                ),
+                VideoCodec::H265 => rung.video_profile == VideoProfile::HevcMain,
+                VideoCodec::Av1 => rung.video_profile == VideoProfile::Av1Main,
+                _ => {
+                    return Err(ConfigError::Invalid {
+                        field: "transcoder.ladder",
+                        reason: format!("can't encode to {:?}", rung.video_codec),
+                    });
+                }
+            };
+            if !matches {
+                return Err(ConfigError::Invalid {
+                    field: "transcoder.ladder",
+                    reason: format!(
+                        "{:?} can't encode at {:?}; encodes are 8-bit 4:2:0",
+                        rung.video_codec, rung.video_profile
+                    ),
+                });
+            }
+            if rung.max_pixels == 0 {
+                return Err(ConfigError::Invalid {
+                    field: "transcoder.ladder",
+                    reason: "max_pixels must be above 0".to_string(),
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -318,6 +390,10 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     (
         "TRANSCODER_OPTIMIZE_MAX_STORAGE_GB",
         "transcoder.optimize.max_storage_gb",
+    ),
+    (
+        "TRANSCODER_OPTIMIZE_MAX_VERSION_GB",
+        "transcoder.optimize.max_version_gb",
     ),
     (
         "TRANSCODER_OPTIMIZE_MAX_CPU_PERCENT",

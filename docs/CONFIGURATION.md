@@ -153,30 +153,31 @@ What to do when the chosen `hwaccel` is unavailable. `auto` falls back
 to software encoding; `software` is a hard error.
 
 ### `transcoder.ladder`
-- **Type:** array of `{max_height, video_codec, audio_codec, container, bitrate_kbps}`
-- **Default:** `[{max_height=1080, h264, aac, mp4, 8000}]`
+- **Type:** array of `{max_pixels, video_codec, video_profile, audio_codec, container, bitrate_kbps}`
+- **Default:** AV1 Main and HEVC Main at ~4K, ~1440p and ~1080p; H.264 High at those plus ~720p and ~480p
 - **Env:** not supported (use TOML)
 
-The bitrate ladder offered to clients during a transcode session. The
-direct-play decision picks the highest rung the client supports;
-lower rungs kick in when the client is on a slow network.
+What a re-encode can produce. A rung is a video profile and the largest picture it carries, in luma samples (`8294400` is 3840×2160, and also holds a wider 4K picture that's less tall), at a bitrate. The smallest rung of the encode's codec that holds the picture is used, and its bitrate scales down with the picture's area. `video_profile` is a ceiling (`h264_high`, `h264_main`, `h264_baseline`, `hevc_main`, `av1_main`), since encodes are 8-bit: clients that decode less get their own best.
+
+Live transcodes prefer codecs your hardware encoder has proven it can do at startup, in the order the ladder lists them, then H.264. Software HEVC and AV1 can't reliably keep up with playback, so they're only used for clients that can't decode H.264.
 
 ### `transcoder.optimize`
 - **Type:** table
 - **Env:** `NOFLEX_TRANSCODER_OPTIMIZE_<KEY>`, except `encode_video` (use TOML)
 
-Smart transcoding: preparing versions in the background for titles users are likely to watch next, for devices that opt in from their account settings.
+Smart transcoding: preparing versions in the background for titles users are likely to watch next, for devices that opt in from their account settings. `dir`, `max_storage_gb` and `max_version_gb` are defaults: administrators can override them under Administration → Transcoding.
 
 | Key | Default | |
 |---|---|---|
 | `enabled` | `true` | Nothing is prepared until a device opts in. |
-| `dir` | `optimized/` under `data_dir` | Where finished versions live. They take real disk, so don't point this at a cache volume. |
+| `dir` | `optimized/` under `data_dir` | Where finished versions live. They take real disk, so don't point this at a cache volume. Changing it leaves existing versions where they are. |
 | `max_storage_gb` | `200` | Versions nobody is likely to watch are evicted past this, least recently used first, and no new job starts while over it. |
+| `max_version_gb` | unset | Titles whose version is estimated larger than this aren't prepared. |
 | `max_cpu_percent` | `40` | Jobs start only below this CPU use. Jobs also wait for playback to end, and running jobs pause while anyone is watching. |
 | `plan_interval_secs` | `900` | How often to work out what's likely to be watched next. |
 | `lookahead_episodes` | `3` | Episodes to prepare beyond each next episode. |
 | `recommendations` | `5` | Top recommendations to prepare. |
-| `encode_video` | `["H265", "H264"]` | Codecs to encode to, preferred first. Each device gets the first it decodes. Encoders must exist in your ffmpeg build. |
+| `encode_video` | `["av1", "h265", "h264"]` | Codecs to encode to, preferred first. Each device gets the first it decodes. Ones ffmpeg or the GPU can't encode are skipped. |
 
 ### `plugin.search_path`
 - **Type:** array of paths

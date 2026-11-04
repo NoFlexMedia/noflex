@@ -134,7 +134,8 @@ mod tests {
                 segment_container: HlsSegmentContainer::Ts,
                 video: VideoPlan::Encode {
                     codec: VideoCodec::H264,
-                    max_height: 1080,
+                    width: 1920,
+                    height: 1080,
                     tonemap: false,
                     profile: noflex_core::VideoProfile::H264High,
                 },
@@ -145,8 +146,9 @@ mod tests {
             },
             Encoder::Software264,
             LadderEntry {
-                max_height: 1080,
+                max_pixels: 2_073_600,
                 video_codec: VideoCodec::H264,
+                video_profile: noflex_core::VideoProfile::H264High,
                 audio_codec: AudioCodec::Aac,
                 container: "ts".to_string(),
                 bitrate_kbps: 8000,

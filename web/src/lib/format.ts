@@ -57,6 +57,19 @@ export function versionLabel(probe: any): string | null {
   return [tier, codec, range].filter(Boolean).join(" · ");
 }
 
+/** A profile enum as it's usually written: `HEVC_MAIN10` → "Main 10". */
+export function profileName(profile?: string | null): string {
+  if (!profile) return "";
+  return profile.replace(/^(H264|HEVC|AV1|VP9)_/, "").replace(/(\D)(\d+)$/, "$1 $2").replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+}
+
+/** A picture area as the resolution people call it, e.g. 8294400 → "~4K". */
+export function pixelTier(pixels: number): string {
+  const tiers: [number, string][] = [[33_177_600, "8K"], [14_745_600, "5K"], [8_294_400, "4K"], [3_686_400, "1440p"], [2_073_600, "1080p"], [921_600, "720p"], [409_920, "480p"], [230_400, "360p"]];
+  const [, name] = tiers.find(([size]) => pixels >= size * 0.9) ?? [0, `${Math.round(Math.sqrt((pixels * 9) / 16))}p`];
+  return `~${name}`;
+}
+
 const languages = (() => { try { return new Intl.DisplayNames(undefined, { type: "language" }); } catch { return null; } })();
 
 /** "en" / "eng" / "pt-BR" → "English" / "Portuguese (Brazil)"; unknown codes come back uppercased. */

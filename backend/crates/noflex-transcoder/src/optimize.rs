@@ -61,11 +61,12 @@ impl OptimizeTarget {
             VideoPlan::Copy { codec, .. } => format!("copy-{codec:?}"),
             VideoPlan::Encode {
                 codec,
-                max_height,
+                height,
                 tonemap,
                 profile,
+                ..
             } => format!(
-                "{codec:?}-{max_height}p-{}k-{profile:?}{}",
+                "{codec:?}-{height}p-{}k-{profile:?}{}",
                 self.bitrate_kbps,
                 if tonemap { "-tonemap" } else { "" }
             ),
@@ -138,7 +139,7 @@ pub fn plan_versions(
         let group = match plan.video {
             VideoPlan::None => continue,
             VideoPlan::Copy { range, .. } => (source_height, range != VideoRange::Sdr),
-            VideoPlan::Encode { max_height, .. } => (max_height.min(source_height), false),
+            VideoPlan::Encode { height, .. } => (height, false),
         };
         groups.entry(group).or_default().push(Want {
             device,
@@ -148,11 +149,11 @@ pub fn plan_versions(
 
     let mut targets = Vec::new();
     // Tallest first, so the most demanding version is the first one prepared.
-    for ((height, _), mut wants) in groups.into_iter().rev() {
+    for (_, mut wants) in groups.into_iter().rev() {
         while !wants.is_empty() {
-            let chosen = best_shared_video(&wants, devices, height, opts);
+            let chosen = best_shared_video(&wants, devices, opts);
             let (served, rest) = wants.into_iter().partition::<Vec<_>, _>(|want| {
-                plays(&chosen, want, &devices[want.device].capabilities, height)
+                plays(&chosen, want, &devices[want.device].capabilities)
             });
             wants = rest;
             let capabilities = served
@@ -161,7 +162,7 @@ pub fn plan_versions(
                 .collect::<Vec<_>>();
             targets.push(OptimizeTarget {
                 video: chosen,
-                bitrate_kbps: bitrate_kbps(chosen, height, &capabilities, ladder),
+                bitrate_kbps: bitrate_kbps(chosen, &capabilities, ladder),
                 audio: audio_targets(&probe.audio, &capabilities),
                 devices: served.iter().map(|want| devices[want.device].id).collect(),
             });
@@ -252,12 +253,7 @@ fn fragmented_only(capabilities: &ClientCapabilities) -> ClientCapabilities {
 
 /// Among what `wants` asked for, the video the most of them can play. Ties go
 /// to a stream copy, which loses nothing, then to the server's preferred codec.
-fn best_shared_video(
-    wants: &[Want],
-    devices: &[DeviceTarget],
-    height: u32,
-    opts: &DecideOptions,
-) -> VideoPlan {
+fn best_shared_video(wants: &[Want], devices: &[DeviceTarget], opts: &DecideOptions) -> VideoPlan {
     let rank = |video: &VideoPlan| match video {
         VideoPlan::Copy { .. } | VideoPlan::None => 0,
         VideoPlan::Encode { codec, .. } => {
@@ -273,14 +269,7 @@ fn best_shared_video(
     for want in wants {
         let coverage = wants
             .iter()
-            .filter(|other| {
-                plays(
-                    &want.video,
-                    other,
-                    &devices[other.device].capabilities,
-                    height,
-                )
-            })
+            .filter(|other| plays(&want.video, other, &devices[other.device].capabilities))
             .count();
         let score = (coverage, rank(&want.video));
         if score.0 > best_score.0 || (score.0 == best_score.0 && score.1 < best_score.1) {
@@ -292,11 +281,18 @@ fn best_shared_video(
 }
 
 /// Whether a device that wanted `want` can play `video`.
-fn plays(video: &VideoPlan, want: &Want, capabilities: &ClientCapabilities, height: u32) -> bool {
+fn plays(video: &VideoPlan, want: &Want, capabilities: &ClientCapabilities) -> bool {
     if *video == want.video {
         return true;
     }
-    let VideoPlan::Encode { codec, profile, .. } = *video else {
+    let VideoPlan::Encode {
+        codec,
+        profile,
+        width,
+        height,
+        ..
+    } = *video
+    else {
         // A device that needed an encode couldn't copy the source; one that
         // copies a different stream isn't this device.
         return false;
@@ -309,26 +305,27 @@ fn plays(video: &VideoPlan, want: &Want, capabilities: &ClientCapabilities, heig
         && capabilities.video_codecs.iter().any(|support| {
             support.codec == codec
                 && (support.profiles.is_empty() || support.profiles.contains(&profile))
-                && support.max_height.is_none_or(|max| height <= max)
+                && support.fits(width, height)
         })
 }
 
 fn bitrate_kbps(
     video: VideoPlan,
-    height: u32,
     capabilities: &[&ClientCapabilities],
     ladder: &[LadderEntry],
 ) -> u32 {
-    let VideoPlan::Encode { codec, .. } = video else {
+    let VideoPlan::Encode {
+        codec,
+        width,
+        height,
+        ..
+    } = video
+    else {
         return 0;
     };
-    let rung = ladder
-        .iter()
-        .filter(|entry| entry.max_height >= height)
-        .min_by_key(|entry| entry.max_height)
-        .or_else(|| ladder.iter().max_by_key(|entry| entry.max_height));
-    let mut kbps = rung.map_or(8_000, |rung| {
-        let scaled = scaled_bitrate_kbps(rung, height);
+    let pixels = u64::from(width) * u64::from(height);
+    let mut kbps = LadderEntry::pick(ladder, codec, pixels, None).map_or(8_000, |rung| {
+        let scaled = scaled_bitrate_kbps(rung, pixels);
         if matches!(codec, VideoCodec::H265 | VideoCodec::Av1)
             && rung.video_codec == VideoCodec::H264
         {
@@ -384,13 +381,12 @@ fn decodes_audio(capabilities: &ClientCapabilities, codec: AudioCodec, channels:
 
 /// The ffmpeg arguments writing `target` of `input` to `output`, `argv[0] ==
 /// "ffmpeg"`, in the layout [`crate::package::finalize`] expects. Progress goes
-/// to stdout as `key=value` blocks. `height` is the version's output height.
+/// to stdout as `key=value` blocks.
 pub fn build_optimize_argv(
     input: &Path,
     target: &OptimizeTarget,
     encoder: Encoder,
     vaapi_device: Option<&Path>,
-    height: u32,
     output: &Path,
 ) -> Vec<String> {
     let mut argv: Vec<String> = [
@@ -428,8 +424,10 @@ pub fn build_optimize_argv(
         },
         encoder,
         LadderEntry {
-            max_height: height,
+            // Unscaled: `bitrate_kbps` already suits the output size.
+            max_pixels: 0,
             video_codec: VideoCodec::H264,
+            video_profile: noflex_core::VideoProfile::H264High,
             audio_codec: AudioCodec::Aac,
             container: "mp4".to_string(),
             bitrate_kbps: target.bitrate_kbps,
@@ -557,6 +555,7 @@ mod tests {
                         max_bit_depth: Some(if hdr { 10 } else { 8 }),
                         max_width: None,
                         max_height: Some(max_height),
+                        max_pixels: None,
                         video_ranges: if hdr { vec![VideoRange::Hdr10] } else { vec![] },
                     })
                     .collect(),
@@ -580,10 +579,11 @@ mod tests {
     }
 
     fn ladder() -> Vec<LadderEntry> {
-        [(1080, 8_000), (2160, 20_000)]
-            .map(|(max_height, bitrate_kbps)| LadderEntry {
-                max_height,
+        [(2_073_600, 8_000), (8_294_400, 20_000)]
+            .map(|(max_pixels, bitrate_kbps)| LadderEntry {
+                max_pixels,
                 video_codec: VideoCodec::H264,
+                video_profile: VideoProfile::H264High,
                 audio_codec: AudioCodec::Aac,
                 container: "mp4".to_string(),
                 bitrate_kbps,
@@ -664,7 +664,7 @@ mod tests {
             targets[1].video,
             VideoPlan::Encode {
                 codec: VideoCodec::H264,
-                max_height: 1080,
+                height: 1080,
                 tonemap: true,
                 ..
             }
@@ -749,7 +749,8 @@ mod tests {
         let target = OptimizeTarget {
             video: VideoPlan::Encode {
                 codec: VideoCodec::H264,
-                max_height: 90,
+                width: 160,
+                height: 90,
                 tonemap: false,
                 profile: VideoProfile::H264High,
             },
@@ -772,7 +773,7 @@ mod tests {
             devices: vec![],
         };
         let raw = dir.join("raw.mp4");
-        let argv = build_optimize_argv(&input, &target, Encoder::Software264, None, 90, &raw);
+        let argv = build_optimize_argv(&input, &target, Encoder::Software264, None, &raw);
         let output = std::process::Command::new(&argv[0])
             .args(&argv[1..])
             .output()

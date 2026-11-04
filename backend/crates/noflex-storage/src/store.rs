@@ -20,9 +20,10 @@ use crate::{
         ImageSource, ImageTarget, IntroMarkers, Invite, Library, LinkedServer, LiveTvChannel,
         LiveTvSource, MediaFile, OptimizedVersion, PlaySession, Playlist, PluginOverrideRow,
         PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule, RecordingStatus,
-        RefreshTokenLookup, ScanEvent, Session, Tag, TagAssignment, TagSummary, TrickplayAsset,
-        User, UserData, UserPluginSecret, UserPreference, UserRestrictions, WatchRoom,
-        WatchRoomMember, WatchRoomState, WatchedWork, Work, WorkFeatures,
+        RefreshTokenLookup, ScanEvent, Session, SmartTranscodingSettings, Tag, TagAssignment,
+        TagSummary, TrickplayAsset, User, UserData, UserPluginSecret, UserPreference,
+        UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork, Work,
+        WorkFeatures,
     },
     error::StorageResult,
     query::{
@@ -486,6 +487,12 @@ pub trait Storage: Send + Sync + 'static {
     /// Return running versions to the queue, for after a restart: nothing can
     /// still be working on them. Returns how many moved.
     async fn requeue_running_optimized_versions(&self) -> StorageResult<u64>;
+    /// What an administrator has overridden; defaults until they do.
+    async fn smart_transcoding_settings(&self) -> StorageResult<SmartTranscodingSettings>;
+    async fn set_smart_transcoding_settings(
+        &self,
+        settings: &SmartTranscodingSettings,
+    ) -> StorageResult<()>;
 
     /// The categories with at least one top-level work, in
     /// [`ContentCategory::ALL`][crate::domain::ContentCategory::ALL] order.

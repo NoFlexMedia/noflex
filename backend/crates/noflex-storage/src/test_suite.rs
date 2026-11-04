@@ -77,6 +77,7 @@ where
     episodes_after_lists_regular_episodes_in_order(store).await;
     devices_belong_to_their_user(store).await;
     optimized_versions_queue_by_priority(store).await;
+    smart_transcoding_settings_round_trip(store).await;
     invites_can_only_be_spent_while_valid(store).await;
     linked_servers_belong_to_their_user(store).await;
     applied_watch_state_keeps_its_original_time(store).await;
@@ -3267,6 +3268,37 @@ async fn devices_belong_to_their_user<S: Storage + ?Sized>(store: &S) {
 
     store.delete_user(owner.id).await.ok();
     store.delete_user(other.id).await.ok();
+}
+
+async fn smart_transcoding_settings_round_trip<S: Storage + ?Sized>(store: &S) {
+    use crate::domain::SmartTranscodingSettings;
+
+    assert_eq!(
+        store.smart_transcoding_settings().await.expect("defaults"),
+        SmartTranscodingSettings::default(),
+    );
+    let settings = SmartTranscodingSettings {
+        dir: Some("/mnt/fast/versions".to_string()),
+        max_storage_gb: Some(500),
+        max_version_gb: None,
+    };
+    store
+        .set_smart_transcoding_settings(&settings)
+        .await
+        .expect("set");
+    assert_eq!(
+        store.smart_transcoding_settings().await.expect("read"),
+        settings,
+    );
+    // Reverting to the configuration is a plain overwrite.
+    store
+        .set_smart_transcoding_settings(&SmartTranscodingSettings::default())
+        .await
+        .expect("clear");
+    assert_eq!(
+        store.smart_transcoding_settings().await.expect("read"),
+        SmartTranscodingSettings::default(),
+    );
 }
 
 async fn optimized_versions_queue_by_priority<S: Storage + ?Sized>(store: &S) {

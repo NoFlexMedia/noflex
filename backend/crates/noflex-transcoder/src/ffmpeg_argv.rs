@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use noflex_core::{AudioCodec, VideoCodec, VideoProfile};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -83,15 +84,60 @@ pub fn is_network_url(raw: &str) -> bool {
     })
 }
 
-/// One rung of the transcode ladder: the output ceiling a re-encode
-/// targets.
-#[derive(Debug, Clone)]
+/// One rung of the transcode ladder: what a re-encode in `video_codec` can
+/// produce, up to `max_pixels` of picture area at `bitrate_kbps`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LadderEntry {
-    pub max_height: u32,
+    pub max_pixels: u64,
     pub video_codec: VideoCodec,
+    /// The most capable profile to encode at; a client that decodes less gets
+    /// its own best.
+    pub video_profile: VideoProfile,
     pub audio_codec: AudioCodec,
     pub container: String,
     pub bitrate_kbps: u32,
+}
+
+impl LadderEntry {
+    /// `client`, unless this rung holds its codec to something lower.
+    pub fn cap_profile(&self, client: VideoProfile) -> VideoProfile {
+        // Encodes are 8-bit, so only H.264 has a choice of profile to rank.
+        let rank = |profile| match profile {
+            VideoProfile::H264Baseline | VideoProfile::H264ConstrainedBaseline => Some(0),
+            VideoProfile::H264Main => Some(1),
+            VideoProfile::H264High => Some(2),
+            VideoProfile::H264High10 => Some(3),
+            _ => None,
+        };
+        match (rank(self.video_profile), rank(client)) {
+            (Some(rung), Some(wanted)) if rung < wanted => self.video_profile,
+            _ => client,
+        }
+    }
+
+    /// The rung for a `pixels`-sized encode in `codec`: the smallest that holds
+    /// it, else the largest. A ladder with no rung for `codec` lends its others,
+    /// and rungs over `max_bitrate_bps` are out. `None` when none are left.
+    pub fn pick(
+        ladder: &[Self],
+        codec: VideoCodec,
+        pixels: u64,
+        max_bitrate_bps: Option<u64>,
+    ) -> Option<&Self> {
+        let has_codec = ladder.iter().any(|rung| rung.video_codec == codec);
+        let usable = ladder
+            .iter()
+            .filter(|rung| !has_codec || rung.video_codec == codec)
+            .filter(|rung| {
+                max_bitrate_bps
+                    .is_none_or(|max| u64::from(rung.bitrate_kbps).saturating_mul(1000) <= max)
+            });
+        usable
+            .clone()
+            .filter(|rung| rung.max_pixels >= pixels)
+            .min_by_key(|rung| rung.max_pixels)
+            .or_else(|| usable.max_by_key(|rung| rung.max_pixels))
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -278,7 +324,8 @@ pub(crate) fn push_video(argv: &mut Vec<String>, req: &TranscodeRequest) {
         }
         VideoPlan::Encode {
             codec,
-            max_height,
+            width,
+            height,
             tonemap,
             profile,
         } => {
@@ -287,8 +334,7 @@ pub(crate) fn push_video(argv: &mut Vec<String>, req: &TranscodeRequest) {
             if let Some(name) = profile_flag(profile, req.encoder.backend()) {
                 argv.extend(["-profile:v".to_string(), name.to_string()]);
             }
-            let height = max_height.min(req.ladder.max_height);
-            let kbps = scaled_bitrate_kbps(&req.ladder, height);
+            let kbps = scaled_bitrate_kbps(&req.ladder, u64::from(width) * u64::from(height));
             argv.extend([
                 "-b:v".to_string(),
                 format!("{kbps}k"),
@@ -308,16 +354,15 @@ pub(crate) fn push_video(argv: &mut Vec<String>, req: &TranscodeRequest) {
 }
 
 /// MSE and Safari only accept HEVC in MP4 under the `hvc1` sample entry.
-/// Video bitrate for an encode `height` pixels tall on `ladder`'s rung:
-/// the rung's rate scaled by pixel count (a 480p encode on a 1080p rung
-/// doesn't need 1080p's bits), floored at 15% so small outputs stay
-/// clean, and never above the rung's rate.
-pub fn scaled_bitrate_kbps(ladder: &LadderEntry, height: u32) -> u32 {
-    if ladder.max_height == 0 || height >= ladder.max_height {
+/// Video bitrate for a `pixels`-sized encode on `ladder`'s rung: the rung's
+/// rate scaled by area (a 480p encode on a 1080p rung doesn't need 1080p's
+/// bits), floored at 15% so small outputs stay clean, and never above the
+/// rung's rate.
+pub fn scaled_bitrate_kbps(ladder: &LadderEntry, pixels: u64) -> u32 {
+    if ladder.max_pixels == 0 || pixels >= ladder.max_pixels {
         return ladder.bitrate_kbps;
     }
-    let ratio = f64::from(height) / f64::from(ladder.max_height);
-    let scale = (ratio * ratio).max(0.15);
+    let scale = (pixels as f64 / ladder.max_pixels as f64).max(0.15);
     (f64::from(ladder.bitrate_kbps) * scale).round() as u32
 }
 
@@ -479,7 +524,8 @@ mod tests {
             segment_container: HlsSegmentContainer::Ts,
             video: VideoPlan::Encode {
                 codec: VideoCodec::H264,
-                max_height: 1080,
+                width: 1920,
+                height: 1080,
                 tonemap,
                 profile: VideoProfile::H264High,
             },
@@ -497,8 +543,9 @@ mod tests {
             encode_plan(false),
             encoder,
             LadderEntry {
-                max_height: 1080,
+                max_pixels: 2_073_600,
                 video_codec: VideoCodec::H264,
+                video_profile: VideoProfile::H264High,
                 audio_codec: AudioCodec::Aac,
                 container: "ts".to_string(),
                 bitrate_kbps: 8000,
@@ -723,30 +770,32 @@ mod tests {
         let mut r = req(Encoder::Software264);
         r.plan.video = VideoPlan::Encode {
             codec: VideoCodec::H264,
-            max_height: 480,
+            width: 854,
+            height: 480,
             tonemap: false,
             profile: VideoProfile::H264Main,
         };
         let argv = build_ffmpeg_argv(&r);
         assert_eq!(after(&argv, "-profile:v"), "main");
-        // 8000k on the 1080p rung → (480/1080)² ≈ 0.198 of it.
-        assert_eq!(after(&argv, "-b:v"), "1580k");
-        assert_eq!(after(&argv, "-maxrate"), "2370k");
+        // 8000k on the 1080p rung → 854×480 is ≈ 0.198 of its area.
+        assert_eq!(after(&argv, "-b:v"), "1581k");
+        assert_eq!(after(&argv, "-maxrate"), "2371k");
     }
 
     #[test]
     fn bitrate_scaling_is_floored_and_capped() {
         let rung = LadderEntry {
-            max_height: 1080,
+            max_pixels: 2_073_600,
             video_codec: VideoCodec::H264,
+            video_profile: VideoProfile::H264High,
             audio_codec: AudioCodec::Aac,
             container: "mp4".into(),
             bitrate_kbps: 8000,
         };
-        assert_eq!(scaled_bitrate_kbps(&rung, 1080), 8000);
-        assert_eq!(scaled_bitrate_kbps(&rung, 2160), 8000);
-        assert_eq!(scaled_bitrate_kbps(&rung, 720), 3556);
-        assert_eq!(scaled_bitrate_kbps(&rung, 240), 1200, "15% floor");
+        assert_eq!(scaled_bitrate_kbps(&rung, 2_073_600), 8000);
+        assert_eq!(scaled_bitrate_kbps(&rung, 8_294_400), 8000);
+        assert_eq!(scaled_bitrate_kbps(&rung, 921_600), 3556);
+        assert_eq!(scaled_bitrate_kbps(&rung, 102_240), 1200, "15% floor");
     }
 
     #[test]
@@ -765,12 +814,58 @@ mod tests {
         );
     }
 
+    fn rung(max_pixels: u64, video_codec: VideoCodec, bitrate_kbps: u32) -> LadderEntry {
+        LadderEntry {
+            max_pixels,
+            video_codec,
+            video_profile: VideoProfile::H264High,
+            audio_codec: AudioCodec::Aac,
+            container: "mp4".into(),
+            bitrate_kbps,
+        }
+    }
+
     #[test]
-    fn ladder_caps_plan_height() {
-        let mut r = req(Encoder::Software264);
-        r.ladder.max_height = 720;
-        let argv = build_ffmpeg_argv(&r);
-        assert_eq!(vf(&argv), "scale=-2:720,format=yuv420p");
+    fn picks_the_smallest_rung_holding_the_size_in_that_codec() {
+        let ladder = [
+            rung(2_073_600, VideoCodec::Av1, 3_500),
+            rung(8_294_400, VideoCodec::Av1, 12_000),
+            rung(921_600, VideoCodec::H264, 4_000),
+            rung(2_073_600, VideoCodec::H264, 8_000),
+        ];
+        let picked = |codec, pixels, limit| {
+            LadderEntry::pick(&ladder, codec, pixels, limit).map(|rung| rung.bitrate_kbps)
+        };
+        // A scope 4K picture is under 4K's area and still takes its rung.
+        assert_eq!(picked(VideoCodec::Av1, 6_174_720, None), Some(12_000));
+        // Bigger than anything on offer: the largest, for fitting down.
+        assert_eq!(picked(VideoCodec::H264, 8_294_400, None), Some(8_000));
+        // The limit rules out the rung that would have held it.
+        assert_eq!(
+            picked(VideoCodec::H264, 2_073_600, Some(5_000_000)),
+            Some(4_000)
+        );
+        // No H.265 rungs: borrow the closest fit from the others.
+        assert_eq!(picked(VideoCodec::H265, 921_600, None), Some(4_000));
+        assert_eq!(picked(VideoCodec::H264, 921_600, Some(1_000)), None);
+    }
+
+    #[test]
+    fn a_rung_only_lowers_the_clients_profile() {
+        let mut main = rung(2_073_600, VideoCodec::H264, 8_000);
+        main.video_profile = VideoProfile::H264Main;
+        assert_eq!(
+            main.cap_profile(VideoProfile::H264High),
+            VideoProfile::H264Main
+        );
+        assert_eq!(
+            main.cap_profile(VideoProfile::H264Baseline),
+            VideoProfile::H264Baseline
+        );
+        assert_eq!(
+            main.cap_profile(VideoProfile::Av1Main),
+            VideoProfile::Av1Main
+        );
     }
 
     #[test]

@@ -247,8 +247,9 @@ fn test_transcoder_cfg() -> noflex_server::config::TranscoderConfig {
         fallback: noflex_server::config::TranscodeFallback::Auto,
         optimize: Default::default(),
         ladder: vec![noflex_server::config::LadderEntry {
-            max_height: 480,
+            max_pixels: 409_920,
             video_codec: VideoCodec::H264,
+            video_profile: VideoProfile::H264High,
             audio_codec: AudioCodec::Aac,
             container: "mpegts".to_string(),
             bitrate_kbps: 2_000,
@@ -930,9 +931,11 @@ async fn session_burn_subtitle_forces_transcode() {
         job.request.plan.video,
         VideoPlan::Encode {
             codec: VideoCodec::H264,
-            max_height: 1080,
+            // Fitted to the ladder's one 480p rung.
+            height: 480,
             tonemap: false,
             profile: VideoProfile::H264High,
+            ..
         }
     ));
     assert_eq!(
@@ -1202,6 +1205,7 @@ async fn hevc_hdr_mkv_copies_video_into_fmp4_for_hevc_client() {
             max_bit_depth: Some(10),
             max_width: Some(7680),
             max_height: Some(4320),
+            max_pixels: None,
             video_ranges: vec![VideoRange::Hdr10],
         });
     let session = service

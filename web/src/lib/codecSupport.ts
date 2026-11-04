@@ -21,6 +21,8 @@ export interface VideoCodecSupport {
   maxBitDepth: number | null;
   maxWidth: number | null;
   maxHeight: number | null;
+  /** Largest picture in luma samples, which is what levels actually limit. */
+  maxPixels: number | null;
   videoRanges: VideoRange[];
 }
 export interface AudioCodecSupport { codec: AudioCodec; maxChannels: number | null }
@@ -108,6 +110,26 @@ export function levelTable(codec: VideoCodec): number[] {
   }
 }
 
+// Largest picture per level, in luma samples. H.264 specifies macroblocks
+// (MaxFS × 256); HEVC, AV1 and VP9 specify samples directly.
+const H264_MAX_FS: Record<number, number> = { 10: 99, 11: 396, 12: 396, 13: 396, 20: 396, 21: 792, 22: 1620, 30: 1620, 31: 3600, 32: 5120, 40: 8192, 41: 8192, 42: 8704, 50: 22080, 51: 36864, 52: 36864, 60: 139264, 61: 139264, 62: 139264 };
+const HEVC_MAX_LUMA_PS: Record<number, number> = { 30: 36864, 60: 122880, 63: 245760, 90: 552960, 93: 983040, 120: 2228224, 123: 2228224, 150: 8912896, 153: 8912896, 156: 8912896, 180: 35651584, 183: 35651584, 186: 35651584 };
+const VP9_MAX_LUMA_PS: Record<number, number> = { 10: 36864, 11: 73728, 20: 122880, 21: 245760, 30: 552960, 31: 983040, 40: 2228224, 41: 2228224, 50: 8912896, 51: 8912896, 52: 8912896, 60: 35651584, 61: 35651584, 62: 35651584 };
+// seq_level_idx 0–3 are 2.x, 4–7 are 3.x, 8–11 are 4.x, 12–15 are 5.x, 16+ are 6.x.
+const AV1_MAX_PIC_SIZE: Record<number, number> = { 0: 147456, 1: 278784, 4: 665856, 5: 1065024, 8: 2359296, 9: 2359296, 12: 8912896, 13: 8912896, 14: 8912896, 15: 8912896, 16: 35651584, 17: 35651584, 18: 35651584, 19: 35651584 };
+
+/** Largest picture a decoder of `codec` at `level` (server units) must handle. */
+export function levelMaxPixels(codec: VideoCodec, level: number | undefined): number | null {
+  if (level == null) return null;
+  switch (codec) {
+    case "H264": return H264_MAX_FS[level] != null ? H264_MAX_FS[level] * 256 : null;
+    case "H265": return HEVC_MAX_LUMA_PS[level] ?? null;
+    case "AV1": return AV1_MAX_PIC_SIZE[level] ?? null;
+    case "VP9": return VP9_MAX_LUMA_PS[level] ?? null;
+    case "VP8": return null;
+  }
+}
+
 /** Candidate bit depths for a profile, highest first. */
 export function bitDepthCandidates(codec: VideoCodec, profile?: VideoProfile): number[] {
   switch (codec) {
@@ -121,9 +143,13 @@ export function bitDepthCandidates(codec: VideoCodec, profile?: VideoProfile): n
   }
 }
 
-/** Profiles whose codec string `supports` accepts, in candidate order. */
+/**
+ * Profiles whose codec string `supports` accepts at some bit depth, in
+ * candidate order. Any depth will do: Firefox takes AV1 Professional at 12
+ * bits but not 8, though either makes it the same profile.
+ */
 export function supportedProfiles(codec: VideoCodec, supports: (codecs: string) => boolean): (VideoProfile | undefined)[] {
-  return profileCandidates(codec).filter((profile) => supports(codecString(codec, profile, undefined, bitDepthCandidates(codec, profile).at(-1))));
+  return profileCandidates(codec).filter((profile) => bitDepthCandidates(codec, profile).some((depth) => supports(codecString(codec, profile, undefined, depth))));
 }
 
 /** Highest level reached by walking the table until the first failure. */
@@ -170,6 +196,17 @@ export function doviLevel(codec: "H264" | "H265" | "AV1", level: number): string
     H264: [[30, "01"], [31, "02"], [41, "05"], [50, "06"], [51, "08"], [52, "10"], [60, "12"]],
   };
   return tables[codec].find(([max]) => level <= max)?.[1] ?? "13";
+}
+
+/**
+ * The most a decoder is good for: what it answered for 16:9, bounded by what
+ * its level guarantees. Browsers call everything up to 8K supported and smooth
+ * without looking at the level, while hardware's real limit shows in the level
+ * alone, so neither answer stands by itself.
+ */
+export function maxPixels(max: Resolution | null, levelLimit: number | null): number | null {
+  const probed = max ? max.width * max.height : null;
+  return probed != null && levelLimit != null ? Math.min(probed, levelLimit) : probed ?? levelLimit;
 }
 
 /**
@@ -251,7 +288,7 @@ export function displayHasHdr(): boolean {
   }
 }
 
-async function maxResolution(mime: string, codecs: string, type: "media-source" | "file"): Promise<Resolution | null> {
+async function maxResolution(mime: string, codecs: string, type: "media-source" | "file"): Promise<{ standard: Resolution; widest: Resolution } | null> {
   const probe = (res: Resolution) =>
     decodes({ type, video: { contentType: typeFor(mime, codecs), width: res.width, height: res.height, bitrate: probeBitrate(res), framerate: 30 } })
       // `supported` alone is true for anything software can grind
@@ -267,7 +304,7 @@ async function maxResolution(mime: string, codecs: string, type: "media-source" 
   if (!max.width) return null;
   const alternatives = alternativeResolutions(max);
   const passed = await Promise.all(alternatives.map(probe));
-  return alternatives[passed.findIndex(Boolean)] ?? max;
+  return { standard: max, widest: alternatives[passed.findIndex(Boolean)] ?? max };
 }
 
 async function videoRanges(codec: VideoCodec, profile: VideoProfile | undefined, level: number, supports: Probe, type: "media-source" | "file"): Promise<VideoRange[]> {
@@ -327,8 +364,9 @@ async function codecSupport(codec: VideoCodec, supports: Probe, type: "media-sou
     profiles: profiles.filter((p): p is VideoProfile => !!p),
     maxLevel: level ?? null,
     maxBitDepth: bitDepth ?? null,
-    maxWidth: resolution?.width ?? null,
-    maxHeight: resolution?.height ?? null,
+    maxWidth: resolution?.widest.width ?? null,
+    maxHeight: resolution?.widest.height ?? null,
+    maxPixels: maxPixels(resolution?.standard ?? null, levelMaxPixels(codec, level)),
     videoRanges: ranges,
   };
 }

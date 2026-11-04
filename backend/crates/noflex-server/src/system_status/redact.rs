@@ -146,16 +146,16 @@ mod tests {
     fn flattens_nested_objects_and_arrays() {
         let rows = flatten_config(&json!({
             "bind": "0.0.0.0:8096",
-            "transcoder": { "ladder": [{ "max_height": 1080 }], "hwaccel": "auto" },
+            "transcoder": { "ladder": [{ "max_pixels": 2073600 }], "hwaccel": "auto" },
             "public_url": null,
             "plugin": { "search_path": [] },
         }));
         assert_eq!(get(&rows, "bind").value.as_deref(), Some("0.0.0.0:8096"));
         assert_eq!(
-            get(&rows, "transcoder.ladder[0].max_height")
+            get(&rows, "transcoder.ladder[0].max_pixels")
                 .value
                 .as_deref(),
-            Some("1080")
+            Some("2073600")
         );
         assert_eq!(get(&rows, "public_url").value, None);
         assert_eq!(

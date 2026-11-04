@@ -347,6 +347,20 @@ async fn run() -> anyhow::Result<()> {
     );
     // The session control plane lives behind GraphQL; it mints the
     // scoped media tokens the byte routes accept.
+    let mut ladder_codecs: Vec<noflex_core::VideoCodec> = Vec::new();
+    for rung in &cfg.transcoder.ladder {
+        if !ladder_codecs.contains(&rung.video_codec) {
+            ladder_codecs.push(rung.video_codec);
+        }
+    }
+    let live_codecs = noflex_server::hwaccel::usable_codecs(
+        &ffmpeg_path,
+        resolved_hwaccel,
+        &hw_detect,
+        &ladder_codecs,
+    )
+    .await;
+    tracing::info!(codecs = ?live_codecs, "usable live transcode codecs");
     let playback_sessions = Arc::new(
         stream::ServerPlaybackSessions::new(
             storage.clone(),
@@ -356,6 +370,10 @@ async fn run() -> anyhow::Result<()> {
             hw_detect.vaapi_device.clone(),
             jwt.clone(),
         )
+        .with_encode_video(noflex_server::hwaccel::live_codec_order(
+            resolved_hwaccel,
+            &live_codecs,
+        ))
         .with_events(event_bus.clone()),
     );
     let live_tv = Arc::new(noflex_server::live_tv_runtime::ServerLiveTv::new(
@@ -382,6 +400,14 @@ async fn run() -> anyhow::Result<()> {
         },
     )
     .await;
+    let optimized_dir = cfg
+        .transcoder
+        .optimize
+        .dir
+        .clone()
+        .unwrap_or_else(|| cfg.data_dir.join("optimized"));
+    std::fs::create_dir_all(&optimized_dir)
+        .with_context(|| format!("create optimized dir {}", optimized_dir.display()))?;
     let schema = build_schema(SchemaContext {
         storage: Some(storage.clone()),
         scanner: Some(scan_registry.clone()),
@@ -403,6 +429,12 @@ async fn run() -> anyhow::Result<()> {
         watch_room_bus: Some(Arc::new(noflex_graphql::WatchRoomBus::default())),
         admin_status: Some(admin_status),
         metadata_service: Some(metadata_service),
+        smart_transcoding: Some(noflex_graphql::SmartTranscodingDefaults {
+            enabled: cfg.transcoder.optimize.enabled,
+            directory: optimized_dir.display().to_string(),
+            max_storage_gb: cfg.transcoder.optimize.max_storage_gb,
+            max_version_gb: cfg.transcoder.optimize.max_version_gb,
+        }),
     });
     let download_output_dir = if cfg.cache.transcode_dir.is_empty() {
         cfg.data_dir.join("downloads")
@@ -419,24 +451,24 @@ async fn run() -> anyhow::Result<()> {
             .with_events(export_events.clone()),
     );
     let _download_handle = download_worker.spawn();
-    let optimized_dir = cfg
-        .transcoder
-        .optimize
-        .dir
-        .clone()
-        .unwrap_or_else(|| cfg.data_dir.join("optimized"));
-    std::fs::create_dir_all(&optimized_dir)
-        .with_context(|| format!("create optimized dir {}", optimized_dir.display()))?;
+    let mut optimize_config = cfg.transcoder.optimize.clone();
+    optimize_config.encode_video = noflex_server::hwaccel::usable_codecs(
+        &ffmpeg_path,
+        resolved_hwaccel,
+        &hw_detect,
+        &optimize_config.encode_video,
+    )
+    .await;
     let _optimize_worker = Arc::new(noflex_server::optimize_worker::OptimizeWorker {
         storage: storage.clone(),
         playback: playback_sessions.clone(),
         plugins: Some(plugin_registry.clone()),
-        config: cfg.transcoder.optimize.clone(),
+        config: optimize_config,
         ladder: cfg.transcoder.ladder.clone(),
         ffmpeg_path: ffmpeg_path.clone(),
         backend: resolved_hwaccel,
         vaapi_device: hw_detect.vaapi_device.clone(),
-        dir: optimized_dir.clone(),
+        dir: optimized_dir,
     })
     .spawn();
     let recordings_dir = cfg.data_dir.join("recordings");
@@ -451,7 +483,6 @@ async fn run() -> anyhow::Result<()> {
             transcode_cache_dir: transcode_dir,
             image_cache_dir,
             recordings_dir,
-            optimized_dir,
         },
     );
     let state = AppState {

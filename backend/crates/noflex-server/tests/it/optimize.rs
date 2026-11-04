@@ -17,7 +17,10 @@ use noflex_server::{
 };
 use noflex_storage::{
     Storage,
-    domain::{Device, Edition, Library, MediaFile, OptimizedVersionStatus, User, Work},
+    domain::{
+        Device, Edition, Library, MediaFile, OptimizedVersionStatus, SmartTranscodingSettings,
+        User, Work,
+    },
 };
 use noflex_storage_turso::TursoStore;
 use noflex_transcoder::{
@@ -63,6 +66,7 @@ fn h264_client() -> ClientCapabilities {
             max_bit_depth: Some(8),
             max_width: None,
             max_height: Some(1080),
+            max_pixels: None,
             video_ranges: vec![],
         }],
         audio_codecs: vec![AudioCodecSupport {
@@ -368,6 +372,60 @@ async fn a_watched_title_becomes_a_playable_version_with_every_audio_track() {
     assert_eq!(after[0].status, OptimizedVersionStatus::Queued);
     assert_eq!(after[0].source_size, changed.size_bytes);
     assert!(!Path::new(&path).exists(), "the stale file is gone");
+
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[tokio::test]
+async fn an_administrators_folder_and_limits_replace_the_configured_ones() {
+    let dir = std::env::temp_dir().join(format!("noflex-optimize-it-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("source.mkv");
+    if !make_source(&source) {
+        eprintln!("ffmpeg unavailable; skipping");
+        return;
+    }
+    let fixture = fixture(&source, dir.clone()).await;
+    let worker = worker(&fixture, config());
+    let chosen = dir.join("chosen");
+    std::fs::create_dir_all(&chosen).unwrap();
+    // Folders an administrator picks may hold things of theirs.
+    let theirs = chosen.join("holiday.mp4");
+    std::fs::write(&theirs, b"not ours").unwrap();
+    let unknown_version = chosen.join(format!("{}.mp4", uuid::Uuid::now_v7()));
+    std::fs::write(&unknown_version, b"left by a crash").unwrap();
+
+    let set = |max_storage_gb, max_version_gb| SmartTranscodingSettings {
+        dir: Some(chosen.display().to_string()),
+        max_storage_gb,
+        max_version_gb,
+    };
+    fixture
+        .store
+        .set_smart_transcoding_settings(&set(Some(0), None))
+        .await
+        .unwrap();
+    worker.plan().await.expect("plan");
+    assert!(
+        !worker.run_next().await.expect("run"),
+        "the setting's quota wins over the configured 200 GB"
+    );
+    assert!(theirs.exists(), "a file that isn't ours survives the sweep");
+    assert!(!unknown_version.exists(), "our own orphan doesn't");
+
+    fixture
+        .store
+        .set_smart_transcoding_settings(&set(None, Some(1)))
+        .await
+        .unwrap();
+    worker.plan().await.expect("plan");
+    assert!(worker.run_next().await.expect("run"));
+    let versions = fixture.store.list_optimized_versions().await.unwrap();
+    let path = versions[0].path.as_deref().expect("finished");
+    assert!(
+        Path::new(path).starts_with(&chosen),
+        "written to the chosen folder, not {path}"
+    );
 
     std::fs::remove_dir_all(dir).ok();
 }

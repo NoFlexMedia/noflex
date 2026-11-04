@@ -3,13 +3,16 @@
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import Check from "phosphor-svelte/lib/Check";
   import FilmStrip from "phosphor-svelte/lib/FilmStrip";
+  import Monitor from "phosphor-svelte/lib/Monitor";
   import Sparkle from "phosphor-svelte/lib/Sparkle";
   import Stack from "phosphor-svelte/lib/Stack";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
   import X from "phosphor-svelte/lib/X";
   import { AdminTranscoderStore, graphql } from "$houdini";
+  import { clientCapabilities } from "$lib/codecSupport.js";
+  import { pixelTier, profileName } from "$lib/format.js";
   import { failure, fetchQuery, refetch } from "$lib/graphql.js";
-  import { poll } from "$lib/ui.svelte.js";
+  import { attempt, poll } from "$lib/ui.svelte.js";
   import State from "$components/State.svelte";
   import { codec } from "./status/fmt.js";
 
@@ -28,9 +31,50 @@
   let preparedGb = $derived(versionList.reduce((total, version) => total + (version.status === "READY" ? version.sizeBytes ?? 0 : 0), 0) / 1024 ** 3);
   let activeVersions = $derived(versionList.filter((version) => version.status === "RUNNING" || version.status === "FAILED"));
 
+  const smart = graphql(`
+    query AdminSmartTranscoding {
+      smartTranscoding { enabled directory maxStorageGb maxVersionGb defaultDirectory defaultMaxStorageGb defaultMaxVersionGb }
+    }
+  `);
+  const saveSmart = graphql(`
+    mutation UpdateSmartTranscoding($directory: String, $storage: Int, $version: Int) {
+      updateSmartTranscoding(directory: $directory, maxStorageGb: $storage, maxVersionGb: $version) { enabled directory maxStorageGb maxVersionGb defaultDirectory defaultMaxStorageGb defaultMaxVersionGb }
+    }
+  `);
+  $effect(() => { fetchQuery(smart); });
+  let settings = $derived($smart.data?.smartTranscoding);
+  // Blank fields fall back to the server's configuration.
+  let draft = $state({ directory: "", storage: "", version: "" });
+  let saving = $state(false);
+  $effect(() => {
+    if (!settings) return;
+    draft = {
+      directory: settings.directory === settings.defaultDirectory ? "" : settings.directory,
+      storage: settings.maxStorageGb === settings.defaultMaxStorageGb ? "" : String(settings.maxStorageGb),
+      version: settings.maxVersionGb == null || settings.maxVersionGb === settings.defaultMaxVersionGb ? "" : String(settings.maxVersionGb),
+    };
+  });
+  const toGb = (text) => (String(text).trim() === "" ? null : Number(text));
+  async function saveSettings(event) {
+    event.preventDefault();
+    saving = true;
+    if (await attempt(() => saveSmart.mutate({ directory: draft.directory.trim() || null, storage: toGb(draft.storage), version: toGb(draft.version) }), "Smart transcoding settings saved")) refetch(smart);
+    saving = false;
+  }
+
   let info = $derived($transcoder.data?.transcoderInfo);
   let onlyAvailable = $state(false);
   let showFlags = $state({ ffmpeg: false, ffprobe: false });
+
+  let browser = $state(null);
+  $effect(() => { clientCapabilities().then((caps) => (browser = caps), () => {}); });
+  const megapixels = (pixels) => `${(pixels / 1e6).toFixed(pixels < 1e7 ? 1 : 0)} MP`;
+  /** Whether this browser could play a rung's encode, or null before it's measured. */
+  function browserPlays(rung) {
+    if (!browser) return null;
+    const support = browser.videoCodecs.find((item) => item.codec === rung.videoCodec);
+    return !!support && browser.hls.some((hls) => hls.videoCodecs.includes(rung.videoCodec)) && support.profiles.includes(rung.videoProfile) && (support.maxPixels == null || support.maxPixels >= rung.maxPixels);
+  }
 
   const BACKEND = { software: "Software", vaapi: "VAAPI", nvenc: "NVENC", qsv: "Quick Sync", videotoolbox: "VideoToolbox", mf: "Media Foundation", cuda: "CUDA (NVDEC)" };
   const backendLabel = (name) => BACKEND[name] ?? name;
@@ -84,8 +128,19 @@
     <section class="panel dense">
       <header class="panel-head">
         <span class="panel-icon"><Stack size={18} /></span>
-        <div><h2>Smart transcoding</h2><p>{versionCount("READY")} ready · {preparedGb.toFixed(1)} GB · {versionCount("QUEUED")} queued</p></div>
+        <div><h2>Smart transcoding</h2><p>{versionCount("READY")} ready · {preparedGb.toFixed(1)}{#if settings} of {settings.maxStorageGb}{/if} GB · {versionCount("QUEUED")} queued</p></div>
       </header>
+      {#if settings && !settings.enabled}
+        <p class="error warn"><WarningCircle size={14} />Turned off by <code>transcoder.optimize.enabled</code> in the server’s configuration.</p>
+      {/if}
+      {#if settings}
+        <form class="smart-form" onsubmit={saveSettings}>
+          <label class="field wide">Folder<input class="mono" bind:value={draft.directory} placeholder={settings.defaultDirectory} spellcheck="false" autocomplete="off" /><small>Versions take real disk, so avoid cache volumes. Moving this leaves existing versions where they are, still playing.</small></label>
+          <label class="field">Total storage (GB)<input type="number" min="0" step="1" inputmode="numeric" bind:value={draft.storage} placeholder={String(settings.defaultMaxStorageGb)} /><small>Past this, the least recently used are removed.</small></label>
+          <label class="field">Largest version (GB)<input type="number" min="1" step="1" inputmode="numeric" bind:value={draft.version} placeholder={settings.defaultMaxVersionGb == null ? "No limit" : String(settings.defaultMaxVersionGb)} /><small>Titles estimated bigger than this play with a live transcode instead.</small></label>
+          <div class="smart-actions"><button class="btn sm primary" disabled={saving}>{#if saving}<span class="spinner sm"></span>{/if}Save</button></div>
+        </form>
+      {/if}
       {#if activeVersions.length}
         <ul class="versions">
           {#each activeVersions as version (version.id)}
@@ -118,23 +173,51 @@
       </dl>
     </section>
 
+    {#if browser}
+      <section class="panel dense">
+        <header class="panel-head">
+          <span class="panel-icon"><Monitor size={18} /></span>
+          <div><h2>This browser</h2><p>What it reported it can decode. Sizes are each profile’s largest picture, bounded by its level.</p></div>
+        </header>
+        <div class="dtable-wrap">
+          <table class="dtable">
+            <thead><tr><th scope="col">Video</th><th scope="col">Best profile</th><th scope="col">Max picture</th><th scope="col">Bit depth</th><th scope="col">Dynamic range</th></tr></thead>
+            <tbody>
+              {#each browser.videoCodecs as support (support.codec)}
+                <tr>
+                  <td class="strong">{codec(support.codec)}</td>
+                  <td>{profileName(support.profiles[0]) || "—"}</td>
+                  <td class="nowrap" title={support.maxPixels ? megapixels(support.maxPixels) : null}>{support.maxPixels ? pixelTier(support.maxPixels) : "—"}</td>
+                  <td>{support.maxBitDepth ? `${support.maxBitDepth}-bit` : "—"}</td>
+                  <td>{support.videoRanges.join(", ").replaceAll("_", " ")}</td>
+                </tr>
+              {:else}
+                <tr><td colspan="5" class="faint">No video codecs reported.</td></tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {/if}
+
     <section class="panel dense">
       <header class="panel-head">
         <span class="panel-icon"><Stack size={18} /></span>
-        <div><h2>Transcode ladder</h2><p>The rung matching a client’s maximum height is used; its encoder runs on the resolved backend.</p></div>
+        <div><h2>Transcode ladder</h2><p>A re-encode uses the smallest rung of its codec that holds the picture. Live playback prefers what the hardware encoder can do, then H.264.</p></div>
       </header>
       <div class="dtable-wrap">
         <table class="dtable">
-          <thead><tr><th scope="col">Max height</th><th scope="col">Video</th><th scope="col">Audio</th><th scope="col">Container</th><th scope="col" class="num">Bitrate</th><th scope="col">Encoder</th></tr></thead>
+          <thead><tr><th scope="col">Max picture</th><th scope="col">Video profile</th><th scope="col">Audio</th><th scope="col">Container</th><th scope="col" class="num">Bitrate</th><th scope="col">Encoder</th><th scope="col">This browser</th></tr></thead>
           <tbody>
-            {#each info.ladder as rung (rung.maxHeight + rung.videoCodec)}
+            {#each info.ladder as rung (rung.maxPixels + rung.videoCodec)}
               <tr>
-                <td class="strong">{rung.maxHeight}p</td>
-                <td>{codec(rung.videoCodec)}</td>
+                <td class="strong nowrap" title={megapixels(rung.maxPixels)}>{pixelTier(rung.maxPixels)}</td>
+                <td class="nowrap">{codec(rung.videoCodec)} {profileName(rung.videoProfile)}</td>
                 <td>{rung.audioCodec}</td>
                 <td class="mono">{rung.container}</td>
                 <td class="num">{(rung.bitrateKbps / 1000).toFixed(1)} Mb/s</td>
                 <td class="nowrap"><code>{rung.encoder}</code> {#if rung.encoderAvailable}<span class="state ok">available</span>{:else}<span class="state bad">missing</span>{/if}</td>
+                <td>{#if browserPlays(rung) === null}<span class="faint">—</span>{:else if browserPlays(rung)}<span class="state ok">plays</span>{:else}<span class="faint">can’t decode</span>{/if}</td>
               </tr>
             {/each}
           </tbody>
@@ -170,6 +253,9 @@
 {/if}
 
 <style>
+  .smart-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px 20px; align-items: start; margin-bottom: 14px; }
+  .smart-form .wide { grid-column: 1 / -1; }
+  .smart-actions { grid-column: 1 / -1; }
   .versions { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; font-size: 0.86rem; }
   .versions li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; }
   .versions code { overflow-wrap: anywhere; }

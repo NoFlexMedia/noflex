@@ -176,8 +176,23 @@ pub struct VideoCodecSupport {
     pub max_bit_depth: Option<u8>,
     pub max_width: Option<u32>,
     pub max_height: Option<u32>,
+    /// Largest picture in luma samples. Levels bound area rather than either
+    /// dimension, so a wide source can fit where a tall one of the same width
+    /// doesn't.
+    pub max_pixels: Option<u64>,
     /// Ranges decoder and display can present; SDR is implied.
     pub video_ranges: Vec<VideoRange>,
+}
+
+impl VideoCodecSupport {
+    /// Whether a `width`×`height` picture is within every size limit.
+    pub fn fits(&self, width: u32, height: u32) -> bool {
+        self.max_width.is_none_or(|max| width <= max)
+            && self.max_height.is_none_or(|max| height <= max)
+            && self
+                .max_pixels
+                .is_none_or(|max| u64::from(width) * u64::from(height) <= max)
+    }
 }
 
 /// Decoder limits for one audio codec. Without an entry, any channel
@@ -250,6 +265,8 @@ impl ClientCapabilities {
                 max_bit_depth: Some(8),
                 max_width: Some(4096),
                 max_height: Some(2304),
+                // Level 5.1's MaxFS of 36,864 macroblocks.
+                max_pixels: Some(9_437_184),
                 video_ranges: vec![VideoRange::Sdr],
             }],
             audio_codecs: vec![AudioCodecSupport {
@@ -324,12 +341,27 @@ pub enum VideoPlan {
     },
     /// Re-encode to 8-bit SDR; `tonemap` maps an HDR source down first.
     /// `profile` is the most capable one the client decodes for `codec`.
+    /// `width`×`height` is the output picture.
     Encode {
         codec: VideoCodec,
-        max_height: u32,
+        width: u32,
+        height: u32,
         tonemap: bool,
         profile: VideoProfile,
     },
+}
+
+/// `width`×`height` scaled to hold at most `max_pixels`, keeping its shape.
+/// Returned untouched when it already fits; otherwise even, since 4:2:0
+/// encoders reject odd dimensions.
+pub fn fit_pixels(width: u32, height: u32, max_pixels: u64) -> (u32, u32) {
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels <= max_pixels {
+        return (width, height);
+    }
+    let scale = (max_pixels as f64 / pixels as f64).sqrt();
+    let scaled = |side: u32| ((f64::from(side) * scale) as u32 & !1).max(2);
+    (scaled(width), scaled(height))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -482,12 +514,16 @@ pub fn decide(
             let plan = TranscodePlan {
                 segment_container: HlsSegmentContainer::Ts,
                 video: match video {
-                    Some(v) => VideoPlan::Encode {
-                        codec: VideoCodec::H264,
-                        max_height: encode_height(v, VideoCodec::H264, caps),
-                        tonemap: VideoRange::of(v).is_hdr(),
-                        profile: encode_profile(VideoCodec::H264, caps),
-                    },
+                    Some(v) => {
+                        let (width, height) = encode_size(v, VideoCodec::H264, caps);
+                        VideoPlan::Encode {
+                            codec: VideoCodec::H264,
+                            width,
+                            height,
+                            tonemap: VideoRange::of(v).is_hdr(),
+                            profile: encode_profile(VideoCodec::H264, caps),
+                        }
+                    }
                     None => VideoPlan::None,
                 },
                 audio: match audio {
@@ -561,9 +597,11 @@ fn plan_video(
         .chain(allowed)
         .copied()
         .find(|c| allowed.contains(c) && can_encode_video(*c))?;
+    let (width, height) = encode_size(v, codec, caps);
     Some(VideoPlan::Encode {
         codec,
-        max_height: encode_height(v, codec, caps),
+        width,
+        height,
         tonemap: VideoRange::of(v).is_hdr(),
         profile: encode_profile(codec, caps),
     })
@@ -626,17 +664,32 @@ pub fn encode_profile(codec: VideoCodec, caps: &ClientCapabilities) -> VideoProf
         .unwrap_or(ladder[0])
 }
 
-/// Output height for a re-encode: the source, capped by the display
-/// ceiling and the target codec's decoder limit.
-fn encode_height(v: &VideoStreamProbe, codec: VideoCodec, caps: &ClientCapabilities) -> u32 {
-    let mut h = v.height;
+/// Output size for a re-encode: the source, scaled to fit the display
+/// ceiling and the target codec's decoder limits.
+fn encode_size(v: &VideoStreamProbe, codec: VideoCodec, caps: &ClientCapabilities) -> (u32, u32) {
+    let support = caps.video_support(codec);
+    let mut height = v.height;
     if let Some(max) = caps.max_height {
-        h = h.min(max);
+        height = height.min(max);
     }
-    if let Some(max) = caps.video_support(codec).and_then(|s| s.max_height) {
-        h = h.min(max);
+    if let Some(max) = support.and_then(|s| s.max_height) {
+        height = height.min(max);
     }
-    h.max(1)
+    if let Some(max) = support.and_then(|s| s.max_width)
+        && v.width > max
+    {
+        height = height.min((u64::from(max) * u64::from(v.height) / u64::from(v.width)) as u32);
+    }
+    let height = height.max(1);
+    let width = match v.height {
+        0 => v.width,
+        source if height == source => v.width,
+        source => (u64::from(v.width) * u64::from(height) / u64::from(source)) as u32 & !1,
+    };
+    match support.and_then(|s| s.max_pixels) {
+        Some(max) => fit_pixels(width, height, max),
+        None => (width, height),
+    }
 }
 
 /// Everything about `video` that keeps it from being presented as-is
@@ -673,7 +726,7 @@ fn video_issues(
         {
             r |= TranscodeReasons::VideoBitDepthNotSupported;
         }
-        if s.max_width.is_some_and(|w| v.width > w) || s.max_height.is_some_and(|h| v.height > h) {
+        if !s.fits(v.width, v.height) {
             r |= TranscodeReasons::VideoResolutionNotSupported;
         }
     }
@@ -854,6 +907,7 @@ mod tests {
             max_bit_depth: Some(10),
             max_width: Some(7680),
             max_height: Some(4320),
+            max_pixels: None,
             video_ranges: vec![VideoRange::Hdr10, VideoRange::Hlg],
         });
         caps
@@ -962,8 +1016,9 @@ mod tests {
             VideoPlan::Encode {
                 codec: VideoCodec::H264,
                 tonemap: true,
-                max_height: 2160,
+                height: 2160,
                 profile: VideoProfile::H264High,
+                ..
             }
         ));
         assert!(plan.copies_audio());
@@ -1116,6 +1171,20 @@ mod tests {
     }
 
     #[test]
+    fn pixel_limit_rejects_area_and_keeps_shape() {
+        let mut caps = ClientCapabilities::web();
+        caps.video_codecs[0].max_pixels = Some(1_000_000);
+        let (plan, reasons) = transcoding(&decide_default(&basic(), &caps));
+        assert_eq!(reasons, TranscodeReasons::VideoResolutionNotSupported);
+        let VideoPlan::Encode { width, height, .. } = plan.video else {
+            panic!("expected an encode");
+        };
+        assert!(u64::from(width) * u64::from(height) <= 1_000_000);
+        // The source's 16:9 survives the even rounding.
+        assert!((f64::from(width) / f64::from(height) - 16.0 / 9.0).abs() < 0.01);
+    }
+
+    #[test]
     fn display_ceiling_scales_down() {
         let mut caps = ClientCapabilities::web();
         caps.max_height = Some(720);
@@ -1124,7 +1193,7 @@ mod tests {
         assert!(matches!(
             plan.video,
             VideoPlan::Encode {
-                max_height: 720,
+                height: 720,
                 tonemap: false,
                 ..
             }

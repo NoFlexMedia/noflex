@@ -5,10 +5,55 @@
 //! [`HwBackend`](noflex_transcoder::HwBackend). Runs once at startup;
 //! the result threads into every transcode request.
 
+use std::path::Path;
+
 use noflex_core::VideoCodec;
-use noflex_transcoder::{Encoder, HwDetect, encoder::HwBackend};
+use noflex_transcoder::{Encoder, HwDetect, encoder::HwBackend, hwdetect::encoder_works};
 
 use crate::config::{HwAccel, TranscodeFallback};
+
+/// Which of `codecs` this server can encode on `backend`: built into ffmpeg
+/// and, for hardware, proven by encoding a frame. Keeps the given order.
+pub async fn usable_codecs(
+    ffmpeg: &Path,
+    backend: HwBackend,
+    det: &HwDetect,
+    codecs: &[VideoCodec],
+) -> Vec<VideoCodec> {
+    let mut usable = Vec::new();
+    for &codec in codecs {
+        let encoder = pick_encoder(backend, codec);
+        let built = det.encoders.iter().any(|name| name == encoder.video_flag());
+        if built
+            && (!encoder.is_hardware()
+                || encoder_works(ffmpeg, encoder, det.vaapi_device.as_deref()).await)
+        {
+            usable.push(codec);
+        }
+    }
+    usable
+}
+
+/// Live transcodes' codecs, preferred first: `usable` ones hardware can keep up
+/// with, then H.264 as the one software encoder fast enough to choose, then the
+/// slow software encoders for clients that play nothing else. H.264 is always
+/// present, as the universal fallback.
+pub fn live_codec_order(backend: HwBackend, usable: &[VideoCodec]) -> Vec<VideoCodec> {
+    let (hardware, software): (Vec<_>, Vec<_>) = usable
+        .iter()
+        .copied()
+        .partition(|codec| pick_encoder(backend, *codec).is_hardware());
+    let mut order = hardware;
+    if !order.contains(&VideoCodec::H264) {
+        order.push(VideoCodec::H264);
+    }
+    order.extend(
+        software
+            .into_iter()
+            .filter(|codec| *codec != VideoCodec::H264),
+    );
+    order
+}
 
 /// Map the configured preference onto a concrete backend the runtime
 /// can actually use. `fallback` says what to fall *back to* when an

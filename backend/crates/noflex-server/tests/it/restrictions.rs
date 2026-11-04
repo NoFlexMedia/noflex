@@ -394,8 +394,9 @@ fn config() -> Arc<TranscoderConfig> {
 
 fn ladder(height: u32, bitrate_kbps: u32) -> LadderEntry {
     LadderEntry {
-        max_height: height,
+        max_pixels: u64::from(height) * u64::from(height) * 16 / 9,
         video_codec: VideoCodec::H264,
+        video_profile: noflex_core::VideoProfile::H264High,
         audio_codec: AudioCodec::Aac,
         container: "mpegts".into(),
         bitrate_kbps,
@@ -429,7 +430,6 @@ fn router(
         transcode_cache_dir: fixture.root.path().join("jobs"),
         image_cache_dir: fixture.root.path().join("image"),
         recordings_dir: fixture.root.path().join("recordings"),
-        optimized_dir: fixture.root.path().join("optimized"),
     })
 }
 

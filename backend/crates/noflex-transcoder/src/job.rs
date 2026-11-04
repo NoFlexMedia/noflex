@@ -396,7 +396,8 @@ mod tests {
                 segment_container: HlsSegmentContainer::Ts,
                 video: VideoPlan::Encode {
                     codec: VideoCodec::H264,
-                    max_height: 720,
+                    width: 1280,
+                    height: 720,
                     tonemap: false,
                     profile: noflex_core::VideoProfile::H264High,
                 },
@@ -407,8 +408,9 @@ mod tests {
             },
             Encoder::Software264,
             LadderEntry {
-                max_height: 720,
+                max_pixels: 921_600,
                 video_codec: VideoCodec::H264,
+                video_profile: noflex_core::VideoProfile::H264High,
                 audio_codec: AudioCodec::Aac,
                 container: "ts".to_string(),
                 bitrate_kbps: 4000,
@@ -754,8 +756,9 @@ mod tests {
         }
         let mgr = FfmpegJobManager::new(&ffmpeg, &dir);
         let ladder = LadderEntry {
-            max_height: 240,
+            max_pixels: 102_240,
             video_codec: VideoCodec::H264,
+            video_profile: noflex_core::VideoProfile::H264High,
             audio_codec: AudioCodec::Aac,
             container: "mp4".to_string(),
             bitrate_kbps: 500,
@@ -806,7 +809,8 @@ mod tests {
             segment_container: HlsSegmentContainer::Ts,
             video: VideoPlan::Encode {
                 codec: VideoCodec::H264,
-                max_height: 240,
+                width: 426,
+                height: 240,
                 tonemap: true,
                 profile: noflex_core::VideoProfile::H264High,
             },

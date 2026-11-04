@@ -864,6 +864,19 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.writer().await?;
         repo::optimized_versions::requeue_running(&conn).await
     }
+    async fn smart_transcoding_settings(
+        &self,
+    ) -> StorageResult<noflex_storage::domain::SmartTranscodingSettings> {
+        let (_schema, conn) = self.reader().await?;
+        repo::optimized_versions::settings(&conn).await
+    }
+    async fn set_smart_transcoding_settings(
+        &self,
+        settings: &noflex_storage::domain::SmartTranscodingSettings,
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::optimized_versions::set_settings(&conn, settings).await
+    }
     async fn content_category_counts(
         &self,
         access_user_id: Option<UserId>,

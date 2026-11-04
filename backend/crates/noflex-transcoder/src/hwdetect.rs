@@ -11,7 +11,12 @@
 use std::{
     path::{Path, PathBuf},
     process::Stdio,
+    time::Duration,
 };
+
+use crate::encoder::{Encoder, HwBackend};
+
+const ENCODER_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Snapshot of what the local ffmpeg can actually do. Built by
 /// [`detect`]; consumed by the server's backend-resolution logic.
@@ -67,6 +72,39 @@ pub async fn detect(ffmpeg: &Path) -> HwDetect {
         encoders,
         vaapi_device: find_vaapi_device(),
     }
+}
+
+/// Whether `encoder` actually produces a frame here. `-encoders` lists what
+/// ffmpeg was built with, not what the GPU can do: an older card only refuses
+/// AV1 once asked, which at playback time would mean a failed stream.
+pub async fn encoder_works(ffmpeg: &Path, encoder: Encoder, vaapi_device: Option<&Path>) -> bool {
+    let filter = match encoder.backend() {
+        HwBackend::Vaapi => "format=nv12,hwupload",
+        HwBackend::Qsv => "format=nv12,hwupload=extra_hw_frames=64",
+        _ => "format=yuv420p",
+    };
+    let status = tokio::process::Command::new(ffmpeg)
+        .args(["-hide_banner", "-loglevel", "error", "-nostdin"])
+        .args(encoder.extra_args(vaapi_device))
+        .args(["-f", "lavfi", "-i", "color=black:s=1280x720:r=30"])
+        .args([
+            "-frames:v",
+            "1",
+            "-vf",
+            filter,
+            "-c:v",
+            encoder.video_flag(),
+        ])
+        .args(["-f", "null", "-"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .status();
+    matches!(
+        tokio::time::timeout(ENCODER_CHECK_TIMEOUT, status).await,
+        Ok(Ok(status)) if status.success()
+    )
 }
 
 /// Run ffmpeg with `args`, returning captured stdout on success.

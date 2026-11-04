@@ -358,7 +358,7 @@ enum ColorPrimaries {
 
 type ConfigEntry {
 	"""
-	Dotted path, arrays indexed: `transcoder.ladder[0].max_height`.
+	Dotted path, arrays indexed: `transcoder.ladder[0].max_pixels`.
 	"""
 	key: String!
 	"""
@@ -1058,8 +1058,15 @@ A scalar that can represent any JSON value.
 scalar JSON
 
 type LadderRung {
-	maxHeight: Int!
+	"""
+	Largest picture this rung produces, in luma samples.
+	"""
+	maxPixels: Int!
 	videoCodec: VideoCodec!
+	"""
+	Most capable profile it encodes at; lower when a client decodes less.
+	"""
+	videoProfile: VideoProfile!
 	audioCodec: AudioCodec!
 	container: String!
 	bitrateKbps: Int!
@@ -1537,6 +1544,12 @@ type Mutation {
 	device's settings. An id already registered to someone else fails.
 	"""
 	registerDevice(id: ID!, name: String!, capabilities: ClientCapabilities!): Device!
+	"""
+	Set where smart transcoding writes and how much it may use. Null leaves
+	a setting to the server's configuration. Versions already prepared stay
+	where they are and keep playing. Administrator only.
+	"""
+	updateSmartTranscoding(directory: String, maxStorageGb: Int, maxVersionGb: Int): SmartTranscoding!
 	"""
 	Change one of the caller's devices; omitted settings stay. Pass
 	`clearMaxBitrate` or `clearDownloadBudget` to remove a limit.
@@ -2610,6 +2623,11 @@ type Query {
 	"""
 	myDevices: [Device!]!
 	"""
+	Where smart transcoding writes and how much it may use. Administrator
+	only.
+	"""
+	smartTranscoding: SmartTranscoding!
+	"""
 	Every optimized version the server knows about, in or out of the queue.
 	Administrator only.
 	"""
@@ -3037,6 +3055,28 @@ type SmartDownload {
 	"""
 	optimized: Boolean!
 	subtitles: [SubtitleDelivery!]!
+}
+
+"""
+Where smart transcoding writes and how much it may use.
+"""
+type SmartTranscoding {
+	"""
+	Off in the server's configuration, which only that can change.
+	"""
+	enabled: Boolean!
+	directory: String!
+	maxStorageGb: Int!
+	"""
+	Skip versions estimated larger than this; null has no limit.
+	"""
+	maxVersionGb: Int
+	"""
+	What each falls back to when cleared.
+	"""
+	defaultDirectory: String!
+	defaultMaxStorageGb: Int!
+	defaultMaxVersionGb: Int
 }
 
 enum SortOrder {
@@ -3617,6 +3657,12 @@ input VideoCodecSupport {
 	maxBitDepth: Int
 	maxWidth: Int
 	maxHeight: Int
+	"""
+	Largest picture in luma samples. Levels bound area rather than either
+	dimension, so a wide source can fit where a tall one of the same width
+	doesn't.
+	"""
+	maxPixels: Int
 	"""
 	Ranges decoder and display can present; SDR is implied.
 	"""

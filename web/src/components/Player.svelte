@@ -23,7 +23,7 @@
   import { Slider } from "bits-ui";
   import { CachePolicy, ControlWatchRoomStore, MarkPlayedStore, MediaFilesStore, ReportProgressStore, StopPlaybackStore, WatchRoomEventsStore, WatchRoomStore } from "$houdini";
   import { reportOnExit } from "$lib/api.js";
-  import { languageName, timecode } from "$lib/format.js";
+  import { languageName, profileName, timecode } from "$lib/format.js";
   import { mediaUrl } from "$lib/tokens.js";
   import { request, writeUserData } from "$lib/graphql.js";
   import { onReconnect } from "$lib/live.js";
@@ -337,10 +337,9 @@
   const CODEC = { H264: "H.264", H265: "HEVC", AV1: "AV1", VP9: "VP9", VP8: "VP8", MPEG2: "MPEG-2", AC3: "AC-3", EAC3: "E-AC-3", MP3: "MP3" };
   // Server levels are ffprobe's: H.264 ×10, HEVC ×30, AV1 seq_level_idx.
   const levelText = (codec, level) => level == null ? null : codec === "H264" ? `L${level / 10}` : codec === "H265" ? `L${Math.round(level / 3) / 10}` : `L${level}`;
-  const profileText = (profile) => profile?.replace(/^(H264|HEVC|AV1|VP9)_/, "").replace(/(\D)(\d+)$/, "$1 $2").replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
   function videoText(s) {
     if (!s?.videoCodec) return "none";
-    return [CODEC[s.videoCodec] ?? s.videoCodec, profileText(s.videoProfile), levelText(s.videoCodec, s.videoLevel), s.width && `${s.width}×${s.height}`, s.bitDepth && `${s.bitDepth}-bit`, s.videoRange && s.videoRange !== "SDR" && s.videoRange.replace(/_/g, " ")].filter(Boolean).join(" · ");
+    return [CODEC[s.videoCodec] ?? s.videoCodec, profileName(s.videoProfile), levelText(s.videoCodec, s.videoLevel), s.width && `${s.width}×${s.height}`, s.bitDepth && `${s.bitDepth}-bit`, s.videoRange && s.videoRange !== "SDR" && s.videoRange.replace(/_/g, " ")].filter(Boolean).join(" · ");
   }
   const audioText = (s) => s?.audioCodec ? [s.audioCodec.toUpperCase(), s.audioChannels && `${s.audioChannels} ch`].filter(Boolean).join(" · ") : "none";
   const rate = (bps) => bps ? `${(bps / 1e6).toFixed(1)} Mb/s` : null;

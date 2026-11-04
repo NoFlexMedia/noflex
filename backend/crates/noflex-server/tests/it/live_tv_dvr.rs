@@ -548,8 +548,9 @@ fn transcoder_config() -> Arc<TranscoderConfig> {
         fallback: TranscodeFallback::Auto,
         optimize: Default::default(),
         ladder: vec![LadderEntry {
-            max_height: 720,
+            max_pixels: 921_600,
             video_codec: VideoCodec::H264,
+            video_profile: noflex_core::VideoProfile::H264High,
             audio_codec: AudioCodec::Aac,
             container: "mpegts".into(),
             bitrate_kbps: 4_000,
@@ -662,7 +663,6 @@ async fn start_live_tv_channel_creates_typed_hls_job_with_scoped_access() {
         transcode_cache_dir: f.root.path().join("hls"),
         image_cache_dir: f.root.path().join("images"),
         recordings_dir: f.root.path().join("recordings"),
-        optimized_dir: f.root.path().join("optimized"),
     });
     let path = format!("/stream/job/{job}/master.m3u8");
     for user in [&f.owner, &f.admin] {
@@ -767,7 +767,6 @@ fn recording_router(f: &Fixture, sessions: Arc<ServerPlaybackSessions>) -> Route
         transcode_cache_dir: f.root.path().join("hls"),
         image_cache_dir: f.root.path().join("images"),
         recordings_dir: f.root.path().join("recordings"),
-        optimized_dir: f.root.path().join("optimized"),
     })
 }
 

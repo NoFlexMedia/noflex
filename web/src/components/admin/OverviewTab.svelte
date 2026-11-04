@@ -71,7 +71,8 @@
       if (info.ffmpeg.error) out.push({ tone: "bad", icon: FilmStrip, title: "ffmpeg not usable", detail: info.ffmpeg.error, tab: "transcoding" });
       if (info.ffprobe.error) out.push({ tone: "bad", icon: FilmStrip, title: "ffprobe not usable", detail: info.ffprobe.error, tab: "transcoding" });
       if (info.fellBack) out.push({ tone: "warn", icon: FilmStrip, title: `Configured ${info.configuredHwaccel} acceleration unavailable`, detail: `Transcoding on ${info.resolvedBackend} instead.`, tab: "transcoding" });
-      for (const rung of info.ladder.filter((item) => !item.encoderAvailable)) out.push({ tone: "bad", icon: FilmStrip, title: `Ladder ${rung.maxHeight}p encoder missing`, detail: `${rung.encoder} isn’t in this ffmpeg build.`, tab: "transcoding" });
+      // A missing encoder costs its codec's rungs, not playback: H.264 always remains.
+      for (const encoder of new Set(info.ladder.filter((item) => !item.encoderAvailable).map((item) => item.encoder))) out.push({ tone: "warn", icon: FilmStrip, title: `${encoder} encoder missing`, detail: `It isn’t in this ffmpeg build, so the ladder skips its rungs.`, tab: "transcoding" });
     }
     for (const entry of libraries) {
       const name = entry.library.name;

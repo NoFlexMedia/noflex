@@ -44,7 +44,8 @@ fn record(user: UserId, id: &str) -> ActiveStreamRecord {
         segment_container: HlsSegmentContainer::Ts,
         video: VideoPlan::Encode {
             codec: noflex_core::VideoCodec::H264,
-            max_height: 720,
+            width: 1280,
+            height: 720,
             tonemap: false,
             profile: noflex_core::VideoProfile::H264High,
         },

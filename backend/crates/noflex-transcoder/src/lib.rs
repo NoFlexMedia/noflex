@@ -32,7 +32,7 @@ pub mod subtitles;
 pub use decision::{
     AudioCodecSupport, AudioPlan, ClientCapabilities, DecideOptions, DirectPlayProfile, HlsProfile,
     HlsSegmentContainer, PlaybackDecision, PlaybackRoute, TranscodePlan, VideoCodecSupport,
-    VideoPlan, VideoRange, decide,
+    VideoPlan, VideoRange, decide, fit_pixels,
 };
 pub use encoder::{Encoder, HwBackend};
 pub use explain::{

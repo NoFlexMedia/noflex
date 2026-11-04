@@ -37,7 +37,7 @@ use tokio::{
 
 use crate::{
     config::{LadderEntry, OptimizeConfig},
-    stream::{pick_encoder, runtime_ladder},
+    stream::pick_encoder,
 };
 
 const TICK: Duration = Duration::from_secs(30);
@@ -59,8 +59,16 @@ pub struct OptimizeWorker {
     pub ffmpeg_path: PathBuf,
     pub backend: HwBackend,
     pub vaapi_device: Option<PathBuf>,
-    /// Finished versions live directly in here, as `{id}.mp4`.
+    /// Finished versions live directly in here, as `{id}.mp4`, until an
+    /// administrator picks somewhere else.
     pub dir: PathBuf,
+}
+
+/// The limits in force: an administrator's settings over the configuration.
+struct Limits {
+    dir: PathBuf,
+    quota_bytes: u64,
+    version_cap_bytes: Option<u64>,
 }
 
 /// How a job ended, when not in error.
@@ -123,10 +131,26 @@ impl OptimizeWorker {
         }
     }
 
+    async fn limits(&self) -> anyhow::Result<Limits> {
+        let settings = self.storage.smart_transcoding_settings().await?;
+        let gb = |gb: u64| gb.saturating_mul(1024 * MIB);
+        Ok(Limits {
+            dir: settings.dir.map_or_else(|| self.dir.clone(), PathBuf::from),
+            quota_bytes: gb(settings
+                .max_storage_gb
+                .unwrap_or(self.config.max_storage_gb)),
+            version_cap_bytes: settings
+                .max_version_gb
+                .or(self.config.max_version_gb)
+                .map(gb),
+        })
+    }
+
     /// Bring the queue in line with what users are likely to watch: queue what's
     /// missing, drop waiting jobs nobody wants now, remove versions of files that
     /// have changed, and evict over quota. Touches no running job.
     pub async fn plan(&self) -> anyhow::Result<()> {
+        let limits = self.limits().await?;
         // Before queuing: a stale row would block its replacement's key.
         self.remove_stale().await?;
         let devices = self.storage.devices_wanting_versions().await?;
@@ -188,14 +212,20 @@ impl OptimizeWorker {
         }
 
         let opts = self.decide_options();
-        let ladder = runtime_ladder(&self.ladder);
         let mut keep: HashSet<(MediaFileId, String)> = HashSet::new();
         for want in wanted.values() {
             let Ok(probe) = serde_json::from_value::<ProbeReport>(want.media.probe.0.clone())
             else {
                 continue;
             };
-            for target in plan_versions(&probe, &want.targets, &opts, &ladder) {
+            for target in plan_versions(&probe, &want.targets, &opts, &self.ladder) {
+                let estimate = target
+                    .estimated_bitrate_bps(&probe)
+                    .saturating_mul(probe.duration_ms.unwrap_or(0))
+                    / 8000;
+                if limits.version_cap_bytes.is_some_and(|cap| estimate > cap) {
+                    continue;
+                }
                 let key = target.key();
                 keep.insert((want.media.id, key.clone()));
                 self.storage
@@ -222,7 +252,7 @@ impl OptimizeWorker {
                     .await?;
             }
         }
-        self.prune(&keep).await
+        self.prune(&keep, &limits).await
     }
 
     fn decide_options(&self) -> DecideOptions {
@@ -253,7 +283,11 @@ impl OptimizeWorker {
         Ok(())
     }
 
-    async fn prune(&self, keep: &HashSet<(MediaFileId, String)>) -> anyhow::Result<()> {
+    async fn prune(
+        &self,
+        keep: &HashSet<(MediaFileId, String)>,
+        limits: &Limits,
+    ) -> anyhow::Result<()> {
         let mut known = HashSet::new();
         let mut evictable = Vec::new();
         let mut used = 0_u64;
@@ -279,20 +313,15 @@ impl OptimizeWorker {
         }
 
         evictable.sort_by_key(|version| version.last_used_at.or(version.finished_at));
-        let quota = self.quota_bytes();
         for version in evictable {
-            if used <= quota {
+            if used <= limits.quota_bytes {
                 break;
             }
             used = used.saturating_sub(version.size_bytes.unwrap_or(0));
             known.remove(&version.id);
             self.remove(&version).await?;
         }
-        self.remove_orphan_files(&known).await
-    }
-
-    fn quota_bytes(&self) -> u64 {
-        self.config.max_storage_gb.saturating_mul(1024 * MIB)
+        self.remove_orphan_files(&known, &limits.dir).await
     }
 
     async fn remove(&self, version: &OptimizedVersion) -> anyhow::Result<()> {
@@ -307,9 +336,15 @@ impl OptimizeWorker {
     }
 
     /// A library removal takes version rows with it but can't reach their
-    /// files, and a crash can leave partial output behind.
-    async fn remove_orphan_files(&self, known: &HashSet<OptimizedVersionId>) -> anyhow::Result<()> {
-        let mut entries = match tokio::fs::read_dir(&self.dir).await {
+    /// files, and a crash can leave partial output behind. Only files named the
+    /// way this worker names them count: the folder is an administrator's
+    /// choice, and may well hold things of theirs.
+    async fn remove_orphan_files(
+        &self,
+        known: &HashSet<OptimizedVersionId>,
+        dir: &Path,
+    ) -> anyhow::Result<()> {
+        let mut entries = match tokio::fs::read_dir(dir).await {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error.into()),
@@ -325,12 +360,18 @@ impl OptimizeWorker {
         while let Some(entry) = entries.next_entry().await? {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            let id = name.split('.').next().unwrap_or_default();
-            let belongs = uuid::Uuid::parse_str(id).is_ok_and(|parsed| {
-                let id = OptimizedVersionId::from_uuid(parsed);
-                running.contains(&id.to_string())
-                    || (known.contains(&id) && !name.ends_with(".raw.mp4"))
-            });
+            let Some((id, suffix)) = name.split_once('.') else {
+                continue;
+            };
+            let Ok(parsed) = uuid::Uuid::parse_str(id) else {
+                continue;
+            };
+            if !matches!(suffix, "mp4" | "raw.mp4" | "staged.mp4") {
+                continue;
+            }
+            let id = OptimizedVersionId::from_uuid(parsed);
+            let belongs =
+                running.contains(&id.to_string()) || (known.contains(&id) && suffix != "raw.mp4");
             if !belongs {
                 tracing::debug!(file = %name, "removing orphaned optimized file");
                 if let Err(error) = tokio::fs::remove_file(entry.path()).await {
@@ -344,6 +385,7 @@ impl OptimizeWorker {
     /// Run the most urgent queued job to completion, if the quota has room.
     /// Returns whether there was one to run.
     pub async fn run_next(&self) -> anyhow::Result<bool> {
+        let limits = self.limits().await?;
         let used = self
             .storage
             .list_optimized_versions()
@@ -352,13 +394,13 @@ impl OptimizeWorker {
             .filter(|version| version.status == OptimizedVersionStatus::Ready)
             .map(|version| version.size_bytes.unwrap_or(0))
             .sum::<u64>();
-        if used >= self.quota_bytes() {
+        if used >= limits.quota_bytes {
             return Ok(false);
         }
         let Some(mut version) = self.storage.claim_optimized_version().await? else {
             return Ok(false);
         };
-        match self.run_job(&mut version).await {
+        match self.run_job(&mut version, &limits.dir).await {
             Ok(JobEnd::Finished | JobEnd::Requeued) => {}
             Err(error) => {
                 // The detail stays in the log: it can carry paths, and this
@@ -372,17 +414,15 @@ impl OptimizeWorker {
                 };
                 version.finished_at = Some(OffsetDateTime::now_utc());
                 self.storage.update_optimized_version(&version).await?;
-                tokio::fs::remove_file(self.raw_path(version.id)).await.ok();
+                tokio::fs::remove_file(raw_path(&limits.dir, version.id))
+                    .await
+                    .ok();
             }
         }
         Ok(true)
     }
 
-    fn raw_path(&self, id: OptimizedVersionId) -> PathBuf {
-        self.dir.join(format!("{id}.raw.mp4"))
-    }
-
-    async fn run_job(&self, version: &mut OptimizedVersion) -> anyhow::Result<JobEnd> {
+    async fn run_job(&self, version: &mut OptimizedVersion, dir: &Path) -> anyhow::Result<JobEnd> {
         let media = self
             .storage
             .media_file_by_id(version.media_file_id)
@@ -390,28 +430,18 @@ impl OptimizeWorker {
             .ok_or_else(|| anyhow::anyhow!("source file is gone"))?;
         let target = serde_json::from_value::<OptimizeTarget>(version.plan.clone())?;
         let probe = serde_json::from_value::<ProbeReport>(media.probe.0.clone())?;
-        tokio::fs::create_dir_all(&self.dir).await?;
+        tokio::fs::create_dir_all(dir).await?;
 
-        let raw = self.raw_path(version.id);
-        let source_height = probe.video.as_ref().map_or(0, |video| video.height);
-        let (encoder, height) = match target.video {
-            VideoPlan::Encode {
-                codec, max_height, ..
-            } => (
-                pick_encoder(self.backend, codec),
-                max_height.min(source_height),
-            ),
-            _ => (
-                pick_encoder(self.backend, noflex_core::VideoCodec::H264),
-                source_height,
-            ),
+        let raw = raw_path(dir, version.id);
+        let encoder = match target.video {
+            VideoPlan::Encode { codec, .. } => pick_encoder(self.backend, codec),
+            _ => pick_encoder(self.backend, noflex_core::VideoCodec::H264),
         };
         let argv = build_optimize_argv(
             Path::new(&media.path),
             &target,
             encoder,
             self.vaapi_device.as_deref(),
-            height,
             &raw,
         );
         let mut child = Command::new(&self.ffmpeg_path)
@@ -422,10 +452,10 @@ impl OptimizeWorker {
             .kill_on_drop(true)
             .spawn()?;
         tracing::info!(version = %version.id, key = %version.variant_key, "preparing optimized version");
-        if let JobEnd::Requeued = self.supervise(&mut child, version, &probe).await? {
+        if let JobEnd::Requeued = self.supervise(&mut child, version, &probe, &raw).await? {
             return Ok(JobEnd::Requeued);
         }
-        self.publish(version, &raw).await?;
+        self.publish(version, &raw, dir).await?;
         tracing::info!(version = %version.id, bytes = version.size_bytes, "optimized version ready");
         Ok(JobEnd::Finished)
     }
@@ -438,6 +468,7 @@ impl OptimizeWorker {
         child: &mut Child,
         version: &mut OptimizedVersion,
         probe: &ProbeReport,
+        raw: &Path,
     ) -> anyhow::Result<JobEnd> {
         let stdout = child
             .stdout
@@ -491,7 +522,7 @@ impl OptimizeWorker {
                             // Giving way to viewers isn't a failed attempt.
                             version.attempts = version.attempts.saturating_sub(1);
                             self.storage.update_optimized_version(version).await?;
-                            tokio::fs::remove_file(self.raw_path(version.id)).await.ok();
+                            tokio::fs::remove_file(raw).await.ok();
                             return Ok(JobEnd::Requeued);
                         }
                         _ => {}
@@ -512,9 +543,14 @@ impl OptimizeWorker {
 
     /// Turn ffmpeg's output into a finished version. The final name appears
     /// only once it's complete, so nothing can read a partial package.
-    async fn publish(&self, version: &mut OptimizedVersion, raw: &Path) -> anyhow::Result<()> {
-        let staged = self.dir.join(format!("{}.staged.mp4", version.id));
-        let final_path = self.dir.join(format!("{}.mp4", version.id));
+    async fn publish(
+        &self,
+        version: &mut OptimizedVersion,
+        raw: &Path,
+        dir: &Path,
+    ) -> anyhow::Result<()> {
+        let staged = dir.join(format!("{}.staged.mp4", version.id));
+        let final_path = dir.join(format!("{}.mp4", version.id));
         let (raw_owned, staged_owned) = (raw.to_path_buf(), staged.clone());
         let index =
             tokio::task::spawn_blocking(move || finalize(&raw_owned, &staged_owned)).await??;
@@ -533,6 +569,10 @@ impl OptimizeWorker {
         self.storage.update_optimized_version(version).await?;
         Ok(())
     }
+}
+
+fn raw_path(dir: &Path, id: OptimizedVersionId) -> PathBuf {
+    dir.join(format!("{id}.raw.mp4"))
 }
 
 /// A source and the devices that want it.

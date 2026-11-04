@@ -51,7 +51,7 @@ query AdminTranscoder {
     vaapiDevice
     encoders { name media backend available }
     decoders { name media backend available }
-    ladder { maxHeight videoCodec audioCodec container bitrateKbps encoder encoderAvailable }
+    ladder { maxPixels videoCodec videoProfile audioCodec container bitrateKbps encoder encoderAvailable }
     transcodeDir
   }
 }

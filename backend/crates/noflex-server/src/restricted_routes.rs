@@ -29,7 +29,6 @@ pub struct RestrictedRouteState {
     pub transcode_cache_dir: PathBuf,
     pub image_cache_dir: PathBuf,
     pub recordings_dir: PathBuf,
-    pub optimized_dir: PathBuf,
 }
 
 pub fn routes(state: RestrictedRouteState) -> Router {
@@ -243,7 +242,15 @@ async fn optimized_part(
             Ok(authorized) => authorized,
             Err(response) => return response,
         };
-    let root = match RootCapability::new(&state.optimized_dir).await {
+    // Versions stay where they were written when the folder setting changes.
+    let Some(dir) = version
+        .path
+        .as_deref()
+        .and_then(|path| std::path::Path::new(path).parent())
+    else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let root = match RootCapability::new(dir).await {
         Ok(root) => root,
         Err(error) => {
             tracing::warn!(%error, "optimized directory unavailable");

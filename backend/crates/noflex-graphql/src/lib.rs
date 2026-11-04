@@ -54,6 +54,7 @@ pub mod subscriptions;
 mod users;
 mod watch;
 pub use admin_status::{AdminStatusError, AdminStatusService};
+pub use devices::SmartTranscodingDefaults;
 pub use external_auth::{ExternalAuthChallenge, ExternalAuthError, ExternalAuthService};
 pub use live_tv::{LiveTvService, LiveTvServiceError};
 pub use playback_session::{
@@ -686,6 +687,9 @@ pub struct SchemaContext {
     /// `identifyWork`. Absent → built per request from `plugins`,
     /// `storage` and `priority_table`, without artwork fetching.
     pub metadata_service: Option<Arc<noflex_plugin_host::MetadataService>>,
+    /// Absent → `smartTranscoding` errors with "smart transcoding not
+    /// configured".
+    pub smart_transcoding: Option<devices::SmartTranscodingDefaults>,
 }
 
 impl SchemaContext {
@@ -767,6 +771,9 @@ pub fn build_schema(ctx: SchemaContext) -> NoflexSchema {
     }
     if let Some(metadata_service) = ctx.metadata_service {
         builder = builder.data(metadata_service);
+    }
+    if let Some(smart_transcoding) = ctx.smart_transcoding {
+        builder = builder.data(smart_transcoding);
     }
     builder.finish()
 }

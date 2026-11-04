@@ -50,7 +50,7 @@ async fn loads_real_tmdb_plugin() {
 
     assert_eq!(info.id, "tmdb", "plugin_id from embedded manifest");
     assert_eq!(info.display_name, "The Movie Database");
-    assert_eq!(info.api_version, "0.8");
+    assert_eq!(info.api_version, "0.9");
     assert!(
         info.hooks.contains(&HookKind::Metadata),
         "exports metadata hook"
@@ -240,7 +240,7 @@ async fn loads_real_embeddings_plugin() {
         .unwrap_or_else(|e| panic!("load embeddings plugin: {e}"));
 
     assert_eq!(info.id, "embeddings", "plugin_id from embedded manifest");
-    assert_eq!(info.api_version, "0.8");
+    assert_eq!(info.api_version, "0.9");
     assert!(
         info.hooks.contains(&HookKind::Embedder),
         "exports embedder hook"
@@ -253,7 +253,7 @@ async fn loads_real_embeddings_plugin() {
         .embedding
         .as_ref()
         .expect("[embedding] table parses");
-    assert_eq!(claim.namespace, "potion-base-8m");
+    assert_eq!(claim.namespace, "potion-base-8m-v2");
     assert_eq!(claim.model_id, "minishlab/potion-base-8M");
     assert_eq!(claim.dimensions, 256);
     assert_eq!(info.manifest.memory_limit_mb, Some(128));

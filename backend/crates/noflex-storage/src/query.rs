@@ -142,6 +142,8 @@ pub struct ListWorksQuery {
     /// Administrators leave this unset.
     pub access_user_id: Option<UserId>,
     pub library: Option<LibraryId>,
+    /// Restrict to this category's top-level works, across libraries.
+    pub category: Option<crate::domain::ContentCategory>,
     pub parent: Option<WorkId>,
     /// Restrict to works carrying this tag.
     pub tag: Option<TagId>,

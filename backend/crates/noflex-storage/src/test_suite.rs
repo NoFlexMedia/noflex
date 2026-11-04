@@ -4,9 +4,9 @@
 // store; behavioral divergence shows up as a test failure, not a runtime
 // surprise.
 use noflex_core::{
-    CollectionId, DevicePinId, EditionId, ExternalId, ExternalIdKind, LibraryId, MediaFileId,
-    MetadataStatus, PlayTarget, PlaylistId, SessionId, TagId, TagTarget, UserId, WatchRoomId,
-    WorkField, WorkId, WorkKind,
+    CollectionId, DevicePinId, EditionId, EmbeddingTarget, ExternalId, ExternalIdKind, LibraryId,
+    MediaFileId, MetadataStatus, PlayTarget, PlaylistId, SessionId, TagId, TagTarget, UserId,
+    WatchRoomId, WorkField, WorkId, WorkKind,
 };
 use time::OffsetDateTime;
 
@@ -66,8 +66,14 @@ where
     record_progress_roundtrip(store).await;
     mark_played_play_count(store).await;
     set_favorite_roundtrip(store).await;
-    resume_items_filter(store).await;
-    next_up_filter(store).await;
+    continue_watching_resumes_unfinished_works(store).await;
+    continue_watching_suggests_the_next_episode(store).await;
+    continue_watching_handles_multi_episode_files(store).await;
+    continue_watching_decays_until_new_episodes_arrive(store).await;
+    watched_top_level_works_roll_up(store).await;
+    work_embeddings_round_trip(store).await;
+    content_categories_split_by_kind_and_anime(store).await;
+    work_features_collect_comparison_facts(store).await;
     tag_namespace_uniqueness(store).await;
     tag_assign_unassign(store).await;
     tag_assignments_carry_source_and_weight(store).await;
@@ -2653,99 +2659,596 @@ async fn set_favorite_roundtrip<S: Storage + ?Sized>(store: &S) {
     store.delete_library(library.id).await.ok();
 }
 
-/// `resume_items` returns works with `position_ms > 0` and `played = 0`,
-/// ordered by `last_played` DESC. Played + non-positioned works are
-/// excluded.
-async fn resume_items_filter<S: Storage + ?Sized>(store: &S) {
+/// One series in the shape the scanner produces (series, season, episode).
+struct ContinueSeries {
+    series: WorkId,
+    season: WorkId,
+    library: LibraryId,
+}
+
+impl ContinueSeries {
+    async fn create<S: Storage + ?Sized>(store: &S, library: LibraryId, title: &str) -> Self {
+        let now = OffsetDateTime::now_utc();
+        let series = make_work_of_kind(library, WorkKind::Series, title, now);
+        store.upsert_work(&series).await.expect("series");
+        let mut season = make_work_of_kind(library, WorkKind::Season, "Season", now);
+        season.parent_id = Some(series.id);
+        store.upsert_work(&season).await.expect("season");
+        Self {
+            series: series.id,
+            season: season.id,
+            library,
+        }
+    }
+
+    async fn episode<S: Storage + ?Sized>(&self, store: &S, season: i32, number: i32) -> WorkId {
+        self.episode_added(store, season, number, OffsetDateTime::now_utc())
+            .await
+    }
+
+    async fn episode_added<S: Storage + ?Sized>(
+        &self,
+        store: &S,
+        season: i32,
+        number: i32,
+        added_at: OffsetDateTime,
+    ) -> WorkId {
+        let mut episode = make_work_of_kind(
+            self.library,
+            WorkKind::Episode,
+            &format!("S{season:02}E{number:02}"),
+            added_at,
+        );
+        episode.parent_id = Some(self.season);
+        episode.parent_index = Some(season);
+        episode.index_number = Some(number);
+        store.upsert_work(&episode).await.expect("episode");
+        episode.id
+    }
+}
+
+async fn played<S: Storage + ?Sized>(store: &S, user: UserId, work: WorkId) {
+    store
+        .mark_played(user, PlayTarget::Work(work), true)
+        .await
+        .expect("played");
+}
+
+/// Timestamps are the only ordering input, and consecutive writes can land
+/// on the same one.
+async fn tick() {
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+}
+
+/// What a user's "Continue watching" lists, a long way before now so nothing
+/// decays unless a test asks for it.
+async fn continuing<S: Storage + ?Sized>(store: &S, user: UserId) -> Vec<WorkId> {
+    store
+        .continue_watching(
+            user,
+            OffsetDateTime::now_utc() - time::Duration::days(3650),
+            50,
+        )
+        .await
+        .expect("continue_watching")
+        .into_iter()
+        .map(|work| work.id)
+        .collect()
+}
+
+async fn continue_watching_resumes_unfinished_works<S: Storage + ?Sized>(store: &S) {
     let library = test_library("Resume Lib");
     store.upsert_library(&library).await.expect("library");
     let user = make_user("resume-user", false);
     store.upsert_user(&user).await.expect("user");
 
-    let in_progress = make_work(library.id, "In Progress", OffsetDateTime::now_utc());
-    let played = make_work(library.id, "Played", OffsetDateTime::now_utc());
-    let untouched = make_work(library.id, "Untouched", OffsetDateTime::now_utc());
-    store.upsert_work(&in_progress).await.expect("ip");
-    store.upsert_work(&played).await.expect("pl");
-    store.upsert_work(&untouched).await.expect("ut");
+    let now = OffsetDateTime::now_utc();
+    let older = make_work(library.id, "Older", now);
+    let newer = make_work(library.id, "Newer", now);
+    let finished = make_work(library.id, "Finished", now);
+    let untouched = make_work(library.id, "Untouched", now);
+    for work in [&older, &newer, &finished, &untouched] {
+        store.upsert_work(work).await.expect("work");
+    }
+    for work in [&older, &newer] {
+        store
+            .record_playback_progress(user.id, PlayTarget::Work(work.id), 100_000)
+            .await
+            .expect("progress");
+        tick().await;
+    }
+    played(store, user.id, finished.id).await;
 
-    store
-        .record_playback_progress(
-            user.id,
-            noflex_core::PlayTarget::Work(in_progress.id),
-            100_000,
-        )
-        .await
-        .expect("progress");
-    store
-        .mark_played(user.id, noflex_core::PlayTarget::Work(played.id), true)
-        .await
-        .expect("played");
+    assert_eq!(
+        continuing(store, user.id).await,
+        [newer.id, older.id],
+        "unfinished works only, most recent first"
+    );
 
-    let resume = store.resume_items(user.id, 10).await.expect("resume");
-    assert_eq!(resume.len(), 1, "only the in-progress work is resumable");
-    assert_eq!(resume[0].id, in_progress.id);
+    let other = make_user("resume-other", false);
+    store.upsert_user(&other).await.expect("other");
+    assert!(continuing(store, other.id).await.is_empty());
 
-    store.delete_work(in_progress.id).await.ok();
-    store.delete_work(played.id).await.ok();
-    store.delete_work(untouched.id).await.ok();
     store.delete_user(user.id).await.ok();
+    store.delete_user(other.id).await.ok();
     store.delete_library(library.id).await.ok();
 }
 
-/// `next_up` returns episodes whose series the user has marked played
-/// AND that the user has not themselves watched. The series row lives
-/// on the same (user, target_kind='series') row; episode rows are
-/// queried via parent_id.
-async fn next_up_filter<S: Storage + ?Sized>(store: &S) {
-    use noflex_core::{WorkId, WorkKind};
-
+async fn continue_watching_suggests_the_next_episode<S: Storage + ?Sized>(store: &S) {
     let library = test_library("NextUp Lib");
     store.upsert_library(&library).await.expect("library");
     let user = make_user("nextup-user", false);
     store.upsert_user(&user).await.expect("user");
 
-    let now = OffsetDateTime::now_utc();
-    let series = make_work_of_kind(library.id, WorkKind::Series, "Show", now);
-    let s_id = series.id;
-    store.upsert_work(&series).await.expect("series");
+    let show = ContinueSeries::create(store, library.id, "Show").await;
+    let special = show.episode(store, 0, 1).await;
+    let s3e5 = show.episode(store, 3, 5).await;
+    let s3e6 = show.episode(store, 3, 6).await;
+    let s3e7 = show.episode(store, 3, 7).await;
+    let s3e8 = show.episode(store, 3, 8).await;
+    let s4e1 = show.episode(store, 4, 1).await;
+
+    played(store, user.id, s3e6).await;
+    assert_eq!(
+        continuing(store, user.id).await,
+        [s3e7],
+        "S03E06 leads to S03E07, and the skipped S03E05 stays skipped"
+    );
+
+    played(store, user.id, s3e8).await;
+    assert_eq!(
+        continuing(store, user.id).await,
+        [s4e1],
+        "the next episode crosses into the next season"
+    );
+
+    tick().await;
+    played(store, user.id, s3e6).await;
+    assert_eq!(
+        continuing(store, user.id).await,
+        [s3e7],
+        "rewatching goes back to following that episode"
+    );
+
+    // An unfinished episode is the series' one entry, ahead of any next one.
+    tick().await;
     store
-        .mark_played(user.id, noflex_core::PlayTarget::Work(s_id), true)
+        .record_playback_progress(user.id, PlayTarget::Work(s3e7), 60_000)
         .await
-        .expect("series played");
+        .expect("progress");
+    assert_eq!(continuing(store, user.id).await, [s3e7]);
 
-    let mut ep1 = make_work_of_kind(library.id, WorkKind::Episode, "Ep 1", now);
-    ep1.parent_id = Some(s_id);
-    ep1.index_number = Some(1);
-    let ep1_id: WorkId = ep1.id;
-    let mut ep2 = make_work_of_kind(library.id, WorkKind::Episode, "Ep 2", now);
-    ep2.parent_id = Some(s_id);
-    ep2.index_number = Some(2);
-    let ep2_id: WorkId = ep2.id;
-    store.upsert_work(&ep1).await.expect("ep1");
-    store.upsert_work(&ep2).await.expect("ep2");
-    store
-        .mark_played(user.id, noflex_core::PlayTarget::Work(ep1_id), true)
-        .await
-        .expect("ep1 played");
+    // A special is never next, and watching one continues the main run.
+    tick().await;
+    played(store, user.id, s3e7).await;
+    tick().await;
+    played(store, user.id, special).await;
+    assert_eq!(continuing(store, user.id).await, [s3e5]);
 
-    let next = store.next_up(user.id, 10).await.expect("next_up");
-    assert_eq!(next.len(), 1, "only the unwatched episode is next");
-    assert_eq!(next[0].id, ep2_id);
+    // Past the last episode, nothing is left to suggest.
+    tick().await;
+    played(store, user.id, s4e1).await;
+    assert!(continuing(store, user.id).await.is_empty());
 
-    let other_user = make_user("nextup-other", false);
-    store.upsert_user(&other_user).await.expect("other");
-    let none = store
-        .next_up(other_user.id, 10)
-        .await
-        .expect("next_up other");
-    assert!(none.is_empty());
-
-    store.delete_work(ep1_id).await.ok();
-    store.delete_work(ep2_id).await.ok();
-    store.delete_work(s_id).await.ok();
     store.delete_user(user.id).await.ok();
-    store.delete_user(other_user.id).await.ok();
+    store.delete_library(library.id).await.ok();
+}
+
+async fn continue_watching_handles_multi_episode_files<S: Storage + ?Sized>(store: &S) {
+    let library = test_library("Multi-episode Lib");
+    store.upsert_library(&library).await.expect("library");
+    let user = make_user("multi-episode-user", false);
+    store.upsert_user(&user).await.expect("user");
+
+    let show = ContinueSeries::create(store, library.id, "Show").await;
+    let mut double = make_work_of_kind(
+        library.id,
+        WorkKind::Episode,
+        "E05-E06",
+        OffsetDateTime::now_utc(),
+    );
+    double.parent_id = Some(show.season);
+    double.parent_index = Some(1);
+    double.index_number = Some(5);
+    double.index_end = Some(6);
+    store.upsert_work(&double).await.expect("double");
+    show.episode(store, 1, 6).await;
+    let e7 = show.episode(store, 1, 7).await;
+
+    played(store, user.id, double.id).await;
+    assert_eq!(continuing(store, user.id).await, [e7]);
+
+    store.delete_user(user.id).await.ok();
+    store.delete_library(library.id).await.ok();
+}
+
+async fn continue_watching_decays_until_new_episodes_arrive<S: Storage + ?Sized>(store: &S) {
+    let library = test_library("Decay Lib");
+    store.upsert_library(&library).await.expect("library");
+    let user = make_user("decay-user", false);
+    store.upsert_user(&user).await.expect("user");
+
+    let now = OffsetDateTime::now_utc();
+    let show = ContinueSeries::create(store, library.id, "Show").await;
+    let last_watched = show
+        .episode_added(store, 1, 1, now - time::Duration::days(400))
+        .await;
+    let old_next = show
+        .episode_added(store, 1, 2, now - time::Duration::days(400))
+        .await;
+    played(store, user.id, last_watched).await;
+
+    let listed = |since| async move {
+        store
+            .continue_watching(user.id, since, 50)
+            .await
+            .expect("continue_watching")
+            .into_iter()
+            .map(|work| work.id)
+            .collect::<Vec<_>>()
+    };
+    let cutoff = now + time::Duration::days(1);
+    assert_eq!(listed(now - time::Duration::days(1)).await, [old_next]);
+    assert!(
+        listed(cutoff).await.is_empty(),
+        "activity older than the cutoff decays"
+    );
+
+    // A next episode added after the cutoff brings the series back. Only
+    // the next episode counts, so this replaces the old one.
+    store
+        .mark_played(user.id, PlayTarget::Work(old_next), true)
+        .await
+        .expect("played");
+    let new_next = show
+        .episode_added(store, 2, 1, now + time::Duration::days(2))
+        .await;
+    assert_eq!(listed(cutoff).await, [new_next]);
+
+    store.delete_user(user.id).await.ok();
+    store.delete_library(library.id).await.ok();
+}
+
+async fn content_categories_split_by_kind_and_anime<S: Storage + ?Sized>(store: &S) {
+    use crate::{
+        domain::{
+            ANIME_TAG_SLUG, CATEGORY_TAG_NAMESPACE, ContentCategory, ContentCategoryCount,
+            LibraryCategory, Tag,
+        },
+        query::ListWorksQuery,
+    };
+
+    let now = OffsetDateTime::now_utc();
+    let mut mixed = test_library("Category Mixed");
+    let mut anime_lib = test_library("Category Anime");
+    anime_lib.config.content_category = LibraryCategory::Anime;
+    let mut general_lib = test_library("Category General");
+    general_lib.config.content_category = LibraryCategory::General;
+    mixed.config.content_category = LibraryCategory::Auto;
+    for library in [&mixed, &anime_lib, &general_lib] {
+        store.upsert_library(library).await.expect("library");
+    }
+
+    let plain_movie = make_work(mixed.id, "Plain movie", now);
+    let tagged_movie = make_work(mixed.id, "Tagged movie", now);
+    let plain_show = make_work_of_kind(mixed.id, WorkKind::Series, "Plain show", now);
+    let tagged_show = make_work_of_kind(mixed.id, WorkKind::Series, "Tagged show", now);
+    let library_show = make_work_of_kind(anime_lib.id, WorkKind::Series, "Library show", now);
+    let general_tagged = make_work_of_kind(general_lib.id, WorkKind::Series, "General tagged", now);
+    let mut season = make_work_of_kind(mixed.id, WorkKind::Season, "Season 1", now);
+    season.parent_id = Some(plain_show.id);
+    for work in [
+        &plain_movie,
+        &tagged_movie,
+        &plain_show,
+        &tagged_show,
+        &library_show,
+        &general_tagged,
+        &season,
+    ] {
+        store.upsert_work(work).await.expect("work");
+    }
+    let tag = Tag {
+        id: TagId::new(),
+        namespace: CATEGORY_TAG_NAMESPACE.to_string(),
+        parent_id: None,
+        slug: ANIME_TAG_SLUG.to_string(),
+        display: "Anime".to_string(),
+        metadata: async_graphql::Json(serde_json::json!({})),
+    };
+    let tag_id = store.upsert_tag(&tag).await.expect("tag");
+    for work in [&tagged_movie, &tagged_show, &general_tagged] {
+        store
+            .assign_tag(tag_id, TagTarget::Work(work.id), 1.0, "provider:test")
+            .await
+            .expect("assign");
+    }
+
+    let titles = async |category, kinds: Vec<WorkKind>| {
+        let mut titles = store
+            .list_works(&ListWorksQuery {
+                category: Some(category),
+                kinds,
+                limit: 50,
+                ..Default::default()
+            })
+            .await
+            .expect("list_works")
+            .items
+            .into_iter()
+            .map(|work| work.title)
+            .filter(|title| title != "Unrelated")
+            .collect::<Vec<_>>();
+        titles.sort();
+        titles
+    };
+    assert_eq!(
+        titles(ContentCategory::Movies, vec![]).await,
+        ["Plain movie"]
+    );
+    assert_eq!(
+        titles(ContentCategory::Shows, vec![]).await,
+        ["General tagged", "Plain show"],
+        "a General library overrides the tag"
+    );
+    assert_eq!(
+        titles(ContentCategory::Anime, vec![]).await,
+        ["Library show", "Tagged movie", "Tagged show"],
+        "an Anime library needs no tag"
+    );
+    assert_eq!(
+        titles(ContentCategory::Anime, vec![WorkKind::Movie]).await,
+        ["Tagged movie"],
+        "kind filters narrow a category"
+    );
+
+    let counts = store.content_category_counts(None).await.expect("counts");
+    let count = |category| {
+        counts
+            .iter()
+            .find(|entry: &&ContentCategoryCount| entry.category == category)
+            .map(|entry| entry.work_count)
+    };
+    assert_eq!(count(ContentCategory::Anime), Some(3));
+
+    // Grants scope the counts, and so hide a category the user can't reach.
+    let user = make_user("category-user", false);
+    store.upsert_user(&user).await.expect("user");
+    store
+        .grant_library_access(user.id, general_lib.id)
+        .await
+        .expect("grant");
+    assert_eq!(
+        store
+            .content_category_counts(Some(user.id))
+            .await
+            .expect("counts"),
+        [ContentCategoryCount {
+            category: ContentCategory::Shows,
+            work_count: 1,
+        }]
+    );
+
+    store.delete_user(user.id).await.ok();
+    for library in [&mixed, &anime_lib, &general_lib] {
+        store.delete_library(library.id).await.ok();
+    }
+}
+
+async fn work_features_collect_comparison_facts<S: Storage + ?Sized>(store: &S) {
+    use crate::domain::Tag;
+
+    let now = OffsetDateTime::now_utc();
+    let library = test_library("Features Lib");
+    let hidden_library = test_library("Features Hidden");
+    store.upsert_library(&library).await.expect("library");
+    store
+        .upsert_library(&hidden_library)
+        .await
+        .expect("library");
+
+    let mut movie = make_work(library.id, "Featured movie", now);
+    movie.year = Some(1999);
+    movie.community_rating = Some(8.5);
+    let series = make_work_of_kind(library.id, WorkKind::Series, "Featured series", now);
+    let mut season = make_work_of_kind(library.id, WorkKind::Season, "Season", now);
+    season.parent_id = Some(series.id);
+    let album = make_work_of_kind(library.id, WorkKind::Album, "Featured album", now);
+    let hidden = make_work(hidden_library.id, "Hidden movie", now);
+    for work in [&movie, &series, &season, &album, &hidden] {
+        store.upsert_work(work).await.expect("work");
+    }
+    let mut short = make_edition(movie.id, "Short");
+    short.runtime_ms = Some(1_000);
+    let mut long = make_edition(movie.id, "Long");
+    long.runtime_ms = Some(2_000);
+    store.upsert_edition(&short).await.expect("edition");
+    store.upsert_edition(&long).await.expect("edition");
+
+    let tag = |namespace: &str, slug: &str| Tag {
+        id: TagId::new(),
+        namespace: namespace.to_string(),
+        parent_id: None,
+        slug: slug.to_string(),
+        display: slug.to_string(),
+        metadata: async_graphql::Json(serde_json::json!({})),
+    };
+    let genre = store
+        .upsert_tag(&tag("genre", "features-genre"))
+        .await
+        .expect("tag");
+    let user_tag = store
+        .upsert_tag(&tag("user", "features-user"))
+        .await
+        .expect("tag");
+    for id in [genre, user_tag] {
+        store
+            .assign_tag(id, TagTarget::Work(movie.id), 1.0, "test")
+            .await
+            .expect("assign");
+    }
+
+    let kinds = [WorkKind::Movie, WorkKind::Series];
+    let features = store
+        .work_features(&kinds, &["genre"], None)
+        .await
+        .expect("features");
+    let found = features
+        .iter()
+        .find(|entry| entry.work == movie.id)
+        .expect("movie");
+    assert_eq!(found.kind, WorkKind::Movie);
+    assert_eq!(found.year, Some(1999));
+    assert_eq!(found.community_rating, Some(8.5));
+    assert_eq!(found.runtime_ms, Some(2_000), "the longest edition");
+    assert_eq!(found.tags, [genre], "only the requested namespaces");
+    let found_series = features
+        .iter()
+        .find(|entry| entry.work == series.id)
+        .expect("series");
+    assert_eq!(found_series.runtime_ms, None);
+    assert!(
+        features
+            .iter()
+            .all(|entry| entry.work != season.id && entry.work != album.id),
+        "top-level works of the requested kinds only"
+    );
+
+    let user = make_user("features-user", false);
+    store.upsert_user(&user).await.expect("user");
+    store
+        .grant_library_access(user.id, library.id)
+        .await
+        .expect("grant");
+    let visible = store
+        .work_features(&kinds, &[], Some(user.id))
+        .await
+        .expect("features");
+    assert!(visible.iter().any(|entry| entry.work == movie.id));
+    assert!(
+        visible.iter().all(|entry| entry.work != hidden.id),
+        "grants apply"
+    );
+
+    store.delete_user(user.id).await.ok();
+    store.delete_library(library.id).await.ok();
+    store.delete_library(hidden_library.id).await.ok();
+}
+
+async fn watched_top_level_works_roll_up<S: Storage + ?Sized>(store: &S) {
+    let library = test_library("Watched Lib");
+    store.upsert_library(&library).await.expect("library");
+    let user = make_user("watched-user", false);
+    store.upsert_user(&user).await.expect("user");
+
+    let show = ContinueSeries::create(store, library.id, "Show").await;
+    let e1 = show.episode(store, 1, 1).await;
+    let e2 = show.episode(store, 1, 2).await;
+    let movie = make_work(library.id, "Movie", OffsetDateTime::now_utc());
+    let unstarted = make_work(library.id, "Unstarted", OffsetDateTime::now_utc());
+    store.upsert_work(&movie).await.expect("movie");
+    store.upsert_work(&unstarted).await.expect("unstarted");
+
+    played(store, user.id, e1).await;
+    tick().await;
+    store
+        .record_playback_progress(user.id, PlayTarget::Work(movie.id), 1_000)
+        .await
+        .expect("progress");
+    tick().await;
+    store
+        .record_playback_progress(user.id, PlayTarget::Work(e2), 1_000)
+        .await
+        .expect("progress");
+    // Unmarking leaves a timestamped row that no longer means "watched".
+    store
+        .mark_played(user.id, PlayTarget::Work(unstarted.id), false)
+        .await
+        .expect("unplayed");
+
+    // A favorite with no playback isn't watch history...
+    store
+        .set_favorite(user.id, PlayTarget::Work(unstarted.id), true)
+        .await
+        .expect("favorite");
+    // ...but on a series, it describes the episodes watched under it.
+    store
+        .set_favorite(user.id, PlayTarget::Work(show.series), true)
+        .await
+        .expect("favorite");
+
+    let watched = store
+        .watched_top_level_works(user.id)
+        .await
+        .expect("watched");
+    assert_eq!(
+        watched.iter().map(|w| w.work).collect::<Vec<_>>(),
+        [show.series, movie.id],
+        "two episodes are one series, dated by the latest"
+    );
+    assert!(
+        watched[0].finished,
+        "one finished episode finishes the roll-up"
+    );
+    assert!(watched[0].favorite);
+    assert_eq!(watched[0].position_ms, Some(1_000));
+    assert!(!watched[1].finished);
+    assert!(!watched[1].favorite);
+
+    store.delete_user(user.id).await.ok();
+    store.delete_library(library.id).await.ok();
+}
+
+async fn work_embeddings_round_trip<S: Storage + ?Sized>(store: &S) {
+    let library = test_library("Embeddings Lib");
+    store.upsert_library(&library).await.expect("library");
+    let now = OffsetDateTime::now_utc();
+    let with = make_work(library.id, "With", now);
+    let other_namespace = make_work(library.id, "Other namespace", now);
+    let without = make_work(library.id, "Without", now);
+    for work in [&with, &other_namespace, &without] {
+        store.upsert_work(work).await.expect("work");
+    }
+    store
+        .upsert_embedding(EmbeddingTarget::Work(with.id), "taste-ns", "m", &[1.0, 2.0])
+        .await
+        .expect("embedding");
+    store
+        .upsert_embedding(
+            EmbeddingTarget::Work(other_namespace.id),
+            "other-ns",
+            "m",
+            &[3.0, 4.0],
+        )
+        .await
+        .expect("embedding");
+
+    let found = store
+        .work_embeddings("taste-ns", &[with.id, other_namespace.id, without.id])
+        .await
+        .expect("work_embeddings");
+    assert_eq!(found, [(with.id, vec![1.0, 2.0])]);
+    assert!(
+        store
+            .work_embeddings("taste-ns", &[])
+            .await
+            .expect("empty")
+            .is_empty()
+    );
+
+    store.delete_work_embeddings(with.id).await.expect("delete");
+    assert!(
+        store
+            .work_embeddings("taste-ns", &[with.id])
+            .await
+            .expect("after delete")
+            .is_empty()
+    );
+    store
+        .delete_work_embeddings(without.id)
+        .await
+        .expect("deleting nothing is fine");
+
     store.delete_library(library.id).await.ok();
 }
 
@@ -4925,7 +5428,7 @@ async fn list_works_random_sort_mints_no_cursor<S: Storage + ?Sized>(store: &S) 
 }
 
 async fn library_config_round_trip<S: Storage + ?Sized>(store: &S) {
-    use crate::domain::{ArtworkPreference, LibraryConfig, ScanSchedule};
+    use crate::domain::{ArtworkPreference, LibraryCategory, LibraryConfig, ScanSchedule};
 
     let lib = test_library("Cfg Lib");
     assert_eq!(
@@ -4942,6 +5445,7 @@ async fn library_config_round_trip<S: Storage + ?Sized>(store: &S) {
         watch_enabled: false,
         scan_schedule: ScanSchedule::Daily,
         artwork_preference: ArtworkPreference::PreferLocal,
+        content_category: LibraryCategory::Anime,
     };
     store.upsert_library(&configured).await.expect("upsert");
 
@@ -4959,6 +5463,7 @@ async fn library_config_round_trip<S: Storage + ?Sized>(store: &S) {
         fetched.config.artwork_preference,
         ArtworkPreference::PreferLocal
     );
+    assert_eq!(fetched.config.content_category, LibraryCategory::Anime);
 
     let all = store.list_libraries().await.expect("list");
     let found = all.iter().find(|l| l.id == lib_id).expect("listed");

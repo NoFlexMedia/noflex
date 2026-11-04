@@ -33,7 +33,7 @@ pub struct PluginManifest {
     pub plugin_id: String,
     pub display_name: String,
     pub version: String,
-    /// `MAJOR.MINOR`, e.g. `"0.8"`. Pre-1.0 the host requires an exact
+    /// `MAJOR.MINOR`, e.g. `"0.9"`. Pre-1.0 the host requires an exact
     /// match with its own API version; see [`Self::check_api_compat`].
     pub noflex_api_version: String,
     #[serde(default)]
@@ -652,7 +652,7 @@ mod tests {
             plugin_id = "intro"
             display_name = "Intro Detector"
             version = "0.1.0"
-            noflex_api_version = "0.8"
+            noflex_api_version = "0.9"
             hooks = ["background"]
             capabilities = ["background"]
 
@@ -682,7 +682,7 @@ mod tests {
                 plugin_id = "p"
                 display_name = "P"
                 version = "0.1.0"
-                noflex_api_version = "0.8"
+                noflex_api_version = "0.9"
                 secrets_read = ["token"]
             "#,
         )
@@ -695,7 +695,7 @@ mod tests {
                 plugin_id = "p"
                 display_name = "P"
                 version = "0.1.0"
-                noflex_api_version = "0.8"
+                noflex_api_version = "0.9"
                 capabilities = ["user-secrets.write"]
                 user_secrets_write = ["token"]
             "#,
@@ -711,7 +711,7 @@ mod tests {
             plugin_id = "intro"
             display_name = "Intro Detector"
             version = "0.1.0"
-            noflex_api_version = "0.8"
+            noflex_api_version = "0.9"
 
             [[tasks]]
             name = "sweep"
@@ -728,7 +728,7 @@ mod tests {
             plugin_id = "potion"
             display_name = "Potion"
             version = "0.1.0"
-            noflex_api_version = "0.8"
+            noflex_api_version = "0.9"
             hooks = ["embedder"]
             capabilities = ["assets.read"]
 
@@ -777,7 +777,7 @@ mod tests {
             plugin_id = "gotify"
             display_name = "Gotify"
             version = "0.1.0"
-            noflex_api_version = "0.8"
+            noflex_api_version = "0.9"
             hooks = ["notifier"]
         "#;
         let m = PluginManifest::from_bytes(toml.as_bytes()).expect("parses");
@@ -794,7 +794,7 @@ mod tests {
             plugin_id = "gotify"
             display_name = "Gotify"
             version = "0.1.0"
-            noflex_api_version = "0.8"
+            noflex_api_version = "0.9"
             hooks = ["notifier"]
             events = ["scan-started", "scan-completed"]
         "#;

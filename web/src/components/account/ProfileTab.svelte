@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
+  import Books from "phosphor-svelte/lib/Books";
   import CaretRight from "phosphor-svelte/lib/CaretRight";
   import Gear from "phosphor-svelte/lib/Gear";
   import Lock from "phosphor-svelte/lib/Lock";
@@ -10,6 +11,7 @@
   import { cache, graphql, ParentalTagsStore } from "$houdini";
   import { date, splitList } from "$lib/format.js";
   import { fetchQuery, refetch } from "$lib/graphql.js";
+  import { app, SHOW_LIBRARIES_KEY } from "$lib/session.svelte.js";
   import { attempt, confirmAction } from "$lib/ui.svelte.js";
   import Select from "$components/ui/Select.svelte";
 
@@ -95,6 +97,14 @@
     savingPlayback = false;
   }
 
+  // ---- Browsing ----
+  async function toggleLibraries(event) {
+    const input = event.currentTarget;
+    const show = input.checked;
+    if (await attempt(() => setPreference.mutate({ key: SHOW_LIBRARIES_KEY, value: show }))) app.showLibraries = show;
+    else input.checked = app.showLibraries;
+  }
+
   // ---- Raw preferences ----
   let raw = $state({ key: "", value: "" });
   let rawError = $state("");
@@ -156,6 +166,16 @@
         <label class="field">Confirm new password<input type="password" bind:value={password.confirm} autocomplete="new-password" required aria-invalid={mismatch} aria-describedby="pw-mismatch" />{#if mismatch}<small id="pw-mismatch" class="error">Passwords don’t match yet.</small>{/if}</label>
         <div class="form-actions"><button class="btn primary sm" disabled={changing || mismatch || !password.current || password.next.length < 8}>{#if changing}<span class="spinner sm"></span>{/if}Update password</button></div>
       </form>
+    </section>
+
+    <section class="panel wide" style:--i={2}>
+      <header class="panel-head">
+        <span class="panel-icon"><Books size={19} /></span>
+        <div><h2>Browsing</h2><p>NoFlex browses by movies, shows and other content types across your libraries</p></div>
+      </header>
+      <div class="toggles">
+        <label class="toggle"><input type="checkbox" class="switch" checked={app.showLibraries} onchange={toggleLibraries} /><span><strong>Show libraries in the sidebar</strong><small>List each library too, for browsing by where files live.</small></span></label>
+      </div>
     </section>
 
     <section class="panel wide" style:--i={2}>

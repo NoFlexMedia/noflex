@@ -263,6 +263,10 @@ mod guest {
                 .collect(),
             rating: payload.rating,
             community_rating: payload.community_rating,
+            original_language: payload.original_language,
+            origin_countries: payload.origin_countries,
+            keywords: payload.keywords,
+            budget_usd: payload.budget_usd,
         }
     }
 

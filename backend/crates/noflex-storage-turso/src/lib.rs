@@ -678,20 +678,14 @@ impl Storage for TursoStore {
         data.favorite = favorite;
         repo::user_data::write(&conn, user, target, &data).await
     }
-    async fn resume_items(&self, user: UserId, limit: u32) -> StorageResult<Vec<Work>> {
+    async fn continue_watching(
+        &self,
+        user: UserId,
+        active_since: time::OffsetDateTime,
+        limit: u32,
+    ) -> StorageResult<Vec<Work>> {
         let (_schema, conn) = self.reader().await?;
-        let ids = repo::user_data::resume_works(&conn, user, limit).await?;
-        let mut out = Vec::with_capacity(ids.len());
-        for (id, _pos) in ids {
-            if let Some(w) = repo::works::get(&conn, id).await? {
-                out.push(w);
-            }
-        }
-        Ok(out)
-    }
-    async fn next_up(&self, user: UserId, limit: u32) -> StorageResult<Vec<Work>> {
-        let (_schema, conn) = self.reader().await?;
-        let ids = repo::user_data::next_up_works(&conn, user, limit).await?;
+        let ids = repo::user_data::continue_watching(&conn, user, active_since, limit).await?;
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
             if let Some(w) = repo::works::get(&conn, id).await? {
@@ -699,6 +693,41 @@ impl Storage for TursoStore {
             }
         }
         Ok(out)
+    }
+    async fn content_category_counts(
+        &self,
+        access_user_id: Option<UserId>,
+    ) -> StorageResult<Vec<noflex_storage::domain::ContentCategoryCount>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::list_works::content_category_counts(&conn, access_user_id).await
+    }
+    async fn watched_top_level_works(
+        &self,
+        user: UserId,
+    ) -> StorageResult<Vec<noflex_storage::domain::WatchedWork>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::user_data::watched_top_level_works(&conn, user).await
+    }
+    async fn work_features(
+        &self,
+        kinds: &[WorkKind],
+        tag_namespaces: &[&str],
+        access_user_id: Option<UserId>,
+    ) -> StorageResult<Vec<noflex_storage::domain::WorkFeatures>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::list_works::work_features(&conn, kinds, tag_namespaces, access_user_id).await
+    }
+    async fn delete_work_embeddings(&self, work: WorkId) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::search::delete_work_embeddings(&conn, work).await
+    }
+    async fn work_embeddings(
+        &self,
+        namespace: &str,
+        works: &[WorkId],
+    ) -> StorageResult<Vec<(WorkId, Vec<f32>)>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::search::work_embeddings(&conn, namespace, works).await
     }
 
     // ---- Libraries / scans ---------------------------------------------

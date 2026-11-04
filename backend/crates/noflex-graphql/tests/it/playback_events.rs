@@ -229,6 +229,51 @@ async fn playback_mutations_emit_domain_events() {
 }
 
 #[tokio::test]
+async fn progress_past_the_completion_point_finishes_the_work_once() {
+    let (schema, store, bus) = authed_schema().await;
+    let principal = setup_admin(&schema).await;
+
+    let lib = seed_library();
+    store.upsert_library(&lib).await.expect("library");
+    let work = seed_work(lib.id, "Alien");
+    store.upsert_work(&work).await.expect("work");
+    store
+        .upsert_edition(&seed_edition(work.id))
+        .await
+        .expect("edition");
+
+    let mut rx = bus.subscribe();
+    let report = async |position: i64| {
+        let query = format!(
+            r#"mutation {{ reportProgress(target: {{ kind: WORK, id: "{}" }}, positionMs: {position}, state: PLAYING) {{ played }} }}"#,
+            work.id
+        );
+        let resp = schema
+            .execute(authed_request(query.as_str(), principal))
+            .await;
+        assert!(resp.errors.is_empty(), "reportProgress: {:?}", resp.errors);
+        resp.data.into_json().unwrap()["reportProgress"]["played"]
+            .as_bool()
+            .expect("played")
+    };
+
+    // 90% of the seeded 7,020,000 ms runtime is 6,318,000.
+    assert!(!report(6_000_000).await);
+    let silent = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await;
+    assert!(silent.is_err(), "no completion before the threshold");
+
+    assert!(report(6_400_000).await);
+    assert!(matches!(
+        rx.recv().await.expect("event"),
+        DomainEvent::WorkPlayed { .. }
+    ));
+
+    assert!(report(6_500_000).await);
+    let silent = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await;
+    assert!(silent.is_err(), "completion is announced once");
+}
+
+#[tokio::test]
 async fn edition_target_resolves_to_work_event() {
     let (schema, store, bus) = authed_schema().await;
     let principal = setup_admin(&schema).await;

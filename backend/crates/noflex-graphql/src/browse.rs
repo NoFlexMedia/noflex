@@ -10,7 +10,9 @@ use async_graphql::{Context, Enum, ID, InputObject, Object, connection::Connecti
 use noflex_core::{EditionId, LibraryId, TagId, UserId, WorkId, WorkKind};
 use noflex_storage::{
     ListTagsQuery, ListWorksQuery, SortOrder, Storage, TagSummary, WatchedFilter,
-    domain::{Edition, Image, ImageTarget, MediaFile, Tag, Work},
+    domain::{
+        ContentCategory, ContentCategoryCount, Edition, Image, ImageTarget, MediaFile, Tag, Work,
+    },
 };
 use time::OffsetDateTime;
 
@@ -66,13 +68,34 @@ pub struct BrowseQuery;
 
 #[Object]
 impl BrowseQuery {
-    /// A library's works, optionally filtered and sorted. `first`
+    /// The categories holding at least one top-level work the caller can
+    /// access, for building navigation.
+    async fn content_categories(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<Vec<ContentCategoryCount>> {
+        let storage = ctx
+            .data::<Arc<dyn Storage>>()
+            .map_err(|_| async_graphql::Error::new("storage not configured"))?;
+        let user = access::request_user(ctx)?;
+        storage
+            .content_category_counts(user.access_user_id())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))
+    }
+
+    /// Works the caller can access, optionally filtered and sorted.
+    /// `libraryId` restricts to one library; `category` restricts to one
+    /// content category's top-level works across libraries. `first`
     /// defaults to 50, max 200. A `RANDOM` sort is a single page.
+    // Each parameter is one GraphQL field argument.
+    #[allow(clippy::too_many_arguments)]
     #[graphql(complexity = "paging::cost(first, 50, 200, child_complexity)")]
     async fn works(
         &self,
         ctx: &Context<'_>,
-        library_id: LibraryId,
+        library_id: Option<LibraryId>,
+        category: Option<ContentCategory>,
         filter: Option<WorkFilterInput>,
         sort: Option<SortOrder>,
         first: Option<i32>,
@@ -101,7 +124,8 @@ impl BrowseQuery {
         let page = storage
             .list_works(&ListWorksQuery {
                 access_user_id: request_user.access_user_id(),
-                library: Some(library_id),
+                library: library_id,
+                category,
                 parent: filter.parent_id,
                 tag: filter.tag,
                 kinds: filter.kinds.unwrap_or_default(),

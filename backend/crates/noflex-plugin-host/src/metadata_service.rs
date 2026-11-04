@@ -261,6 +261,11 @@ impl MetadataService {
         persist_tags(self.storage.as_ref(), work.id, &provider.0, &report.tags).await?;
         work.updated_at = OffsetDateTime::now_utc();
         self.storage.upsert_work(&work).await?;
+        // Vectors are computed from this metadata, and a work is usually
+        // embedded on being added, before it has any. The next sweep redoes it.
+        if let Err(error) = self.storage.delete_work_embeddings(work.id).await {
+            tracing::warn!(work = %work.id, %error, "metadata: stale embedding not cleared");
+        }
 
         let mut kinds: Vec<(ImageKind, Option<String>)> = Vec::new();
         for image in &payload.images {

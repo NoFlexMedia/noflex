@@ -14,13 +14,14 @@ use tokio::io::AsyncWrite;
 
 use crate::{
     domain::{
-        ActivityEntry, ActivityKind, ApiKey, Collection, DevicePin, Edition, EpgProgram, ExportJob,
-        ExportJobStatus, ExternalIdentity, HistoryPage, Image, ImageSource, ImageTarget,
-        IntroMarkers, Library, LiveTvChannel, LiveTvSource, MediaFile, PlaySession, Playlist,
-        PluginOverrideRow, PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule,
-        RecordingStatus, RefreshTokenLookup, ScanEvent, Session, Tag, TagAssignment, TagSummary,
-        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
-        WatchRoom, WatchRoomMember, WatchRoomState, Work,
+        ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount, DevicePin, Edition,
+        EpgProgram, ExportJob, ExportJobStatus, ExternalIdentity, HistoryPage, Image, ImageSource,
+        ImageTarget, IntroMarkers, Library, LiveTvChannel, LiveTvSource, MediaFile, PlaySession,
+        Playlist, PluginOverrideRow, PluginTaskPayload, PluginTaskState, Recording,
+        RecordingSchedule, RecordingStatus, RefreshTokenLookup, ScanEvent, Session, Tag,
+        TagAssignment, TagSummary, TrickplayAsset, User, UserData, UserPluginSecret,
+        UserPreference, UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork,
+        Work, WorkFeatures,
     },
     error::StorageResult,
     query::{
@@ -385,8 +386,64 @@ pub trait Storage: Send + Sync + 'static {
         target: PlayTarget,
         favorite: bool,
     ) -> StorageResult<()>;
-    async fn resume_items(&self, user: UserId, limit: u32) -> StorageResult<Vec<Work>>;
-    async fn next_up(&self, user: UserId, limit: u32) -> StorageResult<Vec<Work>>;
+    /// What `user` would pick back up, most recent activity first, at most
+    /// `limit` entries: unfinished works with a saved position, plus the
+    /// next episode of each series.
+    ///
+    /// A series contributes one entry, decided by its latest episode
+    /// activity: that episode when unfinished, otherwise the first unplayed
+    /// episode after it. Episodes before it never resurface, and specials
+    /// (season 0) are never a next episode. Entries whose activity predates
+    /// `active_since` are dropped. A next episode's activity is the later of
+    /// the series' latest activity and the episode's `added_at`, so a new
+    /// season revives a dormant show.
+    ///
+    /// Library grants are not applied; callers filter the result.
+    async fn continue_watching(
+        &self,
+        user: UserId,
+        active_since: OffsetDateTime,
+        limit: u32,
+    ) -> StorageResult<Vec<Work>>;
+
+    /// The categories with at least one top-level work, in
+    /// [`ContentCategory::ALL`][crate::domain::ContentCategory::ALL] order.
+    /// `access_user_id` applies that user's library grants and parental
+    /// restrictions; administrators leave it unset.
+    async fn content_category_counts(
+        &self,
+        access_user_id: Option<UserId>,
+    ) -> StorageResult<Vec<ContentCategoryCount>>;
+
+    /// Every top-level work `user` has played or started, episodes and
+    /// seasons rolled up to their series, newest `last_played` first. Works
+    /// only favorited or rated, with no playback, are not included.
+    ///
+    /// Library grants are not applied; callers filter the result.
+    async fn watched_top_level_works(&self, user: UserId) -> StorageResult<Vec<WatchedWork>>;
+
+    /// Every top-level work of `kinds` with its comparison facts, in no
+    /// particular order. `tags` holds assignments in `tag_namespaces` only.
+    /// `access_user_id` applies that user's library grants and parental
+    /// restrictions; administrators leave it unset.
+    async fn work_features(
+        &self,
+        kinds: &[WorkKind],
+        tag_namespaces: &[&str],
+        access_user_id: Option<UserId>,
+    ) -> StorageResult<Vec<WorkFeatures>>;
+
+    /// Remove `work`'s vectors in every namespace, so the next backfill sweep
+    /// recomputes them. A work with none is not an error.
+    async fn delete_work_embeddings(&self, work: WorkId) -> StorageResult<()>;
+
+    /// The stored vectors of `works` in `namespace`, in no particular order.
+    /// Works without one, or whose stored vector is corrupt, are omitted.
+    async fn work_embeddings(
+        &self,
+        namespace: &str,
+        works: &[WorkId],
+    ) -> StorageResult<Vec<(WorkId, Vec<f32>)>>;
 
     // ---- Libraries / scans ---------------------------------------------
     async fn list_libraries(&self) -> StorageResult<Vec<Library>>;

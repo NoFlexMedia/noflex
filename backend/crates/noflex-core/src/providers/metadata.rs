@@ -65,6 +65,14 @@ pub struct MetadataPayload {
     pub images: Vec<MetadataImage>,
     pub rating: Option<String>,
     pub community_rating: Option<f32>,
+    /// ISO 639-1 code of the original language, when known.
+    pub original_language: Option<String>,
+    /// ISO 3166-1 alpha-2 codes of the countries of origin.
+    pub origin_countries: Vec<String>,
+    /// Thematic keywords ("heist", "time travel").
+    pub keywords: Vec<String>,
+    /// Production budget in US dollars, when known.
+    pub budget_usd: Option<u64>,
 }
 
 #[async_trait]

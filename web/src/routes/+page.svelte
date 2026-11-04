@@ -17,6 +17,8 @@
 
   let { data: route } = $props();
   let home = $derived(route.home);
+  // The navigation follows, so a first scan's content appears without a reload.
+  $effect(() => { if ($home.data) app.categories = [...$home.data.contentCategories]; });
   const activity = graphql(`
     query Activity {
       activity(first: 12) { nodes { id kind actor subject detail occurredAt } }
@@ -26,7 +28,7 @@
   const TOP_LEVEL = new Set(["MOVIE", "SERIES", "ALBUM", "AUDIO_BOOK"]);
 
   // Every shelf is a connection; the rails only need its nodes.
-  const SHELVES = ["continueWatching", "nextUp", "recentlyAdded", "recentlyPlayed", "moreLikeThis"];
+  const SHELVES = ["continueWatching", "recentlyAdded", "recentlyPlayed", "recommendations"];
   let data = $derived($home.data && Object.fromEntries(SHELVES.map((shelf) => [shelf, $home.data[shelf].nodes])));
   let featured = $derived.by(() => {
     const pool = (data?.recentlyAdded ?? []).filter((work) => TOP_LEVEL.has(work.kind));
@@ -64,9 +66,8 @@
     {#if featured.length}<Hero items={featured} />{/if}
     <div class="rails" class:flush={!featured.length}>
       {#if data.continueWatching.length}<Rail title="Continue watching" items={data.continueWatching} wide />{/if}
-      {#if data.nextUp.length}<Rail title="Next up" items={data.nextUp} wide />{/if}
       {#if data.recentlyAdded.length}<Rail title="Recently added" items={data.recentlyAdded} />{/if}
-      {#if data.moreLikeThis.length}<Rail title="Picked for you" eyebrow="Because of what you watch" items={data.moreLikeThis} />{/if}
+      {#if data.recommendations.length}<Rail title="Recommended" eyebrow="Because of what you watch" items={data.recommendations} />{/if}
       {#if data.recentlyPlayed.length}<Rail title="Watch again" items={data.recentlyPlayed} />{/if}
 
       {#if $activity.data?.activity.nodes.length}

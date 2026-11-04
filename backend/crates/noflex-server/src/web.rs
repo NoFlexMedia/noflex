@@ -53,14 +53,16 @@ fn is_asset_like(path: &str) -> bool {
 fn is_client_route(path: &str) -> bool {
     matches!(
         path,
-        "/" | "/libraries"
+        "/" | "/browse"
+            | "/libraries"
             | "/search"
             | "/collections"
             | "/live-tv"
             | "/watch-rooms"
             | "/account"
             | "/admin"
-    ) || has_single_parameter(path, "/libraries/")
+    ) || has_single_parameter(path, "/browse/")
+        || has_single_parameter(path, "/libraries/")
         || has_single_parameter(path, "/works/")
 }
 

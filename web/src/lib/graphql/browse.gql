@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 query Home {
+  contentCategories { category workCount }
   continueWatching(first: 16) { nodes { ...WorkCard } }
-  nextUp(first: 16) { nodes { ...WorkCard } }
   recentlyAdded(first: 24) { nodes { ...WorkFull } }
   recentlyPlayed(first: 16) { nodes { ...WorkCard } }
-  moreLikeThis(first: 16) { nodes { ...WorkCard } }
+  recommendations(first: 16) { nodes { ...WorkCard } }
+}
+
+query CategoryWorks($category: ContentCategory!, $filter: WorkFilterInput, $sort: SortOrder) {
+  works(category: $category, filter: $filter, sort: $sort, first: 48) @paginate {
+    edges { node { ...WorkCard } }
+  }
 }
 
 query LibraryWorks($library: ID!, $filter: WorkFilterInput, $sort: SortOrder) {

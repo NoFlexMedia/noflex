@@ -20,7 +20,7 @@
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
   import X from "phosphor-svelte/lib/X";
   import { Slider } from "bits-ui";
-  import { CachePolicy, ControlWatchRoomStore, MediaFilesStore, ReportProgressStore, StopPlaybackStore, WatchRoomEventsStore, WatchRoomStore } from "$houdini";
+  import { CachePolicy, ControlWatchRoomStore, MarkPlayedStore, MediaFilesStore, ReportProgressStore, StopPlaybackStore, WatchRoomEventsStore, WatchRoomStore } from "$houdini";
   import { reportOnExit } from "$lib/api.js";
   import { timecode } from "$lib/format.js";
   import { request, writeUserData } from "$lib/graphql.js";
@@ -228,7 +228,14 @@
     showChrome();
     if (!video.ended) roomSend("PAUSE");
   }
-  function onEnded() { next ? playNext() : close(); }
+  function onEnded() {
+    // The server infers completion from progress, but only with a known runtime.
+    if (playback.workId && !live) {
+      const workId = playback.workId;
+      request(new MarkPlayedStore(), { id: workId }).then((data) => writeUserData(workId, data.markPlayed)).catch(() => {});
+    }
+    next ? playNext() : close();
+  }
 
   // ---- controls -----------------------------------------------------------
   function toggle() {

@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+use std::collections::HashMap;
+
 use noflex_core::{PlayTarget, PlayTargetKind, UserId, WorkId};
 use noflex_storage::{
-    domain::{HistoryPage, HistoryRow, UserData},
+    domain::{HistoryPage, HistoryRow, UserData, WatchedWork},
     error::{StorageError, StorageResult},
     query::PageCursor,
 };
+use time::OffsetDateTime;
 use turso::{Connection, Value};
 use uuid::Uuid;
 
@@ -31,32 +34,47 @@ ON CONFLICT(user_id, target_kind, target_id) DO UPDATE SET \
 const GET: &str = "SELECT played, position_ms, play_count, rating, favorite, last_played \
     FROM user_data WHERE user_id = ?1 AND target_kind = ?2 AND target_id = ?3";
 
-const RESUME: &str = "SELECT w.id, w.kind, w.parent_id, w.library_id, w.title, w.sort_title, \
-    w.year, w.release_date, w.overview, w.external_ids_json, w.index_number, w.index_end, \
-    w.parent_index, w.metadata_status, w.added_at, w.updated_at, ud.position_ms \
+const RESUMABLE_NON_EPISODES: &str = "SELECT ud.target_id, ud.last_played \
     FROM user_data ud JOIN works w ON w.id = ud.target_id \
-    WHERE ud.user_id = ?1 AND ud.target_kind = 'work' AND ud.played = 0 \
-        AND ud.position_ms IS NOT NULL \
-    ORDER BY ud.last_played DESC LIMIT ?2";
+    WHERE ud.user_id = ?1 AND ud.target_kind = 'work' AND ud.played = 0 AND ud.position_ms > 0 \
+        AND ud.last_played IS NOT NULL AND w.kind <> 'episode'";
 
-const NEXT_UP: &str = "SELECT w.id, w.kind, w.parent_id, w.library_id, w.title, w.sort_title, \
-    w.year, w.release_date, w.overview, w.external_ids_json, w.index_number, w.index_end, \
-    w.parent_index, w.metadata_status, w.added_at, w.updated_at \
-    FROM works w \
-    WHERE w.kind = 'episode' \
-        AND w.parent_id IN ( \
-            SELECT s.id FROM works s \
-            JOIN user_data ud ON ud.target_id = s.id \
-            WHERE s.kind = 'series' \
-                AND ud.user_id = ?1 \
-                AND ud.target_kind = 'work' \
-                AND ud.played = 1 \
-        ) \
-        AND w.id NOT IN ( \
-            SELECT target_id FROM user_data \
-            WHERE user_id = ?1 AND target_kind = 'work' AND played = 1 \
-        ) \
-    ORDER BY w.parent_index, w.index_number LIMIT ?2";
+const EPISODE_ACTIVITY: &str = "SELECT e.id, season.parent_id, e.parent_index, e.index_number, \
+    e.index_end, ud.played, ud.last_played \
+    FROM user_data ud \
+    JOIN works e ON e.id = ud.target_id \
+    JOIN works season ON season.id = e.parent_id \
+    WHERE ud.user_id = ?1 AND ud.target_kind = 'work' AND e.kind = 'episode' \
+        AND ud.last_played IS NOT NULL AND season.parent_id IS NOT NULL \
+        AND (ud.played = 1 OR ud.position_ms > 0)";
+
+const NEXT_EPISODE: &str = "SELECT e.id, e.added_at \
+    FROM works e \
+    JOIN works season ON season.id = e.parent_id \
+    LEFT JOIN user_data ud ON ud.user_id = ?1 AND ud.target_kind = 'work' AND ud.target_id = e.id \
+    WHERE season.parent_id = ?2 AND e.kind = 'episode' AND e.parent_index > 0 \
+        AND COALESCE(ud.played, 0) = 0 \
+        AND (e.parent_index > ?3 OR (e.parent_index = ?3 AND e.index_number > ?4)) \
+    ORDER BY e.parent_index, e.index_number LIMIT 1";
+
+const WATCHED_WORKS: &str = "SELECT w.id, parent.id, grandparent.id, ud.last_played, \
+    ud.played, ud.position_ms, ud.favorite, ud.rating \
+    FROM user_data ud \
+    JOIN works w ON w.id = ud.target_id \
+    LEFT JOIN works parent ON parent.id = w.parent_id \
+    LEFT JOIN works grandparent ON grandparent.id = parent.parent_id \
+    WHERE ud.user_id = ?1 AND ud.target_kind = 'work' \
+        AND (ud.played = 1 OR ud.position_ms > 0 OR ud.favorite = 1 OR ud.rating IS NOT NULL)";
+
+/// A series' latest episode activity.
+struct LatestEpisode {
+    episode: WorkId,
+    season: i64,
+    /// The last episode number the file covers (`E05-E06` is 6).
+    number: i64,
+    played: bool,
+    at: OffsetDateTime,
+}
 
 pub(crate) async fn get(
     conn: &Connection,
@@ -108,53 +126,150 @@ pub(crate) async fn write(
     Ok(())
 }
 
-pub(crate) async fn resume_works(
+pub(crate) async fn continue_watching(
     conn: &Connection,
     user: UserId,
-    limit: u32,
-) -> StorageResult<Vec<(WorkId, Option<i64>)>> {
-    let mut rows = conn
-        .query(
-            RESUME,
-            vec![
-                Value::Blob(uuid_to_blob(user.into_uuid())),
-                Value::Integer(limit as i64),
-            ],
-        )
-        .await
-        .map_err(map_turso)?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next().await.map_err(map_turso)? {
-        let id = row.get_value(0).map_err(map_turso)?;
-        let position = row.get_value(16).map_err(map_turso)?;
-        out.push((
-            WorkId::from_uuid(blob_to_uuid(crate::convert::col_blob(&id)?)?),
-            col_int_opt(&position)?,
-        ));
-    }
-    Ok(out)
-}
-
-pub(crate) async fn next_up_works(
-    conn: &Connection,
-    user: UserId,
+    active_since: OffsetDateTime,
     limit: u32,
 ) -> StorageResult<Vec<WorkId>> {
+    let user_blob = Value::Blob(uuid_to_blob(user.into_uuid()));
+    let mut entries: Vec<(WorkId, OffsetDateTime)> = Vec::new();
+
+    let mut rows = conn
+        .query(RESUMABLE_NON_EPISODES, vec![user_blob.clone()])
+        .await
+        .map_err(map_turso)?;
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        let id = blob_to_uuid(col_blob(&row.get_value(0).map_err(map_turso)?)?)?;
+        let at = text_to_dt(col_text(&row.get_value(1).map_err(map_turso)?)?)?;
+        entries.push((WorkId::from_uuid(id), at));
+    }
+
+    for (series, latest) in latest_episode_per_series(conn, &user_blob).await? {
+        if !latest.played {
+            entries.push((latest.episode, latest.at));
+            continue;
+        }
+        let mut rows = conn
+            .query(
+                NEXT_EPISODE,
+                vec![
+                    user_blob.clone(),
+                    Value::Blob(uuid_to_blob(series)),
+                    Value::Integer(latest.season),
+                    Value::Integer(latest.number),
+                ],
+            )
+            .await
+            .map_err(map_turso)?;
+        if let Some(row) = rows.next().await.map_err(map_turso)? {
+            let id = blob_to_uuid(col_blob(&row.get_value(0).map_err(map_turso)?)?)?;
+            let added_at = text_to_dt(col_text(&row.get_value(1).map_err(map_turso)?)?)?;
+            entries.push((WorkId::from_uuid(id), latest.at.max(added_at)));
+        }
+    }
+
+    entries.retain(|(_, at)| *at >= active_since);
+    entries.sort_by_key(|(_, at)| std::cmp::Reverse(*at));
+    entries.truncate(limit as usize);
+    Ok(entries.into_iter().map(|(id, _)| id).collect())
+}
+
+async fn latest_episode_per_series(
+    conn: &Connection,
+    user: &Value,
+) -> StorageResult<HashMap<Uuid, LatestEpisode>> {
+    let mut rows = conn
+        .query(EPISODE_ACTIVITY, vec![user.clone()])
+        .await
+        .map_err(map_turso)?;
+    let mut latest: HashMap<Uuid, LatestEpisode> = HashMap::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        let series = blob_to_uuid(col_blob(&row.get_value(1).map_err(map_turso)?)?)?;
+        let number = col_int_opt(&row.get_value(3).map_err(map_turso)?)?.unwrap_or(0);
+        let episode_end = col_int_opt(&row.get_value(4).map_err(map_turso)?)?;
+        let candidate = LatestEpisode {
+            episode: WorkId::from_uuid(blob_to_uuid(col_blob(
+                &row.get_value(0).map_err(map_turso)?,
+            )?)?),
+            season: col_int_opt(&row.get_value(2).map_err(map_turso)?)?.unwrap_or(0),
+            number: episode_end.unwrap_or(number).max(number),
+            played: col_int(&row.get_value(5).map_err(map_turso)?)? != 0,
+            at: text_to_dt(col_text(&row.get_value(6).map_err(map_turso)?)?)?,
+        };
+        // Bulk "mark watched" stamps episodes almost together; on a tie the
+        // later episode is the one that was reached.
+        let rank = |e: &LatestEpisode| (e.at, e.season, e.number);
+        match latest.get(&series) {
+            Some(current) if rank(current) >= rank(&candidate) => {}
+            _ => {
+                latest.insert(series, candidate);
+            }
+        }
+    }
+    Ok(latest)
+}
+
+pub(crate) async fn watched_top_level_works(
+    conn: &Connection,
+    user: UserId,
+) -> StorageResult<Vec<WatchedWork>> {
     let mut rows = conn
         .query(
-            NEXT_UP,
-            vec![
-                Value::Blob(uuid_to_blob(user.into_uuid())),
-                Value::Integer(limit as i64),
-            ],
+            WATCHED_WORKS,
+            vec![Value::Blob(uuid_to_blob(user.into_uuid()))],
         )
         .await
         .map_err(map_turso)?;
-    let mut out = Vec::new();
+    let mut watched: HashMap<Uuid, WatchedWork> = HashMap::new();
     while let Some(row) = rows.next().await.map_err(map_turso)? {
-        let id = row.get_value(0).map_err(map_turso)?;
-        out.push(WorkId::from_uuid(blob_to_uuid(col_blob(&id)?)?));
+        // The highest ancestor present: grandparent, then parent, then self.
+        let mut top = Value::Null;
+        for column in [2, 1, 0] {
+            top = row.get_value(column).map_err(map_turso)?;
+            if !matches!(top, Value::Null) {
+                break;
+            }
+        }
+        let top = blob_to_uuid(col_blob(&top)?)?;
+        let played = col_int(&row.get_value(4).map_err(map_turso)?)? != 0;
+        let position_ms = col_int_opt(&row.get_value(5).map_err(map_turso)?)?;
+        let favorite = col_int(&row.get_value(6).map_err(map_turso)?)? != 0;
+        let rating = col_real_opt(&row.get_value(7).map_err(map_turso)?)?;
+        // Only playback counts as activity. Unmarking a title stamps the row
+        // too, and a favorite or rating can keep that row selected.
+        let last_played = if played || position_ms.is_some_and(|position| position > 0) {
+            col_text_opt(&row.get_value(3).map_err(map_turso)?)?
+                .map(|text| text_to_dt(&text))
+                .transpose()?
+        } else {
+            None
+        };
+
+        let entry = watched.entry(top).or_insert(WatchedWork {
+            work: WorkId::from_uuid(top),
+            last_played: OffsetDateTime::UNIX_EPOCH,
+            finished: false,
+            position_ms: None,
+            favorite: false,
+            rating: None,
+        });
+        if let Some(at) = last_played {
+            entry.last_played = entry.last_played.max(at);
+        }
+        entry.finished |= played;
+        entry.position_ms = entry.position_ms.max(position_ms);
+        entry.favorite |= favorite;
+        entry.rating = match (entry.rating, rating) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
     }
+    let mut out = watched
+        .into_values()
+        .filter(|entry| entry.last_played != OffsetDateTime::UNIX_EPOCH)
+        .collect::<Vec<_>>();
+    out.sort_by_key(|watched| std::cmp::Reverse(watched.last_played));
     Ok(out)
 }
 

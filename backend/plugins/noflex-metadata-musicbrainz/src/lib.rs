@@ -194,6 +194,10 @@ mod guest {
                 images: Vec::new(),
                 rating: None,
                 community_rating: None,
+                original_language: None,
+                origin_countries: Vec::new(),
+                keywords: Vec::new(),
+                budget_usd: None,
             })
         }
 

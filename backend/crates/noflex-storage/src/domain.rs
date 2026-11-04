@@ -675,6 +675,37 @@ pub struct UserData {
     pub last_played: Option<OffsetDateTime>,
 }
 
+/// A top-level work a user has played or started; see
+/// [`Storage::watched_top_level_works`][crate::Storage::watched_top_level_works].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WatchedWork {
+    pub work: WorkId,
+    /// The latest activity on the work or any of its descendants.
+    pub last_played: OffsetDateTime,
+    /// The work or any descendant was played to completion.
+    pub finished: bool,
+    /// The furthest saved position on the work or any descendant.
+    pub position_ms: Option<i64>,
+    /// The work or any descendant is a favorite.
+    pub favorite: bool,
+    /// The highest of the user's ratings on the work and its descendants.
+    pub rating: Option<f32>,
+}
+
+/// The facts recommendations compare a top-level work by.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkFeatures {
+    pub work: WorkId,
+    pub kind: WorkKind,
+    pub year: Option<i32>,
+    pub community_rating: Option<f32>,
+    /// The longest edition's runtime; `None` for works without their own
+    /// editions, such as series.
+    pub runtime_ms: Option<i64>,
+    pub added_at: OffsetDateTime,
+    pub tags: Vec<TagId>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MediaRemoval {
     /// Works pruned because their last media-bearing descendant was removed.
@@ -713,6 +744,11 @@ pub struct LibraryConfig {
     /// it needs no rescan.
     #[serde(default)]
     pub artwork_preference: ArtworkPreference,
+    /// Whether this library's works count as anime when browsing by
+    /// [`ContentCategory`]. Read at query time, so changing it needs no
+    /// rescan.
+    #[serde(default)]
+    pub content_category: LibraryCategory,
 }
 
 fn default_true() -> bool {
@@ -729,8 +765,72 @@ impl Default for LibraryConfig {
             watch_enabled: true,
             scan_schedule: ScanSchedule::default(),
             artwork_preference: ArtworkPreference::default(),
+            content_category: LibraryCategory::default(),
         }
     }
+}
+
+/// Tag namespace for [`ContentCategory`] classification.
+pub const CATEGORY_TAG_NAMESPACE: &str = "category";
+/// Slug of the tag in [`CATEGORY_TAG_NAMESPACE`] that marks a work as anime.
+pub const ANIME_TAG_SLUG: &str = "anime";
+
+/// A library-level override of per-work anime classification.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Enum)]
+pub enum LibraryCategory {
+    /// A work is anime when it carries the anime category tag.
+    #[default]
+    Auto,
+    /// Every work here is anime.
+    Anime,
+    /// Nothing here is anime, whatever its tags say.
+    General,
+}
+
+/// What viewers browse by, across libraries. Every top-level work belongs to
+/// at most one category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Enum)]
+pub enum ContentCategory {
+    /// Movies that aren't anime.
+    Movies,
+    /// Series that aren't anime.
+    Shows,
+    /// Anime movies and series.
+    Anime,
+    Music,
+    Audiobooks,
+    Photos,
+}
+
+impl ContentCategory {
+    pub const ALL: [Self; 6] = [
+        Self::Movies,
+        Self::Shows,
+        Self::Anime,
+        Self::Music,
+        Self::Audiobooks,
+        Self::Photos,
+    ];
+
+    /// The work kinds this category can contain; anime classification
+    /// narrows `Movies`, `Shows` and `Anime` further.
+    pub fn kinds(self) -> &'static [WorkKind] {
+        match self {
+            Self::Movies => &[WorkKind::Movie],
+            Self::Shows => &[WorkKind::Series],
+            Self::Anime => &[WorkKind::Movie, WorkKind::Series],
+            Self::Music => &[WorkKind::Artist, WorkKind::Album, WorkKind::Track],
+            Self::Audiobooks => &[WorkKind::AudioBook],
+            Self::Photos => &[WorkKind::Photo],
+        }
+    }
+}
+
+/// How many top-level works in a category a caller can access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SimpleObject)]
+pub struct ContentCategoryCount {
+    pub category: ContentCategory,
+    pub work_count: u64,
 }
 
 /// Library-level choice between metadata-provider artwork and artwork

@@ -20,10 +20,13 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use noflex_core::{
-    EmbeddingTarget, WorkId,
+    EmbeddingTarget, TagTarget, WorkId,
     events::{DomainEvent, DomainEventBus},
 };
-use noflex_storage::{Storage, domain::Work};
+use noflex_storage::{
+    Storage,
+    domain::{Tag, Work},
+};
 use tokio::{
     sync::{broadcast::error::RecvError, mpsc},
     task::JoinHandle,
@@ -220,7 +223,17 @@ async fn embed_and_persist(
     if works.is_empty() {
         return true;
     }
-    let texts: Vec<String> = works.iter().map(work_text).collect();
+    let mut texts = Vec::with_capacity(works.len());
+    for work in &works {
+        let tags = match storage.tags_for_target(TagTarget::Work(work.id)).await {
+            Ok(tags) => tags,
+            Err(e) => {
+                tracing::warn!(work = %work.id, error = %e, "embedding: tag lookup failed");
+                return false;
+            }
+        };
+        texts.push(work_text(work, &tags));
+    }
     let Some(outcome) = (match embed_texts(registry, texts).await {
         Ok(outcome) => outcome,
         Err(e) => {
@@ -252,14 +265,27 @@ async fn embed_and_persist(
     true
 }
 
-/// The text an embedder sees for a work: `"{title}"`, plus
-/// `" ({year})"` when the year is known, plus `". {overview}"` when one
-/// is set — truncated to [`MAX_TEXT_BYTES`] on a char boundary.
-fn work_text(work: &Work) -> String {
+/// The text an embedder sees for a work: `"{title}"`, plus `" ({year})"`
+/// when the year is known, then `". {genres}"`, `". {keywords}"` and
+/// `". {overview}"` when present, truncated to [`MAX_TEXT_BYTES`] on a char
+/// boundary. Overviews rarely name a genre or theme outright, and a long one
+/// comes last so truncation cuts its tail rather than the tags.
+fn work_text(work: &Work, tags: &[Tag]) -> String {
     let mut text = work.title.clone();
     if let Some(year) = work.year {
         use std::fmt::Write as _;
         let _ = write!(text, " ({year})");
+    }
+    for namespace in ["genre", "keyword"] {
+        let names = tags
+            .iter()
+            .filter(|tag| tag.namespace == namespace)
+            .map(|tag| tag.display.as_str())
+            .collect::<Vec<_>>();
+        if !names.is_empty() {
+            text.push_str(". ");
+            text.push_str(&names.join(", "));
+        }
     }
     if let Some(overview) = &work.overview {
         if !overview.is_empty() {
@@ -309,18 +335,46 @@ mod tests {
 
     #[test]
     fn text_shaping() {
-        assert_eq!(work_text(&work("Alien", None, None)), "Alien");
-        assert_eq!(work_text(&work("Alien", Some(1979), None)), "Alien (1979)");
+        assert_eq!(work_text(&work("Alien", None, None), &[]), "Alien");
         assert_eq!(
-            work_text(&work(
-                "Alien",
-                Some(1979),
-                Some("In space no one can hear you scream.")
-            )),
+            work_text(&work("Alien", Some(1979), None), &[]),
+            "Alien (1979)"
+        );
+        assert_eq!(
+            work_text(
+                &work(
+                    "Alien",
+                    Some(1979),
+                    Some("In space no one can hear you scream.")
+                ),
+                &[]
+            ),
             "Alien (1979). In space no one can hear you scream."
         );
         // Empty overviews shape like absent ones.
-        assert_eq!(work_text(&work("Alien", None, Some(""))), "Alien");
+        assert_eq!(work_text(&work("Alien", None, Some("")), &[]), "Alien");
+    }
+
+    #[test]
+    fn text_keeps_genres_and_keywords_ahead_of_a_long_overview() {
+        let tag = |namespace: &str, display: &str| Tag {
+            id: noflex_core::TagId::new(),
+            namespace: namespace.to_string(),
+            parent_id: None,
+            slug: display.to_lowercase(),
+            display: display.to_string(),
+            metadata: async_graphql::Json(serde_json::json!({})),
+        };
+        let tags = [
+            tag("studio", "Ignored"),
+            tag("keyword", "xenomorph"),
+            tag("genre", "Horror"),
+            tag("genre", "Science Fiction"),
+        ];
+        let long = "x".repeat(MAX_TEXT_BYTES);
+        let text = work_text(&work("Alien", None, Some(&long)), &tags);
+        assert!(text.starts_with("Alien. Horror, Science Fiction. xenomorph. xxx"));
+        assert!(text.len() <= MAX_TEXT_BYTES);
     }
 
     #[test]
@@ -328,7 +382,7 @@ mod tests {
         // "t. " (3 bytes) + multi-byte chars: the raw cap lands
         // mid-char, and truncation backs off to the boundary.
         let long = "é".repeat(MAX_TEXT_BYTES);
-        let text = work_text(&work("t", None, Some(&long)));
+        let text = work_text(&work("t", None, Some(&long)), &[]);
         assert!(text.len() <= MAX_TEXT_BYTES);
         assert_eq!(text.chars().count(), 3 + (MAX_TEXT_BYTES - 3) / 2);
     }

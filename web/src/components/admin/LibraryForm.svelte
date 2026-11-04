@@ -26,6 +26,12 @@
     { value: "PREFER_LOCAL", label: "From the media folders" },
   ];
 
+  const CATEGORY = [
+    { value: "AUTO", label: "Decide per title" },
+    { value: "ANIME", label: "Everything here is anime" },
+    { value: "GENERAL", label: "Nothing here is anime" },
+  ];
+
   const createLibrary = new CreateLibraryStore();
   const updateLibrary = new UpdateLibraryStore();
   const updateConfig = new UpdateLibraryConfigStore();
@@ -34,14 +40,14 @@
   let saving = $state(false);
 
   function blank() {
-    return { name: "", kind: "MOVIES", paths: "", languages: "", providers: [], excluded: "", schedule: "DAILY", watch: true, artwork: "PREFER_PROVIDER", scan: true };
+    return { name: "", kind: "MOVIES", paths: "", languages: "", providers: [], excluded: "", schedule: "DAILY", watch: true, artwork: "PREFER_PROVIDER", category: "AUTO", scan: true };
   }
 
   $effect(() => {
     if (!open) return;
     // Seed once per open; a background refresh mustn't clobber edits.
     form = untrack(() => library
-      ? { name: library.name, kind: library.kind, paths: library.paths.join("\n"), languages: library.config.preferredLanguages.join(", "), providers: [...library.config.preferredProviders], excluded: library.config.excludedFolders.join("\n"), schedule: library.config.scanSchedule, watch: library.config.watchEnabled, artwork: library.config.artworkPreference, scan: false }
+      ? { name: library.name, kind: library.kind, paths: library.paths.join("\n"), languages: library.config.preferredLanguages.join(", "), providers: [...library.config.preferredProviders], excluded: library.config.excludedFolders.join("\n"), schedule: library.config.scanSchedule, watch: library.config.watchEnabled, artwork: library.config.artworkPreference, category: library.config.contentCategory, scan: false }
       : blank());
   });
 
@@ -59,7 +65,7 @@
   async function submit(event) {
     event.preventDefault();
     const paths = splitList(form.paths);
-    const config = { languages: splitList(form.languages), providers: [...chosen], excluded: splitList(form.excluded), watch: form.watch, schedule: form.schedule, artwork: form.artwork };
+    const config = { languages: splitList(form.languages), providers: [...chosen], excluded: splitList(form.excluded), watch: form.watch, schedule: form.schedule, artwork: form.artwork, category: form.category };
     saving = true;
     let result;
     if (!library) {
@@ -73,7 +79,7 @@
           next = (await updateLibrary.mutate({ id: library.id, name: form.name.trim(), kind: form.kind, paths })).data.updateLibrary;
         }
         const c = library.config;
-        if (!same(config.languages, c.preferredLanguages) || !same(config.providers, c.preferredProviders) || !same(config.excluded, c.excludedFolders) || config.watch !== c.watchEnabled || config.schedule !== c.scanSchedule || config.artwork !== c.artworkPreference) {
+        if (!same(config.languages, c.preferredLanguages) || !same(config.providers, c.preferredProviders) || !same(config.excluded, c.excludedFolders) || config.watch !== c.watchEnabled || config.schedule !== c.scanSchedule || config.artwork !== c.artworkPreference || config.category !== c.contentCategory) {
           next = (await updateConfig.mutate({ id: library.id, ...config })).data.updateLibraryConfig;
         }
         return next;
@@ -134,6 +140,7 @@
       </div>
       <label class="field">Preferred languages<input bind:value={form.languages} placeholder="en, ja" spellcheck="false" autocomplete="off" /><small>BCP-47 tags, most preferred first.</small></label>
       <label class="field">Artwork<Select bind:value={form.artwork} items={ARTWORK} label="Artwork source" /><small>Posters and backdrops to show first; the other source fills any gaps.</small></label>
+      <label class="field">Anime<Select bind:value={form.category} items={CATEGORY} label="Anime classification" /><small>Whether titles here appear under Anime or under Movies and TV Shows when browsing.</small></label>
     </fieldset>
 
     {#if !library}<label class="check"><input type="checkbox" bind:checked={form.scan} />Start the first scan right away</label>{/if}

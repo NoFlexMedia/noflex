@@ -16,6 +16,9 @@ import { onLiveRefused } from "$lib/live.js";
 import { ApiError, clearSession, hasSession, onSessionExpired, saveSession, SessionExpiredError, type SessionResult } from "$lib/tokens.js";
 import { toast } from "$lib/ui.svelte.js";
 
+/** Preference key: list libraries in the navigation alongside content types. */
+export const SHOW_LIBRARIES_KEY = "browse.showLibraries";
+
 export type Phase = "boot" | "error" | "setup" | "auth" | "app";
 
 export const app = $state({
@@ -23,6 +26,9 @@ export const app = $state({
   server: null as any,
   viewer: null as any,
   libraries: [] as any[],
+  /** `contentCategories` rows: what the viewer has anything to browse in. */
+  categories: [] as { category: string; workCount: number }[],
+  showLibraries: false,
   error: "",
   authError: "",
 });
@@ -42,6 +48,8 @@ function signedOut(authError: string): void {
   cache.reset();
   app.viewer = null;
   app.libraries = [];
+  app.categories = [];
+  app.showLibraries = false;
   app.authError = authError;
   app.phase = "auth";
 }
@@ -62,6 +70,8 @@ export async function bootstrap(): Promise<void> {
     const data = await request(new BootstrapStore());
     app.viewer = data.viewer;
     app.server = data.serverInfo;
+    app.categories = [...data.contentCategories];
+    app.showLibraries = data.preferences.some((item: { key: string; value: unknown }) => item.key === SHOW_LIBRARIES_KEY && item.value === true);
     await watchLibraries();
     app.authError = "";
     app.phase = "app";

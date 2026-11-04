@@ -368,6 +368,36 @@ type ConfigEntry {
 	redacted: Boolean!
 }
 
+"""
+What viewers browse by, across libraries. Every top-level work belongs to
+at most one category.
+"""
+enum ContentCategory {
+	"""
+	Movies that aren't anime.
+	"""
+	MOVIES
+	"""
+	Series that aren't anime.
+	"""
+	SHOWS
+	"""
+	Anime movies and series.
+	"""
+	ANIME
+	MUSIC
+	AUDIOBOOKS
+	PHOTOS
+}
+
+"""
+How many top-level works in a category a caller can access.
+"""
+type ContentCategoryCount {
+	category: ContentCategory!
+	workCount: Int!
+}
+
 type CpuCore {
 	index: Int!
 	"""
@@ -990,6 +1020,24 @@ type Library {
 	config: LibraryConfig!
 }
 
+"""
+A library-level override of per-work anime classification.
+"""
+enum LibraryCategory {
+	"""
+	A work is anime when it carries the anime category tag.
+	"""
+	AUTO
+	"""
+	Every work here is anime.
+	"""
+	ANIME
+	"""
+	Nothing here is anime, whatever its tags say.
+	"""
+	GENERAL
+}
+
 type LibraryConfig {
 	"""
 	BCP-47 language tags in priority order (e.g. `["en", "ja"]`).
@@ -1015,6 +1063,12 @@ type LibraryConfig {
 	it needs no rescan.
 	"""
 	artworkPreference: ArtworkPreference!
+	"""
+	Whether this library's works count as anime when browsing by
+	[`ContentCategory`]. Read at query time, so changing it needs no
+	rescan.
+	"""
+	contentCategory: LibraryCategory!
 }
 
 type LibraryIndexStatus {
@@ -1334,7 +1388,7 @@ type Mutation {
 	createLibrary(name: String!, kind: LibraryKind!, paths: [String!]!): Library!
 	updateLibrary(id: ID!, name: String, kind: LibraryKind, paths: [String!]): Library!
 	deleteLibrary(id: ID!): Boolean!
-	updateLibraryConfig(id: ID!, preferredLanguages: [String!], preferredProviders: [String!], excludedFolders: [String!], watchEnabled: Boolean, scanSchedule: ScanSchedule, artworkPreference: ArtworkPreference): Library!
+	updateLibraryConfig(id: ID!, preferredLanguages: [String!], preferredProviders: [String!], excludedFolders: [String!], watchEnabled: Boolean, scanSchedule: ScanSchedule, artworkPreference: ArtworkPreference, contentCategory: LibraryCategory): Library!
 	"""
 	Persist a per-(plugin, hook, work_kind) priority override
 	to the storage. Returns the full active table after the write
@@ -2235,18 +2289,14 @@ type Query {
 	"""
 	activity(kinds: [ActivityKind!], since: String, first: Int, after: String): ActivityEntryConnection!
 	"""
-	"Continue Watching": the caller's works with a saved position
-	(`played=false` + `position_ms>0`). Mapped to Jellyfin's
-	`/Users/{userId}/Items/Resume`. Ranked; `first` defaults to 20,
-	max 100, at most 200 deep.
+	"Continue Watching": unfinished works with a saved position, plus
+	the next episode of each series the caller is following, most
+	recent activity first. A series contributes one entry, and entries
+	drop off after 90 days without activity; a newly added episode
+	counts as activity. Ranked; `first` defaults to 20, max 100, at
+	most 200 deep.
 	"""
 	continueWatching(first: Int, after: String): WorkConnection!
-	"""
-	"Next Up": series the caller has started but not finished.
-	Mapped to Jellyfin's `/Shows/NextUp`. Ranked; `first` defaults to
-	20, max 100, at most 200 deep.
-	"""
-	nextUp(first: Int, after: String): WorkConnection!
 	"""
 	"Recently Added": top-level works the caller can see, newest
 	`addedAt` first — the default landing shelf of every Jellyfin
@@ -2254,12 +2304,12 @@ type Query {
 	"""
 	recentlyAdded(first: Int, after: String): WorkConnection!
 	"""
-	"More like this": works the caller is most likely to enjoy,
-	from the genre overlap of their recently played works. Empty
-	for users with no plays or no genre tags. Ranked; `first`
-	defaults to 20, max 100, at most 200 deep.
+	Movies and series the caller hasn't started, most likely to enjoy
+	first, judged by similarity to what they recently watched and how
+	they responded to it. Callers with no history get the highest-rated
+	titles. Ranked; `first` defaults to 20, max 100, at most 200 deep.
 	"""
-	moreLikeThis(first: Int, after: String): WorkConnection!
+	recommendations(first: Int, after: String): WorkConnection!
 	"""
 	"Recently Played": the caller's played works, newest
 	`lastPlayed` first. Ranked; `first` defaults to 20, max 100, at
@@ -2332,10 +2382,17 @@ type Query {
 	"""
 	activeStreams: [ActiveStream!]!
 	"""
-	A library's works, optionally filtered and sorted. `first`
+	The categories holding at least one top-level work the caller can
+	access, for building navigation.
+	"""
+	contentCategories: [ContentCategoryCount!]!
+	"""
+	Works the caller can access, optionally filtered and sorted.
+	`libraryId` restricts to one library; `category` restricts to one
+	content category's top-level works across libraries. `first`
 	defaults to 50, max 200. A `RANDOM` sort is a single page.
 	"""
-	works(libraryId: ID!, filter: WorkFilterInput, sort: SortOrder, first: Int, after: String): WorkConnection!
+	works(libraryId: ID, category: ContentCategory, filter: WorkFilterInput, sort: SortOrder, first: Int, after: String): WorkConnection!
 	"""
 	A single work by id; null when it doesn't exist.
 	"""

@@ -7,7 +7,7 @@
 // isolation.
 
 use noflex_core::{ExternalId, MetadataStatus, WorkField, providers::MetadataPayload};
-use noflex_storage::domain::Work;
+use noflex_storage::domain::{CATEGORY_TAG_NAMESPACE, Work};
 
 /// One tag the payload implies, in the unified taxonomy.
 pub struct TagDraft {
@@ -92,6 +92,27 @@ pub fn apply_payload(work: &mut Work, payload: &MetadataPayload) -> ApplyReport 
         for genre in &payload.genres {
             push_draft(&mut tags, "genre", genre.clone(), serde_json::json!({}));
         }
+        // These classify the work the way genres do, so their lock covers
+        // them too.
+        if is_anime(payload) {
+            push_draft(
+                &mut tags,
+                CATEGORY_TAG_NAMESPACE,
+                "Anime".to_string(),
+                serde_json::json!({}),
+            );
+        }
+        for keyword in &payload.keywords {
+            push_draft(&mut tags, "keyword", keyword.clone(), serde_json::json!({}));
+        }
+        if let Some(budget) = payload.budget_usd {
+            push_draft(
+                &mut tags,
+                "scale",
+                budget_scale(budget).to_string(),
+                serde_json::json!({}),
+            );
+        }
     }
     if !locked(WorkField::Studios) {
         for studio in &payload.studios {
@@ -144,6 +165,38 @@ pub fn merge_external_id(work: &mut Work, id: ExternalId) -> bool {
     }
     work.external_ids.push(id);
     true
+}
+
+/// The production scale a budget in US dollars suggests. Nominal dollars, so
+/// older films land a bucket low; this only has to group similar titles.
+fn budget_scale(usd: u64) -> &'static str {
+    match usd {
+        0..5_000_000 => "Independent",
+        5_000_000..40_000_000 => "Mid-budget",
+        40_000_000..120_000_000 => "Big-budget",
+        _ => "Blockbuster",
+    }
+}
+
+/// Animation from Japan, by origin country or, when a provider gives none,
+/// original language. Lives here rather than in providers so all of them
+/// classify alike.
+fn is_anime(payload: &MetadataPayload) -> bool {
+    let animated = payload.genres.iter().any(|genre| {
+        genre.eq_ignore_ascii_case("animation") || genre.eq_ignore_ascii_case("anime")
+    });
+    let japanese = if payload.origin_countries.is_empty() {
+        payload
+            .original_language
+            .as_deref()
+            .is_some_and(|language| language.eq_ignore_ascii_case("ja"))
+    } else {
+        payload
+            .origin_countries
+            .iter()
+            .any(|country| country.eq_ignore_ascii_case("JP"))
+    };
+    animated && japanese
 }
 
 /// First draft per (namespace, display) wins — providers occasionally
@@ -219,7 +272,65 @@ mod tests {
             images: vec![],
             rating: None,
             community_rating: None,
+            original_language: None,
+            origin_countries: vec![],
+            keywords: vec![],
+            budget_usd: None,
         }
+    }
+
+    #[test]
+    fn keywords_and_budget_become_tags_under_the_genre_lock() {
+        let mut payload = empty_payload();
+        payload.keywords = vec!["heist".into()];
+        payload.budget_usd = Some(150_000_000);
+        let mut unlocked = work();
+        let tags = apply_payload(&mut unlocked, &payload).tags;
+        assert!(
+            tags.iter()
+                .any(|t| t.namespace == "keyword" && t.display == "heist")
+        );
+        assert!(
+            tags.iter()
+                .any(|t| t.namespace == "scale" && t.display == "Blockbuster")
+        );
+
+        let mut locked = work();
+        locked.locked_fields = vec![WorkField::Genres];
+        assert!(apply_payload(&mut locked, &payload).tags.is_empty());
+    }
+
+    #[test]
+    fn anime_is_japanese_animation() {
+        let category_tags = |genres: &[&str], language: Option<&str>, countries: &[&str]| {
+            let mut payload = empty_payload();
+            payload.genres = genres.iter().map(|g| g.to_string()).collect();
+            payload.original_language = language.map(str::to_string);
+            payload.origin_countries = countries.iter().map(|c| c.to_string()).collect();
+            let mut work = work();
+            apply_payload(&mut work, &payload)
+                .tags
+                .iter()
+                .filter(|tag| tag.namespace == CATEGORY_TAG_NAMESPACE)
+                .count()
+        };
+        assert_eq!(category_tags(&["Animation"], Some("ja"), &["JP"]), 1);
+        assert_eq!(category_tags(&["Animation"], Some("ja"), &[]), 1);
+        assert_eq!(
+            category_tags(&["Animation"], Some("en"), &["US"]),
+            0,
+            "Western animation"
+        );
+        assert_eq!(
+            category_tags(&["Drama"], Some("ja"), &["JP"]),
+            0,
+            "Japanese live action"
+        );
+        assert_eq!(
+            category_tags(&["Animation"], Some("ja"), &["US"]),
+            0,
+            "a stated country wins over the language"
+        );
     }
 
     #[test]

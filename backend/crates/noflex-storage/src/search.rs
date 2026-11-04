@@ -143,6 +143,10 @@ pub struct HealthReport {
     pub notes: Vec<String>,
 }
 
+/// The rank-smoothing constant reciprocal rank fusion uses everywhere: a
+/// result at zero-based `rank` contributes `1 / (RRF_K + rank + 1)`.
+pub const RRF_K: f32 = 60.0;
+
 /// Default hybrid-search impl: fuses lexical + vector results with
 /// reciprocal rank fusion (RRF). Backends with a native hybrid query plan
 /// override `Storage::search_hybrid` and skip this.
@@ -160,8 +164,6 @@ where
     use std::collections::HashMap;
 
     use crate::query::SearchMode;
-
-    const RRF_K: f32 = 60.0;
 
     let want_lex = matches!(query.mode, SearchMode::Lexical | SearchMode::Hybrid);
     let want_vec = matches!(query.mode, SearchMode::Vector | SearchMode::Hybrid)

@@ -2,7 +2,7 @@
 //
 // Playback reporting. The Jellyfin shim used to carry these writes;
 // with it gone this mutation set is the only path that lands rows in
-// `user_data`, so without it continue-watching / next-up stay empty.
+// `user_data`, so without it continue-watching stays empty.
 // Every mutation is authenticated against the per-request `Principal`
 // (the axum auth middleware attaches it as request data) and returns the
 // freshly-read `UserData` so clients update local state without a
@@ -148,6 +148,71 @@ async fn resolve_event_work(
     }
 }
 
+/// Mark `target` played and tell everyone who cares: the activity log and
+/// the domain-event subscribers (scrobblers, webhooks).
+async fn complete_play(
+    ctx: &Context<'_>,
+    storage: &Arc<dyn Storage>,
+    user: UserId,
+    target: PlayTarget,
+) -> async_graphql::Result<()> {
+    storage
+        .mark_played(user, target, true)
+        .await
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+    log_play_activity(storage, ActivityKind::PlayCompleted, user, target).await?;
+    if let Some(bus) = event_bus(ctx)
+        && let Some((work, title)) = resolve_event_work(storage, target).await
+    {
+        bus.emit(DomainEvent::WorkPlayed { user, work, title });
+    }
+    Ok(())
+}
+
+/// Whether `position_ms` counts as having finished `target`. A work with
+/// several editions is judged by its longest, because the session's edition
+/// isn't known here and finishing early would lose a resume position. A
+/// lookup failure counts as not finished: the next heartbeat tries again.
+async fn past_completion_point(
+    storage: &Arc<dyn Storage>,
+    target: PlayTarget,
+    position_ms: i64,
+) -> bool {
+    let editions = match target {
+        PlayTarget::Work(work) => storage.editions_for_work(work).await,
+        PlayTarget::Edition(edition) => storage
+            .get_edition(edition)
+            .await
+            .map(|edition| edition.into_iter().collect()),
+    };
+    let editions = match editions {
+        Ok(editions) => editions,
+        Err(error) => {
+            tracing::warn!(%error, "play completion: edition lookup failed");
+            return false;
+        }
+    };
+    editions
+        .iter()
+        .max_by_key(|edition| edition.runtime_ms)
+        .and_then(|edition| completion_point(edition.runtime_ms?, edition.credits_start_ms))
+        .is_some_and(|point| position_ms >= point)
+}
+
+/// Where a title counts as finished: the start of the credits, else 90% of
+/// the runtime. Credits detected in the first half are a false positive and
+/// are ignored. `None` without a usable runtime.
+fn completion_point(runtime_ms: i64, credits_start_ms: Option<i64>) -> Option<i64> {
+    if runtime_ms <= 0 {
+        return None;
+    }
+    Some(
+        credits_start_ms
+            .filter(|credits| *credits >= runtime_ms / 2 && *credits <= runtime_ms)
+            .unwrap_or(runtime_ms / 10 * 9),
+    )
+}
+
 /// Playback half of the mutation root; merged into `Mutation` in
 /// `lib.rs` (async-graphql can't split one `#[Object] impl` across
 /// modules, so roots compose via `MergedObject`).
@@ -176,6 +241,18 @@ impl PlaybackMutation {
             .record_playback_progress(user, target, position_ms)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        // Done here rather than in clients so every client agrees on what
+        // "finished" means. Viewers rarely sit through the credits, so
+        // waiting for an explicit markPlayed would strand the next episode.
+        if past_completion_point(storage, target, position_ms).await
+            && !storage
+                .user_data(user, target)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?
+                .played
+        {
+            complete_play(ctx, storage, user, target).await?;
+        }
         // Play history is analytics: a failure there must not lose the
         // resume position the client is waiting on.
         if let Err(error) = crate::stats::record_heartbeat(
@@ -229,16 +306,7 @@ impl PlaybackMutation {
             .map_err(|_| async_graphql::Error::new("storage not configured"))?;
         let target = target.to_play_target()?;
         authorize_target(ctx, storage, target).await?;
-        storage
-            .mark_played(user, target, true)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        log_play_activity(storage, ActivityKind::PlayCompleted, user, target).await?;
-        if let Some(bus) = event_bus(ctx)
-            && let Some((work, title)) = resolve_event_work(storage, target).await
-        {
-            bus.emit(DomainEvent::WorkPlayed { user, work, title });
-        }
+        complete_play(ctx, storage, user, target).await?;
         storage
             .user_data(user, target)
             .await
@@ -460,5 +528,24 @@ impl PlaybackQuery {
             });
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::completion_point;
+
+    #[test]
+    fn credits_mark_completion_unless_they_look_wrong() {
+        assert_eq!(completion_point(100_000, Some(95_000)), Some(95_000));
+        assert_eq!(completion_point(100_000, Some(80_000)), Some(80_000));
+        assert_eq!(
+            completion_point(100_000, Some(5_000)),
+            Some(90_000),
+            "credits in the first half are a false detection"
+        );
+        assert_eq!(completion_point(100_000, Some(120_000)), Some(90_000));
+        assert_eq!(completion_point(100_000, None), Some(90_000));
+        assert_eq!(completion_point(0, None), None);
     }
 }

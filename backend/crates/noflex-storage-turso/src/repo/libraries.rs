@@ -2,7 +2,7 @@
 
 use noflex_core::LibraryId;
 use noflex_storage::{
-    domain::{ArtworkPreference, Library, ScanSchedule},
+    domain::{ArtworkPreference, Library, LibraryCategory, ScanSchedule},
     error::{StorageError, StorageResult},
 };
 use turso::{Connection, Value};
@@ -18,8 +18,9 @@ use crate::{
 const UPSERT: &str = "INSERT INTO libraries (\
         id, name, kind, paths_json, \
         config_languages_json, config_providers_json, config_excluded_json, \
-        config_watch_enabled, config_scan_schedule, config_artwork_preference) \
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+        config_watch_enabled, config_scan_schedule, config_artwork_preference, \
+        config_content_category) \
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
     ON CONFLICT(id) DO UPDATE SET \
         name = excluded.name, \
         kind = excluded.kind, \
@@ -29,11 +30,13 @@ const UPSERT: &str = "INSERT INTO libraries (\
         config_excluded_json = excluded.config_excluded_json, \
         config_watch_enabled = excluded.config_watch_enabled, \
         config_scan_schedule = excluded.config_scan_schedule, \
-        config_artwork_preference = excluded.config_artwork_preference";
+        config_artwork_preference = excluded.config_artwork_preference, \
+        config_content_category = excluded.config_content_category";
 
 const LIST: &str = "SELECT id, name, kind, paths_json, \
         config_languages_json, config_providers_json, config_excluded_json, \
-        config_watch_enabled, config_scan_schedule, config_artwork_preference \
+        config_watch_enabled, config_scan_schedule, config_artwork_preference, \
+        config_content_category \
     FROM libraries ORDER BY name";
 
 const DELETE: &str = "DELETE FROM libraries WHERE id = ?1";
@@ -84,6 +87,27 @@ fn text_to_artwork(s: &str) -> StorageResult<ArtworkPreference> {
     })
 }
 
+fn category_to_text(c: LibraryCategory) -> &'static str {
+    match c {
+        LibraryCategory::Auto => "AUTO",
+        LibraryCategory::Anime => "ANIME",
+        LibraryCategory::General => "GENERAL",
+    }
+}
+
+fn text_to_category(s: &str) -> StorageResult<LibraryCategory> {
+    Ok(match s {
+        "AUTO" => LibraryCategory::Auto,
+        "ANIME" => LibraryCategory::Anime,
+        "GENERAL" => LibraryCategory::General,
+        other => {
+            return Err(StorageError::Backend(
+                format!("unknown library category: {other}").into(),
+            ));
+        }
+    })
+}
+
 pub(crate) async fn upsert(conn: &Connection, lib: &Library) -> StorageResult<()> {
     let params: Vec<Value> = vec![
         Value::Blob(uuid_to_blob(lib.id.into_uuid())),
@@ -96,6 +120,7 @@ pub(crate) async fn upsert(conn: &Connection, lib: &Library) -> StorageResult<()
         Value::Integer(if lib.config.watch_enabled { 1 } else { 0 }),
         Value::Text(schedule_to_text(&lib.config.scan_schedule).to_string()),
         Value::Text(artwork_to_text(lib.config.artwork_preference).to_string()),
+        Value::Text(category_to_text(lib.config.content_category).to_string()),
     ];
     conn.execute(UPSERT, params).await.map_err(map_turso)?;
     Ok(())
@@ -115,6 +140,7 @@ pub(crate) async fn list_all(conn: &Connection) -> StorageResult<Vec<Library>> {
         let watch = row.get_value(7).map_err(map_turso)?;
         let sched = row.get_value(8).map_err(map_turso)?;
         let artwork = row.get_value(9).map_err(map_turso)?;
+        let category = row.get_value(10).map_err(map_turso)?;
         out.push(Library {
             id: LibraryId::from_uuid(blob_to_uuid(col_blob(&id)?)?),
             name: col_text(&name)?.to_string(),
@@ -127,6 +153,7 @@ pub(crate) async fn list_all(conn: &Connection) -> StorageResult<Vec<Library>> {
                 watch_enabled: col_int(&watch)? != 0,
                 scan_schedule: text_to_schedule(col_text(&sched)?)?,
                 artwork_preference: text_to_artwork(col_text(&artwork)?)?,
+                content_category: text_to_category(col_text(&category)?)?,
             },
         });
     }

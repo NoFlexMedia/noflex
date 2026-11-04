@@ -29,6 +29,6 @@ mutation UpdateLibrary($id: ID!, $name: String, $kind: LibraryKind, $paths: [Str
   updateLibrary(id: $id, name: $name, kind: $kind, paths: $paths) { ...LibraryFields }
 }
 
-mutation UpdateLibraryConfig($id: ID!, $languages: [String!], $providers: [String!], $excluded: [String!], $watch: Boolean, $schedule: ScanSchedule, $artwork: ArtworkPreference) {
-  updateLibraryConfig(id: $id, preferredLanguages: $languages, preferredProviders: $providers, excludedFolders: $excluded, watchEnabled: $watch, scanSchedule: $schedule, artworkPreference: $artwork) { ...LibraryFields }
+mutation UpdateLibraryConfig($id: ID!, $languages: [String!], $providers: [String!], $excluded: [String!], $watch: Boolean, $schedule: ScanSchedule, $artwork: ArtworkPreference, $category: LibraryCategory) {
+  updateLibraryConfig(id: $id, preferredLanguages: $languages, preferredProviders: $providers, excludedFolders: $excluded, watchEnabled: $watch, scanSchedule: $schedule, artworkPreference: $artwork, contentCategory: $category) { ...LibraryFields }
 }

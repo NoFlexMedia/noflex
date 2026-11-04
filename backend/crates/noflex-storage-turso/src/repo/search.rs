@@ -164,6 +164,55 @@ pub(crate) async fn search_vector(
         .collect())
 }
 
+pub(crate) async fn delete_work_embeddings(conn: &Connection, work: WorkId) -> StorageResult<()> {
+    conn.execute(
+        "DELETE FROM embeddings WHERE target_kind = 'work' AND target_id = ?1",
+        vec![Value::Blob(uuid_to_blob(work.into_uuid()))],
+    )
+    .await
+    .map_err(map_turso)?;
+    Ok(())
+}
+
+pub(crate) async fn work_embeddings(
+    conn: &Connection,
+    namespace: &str,
+    works: &[WorkId],
+) -> StorageResult<Vec<(WorkId, Vec<f32>)>> {
+    if works.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = (0..works.len())
+        .map(|index| format!("?{}", index + 2))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT target_id, dimensions, vector_blob FROM embeddings \
+         WHERE namespace = ?1 AND target_kind = 'work' AND target_id IN ({placeholders})"
+    );
+    let mut params = vec![Value::Text(namespace.to_string())];
+    params.extend(
+        works
+            .iter()
+            .map(|work| Value::Blob(uuid_to_blob(work.into_uuid()))),
+    );
+    let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        let target_id = blob_to_uuid(col_blob(&row.get_value(0).map_err(map_turso)?)?)?;
+        let dimensions = col_int(&row.get_value(1).map_err(map_turso)?)?;
+        let Value::Blob(bytes) = row.get_value(2).map_err(map_turso)? else {
+            continue;
+        };
+        let Some(vector) = decode_embedding(&bytes, dimensions) else {
+            tracing::warn!(%target_id, dimensions, "skipping corrupt embedding");
+            continue;
+        };
+        out.push((WorkId::from_uuid(target_id), vector));
+    }
+    Ok(out)
+}
+
 pub(crate) async fn works_missing_embedding(
     conn: &Connection,
     namespace: &str,

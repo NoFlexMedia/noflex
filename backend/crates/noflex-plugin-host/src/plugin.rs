@@ -2161,7 +2161,7 @@ mod tests {
             plugin_id = "p"
             display_name = "P"
             version = "0.1.0"
-            noflex_api_version = "0.8"
+            noflex_api_version = "0.9"
             hooks = ["metadata"]
             capabilities = ["background"]
 

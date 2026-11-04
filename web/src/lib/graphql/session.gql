@@ -7,6 +7,8 @@ query ServerInfo @cache(policy: NetworkOnly) {
 query Bootstrap @cache(policy: NetworkOnly) {
   viewer { ...UserFields }
   libraries { ...LibraryFields }
+  contentCategories { category workCount }
+  preferences { userId key value }
   serverInfo { name version backend isConfigured }
 }
 

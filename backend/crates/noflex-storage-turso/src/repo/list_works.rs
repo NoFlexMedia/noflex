@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use noflex_core::WorkId;
+use std::collections::HashMap;
+
+use noflex_core::{TagId, UserId, WorkId, WorkKind};
 use noflex_storage::{
-    domain::Work,
+    domain::{ContentCategory, ContentCategoryCount, Work, WorkFeatures},
     error::StorageResult,
     query::{ItemPage, ListWorksQuery, PageCursor, SortOrder},
 };
 use turso::{Connection, Value};
 
 use crate::{
-    convert::{col_text, dt_to_text, uuid_to_blob},
+    convert::{
+        blob_to_uuid, col_blob, col_int, col_int_opt, col_real_opt, col_text, dt_to_text,
+        text_to_dt, text_to_work_kind, uuid_to_blob,
+    },
     error::map_turso,
     repo::works::row_to_work,
 };
@@ -18,6 +23,16 @@ const SELECT_BASE: &str = "SELECT id, kind, parent_id, library_id, title, sort_t
     year, release_date, overview, external_ids_json, index_number, index_end, \
     parent_index, metadata_status, added_at, updated_at, tagline, original_title, \
     community_rating, locked_fields_json FROM works";
+
+/// Whether a row of `works` is anime: its library says so, or its library
+/// defers to per-work tags and it carries the anime tag. The tag values match
+/// `ANIME_TAG_SLUG` and `CATEGORY_TAG_NAMESPACE`.
+const IS_ANIME: &str = "(library_id IN (SELECT id FROM libraries \
+        WHERE config_content_category = 'ANIME') \
+    OR (library_id IN (SELECT id FROM libraries WHERE config_content_category = 'AUTO') \
+        AND EXISTS (SELECT 1 FROM tag_assignments ta JOIN tags t ON t.id = ta.tag_id \
+            WHERE ta.target_kind = 'work' AND ta.target_id = works.id \
+                AND t.namespace = 'category' AND t.slug = 'anime')))";
 
 /// Index of the extra `LOWER(title)` column appended for title sorts;
 /// `row_to_work` reads fixed indices 0..19, so it rides along unused.
@@ -43,6 +58,9 @@ pub(crate) async fn list(conn: &Connection, q: &ListWorksQuery) -> StorageResult
         where_clauses.push(format!("library_id = ?{}", params.len() + 1));
         params.push(Value::Blob(uuid_to_blob(lib.into_uuid())));
     }
+    if let Some(category) = q.category {
+        push_category_filter(&mut where_clauses, &mut params, category);
+    }
     if let Some(parent) = q.parent {
         where_clauses.push(format!("parent_id = ?{}", params.len() + 1));
         params.push(Value::Blob(uuid_to_blob(parent.into_uuid())));
@@ -55,20 +73,7 @@ pub(crate) async fn list(conn: &Connection, q: &ListWorksQuery) -> StorageResult
         ));
         params.push(Value::Blob(uuid_to_blob(tag.into_uuid())));
     }
-    if !q.kinds.is_empty() {
-        let placeholders: Vec<String> = q
-            .kinds
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("?{}", params.len() + 1 + i))
-            .collect();
-        for k in &q.kinds {
-            params.push(Value::Text(
-                crate::convert::work_kind_to_text(*k).to_string(),
-            ));
-        }
-        where_clauses.push(format!("kind IN ({})", placeholders.join(",")));
-    }
+    push_kind_filter(&mut where_clauses, &mut params, &q.kinds);
     if let Some(ymin) = q.year_min {
         where_clauses.push(format!("year >= ?{}", params.len() + 1));
         params.push(Value::Integer(ymin as i64));
@@ -170,6 +175,134 @@ pub(crate) async fn list(conn: &Connection, q: &ListWorksQuery) -> StorageResult
         // honors an incoming cursor, so it never promises a next page.
         has_next: has_more && q.sort != SortOrder::Random,
     })
+}
+
+fn push_kind_filter(clauses: &mut Vec<String>, params: &mut Vec<Value>, kinds: &[WorkKind]) {
+    if kinds.is_empty() {
+        return;
+    }
+    let placeholders: Vec<String> = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", params.len() + 1 + i))
+        .collect();
+    for k in kinds {
+        params.push(Value::Text(
+            crate::convert::work_kind_to_text(*k).to_string(),
+        ));
+    }
+    clauses.push(format!("kind IN ({})", placeholders.join(",")));
+}
+
+fn push_category_filter(
+    clauses: &mut Vec<String>,
+    params: &mut Vec<Value>,
+    category: ContentCategory,
+) {
+    clauses.push("parent_id IS NULL".to_string());
+    push_kind_filter(clauses, params, category.kinds());
+    match category {
+        ContentCategory::Anime => clauses.push(IS_ANIME.to_string()),
+        ContentCategory::Movies | ContentCategory::Shows => {
+            clauses.push(format!("NOT ({IS_ANIME})"));
+        }
+        ContentCategory::Music | ContentCategory::Audiobooks | ContentCategory::Photos => {}
+    }
+}
+
+pub(crate) async fn content_category_counts(
+    conn: &Connection,
+    access_user_id: Option<UserId>,
+) -> StorageResult<Vec<ContentCategoryCount>> {
+    let mut out = Vec::new();
+    for category in ContentCategory::ALL {
+        let mut clauses = Vec::new();
+        let mut params = Vec::new();
+        if let Some(user) = access_user_id {
+            push_access_filter(&mut clauses, &mut params, user);
+        }
+        push_category_filter(&mut clauses, &mut params, category);
+        let sql = format!("SELECT COUNT(*) FROM works WHERE {}", clauses.join(" AND "));
+        let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
+        let count = match rows.next().await.map_err(map_turso)? {
+            Some(row) => col_int(&row.get_value(0).map_err(map_turso)?)?,
+            None => 0,
+        };
+        if count > 0 {
+            out.push(ContentCategoryCount {
+                category,
+                work_count: count as u64,
+            });
+        }
+    }
+    Ok(out)
+}
+
+pub(crate) async fn work_features(
+    conn: &Connection,
+    kinds: &[WorkKind],
+    tag_namespaces: &[&str],
+    access_user_id: Option<UserId>,
+) -> StorageResult<Vec<WorkFeatures>> {
+    let mut clauses = vec!["parent_id IS NULL".to_string()];
+    let mut params = Vec::new();
+    if let Some(user) = access_user_id {
+        push_access_filter(&mut clauses, &mut params, user);
+    }
+    push_kind_filter(&mut clauses, &mut params, kinds);
+    let sql = format!(
+        "SELECT id, kind, year, community_rating, added_at, \
+            (SELECT MAX(e.runtime_ms) FROM editions e WHERE e.work_id = works.id) \
+         FROM works WHERE {}",
+        clauses.join(" AND ")
+    );
+    let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
+    let mut out = Vec::new();
+    let mut positions: HashMap<WorkId, usize> = HashMap::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        let work = WorkId::from_uuid(blob_to_uuid(col_blob(
+            &row.get_value(0).map_err(map_turso)?,
+        )?)?);
+        positions.insert(work, out.len());
+        out.push(WorkFeatures {
+            work,
+            kind: text_to_work_kind(col_text(&row.get_value(1).map_err(map_turso)?)?)?,
+            year: col_int_opt(&row.get_value(2).map_err(map_turso)?)?.map(|year| year as i32),
+            community_rating: col_real_opt(&row.get_value(3).map_err(map_turso)?)?,
+            added_at: text_to_dt(col_text(&row.get_value(4).map_err(map_turso)?)?)?,
+            runtime_ms: col_int_opt(&row.get_value(5).map_err(map_turso)?)?,
+            tags: Vec::new(),
+        });
+    }
+    if tag_namespaces.is_empty() {
+        return Ok(out);
+    }
+    let placeholders = (1..=tag_namespaces.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT ta.target_id, ta.tag_id FROM tag_assignments ta \
+         JOIN tags t ON t.id = ta.tag_id \
+         WHERE ta.target_kind = 'work' AND t.namespace IN ({placeholders})"
+    );
+    let params = tag_namespaces
+        .iter()
+        .map(|namespace| Value::Text((*namespace).to_string()))
+        .collect::<Vec<_>>();
+    let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        let work = WorkId::from_uuid(blob_to_uuid(col_blob(
+            &row.get_value(0).map_err(map_turso)?,
+        )?)?);
+        if let Some(position) = positions.get(&work) {
+            let tag = TagId::from_uuid(blob_to_uuid(col_blob(
+                &row.get_value(1).map_err(map_turso)?,
+            )?)?);
+            out[*position].tags.push(tag);
+        }
+    }
+    Ok(out)
 }
 
 fn push_access_filter(

@@ -298,10 +298,12 @@ impl CoreQuery {
         paging::filtered(window, fetch, |rows| visible_activity(storage, user, rows)).await
     }
 
-    /// "Continue Watching": the caller's works with a saved position
-    /// (`played=false` + `position_ms>0`). Mapped to Jellyfin's
-    /// `/Users/{userId}/Items/Resume`. Ranked; `first` defaults to 20,
-    /// max 100, at most 200 deep.
+    /// "Continue Watching": unfinished works with a saved position, plus
+    /// the next episode of each series the caller is following, most
+    /// recent activity first. A series contributes one entry, and entries
+    /// drop off after 90 days without activity; a newly added episode
+    /// counts as activity. Ranked; `first` defaults to 20, max 100, at
+    /// most 200 deep.
     #[graphql(complexity = "paging::cost(first, 20, 100, child_complexity)")]
     async fn continue_watching(
         &self,
@@ -313,27 +315,11 @@ impl CoreQuery {
         let storage = storage(ctx)?;
         let user = access::request_user(ctx)?;
         let works = storage
-            .resume_items(user.user_id, overfetch(window))
-            .await
-            .map_err(gql_err)?;
-        Ok(window.connection(visible_works(storage, user, works, window.fetch()).await?))
-    }
-
-    /// "Next Up": series the caller has started but not finished.
-    /// Mapped to Jellyfin's `/Shows/NextUp`. Ranked; `first` defaults to
-    /// 20, max 100, at most 200 deep.
-    #[graphql(complexity = "paging::cost(first, 20, 100, child_complexity)")]
-    async fn next_up(
-        &self,
-        ctx: &Context<'_>,
-        first: Option<i32>,
-        after: Option<String>,
-    ) -> async_graphql::Result<Connection<String, Work>> {
-        let window = shelf_window(first, after)?;
-        let storage = storage(ctx)?;
-        let user = access::request_user(ctx)?;
-        let works = storage
-            .next_up(user.user_id, overfetch(window))
+            .continue_watching(
+                user.user_id,
+                OffsetDateTime::now_utc() - CONTINUE_WATCHING_DECAY,
+                overfetch(window),
+            )
             .await
             .map_err(gql_err)?;
         Ok(window.connection(visible_works(storage, user, works, window.fetch()).await?))
@@ -366,12 +352,12 @@ impl CoreQuery {
         Ok(paging::from_item_page(page, resumed))
     }
 
-    /// "More like this": works the caller is most likely to enjoy,
-    /// from the genre overlap of their recently played works. Empty
-    /// for users with no plays or no genre tags. Ranked; `first`
-    /// defaults to 20, max 100, at most 200 deep.
+    /// Movies and series the caller hasn't started, most likely to enjoy
+    /// first, judged by similarity to what they recently watched and how
+    /// they responded to it. Callers with no history get the highest-rated
+    /// titles. Ranked; `first` defaults to 20, max 100, at most 200 deep.
     #[graphql(complexity = "paging::cost(first, 20, 100, child_complexity)")]
-    async fn more_like_this(
+    async fn recommendations(
         &self,
         ctx: &Context<'_>,
         first: Option<i32>,
@@ -380,18 +366,20 @@ impl CoreQuery {
         let window = shelf_window(first, after)?;
         let storage = storage(ctx)?;
         let user = access::request_user(ctx)?;
-        let recs = recommend::more_like_this::more_like_this(
+        let namespace = ctx
+            .data::<Arc<PluginRegistry>>()
+            .ok()
+            .and_then(|registry| registry.embedder_claim())
+            .map(|claim| claim.namespace);
+        let works = recommend::recommendations(
             storage.as_ref(),
-            user.user_id,
-            window.fetch() as u32,
-            &recommend::more_like_this::MoreLikeThisConfig::default(),
+            namespace.as_deref(),
+            user,
+            overfetch(window),
+            OffsetDateTime::now_utc(),
         )
         .await
         .map_err(gql_err)?;
-        let works = recs
-            .into_iter()
-            .map(|recommendation| recommendation.work)
-            .collect();
         Ok(window.connection(visible_works(storage, user, works, window.fetch()).await?))
     }
 
@@ -483,6 +471,9 @@ impl CoreQuery {
 }
 
 /// Home shelves are ranked lists capped at 200 deep.
+/// How long a "Continue Watching" entry survives without activity.
+const CONTINUE_WATCHING_DECAY: time::Duration = time::Duration::days(90);
+
 fn shelf_window(
     first: Option<i32>,
     after: Option<String>,
@@ -952,6 +943,7 @@ impl CoreMutation {
         watch_enabled: Option<bool>,
         scan_schedule: Option<noflex_storage::domain::ScanSchedule>,
         artwork_preference: Option<noflex_storage::domain::ArtworkPreference>,
+        content_category: Option<noflex_storage::domain::LibraryCategory>,
     ) -> async_graphql::Result<Library> {
         let storage = ctx
             .data::<Arc<dyn Storage>>()
@@ -980,6 +972,9 @@ impl CoreMutation {
         }
         if let Some(v) = artwork_preference {
             current.config.artwork_preference = v;
+        }
+        if let Some(v) = content_category {
+            current.config.content_category = v;
         }
         storage
             .upsert_library(&current)

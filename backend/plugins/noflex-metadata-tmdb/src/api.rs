@@ -146,6 +146,10 @@ pub struct Payload {
     pub images: Vec<Art>,
     pub rating: Option<String>,
     pub community_rating: Option<f32>,
+    pub original_language: Option<String>,
+    pub origin_countries: Vec<String>,
+    pub keywords: Vec<String>,
+    pub budget_usd: Option<u64>,
 }
 
 /// One search result with this plugin's confidence (see [`confidence`]).
@@ -211,8 +215,8 @@ pub fn search_url(kind: SearchKind, title: &str, year: Option<i32>) -> String {
 /// The record's details with credits, images (English and text-free), ids and ratings appended.
 pub fn details_url(id: TmdbId) -> String {
     let append = match id {
-        TmdbId::Movie(_) => "credits,images,release_dates,external_ids",
-        TmdbId::Series(_) => "credits,images,content_ratings,external_ids",
+        TmdbId::Movie(_) => "credits,images,release_dates,external_ids,keywords",
+        TmdbId::Series(_) => "credits,images,content_ratings,external_ids,keywords",
         TmdbId::Season { .. } => "images",
         TmdbId::Episode { .. } => "credits,images,external_ids",
     };
@@ -393,6 +397,13 @@ struct Movie {
     id: u64,
     #[serde(default)]
     title: String,
+    original_language: Option<String>,
+    #[serde(default)]
+    origin_country: Vec<String>,
+    #[serde(default)]
+    budget: u64,
+    #[serde(default)]
+    keywords: Keywords,
     original_title: Option<String>,
     overview: Option<String>,
     tagline: Option<String>,
@@ -414,6 +425,13 @@ struct Movie {
     external_ids: ExternalIds,
 }
 
+/// TMDb names the list `keywords` on movies and `results` on series.
+#[derive(Debug, Default, Deserialize)]
+struct Keywords {
+    #[serde(default, alias = "results")]
+    keywords: Vec<Named>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct SeasonSummary {
     season_number: u32,
@@ -429,6 +447,11 @@ struct Series {
     id: u64,
     #[serde(default)]
     name: String,
+    original_language: Option<String>,
+    #[serde(default)]
+    origin_country: Vec<String>,
+    #[serde(default)]
+    keywords: Keywords,
     original_name: Option<String>,
     overview: Option<String>,
     tagline: Option<String>,
@@ -662,6 +685,11 @@ fn parse_movie(body: &[u8]) -> Result<Payload, String> {
         ),
         rating,
         community_rating: rating_value(m.vote_average),
+        original_language: non_empty(m.original_language),
+        origin_countries: m.origin_country,
+        keywords: names(m.keywords.keywords),
+        // TMDb reports an unknown budget as 0.
+        budget_usd: Some(m.budget).filter(|budget| *budget > 0),
     })
 }
 
@@ -708,6 +736,10 @@ fn parse_series(body: &[u8]) -> Result<Payload, String> {
                 .collect(),
         ),
         community_rating: rating_value(s.vote_average),
+        original_language: non_empty(s.original_language),
+        origin_countries: s.origin_country,
+        keywords: names(s.keywords.keywords),
+        budget_usd: None,
     })
 }
 
@@ -1124,6 +1156,30 @@ mod tests {
     }
 
     #[test]
+    fn movie_and_series_carry_origin_keywords_and_budget() {
+        let movie = parse_movie(
+            br#"{"id": 1, "title": "Akira", "original_language": "ja", "origin_country": ["JP"],
+                "budget": 9000000, "keywords": {"keywords": [{"name": "cyberpunk"}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(movie.original_language.as_deref(), Some("ja"));
+        assert_eq!(movie.origin_countries, ["JP"]);
+        assert_eq!(movie.keywords, ["cyberpunk"]);
+        assert_eq!(movie.budget_usd, Some(9_000_000));
+
+        let unknown_budget = parse_movie(br#"{"id": 2, "title": "Small", "budget": 0}"#).unwrap();
+        assert_eq!(unknown_budget.budget_usd, None);
+
+        let series = parse_series(
+            br#"{"id": 3, "name": "Show", "origin_country": ["JP"],
+                "keywords": {"results": [{"name": "mecha"}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(series.origin_countries, ["JP"]);
+        assert_eq!(series.keywords, ["mecha"]);
+    }
+
+    #[test]
     fn urls_and_auth_follow_the_tmdb_contract() {
         assert_eq!(
             search_url(SearchKind::Movie, "Dune: Part Two", Some(2024)),
@@ -1135,7 +1191,7 @@ mod tests {
         );
         assert_eq!(
             details_url(TmdbId::Movie(603)),
-            "https://api.themoviedb.org/3/movie/603?append_to_response=credits,images,release_dates,external_ids&include_image_language=en,null"
+            "https://api.themoviedb.org/3/movie/603?append_to_response=credits,images,release_dates,external_ids,keywords&include_image_language=en,null"
         );
         assert_eq!(
             images_url(

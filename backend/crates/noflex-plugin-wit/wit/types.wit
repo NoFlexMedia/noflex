@@ -111,6 +111,14 @@ interface types {
         images: list<metadata-image>,
         rating: option<string>,
         community-rating: option<f32>,
+        /// ISO 639-1 code of the original language, when known.
+        original-language: option<string>,
+        /// ISO 3166-1 alpha-2 codes of the countries of origin.
+        origin-countries: list<string>,
+        /// Thematic keywords ("heist", "time travel").
+        keywords: list<string>,
+        /// Production budget in US dollars, when known.
+        budget-usd: option<u64>,
     }
 
     record image-meta {

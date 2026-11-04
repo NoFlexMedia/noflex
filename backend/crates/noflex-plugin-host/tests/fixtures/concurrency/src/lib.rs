@@ -103,6 +103,10 @@ impl metadata::Guest for Fixture {
             }],
             rating: Some("PG-13".into()),
             community_rating: Some(7.5),
+            original_language: None,
+            origin_countries: Vec::new(),
+            keywords: Vec::new(),
+            budget_usd: None,
         })
     }
 

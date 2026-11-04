@@ -97,7 +97,7 @@ fragment LibraryFields on Library {
   name
   kind
   paths
-  config { preferredLanguages preferredProviders excludedFolders watchEnabled scanSchedule artworkPreference }
+  config { preferredLanguages preferredProviders excludedFolders watchEnabled scanSchedule artworkPreference contentCategory }
 }
 
 fragment UserFields on User {

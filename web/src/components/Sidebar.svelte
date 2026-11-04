@@ -14,6 +14,7 @@
   import Stack from "phosphor-svelte/lib/Stack";
   import Television from "phosphor-svelte/lib/Television";
   import { page } from "$app/state";
+  import { availableCategories } from "$lib/categories.js";
   import { app } from "$lib/session.svelte.js";
   import { sidebar, toggleSidebar } from "$lib/ui.svelte.js";
   import BrandMark from "$components/BrandMark.svelte";
@@ -23,10 +24,13 @@
   const primary = [
     { href: "/", label: "Home", icon: House },
     { href: "/search", label: "Search", icon: MagnifyingGlass },
+  ];
+  const secondary = [
     { href: "/collections", label: "Collections", icon: CardsThree },
     { href: "/live-tv", label: "Live TV", icon: Television },
     { href: "/watch-rooms", label: "Watch together", icon: Broadcast },
   ];
+  let categories = $derived(availableCategories(app.categories).map((category) => ({ href: `/browse/${category.slug}`, label: category.label, icon: category.icon })));
   const isActive = (href) => (href === "/" ? page.url.pathname === "/" : page.url.pathname.startsWith(href));
 </script>
 
@@ -47,8 +51,8 @@
     <span class="wordmark">NoFlex</span>
   </a>
   <nav>
-    {#each primary as entry}{@render item(entry)}{/each}
-    {#if app.libraries.length}
+    {#each [...primary, ...categories, ...secondary] as entry (entry.href)}{@render item(entry)}{/each}
+    {#if app.showLibraries && app.libraries.length}
       <p class="heading"><span class="label">Libraries</span></p>
       {#each app.libraries as library (library.id)}
         {@render item({ href: `/libraries/${library.id}`, label: library.name, icon: LIBRARY_ICON[library.kind] ?? Books })}

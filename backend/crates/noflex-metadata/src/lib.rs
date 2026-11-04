@@ -13,8 +13,13 @@ use noflex_storage::domain::{CATEGORY_TAG_NAMESPACE, Work};
 pub struct TagDraft {
     pub namespace: &'static str,
     pub display: String,
-    /// Role/character/photo_url for people; empty object otherwise.
+    /// Stored on the tag itself, so only what holds wherever it's used: a
+    /// person's photo.
     pub metadata: serde_json::Value,
+    /// Stored on this work's assignment of the tag: a person's billing `order`
+    /// and `credits`, each with a `role` and `character` when known. Empty
+    /// otherwise.
+    pub assignment: serde_json::Value,
 }
 
 pub struct ApplyReport {
@@ -121,22 +126,36 @@ pub fn apply_payload(work: &mut Work, payload: &MetadataPayload) -> ApplyReport 
     }
     if !locked(WorkField::People) {
         for person in &payload.people {
-            let mut metadata = serde_json::Map::new();
+            let mut credit = serde_json::Map::new();
             if let Some(role) = &person.role {
-                metadata.insert("role".into(), role.clone().into());
+                credit.insert("role".into(), role.clone().into());
             }
             if let Some(character) = &person.character {
-                metadata.insert("character".into(), character.clone().into());
+                credit.insert("character".into(), character.clone().into());
             }
-            if let Some(photo_url) = &person.photo_url {
-                metadata.insert("photo_url".into(), photo_url.clone().into());
+            // Someone who directed and starred is listed twice, one tag either way.
+            let existing = tags
+                .iter_mut()
+                .find(|draft| draft.namespace == "person" && draft.display == person.name);
+            if let Some(draft) = existing {
+                if let Some(credits) = draft.assignment["credits"].as_array_mut() {
+                    credits.push(credit.into());
+                }
+                continue;
             }
-            push_draft(
-                &mut tags,
-                "person",
-                person.name.clone(),
-                serde_json::Value::Object(metadata),
-            );
+            let order = tags
+                .iter()
+                .filter(|draft| draft.namespace == "person")
+                .count();
+            tags.push(TagDraft {
+                namespace: "person",
+                display: person.name.clone(),
+                metadata: match &person.photo_url {
+                    Some(photo_url) => serde_json::json!({ "photo_url": photo_url }),
+                    None => serde_json::json!({}),
+                },
+                assignment: serde_json::json!({ "order": order, "credits": [credit] }),
+            });
         }
     }
     if !locked(WorkField::ParentalRating)
@@ -217,6 +236,7 @@ fn push_draft(
         namespace,
         display,
         metadata,
+        assignment: serde_json::json!({}),
     });
 }
 
@@ -467,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn person_metadata_carries_only_present_keys() {
+    fn people_keep_billing_order_and_every_part_on_the_assignment() {
         let mut work = work();
         let mut payload = empty_payload();
         payload.people = vec![
@@ -483,21 +503,35 @@ mod tests {
                 character: Some("Protagonist".into()),
                 photo_url: Some("https://img/p.jpg".into()),
             },
+            MetadataPerson {
+                name: "Director One".into(),
+                role: Some("Actor".into()),
+                character: Some("Cameo".into()),
+                photo_url: None,
+            },
         ];
 
         let report = apply_payload(&mut work, &payload);
 
         assert_eq!(report.tags.len(), 2);
+        assert_eq!(report.tags[0].metadata, serde_json::json!({}));
         assert_eq!(
-            report.tags[0].metadata,
-            serde_json::json!({ "role": "Director" })
+            report.tags[0].assignment,
+            serde_json::json!({
+                "order": 0,
+                "credits": [
+                    { "role": "Director" },
+                    { "role": "Actor", "character": "Cameo" },
+                ],
+            })
         );
         assert_eq!(
             report.tags[1].metadata,
-            serde_json::json!({
-                "character": "Protagonist",
-                "photo_url": "https://img/p.jpg",
-            })
+            serde_json::json!({ "photo_url": "https://img/p.jpg" })
+        );
+        assert_eq!(
+            report.tags[1].assignment,
+            serde_json::json!({ "order": 1, "credits": [{ "character": "Protagonist" }] })
         );
     }
 }

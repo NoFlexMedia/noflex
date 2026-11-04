@@ -7,6 +7,7 @@
   import Broadcast from "phosphor-svelte/lib/Broadcast";
   import CardsThree from "phosphor-svelte/lib/CardsThree";
   import CaretRight from "phosphor-svelte/lib/CaretRight";
+  import ClosedCaptioning from "phosphor-svelte/lib/ClosedCaptioning";
   import ClockCounterClockwise from "phosphor-svelte/lib/ClockCounterClockwise";
   import DotsThree from "phosphor-svelte/lib/DotsThree";
   import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
@@ -16,6 +17,7 @@
   import PencilSimple from "phosphor-svelte/lib/PencilSimple";
   import Play from "phosphor-svelte/lib/Play";
   import Plus from "phosphor-svelte/lib/Plus";
+  import SpeakerHigh from "phosphor-svelte/lib/SpeakerHigh";
   import Star from "phosphor-svelte/lib/Star";
   import { goto } from "$app/navigation";
   import {
@@ -32,20 +34,23 @@
   } from "$houdini";
   import { addToCollection } from "$lib/collections.js";
   import { tilt } from "$lib/actions/index.js";
-  import { bytes, runtime, timecode, titleCase, versionLabel } from "$lib/format.js";
+  import { bytes, runtime, techBadges, timecode, titleCase, versionLabel } from "$lib/format.js";
   import { failure, fetchQuery, refetch, writeUserData } from "$lib/graphql.js";
   import { ambientColor, pickImage } from "$lib/images.js";
   import { fetchChildren, player, playWork, subtitleFor } from "$lib/playback.svelte.js";
   import { app } from "$lib/session.svelte.js";
   import { servers } from "$lib/servers.svelte.js";
+  import { audioChoices, preferredAudio, preferredSubtitle, subtitleChoices } from "$lib/tracks.js";
   import { ambient, attempt, toast } from "$lib/ui.svelte.js";
   import Artwork from "$components/Artwork.svelte";
   import State from "$components/State.svelte";
   import AdminSheet from "$components/detail/AdminSheet.svelte";
   import Children from "$components/detail/Children.svelte";
+  import Credits from "$components/detail/Credits.svelte";
   import TechSpecs from "$components/detail/TechSpecs.svelte";
   import Menu from "$components/ui/Menu.svelte";
   import MenuItem from "$components/ui/MenuItem.svelte";
+  import Select from "$components/ui/Select.svelte";
   import Tip from "$components/ui/Tip.svelte";
   import { DropdownMenu } from "bits-ui";
 
@@ -70,6 +75,21 @@
   let multiPart = $derived(new Set(mediaFiles.map((file) => file.partIndex)).size > 1);
   const fileLabel = (file) => [multiPart ? `Part ${file.partIndex + 1}` : "", versionLabel(file.probe) ?? (multiPart ? "" : file.path.split("/").pop())].filter(Boolean).join(" · ");
   $effect(() => { if (!mediaFiles.some((file) => file.id === mediaId)) mediaId = mediaFiles[0]?.id ?? ""; });
+  let mediaFile = $derived(mediaFiles.find((file) => file.id === mediaId));
+
+  // What to start with, seeded from the viewer's preferences for each file.
+  let audioStreams = $derived(mediaFile?.probe?.audio ?? []);
+  let subtitleTracks = $derived(mediaFile?.subtitleTracks ?? []);
+  let audioChoice = $state("");
+  let subtitleChoice = $state("off");
+  $effect(() => {
+    if (!mediaId) return;
+    const audio = preferredAudio(audioStreams, app.playbackPrefs);
+    const subtitle = preferredSubtitle(subtitleTracks, app.playbackPrefs);
+    audioChoice = audio == null ? "" : String(audio);
+    subtitleChoice = subtitle == null ? "off" : String(subtitle);
+  });
+  let chosenAudio = $derived(audioChoice === "" ? null : audioStreams[Number(audioChoice)]);
 
   const parent = new WorkCrumbStore();
   const grandparent = new WorkCrumbStore();
@@ -139,19 +159,20 @@
     return () => { stale = true; ambient.color = null; };
   });
 
-  function badges(item) {
-    if (!item) return [];
-    const list = [];
-    if (item.height >= 2000) list.push("4K"); else if (item.height >= 1000) list.push("HD");
-    if (item.hdrFormat) list.push(/dolby|dovi/i.test(item.hdrFormat) ? "DOLBY VISION" : item.hdrFormat.toUpperCase().includes("HLG") ? "HLG" : "HDR");
-    const channels = Math.max(0, ...(item.audioTracks ?? []).map((track) => track.channels ?? 0));
-    if (channels >= 8) list.push("7.1"); else if (channels >= 6) list.push("5.1");
-    if (item.subtitleTracks?.length) list.push("CC");
-    return list;
-  }
+  let credits = $derived($detail.data?.work?.credits ?? []);
+  let tags = $derived($detail.data?.work?.tags ?? []);
+  let parental = $derived(tags.find((tag) => tag.namespace === "parental")?.display);
+  let genres = $derived(tags.filter((tag) => tag.namespace === "genre").map((tag) => tag.display));
 
   function play(fromStart = false, positionMs = undefined) {
-    return playWork(work, { editionId, mediaFileId: mediaId || undefined, fromStart, positionMs });
+    return playWork(work, {
+      editionId,
+      mediaFileId: mediaId || undefined,
+      fromStart,
+      positionMs,
+      audioStream: audioChoice === "" ? undefined : Number(audioChoice),
+      subtitleIndex: subtitleChoice === "off" ? null : Number(subtitleChoice),
+    });
   }
 
   async function toggleFavorite() {
@@ -240,8 +261,12 @@
         <div class="meta">
           {#if work.communityRating}<span class="rating"><Star size={14} weight="fill" />{work.communityRating.toFixed(1)}</span>{/if}
           {#each [subtitleFor(work) !== String(work.year) ? subtitleFor(work) : "", work.year, runtime(duration)].filter(Boolean) as part}<span class="part">{part}</span>{/each}
-          {#each badges(edition) as badge}<span class="badge">{badge}</span>{/each}
+          {#if parental}<span class="badge">{parental}</span>{/if}
         </div>
+        {#if genres.length}<p class="genres">{genres.join(" · ")}</p>{/if}
+        {#if !isContainer && edition}
+          <div class="tech" aria-label="Video and audio format">{#each techBadges(mediaFile?.probe, edition, chosenAudio) as badge}<span class="badge">{badge}</span>{/each}</div>
+        {/if}
 
         {#if work.tagline}<p class="tagline">{work.tagline}</p>{/if}
         {#if work.overview}
@@ -311,6 +336,17 @@
           </Menu>
         </div>
 
+        {#if !isContainer && (audioStreams.length > 1 || subtitleTracks.length)}
+          <div class="tracks">
+            {#if audioStreams.length > 1}
+              <div class="pick"><SpeakerHigh size={18} /><Select bind:value={audioChoice} items={audioChoices(audioStreams)} label="Audio track" /></div>
+            {/if}
+            {#if subtitleTracks.length}
+              <div class="pick"><ClosedCaptioning size={18} /><Select bind:value={subtitleChoice} items={subtitleChoices(subtitleTracks)} label="Subtitles" /></div>
+            {/if}
+          </div>
+        {/if}
+
         {#if !isContainer && (editions.length > 1 || mediaFiles.length > 1)}
           <div class="versions">
             {#if editions.length > 1}
@@ -340,13 +376,33 @@
       <Children {work} art={backdropWork} {seasonStats} upNextId={upNext && !upNext.rewatch ? upNext.work.id : null} />
     {/if}
 
+    <Credits {credits} />
+
+    {#if work.communityRating || parental}
+      <section class="section ratings">
+        <div class="section-head"><h2>Ratings</h2></div>
+        <div class="scores">
+          {#if work.communityRating}
+            <div class="score">
+              <strong class="tabular">{work.communityRating.toFixed(1)}<small>/10</small></strong>
+              <span class="stars" role="img" aria-label="{work.communityRating.toFixed(1)} out of 10"><span class="meter" style:width="{work.communityRating * 10}%"></span></span>
+              <span class="faint">Community score</span>
+            </div>
+          {/if}
+          {#if parental}
+            <div class="score"><strong>{parental}</strong><span class="faint">Parental rating</span></div>
+          {/if}
+        </div>
+      </section>
+    {/if}
+
     {#if edition && !isContainer}
-      <TechSpecs {edition} file={mediaFiles.find((file) => file.id === mediaId)} onchapter={(ms) => play(false, ms)} />
+      <TechSpecs {edition} file={mediaFile} onchapter={(ms) => play(false, ms)} />
     {/if}
   </div>
 
   {#if manageable}
-    <AdminSheet bind:open={adminOpen} {work} {edition} media={mediaFiles.find((file) => file.id === mediaId)} onremoved={() => { refetch(detail); refetch(media); }} />
+    <AdminSheet bind:open={adminOpen} {work} {edition} media={mediaFile} onremoved={() => { refetch(detail); refetch(media); }} />
   {/if}
 {/if}
 
@@ -374,6 +430,18 @@
   .meta .part + .part::before { content: "·"; margin-right: 14px; color: var(--text-3); }
   .rating { display: inline-flex; align-items: center; gap: 5px; color: var(--warning); }
   .meta .badge { margin-left: 2px; }
+  .genres { color: var(--text-3); font-size: 0.92rem; margin-top: -6px; }
+  .tech { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tracks { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+  .pick { display: flex; align-items: center; gap: 8px; width: min(100%, 230px); color: var(--text-3); }
+  .pick :global(.nf-select) { min-height: 38px; font-size: 0.88rem; }
+  .ratings { margin-top: 56px; }
+  .scores { display: flex; flex-wrap: wrap; gap: 14px; }
+  .score { display: grid; gap: 4px; min-width: 170px; padding: 16px 20px; border-radius: var(--r-l); background: var(--surface); border: 1px solid var(--line); font-size: 0.84rem; }
+  .score strong { font-size: 1.7rem; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }
+  .score strong small { font-size: 0.86rem; font-weight: 550; color: var(--text-3); letter-spacing: 0; margin-left: 2px; }
+  .stars { height: 4px; border-radius: 9px; background: var(--surface-3); overflow: hidden; }
+  .meter { display: block; height: 100%; background: var(--warning); }
   .tagline { font-size: 1.08rem; font-style: italic; color: var(--text-2); }
   .overview { text-align: left; color: var(--text-2); font-size: 1.02rem; line-height: 1.6; max-width: 720px; cursor: pointer; border-radius: 8px; }
   .overview:hover { color: var(--text); }

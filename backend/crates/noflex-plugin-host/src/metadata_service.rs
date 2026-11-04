@@ -848,7 +848,13 @@ async fn persist_tags(
                 }
             };
             storage
-                .assign_tag(tag.id, target, 1.0, &format!("provider:{provider}"))
+                .assign_tag_with_metadata(
+                    tag.id,
+                    target,
+                    1.0,
+                    &format!("provider:{provider}"),
+                    &draft.assignment,
+                )
                 .await?;
         }
     }

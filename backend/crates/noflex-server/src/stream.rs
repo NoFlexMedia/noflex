@@ -770,6 +770,7 @@ impl ServerPlaybackSessions {
             burn_subtitle,
             encode_video,
             encode_audio,
+            audio_stream: None,
         }
     }
 
@@ -991,6 +992,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
             burn_subtitle,
             device,
             start_position_ms,
+            audio_stream,
         } = request;
         let start_offset_ms = start_position_ms.filter(|ms| *ms > 0);
         let media = self
@@ -1071,10 +1073,21 @@ impl PlaybackSessionService for ServerPlaybackSessions {
             None => None,
         };
 
+        let audio_stream = audio_stream
+            .map(|stream| {
+                usize::try_from(stream)
+                    .ok()
+                    .filter(|stream| *stream < probe.audio.len())
+                    .ok_or_else(|| anyhow::anyhow!("audio track not found"))
+            })
+            .transpose()?;
         let mut decision = decide(
             &probe,
             &capabilities,
-            &self.decide_options(burn_source.is_some()),
+            &DecideOptions {
+                audio_stream,
+                ..self.decide_options(burn_source.is_some())
+            },
         );
         if let PlaybackRoute::Transcoding { plan, .. } = &mut decision.route
             && let VideoPlan::Encode {

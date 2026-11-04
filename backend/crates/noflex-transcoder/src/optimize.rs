@@ -575,6 +575,7 @@ mod tests {
             burn_subtitle: false,
             encode_video: vec![VideoCodec::H265, VideoCodec::H264],
             encode_audio: vec![AudioCodec::Aac],
+            audio_stream: None,
         }
     }
 

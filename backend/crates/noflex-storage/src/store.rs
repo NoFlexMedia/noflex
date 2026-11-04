@@ -182,6 +182,19 @@ pub trait Storage: Send + Sync + 'static {
         target: TagTarget,
         weight: f32,
         source: &str,
+    ) -> StorageResult<()> {
+        self.assign_tag_with_metadata(tag, target, weight, source, &serde_json::json!({}))
+            .await
+    }
+    /// [`Storage::assign_tag`], with what's true of the tag on this target
+    /// alone: a person's role and character belong to the work, not the person.
+    async fn assign_tag_with_metadata(
+        &self,
+        tag: TagId,
+        target: TagTarget,
+        weight: f32,
+        source: &str,
+        metadata: &serde_json::Value,
     ) -> StorageResult<()>;
     async fn unassign_tag(&self, tag: TagId, target: TagTarget) -> StorageResult<()>;
     async fn tags_for_target(&self, target: TagTarget) -> StorageResult<Vec<Tag>>;

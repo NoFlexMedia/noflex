@@ -449,6 +449,24 @@ type CreatedInvite {
 	token: String!
 }
 
+"""
+One part a person played in a work. Someone who directed and starred has
+two.
+"""
+type Credit {
+	"""
+	The person's tag; its `works` is their filmography.
+	"""
+	personId: ID!
+	name: String!
+	"""
+	`Director`, `Writer`, `Producer`, `Composer` or `Actor`, as the provider
+	reports it. Null when it doesn't say.
+	"""
+	role: String
+	character: String
+}
+
 type DatabaseStatus {
 	backend: String!
 	engineVersion: String!
@@ -1528,7 +1546,12 @@ type Mutation {
 	resuming or seeking far ahead doesn't wait for ffmpeg to catch
 	up; the session's `startPositionMs` is the offset actually used.
 	"""
-	startPlaybackSession(mediaFileId: ID!, capabilities: ClientCapabilities!, burnSubtitle: Int, startPositionMs: Int): PlaybackSession!
+	startPlaybackSession(		mediaFileId: ID!,		capabilities: ClientCapabilities!,		burnSubtitle: Int,		startPositionMs: Int,
+		"""
+		Index among the file's audio streams to play instead of its default.
+		"""
+		audioStream: Int
+	): PlaybackSession!
 	"""
 	End a session started by `startPlaybackSession`, stopping its
 	transcode job if it has one.
@@ -3443,6 +3466,7 @@ enum TranscodeReason {
 	CONTAINER_BITRATE_EXCEEDS_LIMIT
 	SUBTITLE_BURN_IN
 	LIVE_SOURCE
+	AUDIO_TRACK_CHOSEN
 }
 
 type TranscoderInfo {
@@ -3848,6 +3872,16 @@ type Work {
 	lockedFields: [WorkField!]!
 	addedAt: DateTime!
 	updatedAt: DateTime!
+	"""
+	People credited on this work, in billing order, one entry per part.
+	Empty when no provider named any.
+	"""
+	credits: [Credit!]!
+	"""
+	This work's tags in the given namespaces (`genre`, `parental`, `studio`,
+	…), ordered by namespace then name.
+	"""
+	tags(namespaces: [String!]!): [Tag!]!
 	"""
 	The effective image of each kind attached to this work (posters,
 	backdrops, logos, …) under its library's artwork preference,

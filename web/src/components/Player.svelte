@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
+  import { untrack } from "svelte";
   import Check from "phosphor-svelte/lib/Check";
   import Info from "phosphor-svelte/lib/Info";
   import SpeakerHigh from "phosphor-svelte/lib/SpeakerHigh";
@@ -23,7 +24,7 @@
   import { Slider } from "bits-ui";
   import { CachePolicy, ControlWatchRoomStore, MarkPlayedStore, MediaFilesStore, ReportProgressStore, StopPlaybackStore, WatchRoomEventsStore, WatchRoomStore } from "$houdini";
   import { reportOnExit } from "$lib/api.js";
-  import { languageName, profileName, timecode } from "$lib/format.js";
+  import { languageName, levelName, profileName, timecode } from "$lib/format.js";
   import { mediaUrl } from "$lib/tokens.js";
   import { request, writeUserData } from "$lib/graphql.js";
   import { onReconnect } from "$lib/live.js";
@@ -136,11 +137,19 @@
         }
         const retry = { maxNumRetry: 8, retryDelayMs: 500, maxRetryDelayMs: 3000, shouldRetry: (config, count) => count < config.maxNumRetry };
         const policy = { default: { maxTimeToFirstByteMs: 15_000, maxLoadTimeMs: 30_000, timeoutRetry: retry, errorRetry: retry } };
-        hls = new Hls({ enableWorker: false, backBufferLength: 60, maxBufferLength: 30, manifestLoadPolicy: policy, playlistLoadPolicy: policy });
+        // A transcode's playlist grows as it encodes, which hls.js would take for
+        // a live stream and join at the edge; its time zero is where to start.
+        hls = new Hls({ enableWorker: false, backBufferLength: 60, maxBufferLength: 30, manifestLoadPolicy: policy, playlistLoadPolicy: policy, ...(live ? {} : { startPosition: 0 }) });
         hls.loadSource(url);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
-        hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_event, data) => { audioTracks = data.audioTracks.map((track) => ({ id: track.id, label: languageName(track.lang) || track.name })); });
+        let chosen = playback.audioStream;
+        hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_event, data) => {
+          audioTracks = data.audioTracks.map((track) => ({ id: track.id, label: languageName(track.lang) || track.name }));
+          // A prepared version lists every stream, in the source's order.
+          if (chosen != null && chosen < data.audioTracks.length) hls.audioTrack = chosen;
+          chosen = null;
+        });
         hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_event, data) => { audioTrack = data.id; });
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (!data.fatal) return;
@@ -162,6 +171,13 @@
       video?.removeAttribute("src");
       video?.load();
     };
+  });
+
+  // A new title starts on what was chosen for it; restarts of this one keep
+  // what's been chosen since.
+  $effect(() => {
+    playback.mediaFileId;
+    untrack(() => { subtitleIndex = playback.subtitleIndex ?? null; burned = playback.burnedSubtitle ?? null; });
   });
 
   // Burn-in choices come from the media file: sidecars and muxed text tracks alike.
@@ -327,7 +343,18 @@
   $effect(() => {
     const showing = burned == null ? subtitleIndex : null;
     if (!video || !delivered) return;
-    for (const element of video.querySelectorAll("track")) element.track.mode = Number(element.dataset.index) === showing ? "showing" : "disabled";
+    const apply = () => {
+      for (const element of video.querySelectorAll("track")) {
+        const mode = Number(element.dataset.index) === showing ? "showing" : "disabled";
+        if (element.track.mode !== mode) element.track.mode = mode;
+      }
+    };
+    apply();
+    // Attaching a stream runs the browser's own track selection, which can
+    // turn on tracks nobody asked for.
+    const tracks = video.textTracks;
+    tracks.addEventListener("change", apply);
+    return () => tracks.removeEventListener("change", apply);
   });
 
   const trackLabel = (track) => track.title || track.language?.toUpperCase() || `Track ${track.index + 1}`;
@@ -335,11 +362,9 @@
   // ---- playback info ------------------------------------------------------
   const PLAN = { DIRECT_PLAY: "Direct play", REMUX: "Direct stream (remux)", TRANSCODE_AUDIO: "Transcoding audio", TRANSCODE_VIDEO: "Transcoding video", TRANSCODE: "Transcoding" };
   const CODEC = { H264: "H.264", H265: "HEVC", AV1: "AV1", VP9: "VP9", VP8: "VP8", MPEG2: "MPEG-2", AC3: "AC-3", EAC3: "E-AC-3", MP3: "MP3" };
-  // Server levels are ffprobe's: H.264 ×10, HEVC ×30, AV1 seq_level_idx.
-  const levelText = (codec, level) => level == null ? null : codec === "H264" ? `L${level / 10}` : codec === "H265" ? `L${Math.round(level / 3) / 10}` : `L${level}`;
   function videoText(s) {
     if (!s?.videoCodec) return "none";
-    return [CODEC[s.videoCodec] ?? s.videoCodec, profileName(s.videoProfile), levelText(s.videoCodec, s.videoLevel), s.width && `${s.width}×${s.height}`, s.bitDepth && `${s.bitDepth}-bit`, s.videoRange && s.videoRange !== "SDR" && s.videoRange.replace(/_/g, " ")].filter(Boolean).join(" · ");
+    return [CODEC[s.videoCodec] ?? s.videoCodec, profileName(s.videoProfile), levelName(s.videoCodec, s.videoLevel), s.width && `${s.width}×${s.height}`, s.bitDepth && `${s.bitDepth}-bit`, s.videoRange && s.videoRange !== "SDR" && s.videoRange.replace(/_/g, " ")].filter(Boolean).join(" · ");
   }
   const audioText = (s) => s?.audioCodec ? [s.audioCodec.toUpperCase(), s.audioChannels && `${s.audioChannels} ch`].filter(Boolean).join(" · ") : "none";
   const rate = (bps) => bps ? `${(bps / 1e6).toFixed(1)} Mb/s` : null;

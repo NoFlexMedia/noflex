@@ -99,7 +99,15 @@ impl Transaction for TursoTransaction {
         weight: f32,
         source: &str,
     ) -> StorageResult<()> {
-        crate::repo::tags::assign(self.conn(), tag, target, weight, source).await
+        crate::repo::tags::assign(
+            self.conn(),
+            tag,
+            target,
+            weight,
+            source,
+            &serde_json::json!({}),
+        )
+        .await
     }
 
     async fn upsert_user(&mut self, user: &User) -> StorageResult<()> {

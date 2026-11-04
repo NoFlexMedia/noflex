@@ -32,11 +32,12 @@ const GET_BY_ID: &str = "SELECT id, namespace, slug, display, parent_id, metadat
 const GET_BY_SLUG: &str = "SELECT id, namespace, slug, display, parent_id, metadata \
     FROM tags WHERE namespace = ?1 AND slug = ?2";
 
-const ASSIGN: &str = "INSERT INTO tag_assignments (tag_id, target_kind, target_id, weight, source) \
-    VALUES (?1, ?2, ?3, ?4, ?5) \
+const ASSIGN: &str = "INSERT INTO tag_assignments (tag_id, target_kind, target_id, weight, source, metadata) \
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
     ON CONFLICT(tag_id, target_kind, target_id) DO UPDATE SET \
         weight = excluded.weight, \
-        source = excluded.source";
+        source = excluded.source, \
+        metadata = excluded.metadata";
 
 const UNASSIGN: &str = "DELETE FROM tag_assignments \
     WHERE tag_id = ?1 AND target_kind = ?2 AND target_id = ?3";
@@ -46,7 +47,7 @@ const TAGS_FOR_TARGET: &str = "SELECT t.id, t.namespace, t.slug, t.display, t.pa
     WHERE a.target_kind = ?1 AND a.target_id = ?2";
 
 const ASSIGNMENTS_FOR_TARGET: &str = "SELECT t.id, t.namespace, t.slug, t.display, t.parent_id, t.metadata, \
-    a.weight, a.source \
+    a.weight, a.source, a.metadata \
     FROM tags t JOIN tag_assignments a ON a.tag_id = t.id \
     WHERE a.target_kind = ?1 AND a.target_id = ?2";
 
@@ -122,6 +123,7 @@ pub(crate) async fn assign(
     target: TagTarget,
     weight: f32,
     source: &str,
+    metadata: &serde_json::Value,
 ) -> StorageResult<()> {
     let (kind, id) = tag_target_parts(&target);
     let params: Vec<Value> = vec![
@@ -130,6 +132,7 @@ pub(crate) async fn assign(
         Value::Blob(uuid_to_blob(id)),
         Value::Real(weight as f64),
         Value::Text(source.to_string()),
+        Value::Text(to_json(metadata)?),
     ];
     conn.execute(ASSIGN, params).await.map_err(map_turso)?;
     Ok(())
@@ -185,10 +188,12 @@ pub(crate) async fn assignments_for_target(
     while let Some(row) = rows.next().await.map_err(map_turso)? {
         let weight = row.get_value(6).map_err(map_turso)?;
         let source = row.get_value(7).map_err(map_turso)?;
+        let metadata = row.get_value(8).map_err(map_turso)?;
         out.push(TagAssignment {
             tag: row_to_tag(&row)?,
             weight: col_real(&weight)?,
             source: col_text(&source)?.to_string(),
+            metadata: parse_json(col_text(&metadata)?)?,
         });
     }
     Ok(out)

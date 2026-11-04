@@ -17,6 +17,7 @@ import { syncWatchState } from "$lib/sync.js";
 import { request } from "$lib/graphql.js";
 import { onLiveRefused } from "$lib/live.js";
 import { ApiError, clearSession, hasSession, onSessionExpired, saveSession, SessionExpiredError, type SessionResult } from "$lib/tokens.js";
+import { noPrefs, readPlaybackPrefs } from "$lib/tracks.js";
 import { toast } from "$lib/ui.svelte.js";
 
 /** Preference key: list libraries in the navigation alongside content types. */
@@ -28,6 +29,7 @@ export const app = $state({
   phase: "boot" as Phase,
   server: null as any,
   viewer: null as any,
+  playbackPrefs: noPrefs,
   libraries: [] as any[],
   /** `contentCategories` rows: what the viewer has anything to browse in. */
   categories: [] as { category: string; workCount: number }[],
@@ -78,6 +80,7 @@ export async function bootstrap(): Promise<void> {
     app.categories = [...data.contentCategories];
     setLinkedServers(data.linkedServers as LinkedServer[]);
     app.showLibraries = data.preferences.some((item: { key: string; value: unknown }) => item.key === SHOW_LIBRARIES_KEY && item.value === true);
+    app.playbackPrefs = readPlaybackPrefs(data.preferences.find((item: { key: string; value: unknown }) => item.key === "playback")?.value);
     await watchLibraries();
     app.authError = "";
     app.phase = "app";

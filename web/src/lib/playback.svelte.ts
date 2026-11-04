@@ -2,7 +2,9 @@
 
 import { CachePolicy, ChildPageStore, MediaFilesStore, StartPlaybackStore, StopPlaybackStore, WorkDetailStore } from "$houdini";
 import { clientCapabilities } from "$lib/codecSupport.js";
+import { app } from "$lib/session.svelte.js";
 import { syncWatchState } from "$lib/sync.js";
+import { isImageSubtitle, preferredAudio, preferredSubtitle } from "$lib/tracks.js";
 import { mediaUrl } from "$lib/tokens.js";
 import { request } from "$lib/graphql.js";
 import { toast } from "$lib/ui.svelte.js";
@@ -50,6 +52,11 @@ export interface Playback extends Session {
   mediaFileId?: string;
   live?: boolean;
   room?: { id: string; isHost: boolean } | null;
+  /** Index among the file's audio streams, for restarts and multi-track versions. */
+  audioStream?: number | null;
+  /** The subtitle track to start with, as a text track or burned in. */
+  subtitleIndex?: number | null;
+  burnedSubtitle?: number | null;
 }
 
 export const player = $state<{ current: Playback | null; preparing: string | null }>({ current: null, preparing: null });
@@ -58,9 +65,9 @@ export const player = $state<{ current: Playback | null; preparing: string | nul
 if (typeof window !== "undefined") (window.requestIdleCallback ?? setTimeout)(() => { clientCapabilities().catch(() => {}); });
 
 /** Open a session; a transcode starts at `startPositionMs` so far seeks don't wait on ffmpeg. */
-export async function startSession(mediaFileId: string, subtitle: number | null = null, startPositionMs = 0): Promise<Session> {
+export async function startSession(mediaFileId: string, subtitle: number | null = null, startPositionMs = 0, audioStream: number | null = null): Promise<Session> {
   const capabilities = await clientCapabilities();
-  const data = await request(new StartPlaybackStore(), { media: mediaFileId, capabilities, subtitle, start: Math.max(0, Math.round(startPositionMs)) });
+  const data = await request(new StartPlaybackStore(), { media: mediaFileId, capabilities, subtitle, start: Math.max(0, Math.round(startPositionMs)), audio: audioStream });
   const session = data.startPlaybackSession as Session;
   return { ...session, url: mediaUrl(session.url), subtitles: session.subtitles?.map((track: any) => ({ ...track, url: mediaUrl(track.url) })) } as Session;
 }
@@ -71,7 +78,8 @@ export function stopSession(sessionId: string | null | undefined): Promise<void>
   return request(new StopPlaybackStore(), { session: sessionId }).then(() => {}, () => {});
 }
 
-export interface PlayOptions { editionId?: string; mediaFileId?: string; subtitle?: number | null; fromStart?: boolean; positionMs?: number; room?: Playback["room"] }
+/** `audioStream` and `subtitleIndex` default to the viewer's preferences; null subtitles means off. */
+export interface PlayOptions { editionId?: string; mediaFileId?: string; audioStream?: number; subtitleIndex?: number | null; fromStart?: boolean; positionMs?: number; room?: Playback["room"] }
 
 /**
  * Resolve a work down to a playable media file (first edition, first part
@@ -85,15 +93,16 @@ export async function playWork(work: any, options: PlayOptions = {}): Promise<bo
     const editions = detail.editions ?? [];
     const edition = editions.find((item: any) => item.id === options.editionId) ?? editions[0];
     if (!edition) throw new Error(`“${work.title}” has nothing playable attached yet.`);
-    let mediaFileId = options.mediaFileId;
-    if (!mediaFileId) {
-      const media = await request(new MediaFilesStore(), { edition: edition.id }, { policy: CachePolicy.CacheOrNetwork });
-      mediaFileId = media.mediaFiles[0]?.id;
-    }
+    const media = await request(new MediaFilesStore(), { edition: edition.id }, { policy: CachePolicy.CacheOrNetwork });
+    const file: any = media.mediaFiles.find((item: any) => item.id === options.mediaFileId) ?? media.mediaFiles[0];
+    const mediaFileId = options.mediaFileId ?? file?.id;
     if (!mediaFileId) throw new Error("This edition has no media files on disk.");
+    const audioStream = options.audioStream ?? preferredAudio(file?.probe?.audio, app.playbackPrefs);
+    const subtitleIndex = options.subtitleIndex !== undefined ? options.subtitleIndex : preferredSubtitle(file?.subtitleTracks, app.playbackPrefs);
+    const burnedSubtitle = subtitleIndex != null && isImageSubtitle(file?.subtitleTracks?.[subtitleIndex]) ? subtitleIndex : null;
     const userData = detail.work?.userData;
     const resume = options.positionMs ?? (options.fromStart || userData?.played ? 0 : userData?.positionMs ?? 0);
-    const session = await startSession(mediaFileId, options.subtitle ?? null, resume);
+    const session = await startSession(mediaFileId, burnedSubtitle, resume, audioStream);
     player.current = {
       ...session,
       workId: work.id,
@@ -104,6 +113,9 @@ export async function playWork(work: any, options: PlayOptions = {}): Promise<bo
       edition,
       mediaFileId,
       room: options.room ?? null,
+      audioStream,
+      subtitleIndex,
+      burnedSubtitle,
     };
     return true;
   } catch (cause) {
@@ -168,7 +180,7 @@ export async function restartSession(subtitle: number | null, positionMs: number
   if (!current?.mediaFileId) return false;
   try {
     await stopSession(current.sessionId);
-    const session = await startSession(current.mediaFileId, subtitle, positionMs);
+    const session = await startSession(current.mediaFileId, subtitle, positionMs, current.audioStream ?? null);
     player.current = { ...current, ...session, resumeMs: positionMs };
     return true;
   } catch (cause) {

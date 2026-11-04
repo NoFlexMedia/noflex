@@ -93,7 +93,7 @@
       audio: { ...(base.audio ?? {}), languages: splitList(playback.audioLanguages) },
     };
     savingPlayback = true;
-    await attempt(() => setPreference.mutate({ key: "playback", value }), "Playback preferences saved");
+    if (await attempt(() => setPreference.mutate({ key: "playback", value }), "Playback preferences saved")) app.playbackPrefs = readPlaybackPrefs(value);
     savingPlayback = false;
   }
 

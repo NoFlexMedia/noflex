@@ -25,6 +25,9 @@ bitflags! {
         const ContainerBitrateExceedsLimit = 1 << 10;
         const SubtitleBurnIn               = 1 << 11;
         const LiveSource                   = 1 << 12;
+        /// The client asked for an audio track other than the one a browser
+        /// plays by default, which progressive playback can't switch to.
+        const AudioTrackChosen             = 1 << 13;
 
         /// Reasons that force the video stream to be re-encoded.
         const VIDEO = Self::VideoCodecNotSupported.bits()
@@ -59,6 +62,7 @@ pub enum TranscodeReason {
     ContainerBitrateExceedsLimit,
     SubtitleBurnIn,
     LiveSource,
+    AudioTrackChosen,
 }
 
 /// Bit order is the order `codes()`/`describe()` report in.
@@ -127,6 +131,11 @@ const TABLE: &[(TranscodeReasons, TranscodeReason, &str)] = &[
         TranscodeReasons::LiveSource,
         TranscodeReason::LiveSource,
         "live sources are always transcoded",
+    ),
+    (
+        TranscodeReasons::AudioTrackChosen,
+        TranscodeReason::AudioTrackChosen,
+        "an audio track other than the default was chosen",
     ),
 ];
 

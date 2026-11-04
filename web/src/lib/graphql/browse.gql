@@ -21,7 +21,11 @@ query LibraryWorks($library: ID!, $filter: WorkFilterInput, $sort: SortOrder) {
 }
 
 query WorkDetail($id: ID!) {
-  work(id: $id) { ...WorkFull }
+  work(id: $id) {
+    ...WorkFull
+    credits { personId name role character }
+    tags(namespaces: ["parental", "genre"]) { id namespace display }
+  }
   editions(workId: $id) { ...EditionFull }
 }
 

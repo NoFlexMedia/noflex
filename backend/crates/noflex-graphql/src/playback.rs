@@ -351,6 +351,8 @@ impl PlaybackMutation {
         capabilities: ClientCapabilities,
         burn_subtitle: Option<i32>,
         start_position_ms: Option<i64>,
+        #[graphql(desc = "Index among the file's audio streams to play instead of its default.")]
+        audio_stream: Option<u32>,
     ) -> async_graphql::Result<PlaybackSession> {
         let user = authed_user(ctx)?;
         let service = ctx
@@ -375,6 +377,7 @@ impl PlaybackMutation {
                     burn_subtitle: burn,
                     device,
                     start_position_ms,
+                    audio_stream,
                 },
             )
             .await

@@ -11,7 +11,7 @@ use noflex_core::{
     HdrTransfer, ImageKind, InviteId, LibraryId, LinkedServerId, LiveTvSourceId,
     MatrixCoefficients, MediaFileId, MetadataStatus, OptimizedVersionId, PixelFormat,
     PlaySessionId, PlayTargetKind, PlaylistId, RecordingId, RecordingScheduleId, SessionId, TagId,
-    UserId, VideoCodec, VideoProfile, WatchRoomId, WorkField, WorkId, WorkKind,
+    TagTarget, UserId, VideoCodec, VideoProfile, WatchRoomId, WorkField, WorkId, WorkKind,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -1097,6 +1097,70 @@ pub struct TagAssignment {
     pub tag: Tag,
     pub weight: f32,
     pub source: String,
+    /// What's true of the tag on this target alone; `{}` when nothing is.
+    /// People carry `order` and `credits`: see [`Credit`].
+    pub metadata: async_graphql::Json<serde_json::Value>,
+}
+
+/// One part a person played in a work. Someone who directed and starred has
+/// two.
+#[derive(Debug, Clone, PartialEq, SimpleObject)]
+pub struct Credit {
+    /// The person's tag; its `works` is their filmography.
+    pub person_id: TagId,
+    pub name: String,
+    /// `Director`, `Writer`, `Producer`, `Composer` or `Actor`, as the provider
+    /// reports it. Null when it doesn't say.
+    pub role: Option<String>,
+    pub character: Option<String>,
+}
+
+impl Credit {
+    /// `assignments`' people as credits in billing order. People assigned before
+    /// assignments carried credits have only the role on their tag, which may be
+    /// from another work, so it's the role alone and they sort last.
+    pub fn from_assignments(assignments: Vec<TagAssignment>) -> Vec<Self> {
+        let text = |value: &serde_json::Value, key: &str| {
+            value
+                .get(key)
+                .and_then(|text| text.as_str())
+                .map(str::to_string)
+        };
+        let mut people = assignments
+            .into_iter()
+            .filter(|assignment| assignment.tag.namespace == "person")
+            .collect::<Vec<_>>();
+        people.sort_by_key(|assignment| {
+            (
+                assignment
+                    .metadata
+                    .0
+                    .get("order")
+                    .and_then(|order| order.as_u64())
+                    .unwrap_or(u64::MAX),
+                assignment.tag.display.clone(),
+            )
+        });
+        let mut credits = Vec::new();
+        for person in people {
+            let parts = person.metadata.0.get("credits").and_then(|c| c.as_array());
+            let credit = |role, character| Credit {
+                person_id: person.tag.id,
+                name: person.tag.display.clone(),
+                role,
+                character,
+            };
+            match parts {
+                Some(parts) => credits.extend(
+                    parts
+                        .iter()
+                        .map(|part| credit(text(part, "role"), text(part, "character"))),
+                ),
+                None => credits.push(credit(text(&person.tag.metadata.0, "role"), None)),
+            }
+        }
+        credits
+    }
 }
 
 /// What an image is attached to. Broader than `TagTarget` because images also
@@ -1669,6 +1733,39 @@ async fn load_visible_work(
 
 #[async_graphql::ComplexObject]
 impl Work {
+    /// People credited on this work, in billing order, one entry per part.
+    /// Empty when no provider named any.
+    #[graphql(complexity = 5)]
+    async fn credits(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Vec<Credit>> {
+        crate::access::request_user(ctx)?;
+        let assignments = complex_storage(ctx)?
+            .tag_assignments_for_target(TagTarget::Work(self.id))
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(Credit::from_assignments(assignments))
+    }
+
+    /// This work's tags in the given namespaces (`genre`, `parental`, `studio`,
+    /// …), ordered by namespace then name.
+    #[graphql(complexity = 5)]
+    async fn tags(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+        namespaces: Vec<String>,
+    ) -> async_graphql::Result<Vec<Tag>> {
+        crate::access::request_user(ctx)?;
+        let mut tags = complex_storage(ctx)?
+            .tags_for_target(TagTarget::Work(self.id))
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        tags.retain(|tag| namespaces.contains(&tag.namespace));
+        tags.sort_by(|a, b| (&a.namespace, &a.display).cmp(&(&b.namespace, &b.display)));
+        Ok(tags)
+    }
+
     /// The effective image of each kind attached to this work (posters,
     /// backdrops, logos, …) under its library's artwork preference,
     /// ordered by kind.

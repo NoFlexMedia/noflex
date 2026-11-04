@@ -260,6 +260,7 @@ impl OptimizeWorker {
             burn_subtitle: false,
             encode_video: self.config.encode_video.clone(),
             encode_audio: vec![noflex_core::AudioCodec::Aac],
+            audio_stream: None,
         }
     }
 

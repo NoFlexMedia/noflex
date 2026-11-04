@@ -344,15 +344,16 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.reader().await?;
         repo::tags::get_by_slug(&conn, ns, slug).await
     }
-    async fn assign_tag(
+    async fn assign_tag_with_metadata(
         &self,
         tag: TagId,
         target: TagTarget,
         weight: f32,
         source: &str,
+        metadata: &serde_json::Value,
     ) -> StorageResult<()> {
         let (_schema, conn) = self.writer().await?;
-        repo::tags::assign(&conn, tag, target, weight, source).await
+        repo::tags::assign(&conn, tag, target, weight, source, metadata).await
     }
     async fn unassign_tag(&self, tag: TagId, target: TagTarget) -> StorageResult<()> {
         let (_schema, conn) = self.writer().await?;

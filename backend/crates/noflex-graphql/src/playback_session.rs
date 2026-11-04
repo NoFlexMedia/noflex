@@ -129,6 +129,9 @@ pub struct PlaybackStart {
     /// Start a transcode at this source position (direct play ignores
     /// it; the client seeks).
     pub start_position_ms: Option<i64>,
+    /// Index into the media file's audio streams to play instead of its
+    /// default.
+    pub audio_stream: Option<u32>,
 }
 
 impl PlaybackStart {
@@ -140,6 +143,7 @@ impl PlaybackStart {
             burn_subtitle: None,
             device: None,
             start_position_ms: None,
+            audio_stream: None,
         }
     }
 }

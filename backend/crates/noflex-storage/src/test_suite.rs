@@ -3910,6 +3910,23 @@ async fn tag_assignments_carry_source_and_weight<S: Storage + ?Sized>(store: &S)
     let person_row = by_id(person.id);
     assert_eq!(person_row.source, "user");
     assert!((person_row.weight - 0.75).abs() < f32::EPSILON);
+    assert_eq!(person_row.metadata.0, serde_json::json!({}));
+
+    // What's true on this work stays on this work, and follows re-assignment.
+    let part = serde_json::json!({ "order": 3, "credits": [{ "role": "Actor" }] });
+    store
+        .assign_tag_with_metadata(person.id, target, 1.0, "provider:tmdb", &part)
+        .await
+        .expect("assign with metadata");
+    let assignments = store
+        .tag_assignments_for_target(target)
+        .await
+        .expect("assignments for target");
+    let person_row = assignments
+        .iter()
+        .find(|a| a.tag.id == person.id)
+        .expect("assignment present");
+    assert_eq!(person_row.metadata.0, part);
 
     store.delete_work(work.id).await.ok();
     store.delete_library(lib.id).await.ok();

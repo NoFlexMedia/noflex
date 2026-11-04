@@ -298,6 +298,9 @@ pub struct DecideOptions {
     pub encode_video: Vec<VideoCodec>,
     /// Codecs the server is willing to encode audio to, preferred first.
     pub encode_audio: Vec<AudioCodec>,
+    /// Index into `ProbeReport::audio` the viewer picked, overriding the
+    /// default. Out of range is treated as not picking.
+    pub audio_stream: Option<usize>,
 }
 
 impl Default for DecideOptions {
@@ -306,6 +309,7 @@ impl Default for DecideOptions {
             burn_subtitle: false,
             encode_video: vec![VideoCodec::H264],
             encode_audio: vec![AudioCodec::Aac],
+            audio_stream: None,
         }
     }
 }
@@ -403,8 +407,9 @@ pub enum PlaybackRoute {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlaybackDecision {
     pub route: PlaybackRoute,
-    /// Index into `ProbeReport::audio` of the track decided for (the
-    /// default-flagged track, else the first); `None` without audio.
+    /// Index into `ProbeReport::audio` of the track decided for (the viewer's
+    /// pick, else the default-flagged track, else the first); `None` without
+    /// audio.
     pub audio_stream: Option<usize>,
 }
 
@@ -418,8 +423,17 @@ pub fn decide(
     caps: &ClientCapabilities,
     opts: &DecideOptions,
 ) -> PlaybackDecision {
-    let audio_stream = pick_audio(&probe.audio);
+    let default_stream = pick_audio(&probe.audio);
+    let audio_stream = opts
+        .audio_stream
+        .filter(|stream| *stream < probe.audio.len())
+        .or(default_stream);
     let audio = audio_stream.map(|i| &probe.audio[i]);
+    let chosen_bit = if audio_stream == default_stream {
+        TranscodeReasons::empty()
+    } else {
+        TranscodeReasons::AudioTrackChosen
+    };
     let video = probe.video.as_ref();
     let over_bitrate = matches!(
         (caps.max_bitrate_bps, probe.format_bit_rate),
@@ -438,7 +452,8 @@ pub fn decide(
         for profile in &caps.direct_play {
             let mut r = video_issues(video, &profile.video_codecs, caps)
                 | audio_issues(audio, &profile.audio_codecs, caps)
-                | bitrate_bit;
+                | bitrate_bit
+                | chosen_bit;
             if !probe
                 .container
                 .as_deref()
@@ -1168,6 +1183,38 @@ mod tests {
         p.video.as_mut().unwrap().profile = None;
         let (_, reasons) = transcoding(&decide_default(&p, &ClientCapabilities::web()));
         assert_eq!(reasons, TranscodeReasons::PixelFormatNotSupported);
+    }
+
+    #[test]
+    fn a_chosen_audio_track_rules_out_direct_play_but_not_copying() {
+        let mut probe = basic();
+        let mut second = probe.audio[0].clone();
+        second.default = false;
+        second.language = Some("fra".to_string());
+        probe.audio.push(second);
+        let caps = ClientCapabilities::web();
+        assert!(matches!(
+            decide_default(&probe, &caps).route,
+            PlaybackRoute::Direct
+        ));
+        let opts = DecideOptions {
+            audio_stream: Some(1),
+            ..DecideOptions::default()
+        };
+        let decision = decide(&probe, &caps, &opts);
+        assert_eq!(decision.audio_stream, Some(1));
+        let (plan, reasons) = transcoding(&decision);
+        assert_eq!(reasons, TranscodeReasons::AudioTrackChosen);
+        assert!(plan.copies_video() && plan.copies_audio());
+        // Choosing what would play anyway changes nothing.
+        let opts = DecideOptions {
+            audio_stream: Some(0),
+            ..DecideOptions::default()
+        };
+        assert!(matches!(
+            decide(&probe, &caps, &opts).route,
+            PlaybackRoute::Direct
+        ));
     }
 
     #[test]

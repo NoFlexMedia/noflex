@@ -2,9 +2,9 @@
 
 query Home {
   contentCategories { category workCount }
-  continueWatching(first: 16) { nodes { ...WorkCard seriesExternalIds { kind value } } }
+  continueWatching(first: 16) { nodes { ...WorkCard seriesTitle seriesExternalIds { kind value } } }
   recentlyAdded(first: 24) { nodes { ...WorkFull } }
-  recentlyPlayed(first: 16) { nodes { ...WorkCard } }
+  recentlyPlayed(first: 16) { nodes { ...WorkCard seriesTitle } }
   recommendations(first: 16) { nodes { ...WorkCard } }
 }
 
@@ -55,7 +55,7 @@ query ChildPage($library: ID!, $parent: ID!, $after: String) {
 # A newer keystroke supersedes the search in flight.
 query Search($text: String!, $mode: SearchMode!, $kinds: [WorkKind!]) @dedupe(cancelFirst: true, match: Operation) {
   search(text: $text, mode: $mode, kinds: $kinds, first: 48) @paginate {
-    edges { node { score matchedFields workId work { ...WorkCard overview seriesExternalIds { kind value } } } }
+    edges { node { score matchedFields workId work { ...WorkCard overview seriesTitle seriesExternalIds { kind value } } } }
   }
 }
 

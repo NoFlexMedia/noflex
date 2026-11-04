@@ -10,13 +10,11 @@
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import MusicNotes from "phosphor-svelte/lib/MusicNotes";
   import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
-  import SidebarSimple from "phosphor-svelte/lib/SidebarSimple";
   import Stack from "phosphor-svelte/lib/Stack";
   import Television from "phosphor-svelte/lib/Television";
   import { page } from "$app/state";
   import { availableCategories } from "$lib/categories.js";
   import { app } from "$lib/session.svelte.js";
-  import { sidebar, toggleSidebar } from "$lib/ui.svelte.js";
   import BrandMark from "$components/BrandMark.svelte";
   import Tip from "$components/ui/Tip.svelte";
 
@@ -61,14 +59,6 @@
   </nav>
   <div class="foot">
     {#if app.viewer?.isAdmin}{@render item({ href: "/admin", label: "Administration", icon: ShieldCheck })}{/if}
-    <Tip text={sidebar.collapsed ? "Expand sidebar" : "Collapse sidebar"} hint="[" side="right">
-      {#snippet children(props)}
-        <button {...props} type="button" class="item toggle" onclick={toggleSidebar} aria-expanded={!sidebar.collapsed} aria-label={sidebar.collapsed ? "Expand sidebar" : "Collapse sidebar"}>
-          <span class="glyph"><SidebarSimple size={19} /></span>
-          <span class="label">Collapse</span>
-        </button>
-      {/snippet}
-    </Tip>
     <div class="server" title="{app.server?.name ?? 'NoFlex'} · v{app.server?.version}">
       <span class="dot on"></span>
       <span class="label"><strong>{app.server?.name ?? "NoFlex"}</strong><small>v{app.server?.version} · {app.server?.backend}</small></span>
@@ -88,7 +78,7 @@
   nav { flex: 1; display: grid; align-content: start; gap: 2px; overflow-y: auto; margin: 0 -4px; padding: 0 4px; scrollbar-width: none; }
   .heading { position: relative; padding: 18px 12px 6px; font-size: 0.7rem; font-weight: 650; letter-spacing: 0.13em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; }
   .heading::after { content: ""; position: absolute; left: 10px; right: 10px; top: calc(50% + 6px); height: 1px; background: var(--line); opacity: 0; transition: opacity 160ms var(--ease-out); }
-  .item { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; height: 40px; padding: 0 12px 0 var(--inset); border: 0; border-radius: 11px; background: none; font: inherit; text-align: left; cursor: pointer; color: var(--text-2); font-weight: 550; font-size: 0.92rem; transition: background var(--t) var(--ease-out), color var(--t); }
+  .item { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; height: 40px; padding: 0 12px 0 var(--inset); border-radius: 11px; color: var(--text-2); font-weight: 550; font-size: 0.92rem; transition: background var(--t) var(--ease-out), color var(--t); }
   .item:hover { background: var(--surface-2); color: var(--text); }
   .item[aria-current="page"] { background: var(--surface-3); color: var(--text); }
   .item[aria-current="page"]::before { content: ""; position: absolute; left: -12px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); animation: grow 300ms var(--ease-spring); }
@@ -96,8 +86,6 @@
   .item[aria-current="page"] .glyph { color: var(--accent); }
   .glyph { display: grid; flex: none; transition: transform var(--t) var(--ease-spring); }
   .item:active .glyph { transform: scale(0.88); }
-  .toggle .glyph { color: var(--text-3); }
-  .toggle:hover .glyph { color: var(--text); }
   .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* Labels return once the sidebar has opened enough to hold them, and leave at once. */
   .label, .wordmark { transition: opacity 180ms var(--ease-out) 90ms; }
@@ -113,7 +101,7 @@
   }
   @media (max-width: 1179px) {
     .sidebar { padding-inline: 10px; }
-    .wordmark, .label, .server .label, .heading, .toggle { display: none; }
+    .wordmark, .label, .server .label, .heading { display: none; }
     .brand { justify-content: center; padding-inline: 0; }
     .item { justify-content: center; padding: 0; height: 46px; }
     .item[aria-current="page"]::before { left: -10px; }

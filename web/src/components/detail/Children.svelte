@@ -161,8 +161,10 @@
   .children { margin-top: 56px; }
   .section-head { flex-wrap: wrap; align-items: center; }
 
-  /* Season rail: poster tiles, the chosen one lifted and ringed. */
-  .seasons { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(104px, 11vw, 132px); gap: 14px; overflow-x: auto; padding: 6px 4px 14px; margin: -6px -4px 6px; scroll-snap-type: x proximity; scrollbar-width: none; }
+  /* Season rail: poster tiles, the chosen one lifted and ringed. The rail
+     scrolls, so it clips: its padding has to clear the 5px ring plus the
+     3px hover lift. */
+  .seasons { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(104px, 11vw, 132px); gap: 14px; overflow-x: auto; padding: 10px 8px 14px; margin: -10px -8px 6px; scroll-snap-type: x proximity; scrollbar-width: none; }
   .season { display: grid; gap: 3px; text-align: left; scroll-snap-align: start; animation: fade-up var(--t-slow) var(--ease-out) both; animation-delay: calc(var(--i) * 40ms); }
   .season-art { position: relative; display: block; border-radius: var(--r); overflow: hidden; outline: 2px solid transparent; outline-offset: 3px; transition: transform var(--t) var(--ease-out), outline-color var(--t), box-shadow var(--t), filter var(--t); filter: saturate(0.75) brightness(0.8); }
   .season:hover .season-art { transform: translateY(-3px); filter: none; }

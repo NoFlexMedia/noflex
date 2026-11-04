@@ -1736,6 +1736,21 @@ impl Work {
             .map(|series| series.provider_ids())
             .unwrap_or_default())
     }
+
+    /// Title of the series this episode belongs to, for showing an episode
+    /// away from its series. Null for anything but an episode.
+    #[graphql(complexity = 2)]
+    async fn series_title(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Option<String>> {
+        crate::access::request_user(ctx)?;
+        let series = self
+            .series_of_episode(complex_storage(ctx)?.as_ref())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(series.map(|series| series.title))
+    }
 }
 
 impl Work {

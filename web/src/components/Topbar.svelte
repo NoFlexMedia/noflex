@@ -5,14 +5,16 @@
   import Devices from "phosphor-svelte/lib/Devices";
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
+  import SidebarSimple from "phosphor-svelte/lib/SidebarSimple";
   import SignOut from "phosphor-svelte/lib/SignOut";
   import User from "phosphor-svelte/lib/User";
   import { app, logout } from "$lib/session.svelte.js";
-  import { palette } from "$lib/ui.svelte.js";
+  import { palette, sidebar, toggleSidebar } from "$lib/ui.svelte.js";
   import { titleCase } from "$lib/format.js";
   import BrandMark from "$components/BrandMark.svelte";
   import Menu from "$components/ui/Menu.svelte";
   import MenuItem from "$components/ui/MenuItem.svelte";
+  import Tip from "$components/ui/Tip.svelte";
 
   let scrolled = $state(false);
   const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
@@ -22,6 +24,13 @@
 
 <header class="topbar" class:scrolled>
   <a class="mobile-brand" href="/" aria-label="NoFlex home"><BrandMark size={28} /></a>
+  <span class="sidebar-toggle">
+    <Tip text={sidebar.collapsed ? "Expand sidebar" : "Collapse sidebar"} hint="[">
+      {#snippet children(props)}
+        <button {...props} type="button" class="icon-btn" onclick={toggleSidebar} aria-expanded={!sidebar.collapsed} aria-label={sidebar.collapsed ? "Expand sidebar" : "Collapse sidebar"}><SidebarSimple size={19} /></button>
+      {/snippet}
+    </Tip>
+  </span>
   <button class="search" type="button" onclick={() => (palette.open = true)}>
     <MagnifyingGlass size={17} />
     <span>Search or jump to…</span>
@@ -52,6 +61,9 @@
   :global(:root[data-sidebar-motion]) .topbar { transition: left var(--nav-t) var(--ease-out), background 300ms var(--ease-out), backdrop-filter 300ms, border-color 300ms; }
   .topbar.scrolled { background: rgb(7 8 11 / 0.72); backdrop-filter: blur(22px) saturate(1.5); border-bottom-color: var(--line); }
   .mobile-brand { display: none; }
+  /* Only the wide layout has a sidebar to collapse. */
+  .sidebar-toggle { display: none; }
+  @media (min-width: 1180px) { .sidebar-toggle { display: contents; } }
   .search { display: flex; align-items: center; gap: 10px; width: min(420px, 100%); height: 40px; padding: 0 8px 0 14px; border-radius: 999px; background: rgb(255 255 255 / 0.07); border: 1px solid var(--line); color: var(--text-3); font-size: 0.9rem; backdrop-filter: blur(16px); transition: background var(--t), border-color var(--t), color var(--t); }
   .search:hover { background: rgb(255 255 255 / 0.1); border-color: var(--line-strong); color: var(--text-2); }
   .search span { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

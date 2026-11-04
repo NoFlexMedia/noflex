@@ -173,14 +173,12 @@
         <div><h2>Smart transcoding</h2><p>The server can prepare what you’re likely to watch next while it’s idle, so playback starts without a live transcode</p></div>
       </header>
       {#if devices.length}
-        <ul class="smart-devices">
+        <ul class="list smart-devices">
           {#each devices as device (device.id)}
             <li>
-              <label class="toggle"><input type="checkbox" class="switch" checked={device.smartTranscode} onchange={(event) => setSmart(device, event.currentTarget.checked)} /><span><strong>{device.name}{#if device.id === thisDevice} <small class="faint">· this device</small>{/if}</strong><small>Last seen {ago(device.lastSeenAt)}</small></span></label>
-              <div class="smart-actions">
-                <Select value={device.maxBitrateBps ? String(device.maxBitrateBps) : ""} items={QUALITY} label="Quality limit for {device.name}" onchange={(value) => setLimit(device, value)} />
-                {#if device.id !== thisDevice}<button class="btn ghost sm" onclick={() => forget(device)}>Forget</button>{/if}
-              </div>
+              <label class="toggle"><input type="checkbox" class="switch" checked={device.smartTranscode} onchange={(event) => setSmart(device, event.currentTarget.checked)} /><span class="what"><strong>{device.name}{#if device.id === thisDevice}<span class="chip accent">This browser</span>{/if}</strong><small>Last seen {ago(device.lastSeenAt)}</small></span></label>
+              <Select value={device.maxBitrateBps ? String(device.maxBitrateBps) : ""} items={QUALITY} label="Quality limit for {device.name}" onchange={(value) => setLimit(device, value)} />
+              {#if device.id !== thisDevice}<button class="btn ghost sm" onclick={() => forget(device)} aria-label="Forget {device.name}">Forget</button>{/if}
             </li>
           {/each}
         </ul>
@@ -290,9 +288,8 @@
 </Dialog>
 
 <style>
-  .smart-devices { display: grid; gap: 14px; list-style: none; margin: 0; padding: 0; }
-  .smart-devices li { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; justify-content: space-between; }
-  .smart-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  /* Fixed columns keep the selects lined up whether or not a row can be forgotten. */
+  .smart-devices li { display: grid; grid-template-columns: minmax(0, 1fr) 190px 72px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 18px; align-items: start; }
   .wide { grid-column: 1 / -1; }
   .row-skel { height: 44px; margin-top: 12px; border-radius: 10px; }
@@ -321,6 +318,8 @@
   .secret code { display: block; padding: 16px; border-radius: var(--r); background: rgb(0 0 0 / 0.35); border: 1px solid var(--line); color: var(--accent); font-size: 0.92rem; word-break: break-all; user-select: all; }
   @media (max-width: 620px) {
     .list li { flex-wrap: wrap; }
+    .smart-devices li { grid-template-columns: minmax(0, 1fr) auto; }
+    .smart-devices .toggle { grid-column: 1 / -1; }
     .seen { justify-items: start; text-align: left; order: 3; flex-basis: 100%; padding-left: 52px; }
   }
 </style>

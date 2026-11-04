@@ -147,6 +147,17 @@ pub struct HealthReport {
 /// result at zero-based `rank` contributes `1 / (RRF_K + rank + 1)`.
 pub const RRF_K: f32 = 60.0;
 
+/// Order for fused hits: anything matching by title first, so someone typing a
+/// title gets it even when a synopsis scores well in both channels.
+pub fn hybrid_order(a: &SearchHit, b: &SearchHit) -> std::cmp::Ordering {
+    let in_title = |hit: &SearchHit| hit.matched_fields.iter().any(|field| field == "title");
+    in_title(b).cmp(&in_title(a)).then_with(|| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
+}
+
 /// Default hybrid-search impl: fuses lexical + vector results with
 /// reciprocal rank fusion (RRF). Backends with a native hybrid query plan
 /// override `Storage::search_hybrid` and skip this.
@@ -218,11 +229,7 @@ where
             matched_fields,
         })
         .collect();
-    out.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    out.sort_by(hybrid_order);
     out.truncate(query.limit as usize);
     Ok(out)
 }

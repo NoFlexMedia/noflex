@@ -71,7 +71,9 @@
     overscroll-behavior-x: contain;
     scroll-snap-type: x mandatory;
     scroll-padding-inline: var(--gutter);
-    padding: 8px var(--gutter) 14px;
+    /* Scrolling clips: the top has to clear a lifted card's focus ring. */
+    margin-top: -4px;
+    padding: 12px var(--gutter) 14px;
     scrollbar-width: none;
   }
   .track::-webkit-scrollbar { display: none; }

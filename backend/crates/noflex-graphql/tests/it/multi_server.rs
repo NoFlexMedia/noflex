@@ -382,19 +382,25 @@ async fn an_episode_names_its_series_but_never_local_ids() {
             server
                 .run(
                     Some(server.admin),
-                    r#"query($id: ID!) { work(id: $id) { seriesExternalIds { kind value } } }"#,
+                    r#"query($id: ID!) { work(id: $id) { seriesTitle seriesExternalIds { kind value } } }"#,
                     json!({ "id": work.to_string() }),
                 )
-                .await["work"]["seriesExternalIds"]
+                .await["work"]
                 .clone()
         }
     };
 
     assert_eq!(
         series_ids(episode).await,
-        json!([{ "kind": "TMDB", "value": "tv/42" }])
+        json!({
+            "seriesTitle": "Show",
+            "seriesExternalIds": [{ "kind": "TMDB", "value": "tv/42" }],
+        })
     );
-    assert_eq!(series_ids(series).await, json!([]));
+    assert_eq!(
+        series_ids(series).await,
+        json!({ "seriesTitle": null, "seriesExternalIds": [] })
+    );
 }
 
 #[tokio::test]

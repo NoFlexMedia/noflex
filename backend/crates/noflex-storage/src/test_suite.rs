@@ -103,6 +103,8 @@ where
     search_lexical_miss(store).await;
     search_vector_similarity(store).await;
     search_hybrid_fuses(store).await;
+    search_ranks_titles_over_mentions(store).await;
+    search_hybrid_keeps_title_hits_first(store).await;
     works_missing_embedding_backfill(store).await;
     backup_round_trip(store).await;
     live_tv_dvr_lifecycle(store).await;
@@ -5021,6 +5023,147 @@ async fn search_hybrid_fuses<S: Storage + ?Sized>(store: &S) {
 
     store.delete_work(s_id).await.ok();
     store.delete_work(w_id).await.ok();
+    store.delete_library(lib.id).await.ok();
+}
+
+/// "harbor" should find the show and titles carrying the word, not every episode
+/// whose synopsis names the show, however recently those were added.
+async fn search_ranks_titles_over_mentions<S: Storage + ?Sized>(store: &S) {
+    let lib = test_library("Ranked Lib");
+    store.upsert_library(&lib).await.expect("library");
+    let long_ago = OffsetDateTime::now_utc() - time::Duration::days(365);
+    let newer = OffsetDateTime::now_utc();
+    let work = |kind, title: &str, parent, overview: Option<&str>, added| {
+        let mut work = make_work_of_kind(library_id(&lib), kind, title, added);
+        work.parent_id = parent;
+        work.overview = overview.map(str::to_string);
+        work
+    };
+
+    let show = work(WorkKind::Series, "Harbor Lights", None, None, long_ago);
+    let season = work(WorkKind::Season, "Season 1", Some(show.id), None, newer);
+    let names_its_show = work(
+        WorkKind::Episode,
+        "Low Water",
+        Some(season.id),
+        Some("Another night in Harbor Lights."),
+        newer,
+    );
+    let word_in_title = work(WorkKind::Movie, "Cold Harbor Road", None, None, long_ago);
+    let other_show = work(WorkKind::Series, "Second Shift", None, None, newer);
+    let other_season = work(
+        WorkKind::Season,
+        "Season 1",
+        Some(other_show.id),
+        None,
+        newer,
+    );
+    let titled_episode = work(
+        WorkKind::Episode,
+        "The Harbor Master",
+        Some(other_season.id),
+        None,
+        newer,
+    );
+    let mentioning_episode = work(
+        WorkKind::Episode,
+        "Stock Take",
+        Some(other_season.id),
+        Some("A delivery goes missing at the harbor."),
+        newer,
+    );
+    let mentioning_movie = work(
+        WorkKind::Movie,
+        "Iron Tide",
+        None,
+        Some("A race to the harbor."),
+        newer,
+    );
+    let works = [
+        &show,
+        &season,
+        &names_its_show,
+        &word_in_title,
+        &other_show,
+        &other_season,
+        &titled_episode,
+        &mentioning_episode,
+        &mentioning_movie,
+    ];
+    for work in works {
+        store.upsert_work(work).await.expect("work");
+    }
+
+    let hits = store
+        .search_lexical("harbor", &[], None, 10)
+        .await
+        .expect("search");
+    let found = hits.iter().map(|hit| hit.work).collect::<Vec<_>>();
+    assert_eq!(
+        found,
+        vec![
+            show.id,
+            word_in_title.id,
+            titled_episode.id,
+            mentioning_movie.id,
+            mentioning_episode.id,
+        ]
+    );
+    assert_eq!(hits[0].matched_fields, ["title"]);
+    assert_eq!(hits[3].matched_fields, ["overview"]);
+
+    let episodes = store
+        .search_lexical("harbor", &[WorkKind::Episode], None, 10)
+        .await
+        .expect("search");
+    assert!(
+        episodes.iter().any(|hit| hit.work == names_its_show.id),
+        "filtering to episodes asks for them"
+    );
+
+    for work in works.into_iter().rev() {
+        store.delete_work(work.id).await.ok();
+    }
+    store.delete_library(lib.id).await.ok();
+}
+
+/// A synopsis strong in both channels still sits below a title match.
+async fn search_hybrid_keeps_title_hits_first<S: Storage + ?Sized>(store: &S) {
+    let lib = test_library("Hybrid Title Lib");
+    store.upsert_library(&lib).await.expect("library");
+    let now = OffsetDateTime::now_utc();
+    let titled = make_work_of_kind(library_id(&lib), WorkKind::Movie, "Harbor", now);
+    let mut mentioning = make_work_of_kind(library_id(&lib), WorkKind::Movie, "Iron Tide", now);
+    mentioning.overview = Some("A race to the harbor.".to_string());
+    store.upsert_work(&titled).await.expect("titled");
+    store.upsert_work(&mentioning).await.expect("mentioning");
+    store
+        .upsert_embedding(
+            noflex_core::EmbeddingTarget::Work(mentioning.id),
+            "title-first",
+            "model",
+            &[1.0, 0.0],
+        )
+        .await
+        .expect("embedding");
+
+    let hits = store
+        .search_hybrid(&crate::query::HybridQuery {
+            access_user_id: None,
+            text: "harbor".to_string(),
+            query_vector: Some(vec![1.0, 0.0]),
+            vector_namespace: "title-first".to_string(),
+            kinds: vec![],
+            limit: 10,
+            mode: crate::query::SearchMode::Hybrid,
+        })
+        .await
+        .expect("hybrid");
+    assert_eq!(hits[0].work, titled.id);
+    assert_eq!(hits[1].work, mentioning.id);
+
+    store.delete_work(titled.id).await.ok();
+    store.delete_work(mentioning.id).await.ok();
     store.delete_library(lib.id).await.ok();
 }
 

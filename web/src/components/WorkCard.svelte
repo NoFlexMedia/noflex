@@ -18,7 +18,13 @@
     if (!data || data.played || !data.positionMs || !work.runtimeMs) return null;
     return Math.min(1, data.positionMs / work.runtimeMs);
   });
-  let line = $derived(meta ?? ([subtitleFor(work), work.kind !== "EPISODE" ? titleCase(work.kind) : "", work.server?.name].filter(Boolean).join(" · ")));
+  // Where a list asks for the series, an episode leads with it: "Low Water" means
+  // nothing on its own. Unmatched episodes are only titled with their number.
+  let series = $derived(work.kind === "EPISODE" ? work.seriesTitle : null);
+  let heading = $derived(series ?? work.title);
+  let episodeTitle = $derived(series && !/^episode \d+$/i.test(work.title) ? work.title : "");
+  let label = $derived(series ? [series, subtitleFor(work), episodeTitle].filter(Boolean).join(", ") : work.title);
+  let line = $derived(meta ?? ([subtitleFor(work), episodeTitle, work.kind !== "EPISODE" ? titleCase(work.kind) : "", work.server?.name].filter(Boolean).join(" · ")));
   let href = $derived(work.server ? `/works/${work.id}?server=${work.server.id}` : `/works/${work.id}`);
 
   async function play() {
@@ -31,20 +37,20 @@
 </script>
 
 <div class="card" class:wide bind:this={card}>
-  <a class="hit" {href} onclick={() => markMorph(key, card)} aria-label={work.title}>
+  <a class="hit" {href} onclick={() => markMorph(key, card)} aria-label={label}>
     <div class="frame" use:tilt>
       <Artwork {work} kind={wide ? "thumb" : "poster"} {width} {eager} vt={!wide && morph.key === key ? "poster" : null} />
       <span class="glare" aria-hidden="true"></span>
       {#if work.userData?.played}<span class="watched" title="Watched"><Check size={13} weight="bold" /></span>{/if}
-      {#if wide}<span class="wide-title"><strong>{work.title}</strong>{#if line}<small>{line}</small>{/if}</span>{/if}
+      {#if wide}<span class="wide-title"><strong>{heading}</strong>{#if line}<small>{line}</small>{/if}</span>{/if}
       {#if progress != null}<span class="progress" aria-label="{Math.round(progress * 100)}% watched"><span style:width="{progress * 100}%"></span></span>{/if}
     </div>
     {#if !wide}
-      <span class="caption"><strong>{work.title}</strong>{#if line}<small>{line}</small>{/if}</span>
+      <span class="caption"><strong>{heading}</strong>{#if line}<small>{line}</small>{/if}</span>
     {/if}
   </a>
   {#if playable}
-    <button class="quick-play" class:busy={playing} aria-label="Play {work.title}" onclick={play} disabled={playing}>
+    <button class="quick-play" class:busy={playing} aria-label="Play {label}" onclick={play} disabled={playing}>
       {#if playing}<span class="spinner sm"></span>{:else}<Play size={16} weight="fill" />{/if}
     </button>
   {/if}
@@ -76,7 +82,7 @@
   .hit:hover .caption strong { color: #fff; }
   .wide-title { position: absolute; inset: auto 0 0 0; display: grid; gap: 1px; padding: 40px 14px 14px; border-radius: 0 0 var(--r) var(--r); background: linear-gradient(to top, rgb(0 0 0 / 0.85), transparent); pointer-events: none; }
   .watched { position: absolute; top: 8px; left: 8px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); box-shadow: var(--shadow-1); }
-  .progress { position: absolute; left: 10px; right: 10px; bottom: 9px; height: 3px; border-radius: 9px; background: rgb(255 255 255 / 0.22); overflow: hidden; backdrop-filter: blur(4px); }
+  .progress { position: absolute; left: 10px; right: 10px; bottom: 9px; height: 3px; border-radius: 9px; background: rgb(255 255 255 / 0.22); overflow: hidden; }
   .wide .progress { bottom: 7px; }
   .progress span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
   .quick-play {

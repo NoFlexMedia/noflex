@@ -3826,6 +3826,11 @@ type Work {
 	appear.
 	"""
 	seriesExternalIds: [ExternalId!]!
+	"""
+	Title of the series this episode belongs to, for showing an episode
+	away from its series. Null for anything but an episode.
+	"""
+	seriesTitle: String
 }
 
 type WorkConnection {

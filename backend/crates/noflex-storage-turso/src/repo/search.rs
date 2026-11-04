@@ -16,14 +16,31 @@ use crate::{
     repo::works::row_to_work,
 };
 
-const SEARCH_LEXICAL: &str = "SELECT id, kind, parent_id, library_id, title, sort_title, \
-    year, release_date, overview, external_ids_json, index_number, index_end, parent_index, \
-    metadata_status, added_at, updated_at, tagline, original_title, community_rating, \
-    locked_fields_json \
-    FROM works \
-    WHERE (LOWER(title) LIKE ?1 ESCAPE '\\' \
-       OR LOWER(sort_title) LIKE ?1 ESCAPE '\\' \
-       OR LOWER(COALESCE(overview, '')) LIKE ?1 ESCAPE '\\')";
+// ?1 is the query anywhere, ?2 the whole title, ?3 its start, ?4 the start of a word.
+const SEARCH_LEXICAL: &str = "SELECT w.id, \
+    (LOWER(w.title) LIKE ?1 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?1 ESCAPE '\\') AS in_title \
+    FROM works w \
+    LEFT JOIN works parent ON parent.id = w.parent_id \
+    LEFT JOIN works grandparent ON grandparent.id = parent.parent_id \
+    WHERE (LOWER(w.title) LIKE ?1 ESCAPE '\\' \
+       OR LOWER(w.sort_title) LIKE ?1 ESCAPE '\\' \
+       OR LOWER(COALESCE(w.overview, '')) LIKE ?1 ESCAPE '\\')";
+
+// A show matching the query already answers it, and its episodes' synopses tend
+// to repeat its name. Episodes matching on their own title still count.
+const NOT_JUST_MENTIONING_ITS_SERIES: &str = " AND (w.kind NOT IN ('season', 'episode', 'track') \
+    OR LOWER(w.title) LIKE ?1 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?1 ESCAPE '\\' \
+    OR NOT (LOWER(COALESCE(parent.title, '')) LIKE ?1 ESCAPE '\\' \
+        OR LOWER(COALESCE(grandparent.title, '')) LIKE ?1 ESCAPE '\\'))";
+
+// Titles before synopses, whole titles and series before single episodes.
+const LEXICAL_RELEVANCE: &str = " ORDER BY in_title DESC, \
+    w.kind IN ('season', 'episode', 'track') ASC, \
+    CASE WHEN LOWER(w.title) LIKE ?2 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?2 ESCAPE '\\' THEN 0 \
+        WHEN LOWER(w.title) LIKE ?3 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?3 ESCAPE '\\' THEN 1 \
+        WHEN LOWER(w.title) LIKE ?4 ESCAPE '\\' THEN 2 \
+        ELSE 3 END, \
+    w.added_at DESC";
 
 const EMB_UPSERT: &str = "INSERT INTO embeddings (target_kind, target_id, namespace, model_id, dimensions, vector_blob, updated_at) \
     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
@@ -60,27 +77,35 @@ pub(crate) async fn search_lexical(
     access_user_id: Option<noflex_core::UserId>,
     limit: u32,
 ) -> StorageResult<Vec<SearchHit>> {
-    let pattern = format!("%{}%", escape_like(query));
+    let escaped = escape_like(query);
     let mut sql = String::from(SEARCH_LEXICAL);
-    let mut params = vec![Value::Text(pattern)];
-    push_kind_filter(&mut sql, &mut params, kinds, "kind");
-    if let Some(user) = access_user_id {
-        push_access_filter(&mut sql, &mut params, user, "works");
+    let mut params = vec![
+        Value::Text(format!("%{escaped}%")),
+        Value::Text(escaped.clone()),
+        Value::Text(format!("{escaped}%")),
+        Value::Text(format!("% {escaped}%")),
+    ];
+    // Asking for episodes by kind means wanting them, however they matched.
+    if kinds.is_empty() {
+        sql.push_str(NOT_JUST_MENTIONING_ITS_SERIES);
     }
-    sql.push_str(&format!(
-        " ORDER BY added_at DESC LIMIT ?{}",
-        params.len() + 1
-    ));
+    push_kind_filter(&mut sql, &mut params, kinds, "w.kind");
+    if let Some(user) = access_user_id {
+        push_access_filter(&mut sql, &mut params, user, "w");
+    }
+    sql.push_str(LEXICAL_RELEVANCE);
+    sql.push_str(&format!(" LIMIT ?{}", params.len() + 1));
     params.push(Value::Integer(limit as i64));
     let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
     let mut out = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_turso)? {
         let id = row.get_value(0).map_err(map_turso)?;
+        let in_title = col_int(&row.get_value(1).map_err(map_turso)?)? != 0;
         out.push(SearchHit {
             work: WorkId::from_uuid(blob_to_uuid(col_blob(&id)?)?),
             access_checked: access_user_id.is_some(),
             score: 0.0,
-            matched_fields: vec!["title".to_string()],
+            matched_fields: vec![if in_title { "title" } else { "overview" }.to_string()],
         });
     }
     Ok(out)

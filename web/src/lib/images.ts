@@ -4,6 +4,8 @@
 // is stable for an hour, so plain <img src> works with native lazy loading
 // and the browser's HTTP cache. The server resizes on `w`/`h`/`fill`.
 
+import { mediaUrl } from "$lib/tokens.js";
+
 export type ArtKind = "poster" | "backdrop" | "thumb" | "logo";
 
 const PREFERENCE: Record<ArtKind, string[]> = {
@@ -17,9 +19,9 @@ export function pickImage(images: { kind: string; url: string }[] | null | undef
   if (!images?.length) return null;
   for (const name of PREFERENCE[kind]) {
     const hit = images.find((image) => image.kind === name);
-    if (hit) return hit.url;
+    if (hit) return mediaUrl(hit.url);
   }
-  return kind === "logo" ? null : images[0]?.url ?? null;
+  return kind === "logo" ? null : mediaUrl(images[0]?.url ?? null);
 }
 
 export function sized(url: string, width: number, height?: number): string {
@@ -50,6 +52,8 @@ export async function ambientColor(url: string): Promise<string | null> {
   if (cached) return cached;
   const image = new Image();
   image.decoding = "async";
+  // Art from a linked server taints the canvas without it.
+  if (/^https?:/.test(url)) image.crossOrigin = "anonymous";
   image.src = sized(url, 48, 27);
   try { await image.decode(); } catch { return null; }
   const canvas = document.createElement("canvas");
@@ -57,7 +61,8 @@ export async function ambientColor(url: string): Promise<string | null> {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) return null;
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+  let data: Uint8ClampedArray;
+  try { data = context.getImageData(0, 0, canvas.width, canvas.height).data; } catch { return null; }
   let r = 0, g = 0, b = 0, weight = 0;
   for (let index = 0; index < data.length; index += 4) {
     const pr = data[index] ?? 0, pg = data[index + 1] ?? 0, pb = data[index + 2] ?? 0;

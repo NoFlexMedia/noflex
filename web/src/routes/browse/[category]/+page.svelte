@@ -2,6 +2,10 @@
 <script>
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
+  import { CategoryWorksStore } from "$houdini";
+  import { worksVariables } from "$lib/workFilters.js";
+  import { askServers, connectedServers } from "$lib/servers.svelte.js";
+  import Rail from "$components/Rail.svelte";
   import Segmented from "$components/ui/Segmented.svelte";
   import WorkBrowser from "$components/WorkBrowser.svelte";
 
@@ -9,6 +13,19 @@
 
   const ANIME_KINDS = [{ value: "", label: "All" }, { value: "SERIES", label: "Series" }, { value: "MOVIE", label: "Movies" }];
   const TYPE_FILTERS = { MUSIC: ["ARTIST", "ALBUM", "TRACK"] };
+
+  // A grid can't page through several servers at once, so each gets its own rail.
+  let elsewhere = $state([]);
+  $effect(() => {
+    const variables = { category: route.category.value, ...worksVariables(page.url.searchParams) };
+    elsewhere = [];
+    if (!connectedServers().length) return;
+    let stale = false;
+    askServers(new CategoryWorksStore(), variables, (data) => data.works.edges.map((edge) => edge.node)).then((asked) => {
+      if (!stale) elsewhere = asked.answers.filter((answer) => answer.works.length);
+    });
+    return () => { stale = true; };
+  });
 
   function showKind(kind) {
     const next = new URLSearchParams(page.url.searchParams);
@@ -24,3 +41,13 @@
     {#if route.category.value === "ANIME"}<Segmented value={page.url.searchParams.get("kind") ?? ""} items={ANIME_KINDS} label="Anime type" onchange={showKind} />{/if}
   {/snippet}
 </WorkBrowser>
+
+{#if elsewhere.length}
+  <div class="page elsewhere">
+    {#each elsewhere as answer (answer.server.id)}<Rail title="On {answer.server.name}" items={answer.works} />{/each}
+  </div>
+{/if}
+
+<style>
+  .elsewhere { display: grid; gap: 28px; padding-top: 0; }
+</style>

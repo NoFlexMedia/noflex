@@ -14,6 +14,7 @@ pub(crate) mod library_access;
 pub(crate) mod list_works;
 pub(crate) mod live_tv;
 pub(crate) mod media_files;
+pub(crate) mod multi_server;
 pub(crate) mod optimized_versions;
 pub(crate) mod play_sessions;
 pub(crate) mod playlists;

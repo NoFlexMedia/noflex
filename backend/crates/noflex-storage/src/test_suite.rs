@@ -77,6 +77,9 @@ where
     episodes_after_lists_regular_episodes_in_order(store).await;
     devices_belong_to_their_user(store).await;
     optimized_versions_queue_by_priority(store).await;
+    invites_can_only_be_spent_while_valid(store).await;
+    linked_servers_belong_to_their_user(store).await;
+    applied_watch_state_keeps_its_original_time(store).await;
     tag_namespace_uniqueness(store).await;
     tag_assign_unassign(store).await;
     tag_assignments_carry_source_and_weight(store).await;
@@ -3390,6 +3393,217 @@ async fn optimized_versions_queue_by_priority<S: Storage + ?Sized>(store: &S) {
             .expect("all")
             .is_empty()
     );
+}
+
+async fn invites_can_only_be_spent_while_valid<S: Storage + ?Sized>(store: &S) {
+    use crate::domain::Invite;
+
+    let admin = make_user("invite-admin", true);
+    store.upsert_user(&admin).await.expect("admin");
+    let now = OffsetDateTime::now_utc();
+    let invite = |max_uses, expires_at| Invite {
+        id: noflex_core::InviteId::new(),
+        created_by: admin.id,
+        library_ids: vec![LibraryId::new()],
+        max_uses,
+        uses: 0,
+        expires_at,
+        revoked_at: None,
+        created_at: now,
+    };
+
+    let once = invite(1, now + time::Duration::days(1));
+    store
+        .create_invite(&once, "hash-once")
+        .await
+        .expect("create");
+    let spent = store
+        .consume_invite("hash-once", now)
+        .await
+        .expect("consume")
+        .expect("valid");
+    assert_eq!(spent.uses, 1);
+    assert_eq!(spent.library_ids, once.library_ids);
+    assert!(
+        store
+            .consume_invite("hash-once", now)
+            .await
+            .expect("consume")
+            .is_none(),
+        "used up"
+    );
+    store.release_invite_use(once.id).await.expect("release");
+    assert!(
+        store
+            .consume_invite("hash-once", now)
+            .await
+            .expect("consume")
+            .is_some(),
+        "a released use can be spent again"
+    );
+
+    let expired = invite(5, now - time::Duration::seconds(1));
+    store
+        .create_invite(&expired, "hash-expired")
+        .await
+        .expect("create");
+    assert!(
+        store
+            .consume_invite("hash-expired", now)
+            .await
+            .expect("consume")
+            .is_none()
+    );
+
+    let revoked = invite(5, now + time::Duration::days(1));
+    store
+        .create_invite(&revoked, "hash-revoked")
+        .await
+        .expect("create");
+    assert!(store.revoke_invite(revoked.id, now).await.expect("revoke"));
+    assert!(
+        !store.revoke_invite(revoked.id, now).await.expect("revoke"),
+        "already revoked"
+    );
+    assert!(
+        store
+            .consume_invite("hash-revoked", now)
+            .await
+            .expect("consume")
+            .is_none()
+    );
+    assert!(
+        store
+            .consume_invite("hash-unknown", now)
+            .await
+            .expect("consume")
+            .is_none()
+    );
+    assert_eq!(store.list_invites().await.expect("list").len(), 3);
+
+    store.delete_user(admin.id).await.ok();
+}
+
+async fn linked_servers_belong_to_their_user<S: Storage + ?Sized>(store: &S) {
+    use crate::domain::LinkedServer;
+
+    let owner = make_user("link-owner", false);
+    let other = make_user("link-other", false);
+    store.upsert_user(&owner).await.expect("owner");
+    store.upsert_user(&other).await.expect("other");
+    let now = OffsetDateTime::now_utc();
+    let link = |user: UserId, origin: &str, key: &str| LinkedServer {
+        id: noflex_core::LinkedServerId::new(),
+        user_id: user,
+        origin: origin.to_string(),
+        name: "Friend".to_string(),
+        api_key: key.to_string(),
+        sync_enabled: true,
+        synced_until: None,
+        created_at: now,
+    };
+
+    let first = store
+        .upsert_linked_server(&link(owner.id, "https://friend.example", "key-1"))
+        .await
+        .expect("link");
+
+    // Relinking replaces the key on the same row.
+    let relinked = store
+        .upsert_linked_server(&link(owner.id, "https://friend.example", "key-2"))
+        .await
+        .expect("relink");
+    assert_eq!(relinked.id, first.id);
+    assert_eq!(relinked.api_key, "key-2");
+    assert_eq!(
+        store
+            .linked_servers_for_user(owner.id)
+            .await
+            .expect("list")
+            .len(),
+        1
+    );
+
+    store
+        .upsert_linked_server(&link(other.id, "https://friend.example", "key-3"))
+        .await
+        .expect("another user's link");
+    store
+        .upsert_linked_server(&link(other.id, "http://192.168.1.5:8096", "key-4"))
+        .await
+        .expect("another origin");
+    assert_eq!(
+        store.linked_servers_for_user(owner.id).await.expect("list")[0].api_key,
+        "key-2",
+        "each user sees their own key"
+    );
+    let origins = store.linked_server_origins().await.expect("origins");
+    assert!(origins.contains(&"https://friend.example".to_string()));
+    assert!(origins.contains(&"http://192.168.1.5:8096".to_string()));
+    assert_eq!(
+        origins
+            .iter()
+            .filter(|origin| *origin == "https://friend.example")
+            .count(),
+        1
+    );
+
+    assert!(
+        !store
+            .delete_linked_server(other.id, first.id)
+            .await
+            .expect("delete"),
+        "not theirs to delete"
+    );
+    assert!(
+        store
+            .delete_linked_server(owner.id, first.id)
+            .await
+            .expect("delete")
+    );
+
+    store.delete_user(owner.id).await.ok();
+    store.delete_user(other.id).await.ok();
+    assert!(
+        !store
+            .linked_server_origins()
+            .await
+            .expect("origins")
+            .contains(&"http://192.168.1.5:8096".to_string()),
+        "links go with their user, and the policy with them"
+    );
+}
+
+async fn applied_watch_state_keeps_its_original_time<S: Storage + ?Sized>(store: &S) {
+    let library = test_library("Sync Lib");
+    store.upsert_library(&library).await.expect("library");
+    let user = make_user("sync-user", false);
+    store.upsert_user(&user).await.expect("user");
+    let work = make_work(library.id, "Synced", OffsetDateTime::now_utc());
+    store.upsert_work(&work).await.expect("work");
+    let target = PlayTarget::Work(work.id);
+    store
+        .set_favorite(user.id, target, true)
+        .await
+        .expect("favorite");
+
+    let then = OffsetDateTime::now_utc()
+        .replace_nanosecond(0)
+        .expect("time")
+        - time::Duration::days(3);
+    store
+        .apply_watch_state(user.id, target, true, Some(5_000), then)
+        .await
+        .expect("apply");
+    let data = store.user_data(user.id, target).await.expect("data");
+    assert!(data.played);
+    assert_eq!(data.position_ms, Some(5_000));
+    assert_eq!(data.last_played, Some(then), "not stamped with now");
+    assert_eq!(data.play_count, 1);
+    assert!(data.favorite, "other state is left alone");
+
+    store.delete_user(user.id).await.ok();
+    store.delete_library(library.id).await.ok();
 }
 
 async fn watched_top_level_works_roll_up<S: Storage + ?Sized>(store: &S) {

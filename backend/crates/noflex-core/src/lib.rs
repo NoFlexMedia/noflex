@@ -16,8 +16,9 @@ pub use error::{PluginError, PluginResult};
 pub use events::{DomainEvent, DomainEventBus};
 pub use ids::{
     ApiKeyId, ChannelId, CollectionId, DeviceId, DevicePinId, EditionId, EpgProgramId, ExportJobId,
-    LibraryId, LiveTvSourceId, MediaFileId, OptimizedVersionId, PlaySessionId, PlaylistId,
-    RecordingId, RecordingScheduleId, SessionId, TagId, UserId, WatchRoomId, WorkId,
+    InviteId, LibraryId, LinkedServerId, LiveTvSourceId, MediaFileId, OptimizedVersionId,
+    PlaySessionId, PlaylistId, RecordingId, RecordingScheduleId, SessionId, TagId, UserId,
+    WatchRoomId, WorkId,
 };
 pub use model::{
     AudioCodec, AudioObjectType, ChannelLayout, ColorPrimaries, DolbyVisionProfile,

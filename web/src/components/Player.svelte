@@ -24,6 +24,7 @@
   import { CachePolicy, ControlWatchRoomStore, MarkPlayedStore, MediaFilesStore, ReportProgressStore, StopPlaybackStore, WatchRoomEventsStore, WatchRoomStore } from "$houdini";
   import { reportOnExit } from "$lib/api.js";
   import { languageName, timecode } from "$lib/format.js";
+  import { mediaUrl } from "$lib/tokens.js";
   import { request, writeUserData } from "$lib/graphql.js";
   import { onReconnect } from "$lib/live.js";
   import { closePlayer, nextSibling, player, playWork, restartSession, stopSession } from "$lib/playback.svelte.js";
@@ -424,7 +425,7 @@
     const sheet = trick.sheets.find((item) => item.index === Math.floor(index / perSheet));
     if (!sheet) return null;
     const within = index % perSheet;
-    return { url: sheet.url, x: (within % trick.tileColumns) * trick.thumbWidth, y: Math.floor(within / trick.tileColumns) * trick.thumbHeight, w: trick.thumbWidth, h: trick.thumbHeight };
+    return { url: mediaUrl(sheet.url), x: (within % trick.tileColumns) * trick.thumbWidth, y: Math.floor(within / trick.tileColumns) * trick.thumbHeight, w: trick.thumbWidth, h: trick.thumbHeight };
   }
   let preview = $derived(hover ? sprite(hover.time) : null);
   let hoverChapter = $derived(hover ? [...chapters].reverse().find((chapter) => chapter.positionMs <= hover.time * 1000) : null);

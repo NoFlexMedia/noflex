@@ -91,72 +91,80 @@ impl DevicesQuery {
         ctx: &Context<'_>,
         device_id: DeviceId,
     ) -> async_graphql::Result<Vec<SmartDownload>> {
-        let principal = authed_principal(ctx)?;
-        let storage = storage(ctx)?;
-        let device = owned_device(storage, principal.user_id, device_id).await?;
-        if !device.smart_downloads {
-            return Ok(Vec::new());
-        }
-        let Ok(service) = ctx.data::<Arc<dyn PlaybackSessionService>>() else {
-            return Err(async_graphql::Error::new("playback is not available"));
-        };
-        let capabilities = serde_json::from_value::<ClientCapabilities>(device.capabilities.0)
-            .map_err(|_| async_graphql::Error::new("device capabilities are unreadable"))?;
-        let namespace = ctx
-            .data::<Arc<PluginRegistry>>()
-            .ok()
-            .and_then(|registry| registry.embedder_claim())
-            .map(|claim| claim.namespace);
-        let user = RequestUser {
-            user_id: principal.user_id,
-            is_admin: principal.is_admin,
-        };
-        // Boxed for the same reason as the recommendations resolver.
-        let likely = Box::pin(likely_watched(
-            storage.as_ref(),
-            namespace.as_deref(),
-            user,
-            SMART_DOWNLOAD_CANDIDATES,
-            OffsetDateTime::now_utc(),
-        ))
-        .await
-        .map_err(gql_err)?;
+        // Boxed because every resolver's future is laid out inside the merged
+        // root's, and this one is large enough to overflow a worker's stack.
+        Box::pin(smart_downloads(ctx, device_id)).await
+    }
+}
 
-        let mut remaining = device.download_budget_bytes.unwrap_or(u64::MAX);
-        let mut out = Vec::new();
-        'works: for work in likely {
-            for media in Box::pin(playable_sources(storage.as_ref(), &work))
+async fn smart_downloads(
+    ctx: &Context<'_>,
+    device_id: DeviceId,
+) -> async_graphql::Result<Vec<SmartDownload>> {
+    let principal = authed_principal(ctx)?;
+    let storage = storage(ctx)?;
+    let device = owned_device(storage, principal.user_id, device_id).await?;
+    if !device.smart_downloads {
+        return Ok(Vec::new());
+    }
+    let Ok(service) = ctx.data::<Arc<dyn PlaybackSessionService>>() else {
+        return Err(async_graphql::Error::new("playback is not available"));
+    };
+    let capabilities = serde_json::from_value::<ClientCapabilities>(device.capabilities.0)
+        .map_err(|_| async_graphql::Error::new("device capabilities are unreadable"))?;
+    let namespace = ctx
+        .data::<Arc<PluginRegistry>>()
+        .ok()
+        .and_then(|registry| registry.embedder_claim())
+        .map(|claim| claim.namespace);
+    let user = RequestUser {
+        user_id: principal.user_id,
+        is_admin: principal.is_admin,
+    };
+    let likely = likely_watched(
+        storage.as_ref(),
+        namespace.as_deref(),
+        user,
+        SMART_DOWNLOAD_CANDIDATES,
+        OffsetDateTime::now_utc(),
+    )
+    .await
+    .map_err(gql_err)?;
+
+    let mut remaining = device.download_budget_bytes.unwrap_or(u64::MAX);
+    let mut out = Vec::new();
+    'works: for work in likely {
+        for media in playable_sources(storage.as_ref(), &work)
+            .await
+            .map_err(gql_err)?
+        {
+            let Some(file) = service
+                .smart_download(
+                    principal.user_id,
+                    principal.session_id,
+                    &media,
+                    &capabilities,
+                )
                 .await
                 .map_err(gql_err)?
-            {
-                let Some(file) = service
-                    .smart_download(
-                        principal.user_id,
-                        principal.session_id,
-                        &media,
-                        &capabilities,
-                    )
-                    .await
-                    .map_err(gql_err)?
-                else {
-                    continue;
-                };
-                if file.size_bytes > remaining {
-                    break 'works;
-                }
-                remaining -= file.size_bytes;
-                out.push(SmartDownload {
-                    work: work.clone(),
-                    part_index: media.part_index,
-                    url: file.url,
-                    size_bytes: file.size_bytes,
-                    optimized: file.optimized,
-                    subtitles: file.subtitles,
-                });
+            else {
+                continue;
+            };
+            if file.size_bytes > remaining {
+                break 'works;
             }
+            remaining -= file.size_bytes;
+            out.push(SmartDownload {
+                work: work.clone(),
+                part_index: media.part_index,
+                url: file.url,
+                size_bytes: file.size_bytes,
+                optimized: file.optimized,
+                subtitles: file.subtitles,
+            });
         }
-        Ok(out)
     }
+    Ok(out)
 }
 
 async fn owned_device(

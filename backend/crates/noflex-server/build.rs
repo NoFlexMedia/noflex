@@ -141,7 +141,7 @@ fn content_security_policy(index: &str) -> String {
         push_hash(&mut style_sources, body);
     }
     format!(
-        "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src {script_sources}; style-src {style_sources}; img-src 'self' blob:; media-src 'self' blob:; connect-src 'self'; font-src 'self'"
+        "base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src {script_sources}; style-src {style_sources}; font-src 'self'"
     )
 }
 

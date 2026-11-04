@@ -21,6 +21,7 @@ mod library_crud;
 mod live_tv;
 mod metadata_manage;
 mod metadata_search;
+mod multi_server;
 mod play_stats;
 mod playback_events;
 mod plugin_lifecycle;

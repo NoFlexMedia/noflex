@@ -9,6 +9,8 @@
   import { ToggleGroup } from "bits-ui";
   import { SearchStore } from "$houdini";
   import { inview } from "$lib/actions/index.js";
+  import { mergeRanked } from "$lib/merge.js";
+  import { askServers, connectedServers } from "$lib/servers.svelte.js";
   import { titleCase } from "$lib/format.js";
   import { failure, fetchQuery, nextPage } from "$lib/graphql.js";
   import { attempt } from "$lib/ui.svelte.js";
@@ -28,7 +30,28 @@
   let query = $derived(text.trim());
   let wanted = $derived({ text: query, mode, kinds: kinds.length ? kinds : null });
   let current = $derived($search.variables?.text === query && $search.variables?.mode === mode && JSON.stringify($search.variables?.kinds ?? null) === JSON.stringify(wanted.kinds));
-  let results = $derived(query.length >= 2 ? ($search.data?.search.edges ?? []).map((edge) => edge.node).filter((hit) => hit.work) : []);
+  let ownResults = $derived(query.length >= 2 ? ($search.data?.search.edges ?? []).map((edge) => edge.node).filter((hit) => hit.work) : []);
+
+  // Other servers' hits join as they answer. Merged by rank, since scores from
+  // different servers mean different things.
+  let elsewhere = $state([]);
+  $effect(() => {
+    const variables = wanted;
+    elsewhere = [];
+    if (query.length < 2 || !connectedServers().length) return;
+    let stale = false;
+    const timer = setTimeout(() => {
+      askServers(new SearchStore(), variables, (data) => data.search.edges.map((edge) => edge.node.work).filter(Boolean)).then((asked) => {
+        if (!stale) elsewhere = asked.answers.map((answer) => answer.works);
+      });
+    }, 220);
+    return () => { stale = true; clearTimeout(timer); };
+  });
+  let results = $derived.by(() => {
+    if (!elsewhere.length) return ownResults;
+    const hits = new Map(ownResults.map((hit) => [hit.work.id, hit]));
+    return mergeRanked([ownResults.map((hit) => hit.work), ...elsewhere]).map((work) => hits.get(work.id) ?? { work, workId: work.id, matchedFields: [] });
+  });
   let searched = $derived(query.length >= 2 && $search.data ? $search.variables?.text ?? "" : "");
   let loading = $derived(query.length >= 2 && ($search.fetching || !current));
   let error = $derived(query.length >= 2 && current ? failure($search) : "");

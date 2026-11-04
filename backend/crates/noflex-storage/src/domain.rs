@@ -7,10 +7,11 @@
 use async_graphql::{Enum, SimpleObject, connection::Connection};
 use noflex_core::{
     ApiKeyId, ChannelId, ChannelLayout, CollectionId, ColorPrimaries, DeviceId, DevicePinId,
-    DolbyVisionProfile, EditionId, EpgProgramId, ExportJobId, ExternalId, HdrTransfer, ImageKind,
-    LibraryId, LiveTvSourceId, MatrixCoefficients, MediaFileId, MetadataStatus, OptimizedVersionId,
-    PixelFormat, PlaySessionId, PlayTargetKind, PlaylistId, RecordingId, RecordingScheduleId,
-    SessionId, TagId, UserId, VideoCodec, VideoProfile, WatchRoomId, WorkField, WorkId, WorkKind,
+    DolbyVisionProfile, EditionId, EpgProgramId, ExportJobId, ExternalId, ExternalIdKind,
+    HdrTransfer, ImageKind, InviteId, LibraryId, LinkedServerId, LiveTvSourceId,
+    MatrixCoefficients, MediaFileId, MetadataStatus, OptimizedVersionId, PixelFormat,
+    PlaySessionId, PlayTargetKind, PlaylistId, RecordingId, RecordingScheduleId, SessionId, TagId,
+    UserId, VideoCodec, VideoProfile, WatchRoomId, WorkField, WorkId, WorkKind,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -690,6 +691,38 @@ pub struct WatchedWork {
     pub favorite: bool,
     /// The highest of the user's ratings on the work and its descendants.
     pub rating: Option<f32>,
+}
+
+/// An invitation to create an ordinary account on this server.
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+pub struct Invite {
+    pub id: InviteId,
+    pub created_by: UserId,
+    /// What an account made from this invite can access.
+    pub library_ids: Vec<LibraryId>,
+    pub max_uses: u32,
+    pub uses: u32,
+    pub expires_at: OffsetDateTime,
+    pub revoked_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+}
+
+/// Another NoFlex server a user connects to. Clients talk to it directly; this
+/// server only remembers the link so it follows the user between devices.
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+pub struct LinkedServer {
+    pub id: LinkedServerId,
+    #[graphql(skip)]
+    pub user_id: UserId,
+    /// Scheme, host and port only.
+    pub origin: String,
+    pub name: String,
+    /// The user's revocable key on that server.
+    pub api_key: String,
+    pub sync_enabled: bool,
+    /// Watch activity before this has been carried across.
+    pub synced_until: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
 }
 
 /// A client registered for smart transcoding and downloads. `id` is chosen by
@@ -1683,6 +1716,54 @@ impl Work {
             .map_err(|e| async_graphql::Error::new(e.to_string()))?
             .first()
             .and_then(|edition| edition.runtime_ms))
+    }
+
+    /// Provider IDs of the series this episode belongs to, which identify it
+    /// across servers together with its season and episode numbers. Empty
+    /// for anything but an episode. Paths and other server-local IDs never
+    /// appear.
+    #[graphql(complexity = 2)]
+    async fn series_external_ids(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Vec<ExternalId>> {
+        crate::access::request_user(ctx)?;
+        let series = self
+            .series_of_episode(complex_storage(ctx)?.as_ref())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(series
+            .map(|series| series.provider_ids())
+            .unwrap_or_default())
+    }
+}
+
+impl Work {
+    /// External IDs that mean the same title on any server.
+    pub fn provider_ids(&self) -> Vec<ExternalId> {
+        self.external_ids
+            .iter()
+            .filter(|id| id.kind != ExternalIdKind::Custom)
+            .cloned()
+            .collect()
+    }
+
+    /// The series above an episode, through its season. `None` for anything else.
+    pub async fn series_of_episode(
+        &self,
+        storage: &dyn crate::Storage,
+    ) -> crate::StorageResult<Option<Work>> {
+        let (WorkKind::Episode, Some(season)) = (self.kind, self.parent_id) else {
+            return Ok(None);
+        };
+        match storage
+            .get_work(season)
+            .await?
+            .and_then(|season| season.parent_id)
+        {
+            Some(series) => storage.get_work(series).await,
+            None => Ok(None),
+        }
     }
 }
 

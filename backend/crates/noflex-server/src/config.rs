@@ -35,6 +35,9 @@ pub struct Config {
     pub public_url: Option<String>,
     pub data_dir: PathBuf,
     pub cache_dir: PathBuf,
+    /// Answer cross-origin requests, so clients connected to several servers
+    /// can reach this one from another's web page.
+    pub cross_origin: bool,
     pub log: LogConfig,
     pub transcoder: TranscoderConfig,
     pub plugin: PluginConfig,
@@ -196,6 +199,7 @@ impl Default for Config {
             public_url: None,
             data_dir,
             cache_dir,
+            cross_origin: true,
             log: LogConfig {
                 level: "info".to_string(),
                 file: None,
@@ -306,6 +310,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("CACHE_DIR", "cache_dir"),
     ("LOG_LEVEL", "log.level"),
     ("LOG_FILE", "log.file"),
+    ("CROSS_ORIGIN", "cross_origin"),
     ("TRANSCODER_HWACCEL", "transcoder.hwaccel"),
     ("TRANSCODER_FALLBACK", "transcoder.fallback"),
     ("TRANSCODER_OPTIMIZE_ENABLED", "transcoder.optimize.enabled"),

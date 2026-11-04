@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+use std::sync::Arc;
+
 use axum::{
-    Router,
+    Extension, Router,
     body::Body,
-    http::{HeaderValue, StatusCode, Uri, header},
+    http::{HeaderValue, Method, StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::get,
 };
+use noflex_storage::Storage;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 mod embedded {
     include!(concat!(env!("OUT_DIR"), "/web_assets.rs"));
@@ -22,24 +26,83 @@ where
     Router::new().fallback(get(serve))
 }
 
-async fn serve(uri: Uri) -> Response {
+async fn serve(storage: Option<Extension<Arc<dyn Storage>>>, uri: Uri) -> Response {
+    let linked = match &storage {
+        Some(Extension(storage)) => match storage.linked_server_origins().await {
+            Ok(origins) => origins,
+            Err(error) => {
+                tracing::warn!(%error, "web: linked origins unavailable");
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
     let path = uri.path().trim_start_matches('/');
+    let mut response = None;
     if path == "index.html" || !path.ends_with(".html") {
         if let Some((_, bytes)) = embedded::ASSETS.iter().find(|(asset, _)| *asset == path) {
-            return asset_response(path, bytes);
+            response = Some(asset_response(path, bytes));
         }
     }
-
-    if is_client_route(uri.path()) && !is_asset_like(uri.path()) {
+    if response.is_none() && is_client_route(uri.path()) && !is_asset_like(uri.path()) {
         if let Some((_, index)) = embedded::ASSETS
             .iter()
             .find(|(asset, _)| *asset == "index.html")
         {
-            return asset_response("index.html", index);
+            response = Some(asset_response("index.html", index));
         }
     }
+    let mut response = response.unwrap_or_else(|| {
+        protected_response(StatusCode::NOT_FOUND, Body::empty(), None, NO_CACHE)
+    });
+    if let Ok(policy) = HeaderValue::from_str(&content_security_policy(&linked)) {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_SECURITY_POLICY, policy);
+    }
+    response
+}
 
-    protected_response(StatusCode::NOT_FOUND, Body::empty(), None, NO_CACHE)
+/// The page's full policy: the build's script and style rules, plus where it may
+/// connect and load media from. Those live only in this header, not the page's
+/// meta tag, because browsers enforce both and the meta tag can't know which
+/// servers users have linked. Exact origins rather than `https:`: injected
+/// script could otherwise send a token anywhere. `linked` holds origins that
+/// passed validation when they were linked.
+fn content_security_policy(linked: &[String]) -> String {
+    let origins = linked
+        .iter()
+        .fold(String::new(), |all, origin| format!("{all} {origin}"));
+    format!(
+        "default-src 'self'; connect-src 'self'{origins}; img-src 'self' blob:{origins}; \
+         media-src 'self' blob:{origins}; {}",
+        embedded::CONTENT_SECURITY_POLICY
+    )
+}
+
+/// CORS for clients connected from other origins. Requests authenticate with
+/// bearer tokens and media tokens rather than cookies, so a foreign page gets no
+/// ambient authority. Refused until the server is set up: otherwise any website
+/// a visitor opened could finish setup and take the admin account.
+pub fn cross_origin_layer(storage: Arc<dyn Storage>) -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::async_predicate(move |_origin, _parts| {
+            let storage = storage.clone();
+            async move {
+                storage
+                    .list_users()
+                    .await
+                    .is_ok_and(|users| !users.is_empty())
+            }
+        }))
+        .allow_methods([Method::GET, Method::POST, Method::HEAD])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::RANGE])
+        .expose_headers([
+            header::CONTENT_RANGE,
+            header::ACCEPT_RANGES,
+            header::CONTENT_LENGTH,
+        ])
+        .allow_private_network(true)
 }
 
 fn is_asset_like(path: &str) -> bool {
@@ -61,6 +124,7 @@ fn is_client_route(path: &str) -> bool {
             | "/watch-rooms"
             | "/account"
             | "/admin"
+            | "/invite"
     ) || has_single_parameter(path, "/browse/")
         || has_single_parameter(path, "/libraries/")
         || has_single_parameter(path, "/works/")
@@ -265,10 +329,6 @@ mod tests {
         };
 
         for directive in [
-            "default-src",
-            "connect-src",
-            "img-src",
-            "media-src",
             "object-src",
             "script-src",
             "style-src",
@@ -288,6 +348,87 @@ mod tests {
                 "missing or altered {directive}"
             );
         }
+        // Browsers enforce the meta tag too, so anything here would block
+        // linked servers no matter what the header says.
+        for directive in ["default-src", "connect-src", "img-src", "media-src"] {
+            assert!(
+                !svelte_csp.contains(directive),
+                "{directive} must stay out of the meta tag"
+            );
+        }
+    }
+
+    #[test]
+    fn linked_origins_are_allowed_exactly() {
+        let policy = content_security_policy(&["https://friend.example".to_string()]);
+        for directive in [
+            "connect-src 'self' https://friend.example",
+            "img-src 'self' blob: https://friend.example",
+            "media-src 'self' blob: https://friend.example",
+        ] {
+            assert!(policy.contains(directive), "{policy}");
+        }
+        assert!(policy.contains("default-src 'self'"), "{policy}");
+        assert!(!policy.contains("https:;"), "{policy}");
+        assert!(
+            !content_security_policy(&[]).contains("friend"),
+            "nothing linked, nothing allowed"
+        );
+    }
+
+    #[tokio::test]
+    async fn cross_origin_requests_wait_for_setup() {
+        use noflex_storage::domain::User;
+        use noflex_storage_turso::TursoStore;
+        use tower::ServiceExt;
+
+        let store = Arc::new(TursoStore::open_temp().await.expect("store"));
+        store.migrate().await.expect("migrate");
+        let app = Router::new()
+            .route("/graphql", axum::routing::post(|| async { "ok" }))
+            .layer(cross_origin_layer(store.clone()));
+        let preflight = || {
+            axum::http::Request::builder()
+                .method(Method::OPTIONS)
+                .uri("/graphql")
+                .header(header::ORIGIN, "https://evil.example")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type")
+                .body(Body::empty())
+                .unwrap()
+        };
+
+        let response = app.clone().oneshot(preflight()).await.unwrap();
+        assert!(
+            !response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            "another site must not reach the setup wizard"
+        );
+
+        store
+            .upsert_user(&User {
+                id: noflex_core::UserId::new(),
+                name: "admin".to_string(),
+                password_hash: "argon2id$placeholder".to_string(),
+                is_admin: true,
+                role: noflex_core::UserRole::Admin,
+                created_at: time::OffsetDateTime::now_utc(),
+            })
+            .await
+            .expect("user");
+        let response = app.oneshot(preflight()).await.unwrap();
+        assert_eq!(
+            response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+            "https://evil.example",
+            "after setup every origin may try, with its own credentials"
+        );
+        assert!(
+            !response
+                .headers()
+                .contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
+            "no ambient authority"
+        );
     }
 
     /// Every SvelteKit page must be served the shell on a deep link.

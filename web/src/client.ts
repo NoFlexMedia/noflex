@@ -9,7 +9,7 @@ import { fetch as fetchPlugin, HoudiniClient, subscription } from "$houdini";
 import type { RequestHandler } from "$houdini/runtime/plugins/fetch";
 import type { GraphQLError } from "houdini/runtime";
 import { live } from "$lib/live.js";
-import { ApiError, authHeaders, currentAccessToken, GRAPHQL_URL, hasSession, refreshAccessToken } from "$lib/tokens.js";
+import { activeGraphqlUrl, activeHeaders, ApiError, currentAccessToken, hasSession, refreshAccessToken, usingLinkedServer } from "$lib/tokens.js";
 
 const AUTH_ERROR = /authentication required|invalid token|token expired|unauthenticated/i;
 
@@ -32,7 +32,9 @@ const failed = (error: unknown): Payload => {
   return { data: null, errors: [{ message: cause.message, extensions: { error: cause } }] };
 };
 
-async function post(fetch: typeof globalThis.fetch, body: string, mayRefresh: boolean): Promise<Payload> {
+async function post(fetch: typeof globalThis.fetch, body: string, refreshAllowed: boolean): Promise<Payload> {
+  // A linked server's key doesn't refresh, and this page's session has no say there.
+  const mayRefresh = refreshAllowed && !usingLinkedServer();
   const sentAccess = currentAccessToken();
   const retry = async () => {
     try { await refreshAccessToken(sentAccess); } catch (error) { return failed(error); }
@@ -40,7 +42,7 @@ async function post(fetch: typeof globalThis.fetch, body: string, mayRefresh: bo
   };
   let response: Response;
   try {
-    response = await fetch(GRAPHQL_URL, { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", ...authHeaders() }, body });
+    response = await fetch(activeGraphqlUrl(), { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", ...activeHeaders() }, body });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     return failed(new Error("NoFlex could not reach the server. Check your connection and try again."));

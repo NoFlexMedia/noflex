@@ -66,6 +66,13 @@ log in; anyone else gets "no NoFlex account is linked to this identity; ask an
 admin". Enable this only when every identity your provider will verify should
 get access, since any of them can then create an account.
 
+### `cross_origin`
+- **Type:** boolean
+- **Default:** `true`
+- **Env:** `NOFLEX_CROSS_ORIGIN`
+
+Whether to answer cross-origin requests, which lets web clients signed in to another NoFlex server connect here as a linked server. Requests still need this server's own credentials. Stays off until the first account exists, whatever this says, so a website can't reach the setup wizard through a visitor's browser. Native clients don't need it.
+
 ### `data_dir`
 - **Type:** path
 - **Default:** XDG data dir (`~/.local/share/noflex` on Linux)

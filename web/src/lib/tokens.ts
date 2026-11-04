@@ -68,6 +68,18 @@ export function onSessionExpired(handler: (error: SessionExpiredError) => void):
 export function hasSession(): boolean { return Boolean(refreshToken); }
 /** The access token requests are currently sent with; pass it back to `refreshAccessToken` after a rejection. */
 export function currentAccessToken(): string | null { return accessToken; }
+
+/** The server requests currently go to, when it isn't this page's own. */
+let activeServer: { origin: string; apiKey: string } | null = null;
+/** Direct application requests and media URLs at a linked server, or back home with `null`. */
+export function useServer(server: { origin: string; apiKey: string } | null): void { activeServer = server; }
+export function usingLinkedServer(): boolean { return activeServer !== null; }
+export function activeGraphqlUrl(): string { return activeServer ? `${activeServer.origin}${GRAPHQL_URL}` : GRAPHQL_URL; }
+/** Credentials for the active server. `authHeaders` always means this page's own. */
+export function activeHeaders(): Record<string, string> { return activeServer ? { Authorization: `Bearer ${activeServer.apiKey}` } : authHeaders(); }
+/** A URL from an API response as this page must request it: responses use paths relative to the server that sent them. */
+export function mediaUrl<Url extends string | null | undefined>(url: Url): Url | string { return activeServer && url?.startsWith("/") ? `${activeServer.origin}${url}` : url; }
+
 export function authHeaders(): Record<string, string> { return accessToken ? { Authorization: `Bearer ${accessToken}` } : {}; }
 
 export function saveSession(result: SessionResult): void {

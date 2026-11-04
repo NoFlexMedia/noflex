@@ -5,6 +5,7 @@
   import { tilt } from "$lib/actions/index.js";
   import { titleCase } from "$lib/format.js";
   import { player, playWork, subtitleFor } from "$lib/playback.svelte.js";
+  import { activateServer, deactivateServer } from "$lib/servers.svelte.js";
   import { markMorph, morph } from "$lib/transition.svelte.js";
   import Artwork from "$components/Artwork.svelte";
 
@@ -17,13 +18,20 @@
     if (!data || data.played || !data.positionMs || !work.runtimeMs) return null;
     return Math.min(1, data.positionMs / work.runtimeMs);
   });
-  let line = $derived(meta ?? ([subtitleFor(work), work.kind !== "EPISODE" ? titleCase(work.kind) : ""].filter(Boolean).join(" · ")));
+  let line = $derived(meta ?? ([subtitleFor(work), work.kind !== "EPISODE" ? titleCase(work.kind) : "", work.server?.name].filter(Boolean).join(" · ")));
+  let href = $derived(work.server ? `/works/${work.id}?server=${work.server.id}` : `/works/${work.id}`);
+
+  async function play() {
+    if (work.server) activateServer(work.server.id);
+    await playWork(work);
+    if (work.server && !player.current) deactivateServer();
+  }
   let playing = $derived(player.preparing === work.id);
   let playable = $derived(!["SERIES", "SEASON", "ARTIST", "ALBUM"].includes(work.kind));
 </script>
 
 <div class="card" class:wide bind:this={card}>
-  <a class="hit" href="/works/{work.id}" onclick={() => markMorph(key, card)} aria-label={work.title}>
+  <a class="hit" {href} onclick={() => markMorph(key, card)} aria-label={work.title}>
     <div class="frame" use:tilt>
       <Artwork {work} kind={wide ? "thumb" : "poster"} {width} {eager} vt={!wide && morph.key === key ? "poster" : null} />
       <span class="glare" aria-hidden="true"></span>
@@ -36,7 +44,7 @@
     {/if}
   </a>
   {#if playable}
-    <button class="quick-play" class:busy={playing} aria-label="Play {work.title}" onclick={() => playWork(work)} disabled={playing}>
+    <button class="quick-play" class:busy={playing} aria-label="Play {work.title}" onclick={play} disabled={playing}>
       {#if playing}<span class="spinner sm"></span>{:else}<Play size={16} weight="fill" />{/if}
     </button>
   {/if}

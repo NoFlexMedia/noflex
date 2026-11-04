@@ -38,6 +38,10 @@ pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
         "0007_smart_transcoding.sql",
         include_str!("../migrations/0007_smart_transcoding.sql"),
     ),
+    (
+        "0008_multi_server.sql",
+        include_str!("../migrations/0008_multi_server.sql"),
+    ),
 ];
 
 const META_KEY_PREFIX: &str = "migration:";

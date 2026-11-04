@@ -12,6 +12,8 @@ import {
 } from "$houdini";
 import { deviceName, takeExternalCallback } from "$lib/api.js";
 import { registerThisDevice } from "$lib/device.js";
+import { deactivateServer, setLinkedServers, type LinkedServer } from "$lib/servers.svelte.js";
+import { syncWatchState } from "$lib/sync.js";
 import { request } from "$lib/graphql.js";
 import { onLiveRefused } from "$lib/live.js";
 import { ApiError, clearSession, hasSession, onSessionExpired, saveSession, SessionExpiredError, type SessionResult } from "$lib/tokens.js";
@@ -51,6 +53,8 @@ function signedOut(authError: string): void {
   app.libraries = [];
   app.categories = [];
   app.showLibraries = false;
+  deactivateServer();
+  setLinkedServers([]);
   app.authError = authError;
   app.phase = "auth";
 }
@@ -72,11 +76,13 @@ export async function bootstrap(): Promise<void> {
     app.viewer = data.viewer;
     app.server = data.serverInfo;
     app.categories = [...data.contentCategories];
+    setLinkedServers(data.linkedServers as LinkedServer[]);
     app.showLibraries = data.preferences.some((item: { key: string; value: unknown }) => item.key === SHOW_LIBRARIES_KEY && item.value === true);
     await watchLibraries();
     app.authError = "";
     app.phase = "app";
     void registerThisDevice();
+    void syncWatchState();
   } catch (cause) {
     // An unreachable server is not a sign-out; `start` shows a retry.
     if (!(cause instanceof ApiError) && !(cause instanceof SessionExpiredError)) throw cause;

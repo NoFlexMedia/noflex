@@ -5,9 +5,10 @@ use std::future::Future;
 use async_trait::async_trait;
 use noflex_core::{
     ApiKeyId, ChannelId, CollectionId, DeviceId, DevicePinId, EditionId, EmbeddingTarget,
-    EpgProgramId, ExportJobId, ExternalIdKind, ImageKind, LibraryId, LiveTvSourceId, MediaFileId,
-    OptimizedVersionId, PlaySessionId, PlayTarget, PlaylistId, RecordingId, RecordingScheduleId,
-    SessionId, TagId, TagTarget, UserId, WatchRoomId, WorkId, WorkKind,
+    EpgProgramId, ExportJobId, ExternalIdKind, ImageKind, InviteId, LibraryId, LinkedServerId,
+    LiveTvSourceId, MediaFileId, OptimizedVersionId, PlaySessionId, PlayTarget, PlaylistId,
+    RecordingId, RecordingScheduleId, SessionId, TagId, TagTarget, UserId, WatchRoomId, WorkId,
+    WorkKind,
 };
 use time::OffsetDateTime;
 use tokio::io::AsyncWrite;
@@ -16,12 +17,12 @@ use crate::{
     domain::{
         ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount, Device, DevicePin,
         Edition, EpgProgram, ExportJob, ExportJobStatus, ExternalIdentity, HistoryPage, Image,
-        ImageSource, ImageTarget, IntroMarkers, Library, LiveTvChannel, LiveTvSource, MediaFile,
-        OptimizedVersion, PlaySession, Playlist, PluginOverrideRow, PluginTaskPayload,
-        PluginTaskState, Recording, RecordingSchedule, RecordingStatus, RefreshTokenLookup,
-        ScanEvent, Session, Tag, TagAssignment, TagSummary, TrickplayAsset, User, UserData,
-        UserPluginSecret, UserPreference, UserRestrictions, WatchRoom, WatchRoomMember,
-        WatchRoomState, WatchedWork, Work, WorkFeatures,
+        ImageSource, ImageTarget, IntroMarkers, Invite, Library, LinkedServer, LiveTvChannel,
+        LiveTvSource, MediaFile, OptimizedVersion, PlaySession, Playlist, PluginOverrideRow,
+        PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule, RecordingStatus,
+        RefreshTokenLookup, ScanEvent, Session, Tag, TagAssignment, TagSummary, TrickplayAsset,
+        User, UserData, UserPluginSecret, UserPreference, UserRestrictions, WatchRoom,
+        WatchRoomMember, WatchRoomState, WatchedWork, Work, WorkFeatures,
     },
     error::StorageResult,
     query::{
@@ -405,6 +406,42 @@ pub trait Storage: Send + Sync + 'static {
         active_since: OffsetDateTime,
         limit: u32,
     ) -> StorageResult<Vec<Work>>;
+
+    /// Store an invite; `token_hash` is how redeeming finds it.
+    async fn create_invite(&self, invite: &Invite, token_hash: &str) -> StorageResult<()>;
+    async fn list_invites(&self) -> StorageResult<Vec<Invite>>;
+    /// Atomically spend one use of the invite with `token_hash` and return it.
+    /// `None` when it doesn't exist, was revoked, expired by `now`, or is used up.
+    async fn consume_invite(
+        &self,
+        token_hash: &str,
+        now: OffsetDateTime,
+    ) -> StorageResult<Option<Invite>>;
+    /// Give back a use that [`consume_invite`][Storage::consume_invite] spent.
+    async fn release_invite_use(&self, id: InviteId) -> StorageResult<()>;
+    /// Whether the invite existed and was still active.
+    async fn revoke_invite(&self, id: InviteId, now: OffsetDateTime) -> StorageResult<bool>;
+
+    /// Save a link, replacing the user's existing link to the same origin and
+    /// keeping its id. Returns what's stored.
+    async fn upsert_linked_server(&self, server: &LinkedServer) -> StorageResult<LinkedServer>;
+    async fn linked_servers_for_user(&self, user: UserId) -> StorageResult<Vec<LinkedServer>>;
+    /// Whether `user` had such a link to remove.
+    async fn delete_linked_server(&self, user: UserId, id: LinkedServerId) -> StorageResult<bool>;
+    /// Every origin any user has linked, for the web client's security policy.
+    async fn linked_server_origins(&self) -> StorageResult<Vec<String>>;
+
+    /// Record watch state that happened elsewhere, keeping its original time
+    /// rather than stamping now, and leaving favorite and rating as they are.
+    /// A first play counts toward the play count.
+    async fn apply_watch_state(
+        &self,
+        user: UserId,
+        target: PlayTarget,
+        played: bool,
+        position_ms: Option<i64>,
+        last_played: OffsetDateTime,
+    ) -> StorageResult<()>;
 
     /// Up to `limit` regular episodes of `series` after season `season` and
     /// episode `number`, in viewing order; pass `(0, 0)` for the first ones.

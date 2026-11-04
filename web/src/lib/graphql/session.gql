@@ -9,6 +9,7 @@ query Bootstrap @cache(policy: NetworkOnly) {
   libraries { ...LibraryFields }
   contentCategories { category workCount }
   preferences { userId key value }
+  linkedServers { id origin name apiKey syncEnabled syncedUntil }
   serverInfo { name version backend isConfigured }
 }
 
@@ -17,6 +18,45 @@ query Bootstrap @cache(policy: NetworkOnly) {
 # cached libraries field follows along.
 query Libraries @cache(policy: CacheOnly) {
   libraries @list(name: "Libraries") { ...LibraryFields }
+}
+
+query LinkedServers @cache(policy: NetworkOnly) {
+  linkedServers { id origin name apiKey syncEnabled syncedUntil }
+}
+
+mutation AddLinkedServer($origin: String!, $name: String!, $key: String!) {
+  addLinkedServer(origin: $origin, name: $name, apiKey: $key) { id }
+}
+
+mutation RemoveLinkedServer($id: ID!) {
+  removeLinkedServer(id: $id)
+}
+
+mutation UpdateLinkedServer($id: ID!, $sync: Boolean) {
+  updateLinkedServer(id: $id, syncEnabled: $sync) { id }
+}
+
+mutation LinkedServerSynced($id: ID!, $until: DateTime!) {
+  updateLinkedServer(id: $id, syncedUntil: $until) { id }
+}
+
+query WatchSyncItems($since: DateTime!) @cache(policy: NetworkOnly) {
+  watchSyncItems(since: $since) {
+    externalIds { kind value }
+    season
+    episode
+    played
+    positionMs
+    lastPlayed
+  }
+}
+
+mutation SyncWatchState($items: [WatchSyncItemInput!]!) {
+  syncWatchState(items: $items)
+}
+
+mutation RedeemInvite($token: String!, $username: String!, $password: String!, $device: String!) {
+  redeemInvite(token: $token, username: $username, password: $password, client: "NoFlex Web", device: $device) { token refreshToken }
 }
 
 mutation RegisterDevice($id: ID!, $name: String!, $capabilities: ClientCapabilities!) {

@@ -2,6 +2,8 @@
 
 import { CachePolicy, ChildPageStore, MediaFilesStore, StartPlaybackStore, StopPlaybackStore, WorkDetailStore } from "$houdini";
 import { clientCapabilities } from "$lib/codecSupport.js";
+import { syncWatchState } from "$lib/sync.js";
+import { mediaUrl } from "$lib/tokens.js";
 import { request } from "$lib/graphql.js";
 import { toast } from "$lib/ui.svelte.js";
 
@@ -59,7 +61,8 @@ if (typeof window !== "undefined") (window.requestIdleCallback ?? setTimeout)(()
 export async function startSession(mediaFileId: string, subtitle: number | null = null, startPositionMs = 0): Promise<Session> {
   const capabilities = await clientCapabilities();
   const data = await request(new StartPlaybackStore(), { media: mediaFileId, capabilities, subtitle, start: Math.max(0, Math.round(startPositionMs)) });
-  return data.startPlaybackSession as Session;
+  const session = data.startPlaybackSession as Session;
+  return { ...session, url: mediaUrl(session.url), subtitles: session.subtitles?.map((track: any) => ({ ...track, url: mediaUrl(track.url) })) } as Session;
 }
 
 /** End a session server-side; best effort, a dead session is already gone. */
@@ -113,6 +116,8 @@ export async function playWork(work: any, options: PlayOptions = {}): Promise<bo
 
 export function closePlayer(): void {
   player.current = null;
+  // Give the final progress report a moment to land.
+  setTimeout(() => { void syncWatchState(); }, 2000);
 }
 
 export function subtitleFor(work: any): string {

@@ -54,6 +54,8 @@ runs once at startup and then every `backupIntervalHours`, keeping
 are a complete SQLite dump — restore by loading it into an empty
 Turso database.
 
+Backups include each user's keys for the other servers they've linked, and those keys aren't encrypted in the database, so store backups as you would passwords. Optimized versions in `data_dir/optimized/` can be left out: the server prepares them again as needed.
+
 ## Hardware transcoding
 
 The `hwaccel` option takes `none` (software only), `auto`

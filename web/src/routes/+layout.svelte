@@ -17,10 +17,17 @@
   import Player from "$components/Player.svelte";
   import Sidebar from "$components/Sidebar.svelte";
   import State from "$components/State.svelte";
+  import { page } from "$app/state";
+  import { deactivateServer, servers } from "$lib/servers.svelte.js";
   import Toaster from "$components/Toaster.svelte";
   import Topbar from "$components/Topbar.svelte";
 
   let { children } = $props();
+
+  // Leaving a linked server's title returns to home, unless it's still playing.
+  $effect(() => {
+    if (servers.active && !player.current && !page.url.pathname.startsWith("/works/")) deactivateServer();
+  });
 
   start();
 
@@ -63,6 +70,8 @@
     </main>
   {:else if app.phase === "error"}
     <main class="boot" id="main"><State kind="error" title="NoFlex couldn’t start" message={app.error} action={start} /></main>
+  {:else if app.phase === "auth" && page.url.pathname === "/invite"}
+    {@render children()}
   {:else if app.phase === "auth" || app.phase === "setup"}
     <AuthScreen />
   {:else if app.viewer}

@@ -37,6 +37,7 @@
   import { ambientColor, pickImage } from "$lib/images.js";
   import { fetchChildren, player, playWork, subtitleFor } from "$lib/playback.svelte.js";
   import { app } from "$lib/session.svelte.js";
+  import { servers } from "$lib/servers.svelte.js";
   import { ambient, attempt, toast } from "$lib/ui.svelte.js";
   import Artwork from "$components/Artwork.svelte";
   import State from "$components/State.svelte";
@@ -49,6 +50,8 @@
   import { DropdownMenu } from "bits-ui";
 
   let { data: route } = $props();
+  // Admin tools act on the server this page came from, where this user isn't known to be one.
+  let manageable = $derived(app.viewer.isAdmin && !servers.active);
 
   let detail = $derived(route.detail);
   let work = $derived($detail.data?.work);
@@ -81,7 +84,7 @@
   $effect(() => { fetchQuery(playlists); });
   const collections = new CollectionMenuStore();
   let libraryId = $derived(work?.libraryId);
-  $effect(() => { if (app.viewer.isAdmin && libraryId) fetchQuery(collections, { library: libraryId }); });
+  $effect(() => { if (manageable && libraryId) fetchQuery(collections, { library: libraryId }); });
 
   const setFavorite = new SetFavoriteStore();
   const markPlayed = new MarkPlayedStore();
@@ -287,7 +290,7 @@
                 <MenuItem icon={Plus} href="/collections?tab=playlists">New playlist…</MenuItem>
               </DropdownMenu.SubContent>
             </DropdownMenu.Sub>
-            {#if app.viewer.isAdmin}
+            {#if manageable}
               <DropdownMenu.Sub>
                 <DropdownMenu.SubTrigger class="nf-menu-item"><Books size={17} /><span>Add to collection</span><CaretRight size={15} /></DropdownMenu.SubTrigger>
                 <DropdownMenu.SubContent class="nf-menu" sideOffset={6}>
@@ -301,7 +304,7 @@
               <MenuItem icon={DownloadSimple} disabled={!editionId} onSelect={() => exportEdition("MKV")}>Export for offline (MKV)</MenuItem>
             {/if}
             <MenuItem icon={Link} onSelect={copyLink}>Copy link</MenuItem>
-            {#if app.viewer.isAdmin}
+            {#if manageable}
               <div class="nf-menu-sep"></div>
               <MenuItem icon={PencilSimple} onSelect={() => (adminOpen = true)}>Edit, identify & manage…</MenuItem>
             {/if}
@@ -342,7 +345,7 @@
     {/if}
   </div>
 
-  {#if app.viewer.isAdmin}
+  {#if manageable}
     <AdminSheet bind:open={adminOpen} {work} {edition} media={mediaFiles.find((file) => file.id === mediaId)} onremoved={() => { refetch(detail); refetch(media); }} />
   {/if}
 {/if}

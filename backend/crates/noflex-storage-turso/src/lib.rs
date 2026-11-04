@@ -694,6 +694,82 @@ impl Storage for TursoStore {
         }
         Ok(out)
     }
+    async fn create_invite(
+        &self,
+        invite: &noflex_storage::domain::Invite,
+        token_hash: &str,
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::multi_server::create_invite(&conn, invite, token_hash).await
+    }
+    async fn list_invites(&self) -> StorageResult<Vec<noflex_storage::domain::Invite>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::multi_server::list_invites(&conn).await
+    }
+    async fn consume_invite(
+        &self,
+        token_hash: &str,
+        now: time::OffsetDateTime,
+    ) -> StorageResult<Option<noflex_storage::domain::Invite>> {
+        let (_schema, conn) = self.writer().await?;
+        repo::multi_server::consume_invite(&conn, token_hash, now).await
+    }
+    async fn release_invite_use(&self, id: noflex_core::InviteId) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::multi_server::release_invite_use(&conn, id).await
+    }
+    async fn revoke_invite(
+        &self,
+        id: noflex_core::InviteId,
+        now: time::OffsetDateTime,
+    ) -> StorageResult<bool> {
+        let (_schema, conn) = self.writer().await?;
+        repo::multi_server::revoke_invite(&conn, id, now).await
+    }
+    async fn upsert_linked_server(
+        &self,
+        server: &noflex_storage::domain::LinkedServer,
+    ) -> StorageResult<noflex_storage::domain::LinkedServer> {
+        let (_schema, conn) = self.writer().await?;
+        repo::multi_server::upsert_linked_server(&conn, server).await
+    }
+    async fn linked_servers_for_user(
+        &self,
+        user: UserId,
+    ) -> StorageResult<Vec<noflex_storage::domain::LinkedServer>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::multi_server::linked_servers_for_user(&conn, user).await
+    }
+    async fn delete_linked_server(
+        &self,
+        user: UserId,
+        id: noflex_core::LinkedServerId,
+    ) -> StorageResult<bool> {
+        let (_schema, conn) = self.writer().await?;
+        repo::multi_server::delete_linked_server(&conn, user, id).await
+    }
+    async fn linked_server_origins(&self) -> StorageResult<Vec<String>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::multi_server::linked_origins(&conn).await
+    }
+    async fn apply_watch_state(
+        &self,
+        user: UserId,
+        target: PlayTarget,
+        played: bool,
+        position_ms: Option<i64>,
+        last_played: time::OffsetDateTime,
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        let mut data = repo::user_data::get(&conn, user, target).await?;
+        if played && data.play_count == 0 {
+            data.play_count = 1;
+        }
+        data.played = played;
+        data.position_ms = position_ms;
+        data.last_played = Some(last_played);
+        repo::user_data::write(&conn, user, target, &data).await
+    }
     async fn episodes_after(
         &self,
         series: WorkId,

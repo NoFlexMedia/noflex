@@ -27,6 +27,7 @@ use noflex_storage::{
 use time::OffsetDateTime;
 
 mod metadata;
+mod multi_server;
 pub use metadata::MetadataSearch;
 mod access;
 pub mod admin_status;
@@ -83,6 +84,7 @@ pub struct Query(
     playback::PlaybackQuery,
     browse::BrowseQuery,
     devices::DevicesQuery,
+    multi_server::MultiServerQuery,
     users::UsersQuery,
     preferences::PreferencesQuery,
     collections::CollectionsQuery,
@@ -102,6 +104,7 @@ pub struct Mutation(
     CoreMutation,
     playback::PlaybackMutation,
     devices::DevicesMutation,
+    multi_server::MultiServerMutation,
     auth::AuthMutation,
     users::UsersMutation,
     preferences::PreferencesMutation,

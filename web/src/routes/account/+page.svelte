@@ -13,9 +13,10 @@
   import HistoryTab from "$components/account/HistoryTab.svelte";
   import IntegrationsTab from "$components/account/IntegrationsTab.svelte";
   import ProfileTab from "$components/account/ProfileTab.svelte";
+  import ServersTab from "$components/account/ServersTab.svelte";
   import Tabs from "$components/ui/Tabs.svelte";
 
-  const TABS = ["profile", "devices", "integrations", "downloads", "history"];
+  const TABS = ["profile", "devices", "servers", "integrations", "downloads", "history"];
   let tab = $derived(TABS.includes(page.url.searchParams.get("tab") ?? "") ? page.url.searchParams.get("tab") : "profile");
 
   let { data: route } = $props();
@@ -25,6 +26,7 @@
   let items = $derived([
     { value: "profile", label: "Profile" },
     { value: "devices", label: "Devices & keys", count: data ? data.mySessions.length : null },
+    { value: "servers", label: "Servers" },
     { value: "integrations", label: "Integrations" },
     { value: "downloads", label: "Downloads", count: activeJobs || null },
     { value: "history", label: "History" },
@@ -58,6 +60,7 @@
     {:else}
       <BitsTabs.Content value="profile" class="panel-body"><ProfileTab {account} /></BitsTabs.Content>
       <BitsTabs.Content value="devices" class="panel-body"><DevicesTab {account} /></BitsTabs.Content>
+      <BitsTabs.Content value="servers" class="panel-body"><ServersTab /></BitsTabs.Content>
       <BitsTabs.Content value="integrations" class="panel-body"><IntegrationsTab {account} /></BitsTabs.Content>
       <BitsTabs.Content value="downloads" class="panel-body"><DownloadsTab {account} /></BitsTabs.Content>
     {/if}

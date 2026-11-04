@@ -26,6 +26,26 @@
   /** `admin` is the page's Admin store. */
   let { admin, creating = $bindable(false) } = $props();
 
+  const createInvite = graphql(`
+    mutation CreateInvite($libraries: [ID!]!, $days: Int!, $uses: Int!) {
+      createInvite(libraryIds: $libraries, expiresInDays: $days, maxUses: $uses) { token }
+    }
+  `);
+  let inviting = $state(false);
+  let invite = $state({ libraries: [], days: 7, uses: 1, link: "" });
+  function openInvite() {
+    invite = { libraries: [], days: 7, uses: 1, link: "" };
+    inviting = true;
+  }
+  async function makeInvite(event) {
+    event.preventDefault();
+    const result = await attempt(() => createInvite.mutate({ libraries: invite.libraries, days: Number(invite.days), uses: Number(invite.uses) }));
+    if (result) invite.link = `${location.origin}/invite#${result.data.createInvite.token}`;
+  }
+  async function copyInvite() {
+    await attempt(() => navigator.clipboard.writeText(invite.link), "Invite link copied");
+  }
+
   const createUser = graphql(`
     mutation CreateUser($username: String!, $password: String!, $role: UserRole!) {
       createUser(username: $username, password: $password, role: $role) { ...UserFields ...Users_insert }
@@ -125,6 +145,7 @@
         <span class="panel-icon"><Users size={19} /></span>
         <div><h2>Accounts</h2><p>{users.length} {users.length === 1 ? "person" : "people"} can sign in</p></div>
         <span class="spacer"></span>
+        <button class="btn sm" onclick={openInvite}><Users size={15} />Invite</button>
         <button class="btn sm" onclick={() => (creating = true)}><Plus size={15} />Add</button>
       </header>
       <ul class="list">
@@ -211,6 +232,36 @@
   {#snippet footer()}
     <button class="btn ghost" onclick={() => (access.open = false)}>Cancel</button>
     <button class="btn primary" form="access-form" disabled={saving}>{#if saving}<span class="spinner sm"></span>{/if}Save access</button>
+  {/snippet}
+</Dialog>
+
+<Dialog bind:open={inviting} title="Invite someone" description="They choose their own username and password, and the account is never an administrator.">
+  {#if invite.link}
+    <div class="stack">
+      <label class="field">Invite link<input readonly value={invite.link} onfocus={(event) => event.currentTarget.select()} /><small>Shown once. Anyone with this link can make an account until it expires or is used up.</small></label>
+    </div>
+  {:else}
+    <form id="invite-form" class="stack" onsubmit={makeInvite}>
+      <fieldset class="libs">
+        <legend>Libraries they can see</legend>
+        {#each libraries as library (library.id)}
+          <label class="check"><input type="checkbox" bind:group={invite.libraries} value={library.id} />{library.name}</label>
+        {:else}
+          <p class="hint">No libraries exist yet.</p>
+        {/each}
+      </fieldset>
+      <label class="field">Expires after (days)<input type="number" min="1" max="365" bind:value={invite.days} required /></label>
+      <label class="field">Number of people<input type="number" min="1" max="100" bind:value={invite.uses} required /></label>
+    </form>
+  {/if}
+  {#snippet footer()}
+    {#if invite.link}
+      <button class="btn ghost" onclick={() => (inviting = false)}>Done</button>
+      <button class="btn primary" onclick={copyInvite}>Copy link</button>
+    {:else}
+      <button class="btn ghost" onclick={() => (inviting = false)}>Cancel</button>
+      <button class="btn primary" form="invite-form">Create link</button>
+    {/if}
   {/snippet}
 </Dialog>
 

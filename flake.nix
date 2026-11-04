@@ -155,6 +155,9 @@
           # `imports_granularity = "Crate"` and `group_imports = ...` options
           # in `rustfmt.toml`. Stable rustfmt warns and silently skips them.
           RUSTFMT = "${rustfmtNightly}/bin/rustfmt";
+          # Test threads default to 2 MiB, which the merged GraphQL root's
+          # debug-build futures outgrow; the server sets its own workers to match.
+          RUST_MIN_STACK = "8388608";
 
           shellHook = ''
             # Create cache directories

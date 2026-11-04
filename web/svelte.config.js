@@ -9,16 +9,12 @@ export default {
     csp: {
       mode: "hash",
       directives: {
-        "default-src": ["self"],
         "base-uri": ["none"],
         "form-action": ["self"],
         "frame-ancestors": ["none"],
         "object-src": ["none"],
         "script-src": ["self"],
         "style-src": ["self"],
-        "img-src": ["self", "blob:"],
-        "media-src": ["self", "blob:"],
-        "connect-src": ["self"],
       },
     },
   },

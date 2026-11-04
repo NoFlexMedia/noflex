@@ -33,5 +33,6 @@ npm run build   # writes build/, which the next noflex-server build embeds
 - Icons are [Phosphor](https://phosphoricons.com), imported per icon from `phosphor-svelte/lib/<Name>` (deep imports keep dev builds fast) and rendered directly — no wrapper component, no hand-drawn SVGs. The root `IconContext` defaults them to 20px and `aria-hidden`; pass `weight` for emphasis (`"fill"` for transport controls and ratings) and an `aria-label` plus `aria-hidden="false"` when an icon carries meaning alone. Import the `*Icon` alias when a name shadows a global (`ImageIcon`). Data that picks an icon holds the component, not a name string.
 - Style with the tokens in `app.css`; don't hard-code colors or radii.
 - The CSP is strict (`style-src 'self'`, no `data:`). Never write static `style="…"` attributes — use `style:prop={…}` directives, which Svelte applies through the CSSOM.
-- Auth and refresh tokens live in `sessionStorage`, never `localStorage`, and are sent only to same-origin routes.
+- Auth and refresh tokens live in `sessionStorage`, never `localStorage`, and are sent only to same-origin routes. Linked servers' keys stay in memory and go only to the server that issued them.
+- API responses use paths relative to the server that sent them. Pass any URL you render through `mediaUrl` (`$lib/tokens.js`), so it works while a linked server is active.
 - Layouts must work at phone width; check the mobile nav and sheets when you change a page.

@@ -6,7 +6,9 @@
   import Play from "phosphor-svelte/lib/Play";
   import Sparkle from "phosphor-svelte/lib/Sparkle";
   import Trash from "phosphor-svelte/lib/Trash";
-  import { graphql } from "$houdini";
+  import { graphql, HomeStore } from "$houdini";
+  import { mergeContinueWatching, mergeRanked } from "$lib/merge.js";
+  import { askServersForLists, connectedServers } from "$lib/servers.svelte.js";
   import { failure, fetchQuery, refetch } from "$lib/graphql.js";
   import { app } from "$lib/session.svelte.js";
   import { date, titleCase } from "$lib/format.js";
@@ -29,9 +31,30 @@
 
   // Every shelf is a connection; the rails only need its nodes.
   const SHELVES = ["continueWatching", "recentlyAdded", "recentlyPlayed", "recommendations"];
-  let data = $derived($home.data && Object.fromEntries(SHELVES.map((shelf) => [shelf, $home.data[shelf].nodes])));
+  const MERGED = { continueWatching: mergeContinueWatching, recentlyAdded: mergeRanked, recommendations: mergeRanked };
+  let ownShelves = $derived($home.data && Object.fromEntries(SHELVES.map((shelf) => [shelf, $home.data[shelf].nodes])));
+
+  // Other servers fill in as they answer; this server's rails never wait on them.
+  let elsewhere = $state([]);
+  let unreachable = $state([]);
+  $effect(() => {
+    if (!connectedServers().length) { elsewhere = []; unreachable = []; return; }
+    askAllShelves();
+  });
+  async function askAllShelves() {
+    const asked = await askServersForLists(new HomeStore(), {}, (result) => Object.fromEntries(Object.keys(MERGED).map((shelf) => [shelf, result[shelf].nodes])));
+    elsewhere = asked.answers;
+    unreachable = asked.missing;
+  }
+  let data = $derived.by(() => {
+    if (!ownShelves) return ownShelves;
+    const merged = { ...ownShelves };
+    if (elsewhere.length) for (const [shelf, merge] of Object.entries(MERGED)) merged[shelf] = merge([ownShelves[shelf], ...elsewhere.map((answer) => answer.lists[shelf])]);
+    return merged;
+  });
   let featured = $derived.by(() => {
-    const pool = (data?.recentlyAdded ?? []).filter((work) => TOP_LEVEL.has(work.kind));
+    // This server's own: the hero links and plays without any server context.
+    const pool = (ownShelves?.recentlyAdded ?? []).filter((work) => TOP_LEVEL.has(work.kind));
     const withArt = pool.filter((work) => pickImage(work.images, "backdrop"));
     return (withArt.length ? withArt : pool).slice(0, 6);
   });
@@ -65,6 +88,7 @@
   {:else if data}
     {#if featured.length}<Hero items={featured} />{/if}
     <div class="rails" class:flush={!featured.length}>
+      {#if unreachable.length}<p class="away" role="status">{unreachable.join(", ")} can’t be reached right now.</p>{/if}
       {#if data.continueWatching.length}<Rail title="Continue watching" items={data.continueWatching} wide />{/if}
       {#if data.recentlyAdded.length}<Rail title="Recently added" items={data.recentlyAdded} />{/if}
       {#if data.recommendations.length}<Rail title="Recommended" eyebrow="Because of what you watch" items={data.recommendations} />{/if}
@@ -90,6 +114,7 @@
 </div>
 
 <style>
+  .away { margin: 0; color: var(--text-3); font-size: 0.86rem; }
   .hero-skeleton { height: clamp(440px, 74vh, 760px); margin: calc(var(--topbar-h) * -1 - 20px) calc(var(--gutter) * -1) 0; border-radius: 0; }
   .rail-skeleton { margin-top: 38px; }
   .rail-skeleton .title { width: 200px; height: 22px; border-radius: 8px; margin-bottom: 16px; }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { browser } from "$app/environment";
-import { authHeaders, currentAccessToken, GRAPHQL_URL, hasSession, refreshAccessToken } from "$lib/tokens.js";
+import { activeGraphqlUrl, activeHeaders, authHeaders, currentAccessToken, hasSession, refreshAccessToken } from "$lib/tokens.js";
 
 /** A human-readable device label for the sessions list, e.g. "Firefox on Linux". */
 export function deviceName(): string {
@@ -50,7 +50,7 @@ export function takeExternalCallback(): { kind: "login" | "link"; code: string; 
 export function reportOnExit(store: { artifact: { name: string; raw: string } }, variables: Record<string, unknown>): void {
   if (!currentAccessToken()) return;
   const body = JSON.stringify({ operationName: store.artifact.name, query: store.artifact.raw, variables });
-  fetch(GRAPHQL_URL, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body, keepalive: true }).catch(() => {});
+  fetch(activeGraphqlUrl(), { method: "POST", headers: { "Content-Type": "application/json", ...activeHeaders() }, body, keepalive: true }).catch(() => {});
 }
 
 /** `url` if it is an absolute http(s) URL, else null — for links that plugins supply. */

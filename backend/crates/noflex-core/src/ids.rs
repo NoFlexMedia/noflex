@@ -62,6 +62,14 @@ typed_id!(
 typed_id!(MediaFileId, "Identifier for a physical media file on disk.");
 typed_id!(UserId, "Identifier for a user account.");
 typed_id!(
+    InviteId,
+    "Identifier for an invitation to create an account."
+);
+typed_id!(
+    LinkedServerId,
+    "Identifier for a user's link to another NoFlex server."
+);
+typed_id!(
     DeviceId,
     "Identifier for a registered client device, chosen by the client so it survives sign-outs."
 );

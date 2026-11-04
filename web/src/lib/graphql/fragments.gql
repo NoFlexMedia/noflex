@@ -13,6 +13,7 @@ fragment WorkCard on Work {
   indexEnd
   parentIndex
   runtimeMs
+  externalIds { kind value }
   images { kind url }
   userData { played positionMs favorite }
 }

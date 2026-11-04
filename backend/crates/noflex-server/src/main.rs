@@ -65,8 +65,21 @@ struct AppState {
     external_auth: Arc<noflex_server::external_auth::ServerExternalAuth>,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// Worker threads' stack. Executing a GraphQL request polls the merged schema
+/// root's future, which grows with every resolver and sits close to tokio's
+/// 2 MiB default in debug builds. Untouched pages cost nothing.
+const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+fn main() -> anyhow::Result<()> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(WORKER_STACK_BYTES)
+        .build()
+        .context("start runtime")?
+        .block_on(run())
+}
+
+async fn run() -> anyhow::Result<()> {
     let cfg = Config::load().context("load config")?;
     let log_buffer = init_tracing(&cfg.log);
 
@@ -214,10 +227,7 @@ async fn main() -> anyhow::Result<()> {
             &noflex_plugin_host::PluginId,
             &noflex_plugin_host::PluginManifest,
         )> = plugins.iter().map(|(id, m)| (id, m)).collect();
-        noflex_plugin_host::PriorityTable::build(
-            plugin_refs.into_iter(),
-            &build_host_overrides(&cfg.plugin),
-        )
+        noflex_plugin_host::PriorityTable::build(plugin_refs, &build_host_overrides(&cfg.plugin))
     }));
     // Admin overrides from `setPluginOverride` win over manifest and
     // config priorities, and must survive restarts.
@@ -505,6 +515,11 @@ async fn main() -> anyhow::Result<()> {
         // Published for the auth middleware's API-key lookups.
         .layer(axum::Extension(storage.clone()))
         .merge(restricted_routes);
+    let app = if cfg.cross_origin {
+        app.layer(noflex_server::web::cross_origin_layer(storage.clone()))
+    } else {
+        app
+    };
 
     info!(bind = %cfg.bind, "noflex server listening");
     let listener = tokio::net::TcpListener::bind(&cfg.bind)

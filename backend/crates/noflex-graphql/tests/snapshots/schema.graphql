@@ -438,6 +438,17 @@ type CreatedApiKey {
 	apiKey: ApiKey!
 }
 
+"""
+An invite at the only moment its token exists.
+"""
+type CreatedInvite {
+	invite: Invite!
+	"""
+	Goes in the invite link; can't be retrieved later.
+	"""
+	token: String!
+}
+
 type DatabaseStatus {
 	backend: String!
 	engineVersion: String!
@@ -1025,6 +1036,23 @@ type IndexScanRun {
 }
 
 """
+An invitation to create an ordinary account on this server.
+"""
+type Invite {
+	id: ID!
+	createdBy: ID!
+	"""
+	What an account made from this invite can access.
+	"""
+	libraryIds: [ID!]!
+	maxUses: Int!
+	uses: Int!
+	expiresAt: DateTime!
+	revokedAt: DateTime
+	createdAt: DateTime!
+}
+
+"""
 A scalar that can represent any JSON value.
 """
 scalar JSON
@@ -1161,6 +1189,29 @@ type LibraryWatcherStatus {
 	state: WatcherState!
 	since: DateTime
 	error: String
+}
+
+"""
+Another NoFlex server a user connects to. Clients talk to it directly; this
+server only remembers the link so it follows the user between devices.
+"""
+type LinkedServer {
+	id: ID!
+	"""
+	Scheme, host and port only.
+	"""
+	origin: String!
+	name: String!
+	"""
+	The user's revocable key on that server.
+	"""
+	apiKey: String!
+	syncEnabled: Boolean!
+	"""
+	Watch activity before this has been carried across.
+	"""
+	syncedUntil: DateTime
+	createdAt: DateTime!
 }
 
 """
@@ -1495,6 +1546,46 @@ type Mutation {
 	Forget one of the caller's devices. Returns whether there was one.
 	"""
 	removeDevice(id: ID!): Boolean!
+	"""
+	Create an invite that lets someone make an ordinary account with access
+	to `libraryIds`. Administrator only.
+	"""
+	createInvite(libraryIds: [ID!]!, expiresInDays: Int! = 7, maxUses: Int! = 1): CreatedInvite!
+	"""
+	Stop an invite working. Returns whether it was still active.
+	Administrator only.
+	"""
+	revokeInvite(id: ID!): Boolean!
+	"""
+	Create an account from an invite and sign in. Accounts made this way are
+	never administrators. Needs no authentication; failures are throttled
+	like sign-ins.
+	"""
+	redeemInvite(token: String!, username: String!, password: String!, client: String, device: String): LoginResult!
+	"""
+	Link another server, or replace the key of one already linked. An empty
+	`apiKey` saves just the address. Web clients need that first: their
+	security policy only allows origins known when the page loaded, so they
+	reload before they can sign in there and link again with a real key.
+	"""
+	addLinkedServer(origin: String!, name: String!, apiKey: String! = ""): LinkedServer!
+	"""
+	Forget a linked server. Returns whether the caller had it. The key stays
+	valid on that server until revoked there.
+	"""
+	removeLinkedServer(id: ID!): Boolean!
+	"""
+	Change how the caller syncs with a linked server; omitted values stay.
+	"""
+	updateLinkedServer(id: ID!, syncEnabled: Boolean, syncedUntil: DateTime): LinkedServer!
+	"""
+	Apply watch state from another server. An item only takes effect when it's
+	newer than what's here, so replays are harmless and order doesn't matter.
+	Unmatched titles and ones the caller can't access are skipped. Scrobblers
+	aren't told: the server where it was watched already told them. Returns
+	how many applied.
+	"""
+	syncWatchState(items: [WatchSyncItemInput!]!): Int!
 	login(username: String!, password: String!, client: String, device: String): LoginResult!
 	"""
 	Exchange a live refresh token for a fresh token pair. The
@@ -2530,6 +2621,21 @@ type Query {
 	Whether to fetch now, such as only on Wi-Fi, is the client's call.
 	"""
 	smartDownloads(deviceId: ID!): [SmartDownload!]!
+	"""
+	Every invite, newest first. Administrator only.
+	"""
+	invites: [Invite!]!
+	"""
+	The other servers the caller has linked, with the keys their clients
+	connect with.
+	"""
+	linkedServers: [LinkedServer!]!
+	"""
+	The caller's watch activity since `since`, newest first, in a form other
+	servers can match. Titles without a provider ID are left out, since
+	nothing could safely match them.
+	"""
+	watchSyncItems(since: DateTime!): [WatchSyncItem!]!
 	"""
 	Every user account. Admin only.
 	"""
@@ -3596,6 +3702,44 @@ enum WatchRoomState {
 }
 
 """
+One title's watch state, in terms another server can match.
+"""
+type WatchSyncItem {
+	"""
+	Provider IDs of the movie, or of the series for an episode. Paths and
+	other server-local IDs never appear here, so nothing syncs on a guess.
+	"""
+	externalIds: [ExternalId!]!
+	"""
+	Set for an episode, with `episode`.
+	"""
+	season: Int
+	episode: Int
+	played: Boolean!
+	positionMs: Int
+	lastPlayed: DateTime!
+}
+
+"""
+One title's watch state, in terms another server can match.
+"""
+input WatchSyncItemInput {
+	"""
+	Provider IDs of the movie, or of the series for an episode. Paths and
+	other server-local IDs never appear here, so nothing syncs on a guess.
+	"""
+	externalIds: [ExternalIdInput!]!
+	"""
+	Set for an episode, with `episode`.
+	"""
+	season: Int
+	episode: Int
+	played: Boolean!
+	positionMs: Int
+	lastPlayed: DateTime!
+}
+
+"""
 Watched-state filter for one user. `watched` defaults to true;
 pass `watched: false` for works the user has not completed
 (including never-played).
@@ -3675,6 +3819,13 @@ type Work {
 	the work has no edition or the first has no known runtime.
 	"""
 	runtimeMs: Int
+	"""
+	Provider IDs of the series this episode belongs to, which identify it
+	across servers together with its season and episode numbers. Empty
+	for anything but an episode. Paths and other server-local IDs never
+	appear.
+	"""
+	seriesExternalIds: [ExternalId!]!
 }
 
 type WorkConnection {

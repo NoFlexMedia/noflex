@@ -15,6 +15,7 @@ import '../theme.dart';
 import '../utils/format.dart';
 import '../utils/images.dart';
 import 'artwork.dart';
+import 'nf_press.dart';
 
 void openWork(WorkSummary work) => getIt<NavService>().push(
   WorkDetailScreen(workId: work.id, server: work.server, seed: work),
@@ -22,7 +23,7 @@ void openWork(WorkSummary work) => getIt<NavService>().push(
 
 /// A poster, or a wide thumbnail for shelves like Continue Watching. Shows
 /// progress and watched state as they change on this device.
-class WorkCard extends StatelessWidget {
+class WorkCard extends StatefulWidget {
   const WorkCard({super.key, required this.work, this.wide = false, this.meta});
 
   final WorkSummary work;
@@ -30,7 +31,22 @@ class WorkCard extends StatelessWidget {
   final String? meta;
 
   @override
+  State<WorkCard> createState() => _WorkCardState();
+}
+
+class _WorkCardState extends State<WorkCard> {
+  final _press = Press();
+  final _hovered = signal(false);
+
+  @override
+  void dispose() {
+    _press.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final WorkCard(:work, :wide, :meta) = widget;
     final line =
         meta ??
         [
@@ -39,7 +55,8 @@ class WorkCard extends StatelessWidget {
           if (!work.isEpisode) titleCase(work.kind),
           ?work.server?.name,
         ].where((part) => part.isNotEmpty).join(' · ');
-    final frame = AspectRatio(
+    final still = MediaQuery.disableAnimationsOf(context);
+    final picture = AspectRatio(
       aspectRatio: wide ? 16 / 9 : 2 / 3,
       child: Stack(
         fit: StackFit.expand,
@@ -78,12 +95,48 @@ class WorkCard extends StatelessWidget {
         ],
       ),
     );
+    final frame = NfSink(
+      press: _press,
+      child: SignalBuilder(
+        builder: (_) {
+          final hovered = _hovered.value;
+          return AnimatedContainer(
+            duration: still ? Duration.zero : const Duration(milliseconds: 400),
+            curve: NfMotion.easeOut,
+            transform: Matrix4.translationValues(0, hovered ? -4 : 0, 0),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(NfRadii.m),
+              boxShadow: [
+                hovered
+                    ? const BoxShadow(
+                        color: Color(0xF2000000),
+                        offset: Offset(0, 26),
+                        blurRadius: 44,
+                        spreadRadius: -18,
+                      )
+                    : const BoxShadow(
+                        color: Color(0xE6000000),
+                        offset: Offset(0, 8),
+                        blurRadius: 22,
+                        spreadRadius: -14,
+                      ),
+              ],
+            ),
+            child: picture,
+          );
+        },
+      ),
+    );
     return Semantics(
       button: true,
       label: [work.heading, line].where((part) => part.isNotEmpty).join(', '),
       excludeSemantics: true,
       child: InkWell(
         onTap: () => openWork(work),
+        onHighlightChanged: _press.update,
+        onHover: (hovering) => _hovered.value = hovering,
+        // The lift says it instead, and a tint would show around the poster.
+        hoverColor: Colors.transparent,
         borderRadius: BorderRadius.circular(NfRadii.m),
         child: wide
             ? frame
@@ -190,27 +243,31 @@ class _QuickPlay extends SignalWidget {
     if (context.windowClass.isCompact) return const SizedBox.shrink();
     final playback = getIt<PlaybackService>();
     final busy = playback.preparing.value == work.id;
-    return Material(
-      color: const Color(0xB3000000),
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: busy ? null : () => playback.playWork(work),
-        child: SizedBox.square(
-          dimension: 32,
-          child: busy
-              ? const Padding(
-                  padding: EdgeInsets.all(8),
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
+    return NfPressable(
+      scale: 0.9,
+      builder: (context, onPress) => Material(
+        color: const Color(0xB3000000),
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: busy ? null : () => playback.playWork(work),
+          onHighlightChanged: onPress,
+          child: SizedBox.square(
+            dimension: 32,
+            child: busy
+                ? const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: NfColors.text,
+                    ),
+                  )
+                : const Icon(
+                    PhosphorIconsFill.play,
+                    size: 14,
                     color: NfColors.text,
                   ),
-                )
-              : const Icon(
-                  PhosphorIconsFill.play,
-                  size: 14,
-                  color: NfColors.text,
-                ),
+          ),
         ),
       ),
     );

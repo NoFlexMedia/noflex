@@ -42,12 +42,13 @@ class Rail extends StatelessWidget {
             padding: EdgeInsets.symmetric(horizontal: gutter),
             child: NfSectionHead(title, eyebrow: eyebrow, onTap: onHeader),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 6),
           SizedBox(
-            height: height,
+            height: height + 6,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              padding: EdgeInsets.symmetric(horizontal: gutter),
+              // Room for a hovered card to lift inside the list's clip.
+              padding: EdgeInsets.fromLTRB(gutter, 6, gutter, 0),
               itemCount: items.length,
               separatorBuilder: (_, _) => const SizedBox(width: 12),
               itemBuilder: (_, index) => SizedBox(

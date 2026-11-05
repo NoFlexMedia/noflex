@@ -44,9 +44,39 @@ abstract final class NfRadii {
 abstract final class NfMotion {
   static const easeOut = Cubic(0.16, 1, 0.3, 1);
   static const easeInOut = Cubic(0.65, 0, 0.35, 1);
+  static const spring = _Spring();
   static const fast = Duration(milliseconds: 140);
   static const base = Duration(milliseconds: 240);
   static const slow = Duration(milliseconds: 520);
+}
+
+/// `--ease-spring`, stop for stop.
+final class _Spring extends Curve {
+  const _Spring();
+
+  static const _stops = [
+    (0.0, 0.0),
+    (0.024, 0.06),
+    (0.052, 0.24),
+    (0.13, 0.86),
+    (0.176, 1.04),
+    (0.21, 1.09),
+    (0.254, 1.07),
+    (0.33, 1.01),
+    (0.41, 0.99),
+    (1.0, 1.0),
+  ];
+
+  @override
+  double transformInternal(double t) {
+    for (var i = 1; i < _stops.length; i++) {
+      final (x, y) = _stops[i];
+      if (t > x) continue;
+      final (fromX, fromY) = _stops[i - 1];
+      return fromY + (y - fromY) * (t - fromX) / (x - fromX);
+    }
+    return 1;
+  }
 }
 
 abstract final class NfSpacing {

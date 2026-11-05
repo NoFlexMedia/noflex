@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme.dart';
+import 'nf_press.dart';
 
 enum NfButtonStyle { primary, light, glass, ghost, danger, surface }
 
@@ -89,20 +90,25 @@ class NfButton extends StatelessWidget {
       enabled: enabled,
       label: semanticLabel ?? label,
       excludeSemantics: true,
-      child: Opacity(
-        opacity: enabled || busy ? 1 : 0.45,
-        child: Material(
-          color: background,
-          shape: StadiumBorder(
-            side: border == null ? BorderSide.none : BorderSide(color: border),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: enabled ? onPressed : null,
-            child: Container(
-              height: height,
-              padding: EdgeInsets.symmetric(horizontal: padding),
-              child: content,
+      child: NfPressable(
+        builder: (context, onPress) => Opacity(
+          opacity: enabled || busy ? 1 : 0.45,
+          child: Material(
+            color: background,
+            shape: StadiumBorder(
+              side: border == null
+                  ? BorderSide.none
+                  : BorderSide(color: border),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: enabled ? onPressed : null,
+              onHighlightChanged: onPress,
+              child: Container(
+                height: height,
+                padding: EdgeInsets.symmetric(horizontal: padding),
+                child: content,
+              ),
             ),
           ),
         ),
@@ -155,19 +161,25 @@ class NfIconButton extends StatelessWidget {
       label: label,
       enabled: onPressed != null,
       excludeSemantics: true,
-      child: Opacity(
-        opacity: onPressed == null ? 0.4 : 1,
-        child: Material(
-          color: background,
-          shape: CircleBorder(
-            side: border == null ? BorderSide.none : BorderSide(color: border!),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: onPressed,
-            child: SizedBox.square(
-              dimension: size,
-              child: Icon(icon, size: iconSize, color: color),
+      child: NfPressable(
+        scale: 0.92,
+        builder: (context, onPress) => Opacity(
+          opacity: onPressed == null ? 0.4 : 1,
+          child: Material(
+            color: background,
+            shape: CircleBorder(
+              side: border == null
+                  ? BorderSide.none
+                  : BorderSide(color: border!),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onPressed,
+              onHighlightChanged: onPress,
+              child: SizedBox.square(
+                dimension: size,
+                child: Icon(icon, size: iconSize, color: color),
+              ),
             ),
           ),
         ),
@@ -200,50 +212,53 @@ class NfChoiceChip extends StatelessWidget {
     return Semantics(
       selected: selected,
       button: true,
-      child: Material(
-        color: selected ? NfColors.text : Colors.transparent,
-        shape: StadiumBorder(
-          side: BorderSide(
-            color: selected ? NfColors.text : NfColors.lineStrong,
+      child: NfPressable(
+        builder: (context, onPress) => Material(
+          color: selected ? NfColors.text : Colors.transparent,
+          shape: StadiumBorder(
+            side: BorderSide(
+              color: selected ? NfColors.text : NfColors.lineStrong,
+            ),
           ),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (leading != null) ...[
-                  IconTheme.merge(
-                    data: IconThemeData(size: 14, color: foreground),
-                    child: leading!,
-                  ),
-                  const SizedBox(width: 6),
-                ],
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: nfText(13, weight: 600, color: foreground),
-                  ),
-                ),
-                if (detail != null) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    detail!,
-                    style: nfText(
-                      12,
-                      weight: 500,
-                      color: selected
-                          ? const Color(0x8C000000)
-                          : NfColors.text3,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            onHighlightChanged: onPress,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (leading != null) ...[
+                    IconTheme.merge(
+                      data: IconThemeData(size: 14, color: foreground),
+                      child: leading!,
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  Flexible(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: nfText(13, weight: 600, color: foreground),
                     ),
                   ),
+                  if (detail != null) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      detail!,
+                      style: nfText(
+                        12,
+                        weight: 500,
+                        color: selected
+                            ? const Color(0x8C000000)
+                            : NfColors.text3,
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),

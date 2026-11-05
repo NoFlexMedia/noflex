@@ -964,6 +964,7 @@ impl PlaybackSessionService for StubPlaybackSessions {
             session_id: async_graphql::ID("job-1".to_string()),
             route: PlaybackRouteKind::Transcode,
             url: "/stream/job/job-1/master.m3u8".to_string(),
+            file_url: None,
             job_id: Some(async_graphql::ID("job-1".to_string())),
             start_position_ms: 0,
             decision: noflex_transcoder::PlaybackDecisionInfo::live(

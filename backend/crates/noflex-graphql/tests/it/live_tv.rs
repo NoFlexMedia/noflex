@@ -90,6 +90,7 @@ impl LiveTvService for FakeLiveTvService {
             session_id: async_graphql::ID(format!("live-{}", channel.id)),
             route: PlaybackRouteKind::Transcode,
             url: format!("/stream/job/live-{}/master.m3u8?token=fake", channel.id),
+            file_url: None,
             job_id: Some(async_graphql::ID(format!("live-{}", channel.id))),
             start_position_ms: 0,
             decision: noflex_transcoder::PlaybackDecisionInfo::live(

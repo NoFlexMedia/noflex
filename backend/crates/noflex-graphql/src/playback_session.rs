@@ -39,6 +39,9 @@ pub struct PlaybackSession {
     pub route: PlaybackRouteKind,
     /// Where to point the player.
     pub url: String,
+    /// The whole file behind `url`, on the optimized route only, for a player
+    /// that seeks in a file itself rather than through HLS.
+    pub file_url: Option<String>,
     /// The HLS job, on the transcode route only.
     pub job_id: Option<ID>,
     /// Source position of the stream's time zero: the transcode's start

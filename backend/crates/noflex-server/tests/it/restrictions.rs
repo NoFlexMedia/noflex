@@ -18,8 +18,9 @@ use noflex_server::{
 use noflex_storage::{
     Storage,
     domain::{
-        Edition, Image, ImageSource, ImageTarget, Library, LibraryKind, MediaFile, Tag,
-        TrickplayAsset, TrickplaySheet, User, UserRestrictions, Work,
+        Edition, Image, ImageSource, ImageTarget, Library, LibraryKind, MediaFile,
+        OptimizedVersion, OptimizedVersionStatus, Tag, TrickplayAsset, TrickplaySheet, User,
+        UserRestrictions, Work,
     },
 };
 use noflex_storage_turso::TursoStore;
@@ -632,6 +633,70 @@ async fn media_and_image_tokens_carry_their_users_restrictions() {
 }
 
 #[tokio::test]
+async fn a_ready_version_offers_its_file_beside_its_playlist() {
+    let f = fixture().await;
+    set_policy(
+        &f.store,
+        f.owner.id,
+        vec![f.rating.id],
+        Some(3_000_000),
+        None,
+    )
+    .await;
+    let mut within_policy = probe();
+    within_policy.format_bit_rate = Some(2_000_000);
+    let version = OptimizedVersion {
+        id: noflex_core::OptimizedVersionId::new(),
+        media_file_id: f.media.id,
+        variant_key: "h264-1080".to_string(),
+        status: OptimizedVersionStatus::Ready,
+        priority: 1,
+        plan: serde_json::json!({}),
+        source_size: f.media.size_bytes,
+        source_mtime: f.media.mtime,
+        progress: 1.0,
+        attempts: 0,
+        path: None,
+        size_bytes: Some(1),
+        index: None,
+        probe: Some(serde_json::to_value(within_policy).expect("probe")),
+        error: None,
+        created_at: OffsetDateTime::now_utc(),
+        finished_at: None,
+        last_used_at: None,
+    };
+    f.store
+        .enqueue_optimized_version(&version)
+        .await
+        .expect("enqueue");
+    f.store
+        .update_optimized_version(&version)
+        .await
+        .expect("ready");
+    let manager = Arc::new(FfmpegJobManager::new(
+        f.root.path().join("no-ffmpeg"),
+        f.root.path().join("jobs"),
+    ));
+    let session = service(&f.store, &manager)
+        .start(
+            f.owner.id,
+            None,
+            PlaybackStart::new(f.media.id, ClientCapabilities::web()),
+        )
+        .await
+        .expect("start");
+    assert_eq!(session.route, PlaybackRouteKind::Optimized);
+    let id = version.id;
+    assert!(
+        session
+            .url
+            .starts_with(&format!("/optimized/{id}/master.m3u8?token="))
+    );
+    let file = session.file_url.expect("file");
+    assert!(file.starts_with(&format!("/optimized/{id}/file?token=")));
+}
+
+#[tokio::test]
 async fn playback_policy_clamps_capabilities_and_ladder_bitrate() {
     let f = fixture().await;
     set_policy(
@@ -653,6 +718,7 @@ async fn playback_policy_clamps_capabilities_and_ladder_bitrate() {
         .await
         .expect("start");
     assert_eq!(session.route, PlaybackRouteKind::Transcode);
+    assert_eq!(session.file_url, None);
     let job_id = session.job_id.expect("job");
     let job = manager
         .registry()

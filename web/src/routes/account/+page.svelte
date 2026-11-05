@@ -28,7 +28,7 @@
     { value: "devices", label: "Devices & keys", count: data ? data.mySessions.length : null },
     { value: "servers", label: "Servers" },
     { value: "integrations", label: "Integrations" },
-    { value: "downloads", label: "Downloads", count: activeJobs || null },
+    { value: "downloads", label: "Offline copies", count: activeJobs || null },
     { value: "history", label: "History" },
   ]);
 

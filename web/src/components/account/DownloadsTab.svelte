@@ -17,6 +17,9 @@
   const cancelExport = graphql(`
     mutation CancelExportJob($id: ID!) { cancelExportJob(id: $id) { ...ExportJobFields } }
   `);
+  const deleteExport = graphql(`
+    mutation DeleteExportJob($id: ID!) { deleteExportJob(id: $id) }
+  `);
 
   const ACTIVE = ["QUEUED", "RUNNING", "CANCEL_REQUESTED"];
   const STATUS = {
@@ -60,21 +63,31 @@
     } finally { downloading = ""; }
   }
 
-  async function cancel(job) {
-    if (!(await confirmAction({ title: "Cancel this export?", message: "Any partial output is discarded.", confirmLabel: "Cancel export", danger: true }))) return;
+  async function remove(job) {
+    if (!(await confirmAction({ title: "Remove this offline copy?", message: "The server deletes its file once nobody else needs it. You can always make another.", confirmLabel: "Remove", danger: true }))) return;
     if (job.server) {
-      await attempt(() => serverRequest(job.server, "mutation($id: ID!) { cancelExportJob(id: $id) { id } }", { id: job.id }), "Export cancelled");
+      await attempt(() => serverRequest(job.server, "mutation($id: ID!) { deleteExportJob(id: $id) }", { id: job.id }), "Offline copy removed");
       await loadLinked();
       return;
     }
-    await attempt(() => cancelExport.mutate({ id: job.id }), "Export cancelled");
+    if (await attempt(() => deleteExport.mutate({ id: job.id }), "Offline copy removed")) refetch(account);
+  }
+
+  async function cancel(job) {
+    if (!(await confirmAction({ title: "Cancel this offline copy?", message: "Any partial output is discarded.", confirmLabel: "Cancel export", danger: true }))) return;
+    if (job.server) {
+      await attempt(() => serverRequest(job.server, "mutation($id: ID!) { cancelExportJob(id: $id) { id } }", { id: job.id }), "Offline copy cancelled");
+      await loadLinked();
+      return;
+    }
+    await attempt(() => cancelExport.mutate({ id: job.id }), "Offline copy cancelled");
   }
 </script>
 
 {#if ($account.fetching && !$account.data)}
   <div class="jobs" aria-busy="true">{#each Array(3) as _}<div class="skeleton job-skel"></div>{/each}</div>
 {:else if !jobs.length}
-  <State icon={DownloadSimple} title="No downloads yet" message="Open any film or episode, choose ••• → Export for offline, and it’ll be prepared here as an MP4 or MKV you can keep.">
+  <State icon={DownloadSimple} title="No offline copies yet" message="Open any film or episode, choose ••• → Make an offline copy, and it’ll be prepared here as an MP4 or MKV you can keep.">
     <a class="btn sm" href="/">Browse your libraries</a>
   </State>
 {:else}
@@ -107,6 +120,9 @@
           {:else if job.status === "QUEUED" || job.status === "RUNNING"}
             <button class="btn ghost sm" onclick={() => cancel(job)}>Cancel</button>
           {/if}
+          {#if !ACTIVE.includes(job.status)}
+            <button class="btn ghost sm" onclick={() => remove(job)} aria-label="Remove {job.work?.title ?? 'this offline copy'}">Remove</button>
+          {/if}
         </div>
       </li>
     {/each}
@@ -133,7 +149,7 @@
   .pct { font-size: 0.8rem; color: var(--text-2); font-weight: 600; min-width: 52px; text-align: right; }
   .indeterminate > span { animation: slide 1.4s var(--ease-in-out) infinite; }
   @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
-  .actions { flex: none; }
+  .actions { flex: none; display: flex; align-items: center; gap: 6px; }
   @media (max-width: 560px) {
     .job { flex-wrap: wrap; }
     .actions { flex-basis: 100%; display: flex; justify-content: flex-end; }

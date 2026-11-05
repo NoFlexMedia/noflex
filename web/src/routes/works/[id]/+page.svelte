@@ -210,7 +210,7 @@
 
   async function exportEdition(format) {
     const result = await attempt(() => createExport.mutate({ edition: editionId, format }));
-    if (result) toast("Export queued — follow it under Account → Downloads.", "success", { label: "View", run: () => goto("/account?tab=downloads") });
+    if (result) toast("Making an offline copy — follow it under Account → Offline copies.", "success", { label: "View", run: () => goto("/account?tab=downloads") });
   }
 
   async function createRoom() {
@@ -331,8 +331,8 @@
             {#if !isContainer}
               <MenuItem icon={Broadcast} disabled={!mediaId} onSelect={createRoom}>Start a watch room</MenuItem>
               {#if downloadsAllowed}
-                <MenuItem icon={DownloadSimple} disabled={!editionId} onSelect={() => exportEdition("MP4")}>Export for offline (MP4)</MenuItem>
-                <MenuItem icon={DownloadSimple} disabled={!editionId} onSelect={() => exportEdition("MKV")}>Export for offline (MKV)</MenuItem>
+                <MenuItem icon={DownloadSimple} disabled={!editionId} onSelect={() => exportEdition("MP4")}>Make an offline copy (MP4)</MenuItem>
+                <MenuItem icon={DownloadSimple} disabled={!editionId} onSelect={() => exportEdition("MKV")}>Make an offline copy (MKV)</MenuItem>
               {/if}
             {/if}
             <MenuItem icon={Link} onSelect={copyLink}>Copy link</MenuItem>

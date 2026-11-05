@@ -4,6 +4,7 @@ query Admin {
   libraries { ...LibraryFields }
   users @list(name: "Users") { ...UserFields }
   sessions { id userId client device remoteAddr createdAt lastSeenAt expiresAt }
+  providerAttributions { provider name logoUrl }
   plugins {
     id
     displayName

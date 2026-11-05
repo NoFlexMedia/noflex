@@ -11,6 +11,7 @@
   import { titleCase } from "$lib/format.js";
   import { request } from "$lib/graphql.js";
   import { ask, attempt } from "$lib/ui.svelte.js";
+  import ProviderLogo from "$components/ProviderLogo.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
 
   /** Edits land in the cache by themselves; `onremoved` follows an edition or file removal. */
@@ -19,6 +20,7 @@
   const metadataSearch = graphql(`
     query MetadataSearch($query: String!, $kind: WorkKind!, $year: Int) @cache(policy: NetworkOnly) {
       searchMetadata(query: $query, kind: $kind, year: $year) { externalId { kind value } title year confidence provider }
+      providerAttributions { provider name logoUrl }
     }
   `);
   const identifyWork = graphql(`
@@ -57,6 +59,7 @@
   let query = $state("");
   let year = $state("");
   let matches = $state([]);
+  let credits = $state(new Map());
   let searching = $state(false);
   let busy = $state("");
 
@@ -65,6 +68,7 @@
     searching = true;
     const result = await attempt(() => request(metadataSearch, { query: query || work.title, kind: work.kind, year: year ? Number(year) : work.year }));
     matches = result?.searchMetadata ?? [];
+    credits = new Map((result?.providerAttributions ?? []).map((credit) => [credit.provider, credit]));
     searching = false;
   }
 
@@ -126,9 +130,10 @@
     {#if matches.length}
       <ul class="matches stagger">
         {#each matches as match, index}
+          {@const credit = credits.get(match.provider)}
           <li style:--i={index}>
             <button onclick={() => identify(match)} disabled={busy === "identify"}>
-              <span><strong>{match.title}</strong><small>{match.provider} · {match.externalId.kind}:{match.externalId.value}</small></span>
+              <span class="match"><strong>{match.title}</strong><small>{#if credit?.logoUrl}<ProviderLogo {credit} height={16} />{:else}{credit?.name ?? match.provider} ·{/if} {match.externalId.value}</small></span>
               <span class="conf"><span>{match.year ?? "—"}</span><span class="pct" style:--p={match.confidence}>{Math.round(match.confidence * 100)}%</span></span>
             </button>
           </li>
@@ -186,7 +191,7 @@
   .matches button { display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; padding: 11px 13px; border-radius: 12px; background: var(--surface); text-align: left; transition: background var(--t); }
   .matches button:hover { background: var(--surface-3); }
   .matches span:first-child { display: grid; }
-  .matches small { color: var(--text-3); font-size: 0.8rem; }
+  .matches small { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px; color: var(--text-3); font-size: 0.8rem; }
   .conf { display: flex; gap: 12px; align-items: center; color: var(--text-2); font-size: 0.86rem; }
   .pct { padding: 2px 8px; border-radius: 99px; font-weight: 650; background: color-mix(in srgb, var(--accent) calc(var(--p) * 30%), transparent); color: var(--text); }
   .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

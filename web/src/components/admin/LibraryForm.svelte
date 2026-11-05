@@ -8,11 +8,12 @@
   import ArrowUp from "phosphor-svelte/lib/ArrowUp";
   import Plus from "phosphor-svelte/lib/Plus";
   import X from "phosphor-svelte/lib/X";
+  import ProviderLogo from "$components/ProviderLogo.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
   import Select from "$components/ui/Select.svelte";
 
   /** `library` null → create (centered dialog); otherwise edit (sheet). */
-  let { open = $bindable(false), library = null, providers = [], onsaved } = $props();
+  let { open = $bindable(false), library = null, providers = [], credits = new Map(), onsaved } = $props();
 
   const KINDS = ["MOVIES", "SHOWS", "MUSIC", "AUDIOBOOKS", "PHOTOS", "MIXED"].map((value) => ({ value, label: titleCase(value) }));
   const SCHEDULES = [
@@ -121,7 +122,10 @@
             {#each chosen as id, index (id)}
               <li>
                 <span class="rank tabular">{index + 1}</span>
-                <span class="id" class:missing={!providers.includes(id)} title={providers.includes(id) ? undefined : "Not installed"}>{id}</span>
+                <span class="id" class:named={credits.has(id)} class:missing={!providers.includes(id)} title={providers.includes(id) ? undefined : "Not installed"}>
+                  {#if credits.get(id)?.logoUrl}<ProviderLogo credit={credits.get(id)} height={18} />{/if}
+                  <span>{credits.get(id)?.name ?? id}</span>
+                </span>
                 <button type="button" class="icon-btn sm" disabled={index === 0} onclick={() => moveProvider(index, -1)} aria-label="Move {id} up"><ArrowUp size={15} /></button>
                 <button type="button" class="icon-btn sm" disabled={index === chosen.length - 1} onclick={() => moveProvider(index, 1)} aria-label="Move {id} down"><ArrowDown size={15} /></button>
                 <button type="button" class="icon-btn sm" onclick={() => removeProvider(index)} aria-label="Remove {id}"><X size={15} /></button>
@@ -133,7 +137,7 @@
         {/if}
         {#if available.length}
           <div class="suggest" role="group" aria-label="Add a metadata provider">
-            {#each available as id (id)}<button type="button" class="chip outline" onclick={() => addProvider(id)}><Plus size={12} weight="bold" />{id}</button>{/each}
+            {#each available as id (id)}<button type="button" class="chip outline" class:named={credits.has(id)} onclick={() => addProvider(id)}><Plus size={12} weight="bold" />{#if credits.get(id)?.logoUrl}<ProviderLogo credit={credits.get(id)} height={14} />{/if}{credits.get(id)?.name ?? id}</button>{/each}
           </div>
         {/if}
         <small>Only these providers are used, in this order. The first that matches a title supplies all of its metadata; the next is tried only if it fails.</small>
@@ -165,12 +169,14 @@
   .providers li { display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 12px; border-radius: var(--r-s); background: var(--surface); border: 1px solid var(--line); }
   .providers .icon-btn:disabled { opacity: 0.3; cursor: default; }
   .rank { width: 18px; color: var(--text-3); font-size: 0.8rem; }
-  .id { flex: 1; min-width: 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.86rem; }
+  .id { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.86rem; }
+  .id.named { font-family: inherit; font-weight: 550; }
   .id.missing { color: var(--text-3); text-decoration: line-through; }
   .none { margin: 0; color: var(--text-3); font-size: 0.86rem; }
   .suggest { display: flex; flex-wrap: wrap; gap: 6px; }
   .suggest .chip { display: inline-flex; align-items: center; gap: 4px; }
   .suggest .chip { cursor: pointer; font-family: ui-monospace, "SF Mono", Menlo, monospace; transition: border-color var(--t), color var(--t); }
+  .suggest .chip.named { font-family: inherit; }
   .suggest .chip:hover { border-color: var(--text-3); color: var(--text); }
   @media (max-width: 520px) { .two { grid-template-columns: 1fr; } }
 </style>

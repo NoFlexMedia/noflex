@@ -47,6 +47,7 @@
 
   let libraries = $derived($admin.data?.libraries ?? []);
   let providers = $derived(($admin.data?.plugins ?? []).filter((plugin) => plugin.hooks.includes("METADATA")).map((plugin) => plugin.id));
+  let credits = $derived(new Map(($admin.data?.providerAttributions ?? []).map((credit) => [credit.provider, credit])));
   let scans = $state({});
   let starting = $state("");
   let editing = $state({ open: false, library: null });
@@ -194,8 +195,8 @@
   </div>
 {/if}
 
-<LibraryForm bind:open={editing.open} library={editing.library} {providers} onsaved={(library) => saved(library)} />
-<LibraryForm bind:open={creating} {providers} onsaved={(library, options) => saved(library, options)} />
+<LibraryForm bind:open={editing.open} library={editing.library} {providers} {credits} onsaved={(library) => saved(library)} />
+<LibraryForm bind:open={creating} {providers} {credits} onsaved={(library, options) => saved(library, options)} />
 
 <style>
   .libs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 18px; }

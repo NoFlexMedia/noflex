@@ -46,6 +46,7 @@
   import Artwork from "$components/Artwork.svelte";
   import State from "$components/State.svelte";
   import AdminSheet from "$components/detail/AdminSheet.svelte";
+  import Attributions from "$components/detail/Attributions.svelte";
   import Children from "$components/detail/Children.svelte";
   import Credits from "$components/detail/Credits.svelte";
   import TechSpecs from "$components/detail/TechSpecs.svelte";
@@ -406,6 +407,8 @@
     {#if edition && !isContainer}
       <TechSpecs {edition} file={mediaFile} audio={chosenAudio} onchapter={(ms) => play(false, ms)} />
     {/if}
+
+    <Attributions attributions={work.attributions} />
   </div>
 
   {#if manageable}

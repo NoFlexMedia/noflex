@@ -11,6 +11,7 @@
   import { titleCase } from "$lib/format.js";
   import { nextPage, refetch } from "$lib/graphql.js";
   import { attempt, confirmAction, poll } from "$lib/ui.svelte.js";
+  import ProviderLogo from "$components/ProviderLogo.svelte";
   import State from "$components/State.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
   import Select from "$components/ui/Select.svelte";
@@ -40,6 +41,7 @@
   let plugins = $derived([...($admin.data?.plugins ?? [])].sort((a, b) => Number(b.circuitOpen) - Number(a.circuitOpen) || a.displayName.localeCompare(b.displayName)));
   let overrides = $derived([...($admin.data?.pluginOverrides ?? [])].sort((a, b) => a.hook.localeCompare(b.hook) || a.workKind.localeCompare(b.workKind) || b.priority - a.priority));
   let pluginName = $derived(new Map(plugins.map((plugin) => [plugin.id, plugin.displayName])));
+  let credits = $derived(new Map(($admin.data?.providerAttributions ?? []).map((credit) => [credit.provider, credit])));
 
   function health(plugin) {
     if (plugin.circuitOpen) return { dot: "bad", label: "Circuit open", detail: "Disabled after repeated crashes — reload the plugin to recover." };
@@ -134,9 +136,10 @@
   <div class="plugins stagger">
     {#each plugins as plugin, index (plugin.id)}
       {@const vital = health(plugin)}
+      {@const credit = credits.get(plugin.id)}
       <article class="panel plugin" class:broken={plugin.circuitOpen} style:--i={index}>
         <header class="panel-head">
-          <span class="panel-icon"><Plug size={19} /></span>
+          <span class="panel-icon" class:mark={credit?.logoUrl}>{#if credit?.logoUrl}<ProviderLogo {credit} height={22} />{:else}<Plug size={19} />{/if}</span>
           <div class="title">
             <h3>{plugin.displayName}</h3>
             <p><code>{plugin.id}</code> · v{plugin.version}</p>
@@ -274,6 +277,7 @@
   .plugin { display: flex; flex-direction: column; gap: 14px; }
   .plugin.broken { border-color: rgb(255 107 107 / 0.3); background: linear-gradient(180deg, rgb(255 107 107 / 0.05), transparent 140px), var(--surface); }
   .plugin .panel-head { margin-bottom: 0; align-items: center; }
+  .panel-icon.mark { width: auto; padding-inline: 9px; }
   .title { min-width: 0; }
   .title p code { font-size: 0.8rem; }
   .health { display: inline-flex; align-items: center; gap: 8px; font-size: 0.82rem; font-weight: 600; color: var(--text-2); white-space: nowrap; }

@@ -53,7 +53,7 @@
     if ((event.key === "k" && (event.metaKey || event.ctrlKey)) || (event.key === "/" && !typing)) {
       event.preventDefault();
       palette.open = !palette.open;
-    } else if (event.key === "[" && !typing && !event.metaKey && !event.ctrlKey && !event.altKey && matchMedia("(min-width: 1180px)").matches) {
+    } else if (event.key === "[" && !typing && !event.metaKey && !event.ctrlKey && !event.altKey && matchMedia("(min-width: 760px)").matches) {
       event.preventDefault();
       toggleSidebar();
     }

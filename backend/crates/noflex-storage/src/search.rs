@@ -147,11 +147,23 @@ pub struct HealthReport {
 /// result at zero-based `rank` contributes `1 / (RRF_K + rank + 1)`.
 pub const RRF_K: f32 = 60.0;
 
-/// Order for fused hits: anything matching by title first, so someone typing a
-/// title gets it even when a synopsis scores well in both channels.
+/// [`SearchHit::matched_fields`] entry for a match on a work's own title.
+pub const MATCHED_TITLE: &str = "title";
+
+/// [`SearchHit::matched_fields`] entry for a match on the name of someone credited
+/// on the work.
+pub const MATCHED_CREDITS: &str = "credits";
+
+/// Order for fused hits: anything matching by name first, so someone typing a
+/// title or a person gets it, where fused scores alone would put an unrelated
+/// nearest neighbour above the fifth film of an actor's filmography.
 pub fn hybrid_order(a: &SearchHit, b: &SearchHit) -> std::cmp::Ordering {
-    let in_title = |hit: &SearchHit| hit.matched_fields.iter().any(|field| field == "title");
-    in_title(b).cmp(&in_title(a)).then_with(|| {
+    let by_name = |hit: &SearchHit| {
+        hit.matched_fields
+            .iter()
+            .any(|field| field == MATCHED_TITLE || field == MATCHED_CREDITS)
+    };
+    by_name(b).cmp(&by_name(a)).then_with(|| {
         b.score
             .partial_cmp(&a.score)
             .unwrap_or(std::cmp::Ordering::Equal)

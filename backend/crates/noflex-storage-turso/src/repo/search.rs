@@ -5,7 +5,7 @@ use noflex_storage::{
     domain::Work,
     error::{StorageError, StorageResult},
     query::{Page, PageCursor},
-    search::{SearchHit, VectorHit},
+    search::{MATCHED_CREDITS, MATCHED_TITLE, SearchHit, VectorHit},
 };
 use turso::{Connection, Value};
 use uuid::Uuid;
@@ -16,25 +16,44 @@ use crate::{
     repo::works::row_to_work,
 };
 
-// ?1 is the query anywhere, ?2 the whole title, ?3 its start, ?4 the start of a word.
-const SEARCH_LEXICAL: &str = "SELECT w.id, \
-    (LOWER(w.title) LIKE ?1 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?1 ESCAPE '\\') AS in_title \
-    FROM works w \
-    LEFT JOIN works parent ON parent.id = w.parent_id \
-    LEFT JOIN works grandparent ON grandparent.id = parent.parent_id \
-    WHERE (LOWER(w.title) LIKE ?1 ESCAPE '\\' \
-       OR LOWER(w.sort_title) LIKE ?1 ESCAPE '\\' \
-       OR LOWER(COALESCE(w.overview, '')) LIKE ?1 ESCAPE '\\')";
+// Works crediting someone whose name holds ?1. Runs once rather than per work:
+// people are far fewer than works, and a tag's assignments are keyed by tag.
+const CREDITED: &str = "(SELECT ta.target_id FROM tags t \
+    JOIN tag_assignments ta ON ta.tag_id = t.id AND ta.target_kind = 'work' \
+    WHERE t.namespace = 'person' AND LOWER(t.display) LIKE ?1 ESCAPE '\\')";
 
-// A show matching the query already answers it, and its episodes' synopses tend
-// to repeat its name. Episodes matching on their own title still count.
-const NOT_JUST_MENTIONING_ITS_SERIES: &str = " AND (w.kind NOT IN ('season', 'episode', 'track') \
-    OR LOWER(w.title) LIKE ?1 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?1 ESCAPE '\\' \
-    OR NOT (LOWER(COALESCE(parent.title, '')) LIKE ?1 ESCAPE '\\' \
-        OR LOWER(COALESCE(grandparent.title, '')) LIKE ?1 ESCAPE '\\'))";
+const IN_TITLE: &str =
+    "(LOWER(w.title) LIKE ?1 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?1 ESCAPE '\\')";
 
-// Titles before synopses, whole titles and series before single episodes.
-const LEXICAL_RELEVANCE: &str = " ORDER BY in_title DESC, \
+/// The lexical query up to its filters. ?1 is the query anywhere, ?2 the whole
+/// title, ?3 its start, ?4 the start of a word.
+fn search_lexical_sql() -> String {
+    format!(
+        "SELECT w.id, {IN_TITLE} AS in_title, w.id IN {CREDITED} AS in_credits \
+         FROM works w \
+         LEFT JOIN works parent ON parent.id = w.parent_id \
+         LEFT JOIN works grandparent ON grandparent.id = parent.parent_id \
+         WHERE ({IN_TITLE} \
+            OR LOWER(COALESCE(w.overview, '')) LIKE ?1 ESCAPE '\\' \
+            OR w.id IN {CREDITED})"
+    )
+}
+
+/// A show matching the query already answers it, and its episodes' synopses tend
+/// to repeat its name, as their credits do its regular cast. Episodes matching on
+/// their own title still count, as do guest stars the show doesn't credit.
+fn not_just_echoing_its_series_sql() -> String {
+    format!(
+        " AND (w.kind NOT IN ('season', 'episode', 'track') OR {IN_TITLE} \
+         OR NOT (LOWER(COALESCE(parent.title, '')) LIKE ?1 ESCAPE '\\' \
+             OR LOWER(COALESCE(grandparent.title, '')) LIKE ?1 ESCAPE '\\' \
+             OR COALESCE(parent.id IN {CREDITED}, 0) \
+             OR COALESCE(grandparent.id IN {CREDITED}, 0)))"
+    )
+}
+
+// Titles, then credits, then synopses; whole titles and series before single episodes.
+const LEXICAL_RELEVANCE: &str = " ORDER BY in_title DESC, in_credits DESC, \
     w.kind IN ('season', 'episode', 'track') ASC, \
     CASE WHEN LOWER(w.title) LIKE ?2 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?2 ESCAPE '\\' THEN 0 \
         WHEN LOWER(w.title) LIKE ?3 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?3 ESCAPE '\\' THEN 1 \
@@ -78,7 +97,7 @@ pub(crate) async fn search_lexical(
     limit: u32,
 ) -> StorageResult<Vec<SearchHit>> {
     let escaped = escape_like(query);
-    let mut sql = String::from(SEARCH_LEXICAL);
+    let mut sql = search_lexical_sql();
     let mut params = vec![
         Value::Text(format!("%{escaped}%")),
         Value::Text(escaped.clone()),
@@ -87,7 +106,7 @@ pub(crate) async fn search_lexical(
     ];
     // Asking for episodes by kind means wanting them, however they matched.
     if kinds.is_empty() {
-        sql.push_str(NOT_JUST_MENTIONING_ITS_SERIES);
+        sql.push_str(&not_just_echoing_its_series_sql());
     }
     push_kind_filter(&mut sql, &mut params, kinds, "w.kind");
     if let Some(user) = access_user_id {
@@ -100,12 +119,18 @@ pub(crate) async fn search_lexical(
     let mut out = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_turso)? {
         let id = row.get_value(0).map_err(map_turso)?;
-        let in_title = col_int(&row.get_value(1).map_err(map_turso)?)? != 0;
+        let matched = if col_int(&row.get_value(1).map_err(map_turso)?)? != 0 {
+            MATCHED_TITLE
+        } else if col_int(&row.get_value(2).map_err(map_turso)?)? != 0 {
+            MATCHED_CREDITS
+        } else {
+            "overview"
+        };
         out.push(SearchHit {
             work: WorkId::from_uuid(blob_to_uuid(col_blob(&id)?)?),
             access_checked: access_user_id.is_some(),
             score: 0.0,
-            matched_fields: vec![if in_title { "title" } else { "overview" }.to_string()],
+            matched_fields: vec![matched.to_string()],
         });
     }
     Ok(out)

@@ -76,17 +76,30 @@ export const ambient = $state<{ color: string | null }>({ color: null });
 /** The command palette's open state, so any view can summon it. */
 export const palette = $state({ open: false });
 
-const SIDEBAR_KEY = "noflex.sidebar";
+const wideLayout = typeof matchMedia === "undefined" ? null : matchMedia("(min-width: 1180px)");
+// Remembered per tier, so opening the sidebar in a narrow window doesn't
+// cost a wide one its choice, or the other way round.
+const sidebarKey = () => (wideLayout?.matches ? "noflex.sidebar" : "noflex.sidebar.narrow");
+
+function rememberedCollapsed(): boolean {
+  let stored: string | null = null;
+  try { stored = localStorage.getItem(sidebarKey()); } catch { /* storage unavailable */ }
+  return stored ? stored === "collapsed" : !wideLayout?.matches;
+}
 
 /**
- * The desktop sidebar's collapsed state, remembered per browser and
- * mirrored onto `<html data-sidebar>` so layout CSS can follow it.
- * Below the desktop breakpoint the sidebar is always a rail.
+ * The sidebar's collapsed state, remembered per browser and mirrored onto
+ * `<html data-sidebar>` so layout CSS can follow it. Wide layouts start
+ * open and narrower ones start as a rail; phones have no sidebar.
  */
-export const sidebar = $state({
-  collapsed: (() => { try { return localStorage.getItem(SIDEBAR_KEY) === "collapsed"; } catch { return false; } })(),
+export const sidebar = $state({ collapsed: rememberedCollapsed() });
+
+const mirrorSidebar = () => { document.documentElement.dataset.sidebar = sidebar.collapsed ? "collapsed" : "expanded"; };
+if (typeof document !== "undefined") mirrorSidebar();
+wideLayout?.addEventListener("change", () => {
+  sidebar.collapsed = rememberedCollapsed();
+  mirrorSidebar();
 });
-if (typeof document !== "undefined") document.documentElement.dataset.sidebar = sidebar.collapsed ? "collapsed" : "expanded";
 
 let sidebarSettle: ReturnType<typeof setTimeout> | undefined;
 
@@ -101,7 +114,7 @@ export function toggleSidebar(): void {
   const followers = [...document.querySelectorAll<HTMLElement>(".nav-follow")];
   const before = followers.map((el) => el.getBoundingClientRect().left);
   for (const el of followers) for (const animation of el.getAnimations()) animation.cancel();
-  const animate = !prefersReducedMotion() && matchMedia("(min-width: 1180px)").matches;
+  const animate = !prefersReducedMotion();
   const style = getComputedStyle(root);
   const duration = parseFloat(style.getPropertyValue("--nav-t")) || 280;
 
@@ -114,8 +127,8 @@ export function toggleSidebar(): void {
     sidebarSettle = setTimeout(() => delete root.dataset.sidebarMotion, duration + 50);
   }
   sidebar.collapsed = !sidebar.collapsed;
-  root.dataset.sidebar = sidebar.collapsed ? "collapsed" : "expanded";
-  try { localStorage.setItem(SIDEBAR_KEY, sidebar.collapsed ? "collapsed" : "expanded"); } catch { /* storage unavailable */ }
+  mirrorSidebar();
+  try { localStorage.setItem(sidebarKey(), sidebar.collapsed ? "collapsed" : "expanded"); } catch { /* storage unavailable */ }
   if (!animate) return;
 
   const easing = style.getPropertyValue("--ease-out").trim() || "ease-out";

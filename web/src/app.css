@@ -63,9 +63,8 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-@media (min-width: 1180px) { :root[data-sidebar="collapsed"] { --nav-w: var(--rail-w); } }
-@media (max-width: 1179px) { :root { --nav-w: var(--rail-w); } }
-@media (max-width: 759px) { :root { --nav-w: 0px; } }
+:root[data-sidebar="collapsed"] { --nav-w: var(--rail-w); }
+@media (max-width: 759px) { :root, :root[data-sidebar] { --nav-w: 0px; } }
 
 html { background: var(--bg); scrollbar-gutter: stable; }
 body { margin: 0; min-height: 100dvh; color: var(--text); overflow-x: hidden; }
@@ -367,5 +366,5 @@ label.toggle small { color: var(--text-3); font-size: 0.82rem; }
 .nf-select.pill:hover { background: var(--surface-3); }
 
 .nf-tip { z-index: 95; display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; background: #f4f5f1; color: #0b0c0f; font-size: 0.78rem; font-weight: 600; box-shadow: var(--shadow-2); animation: pop-in 140ms var(--ease-out); }
-@media (min-width: 1180px) { :root:not([data-sidebar="collapsed"]) .nf-tip.rail-tip { display: none; } }
+:root:not([data-sidebar="collapsed"]) .nf-tip.rail-tip { display: none; }
 .nf-tip kbd { padding: 0 5px; border-radius: 4px; background: rgb(0 0 0 / 0.1); font-size: 0.72rem; }

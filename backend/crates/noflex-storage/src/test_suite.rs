@@ -102,6 +102,7 @@ where
     image_source_order_follows_library_preference(store).await;
     search_lexical_match(store).await;
     search_lexical_miss(store).await;
+    search_lexical_finds_credited_people(store).await;
     search_vector_similarity(store).await;
     search_hybrid_fuses(store).await;
     search_ranks_titles_over_mentions(store).await;
@@ -4980,6 +4981,85 @@ async fn search_lexical_miss<S: Storage + ?Sized>(store: &S) {
     assert!(hits.is_empty());
 
     store.delete_work(w_id).await.ok();
+    store.delete_library(lib.id).await.ok();
+}
+
+/// A person's name finds what they're credited on, below works it titles, and a
+/// show's regular cast doesn't drag in every episode.
+async fn search_lexical_finds_credited_people<S: Storage + ?Sized>(store: &S) {
+    let lib = test_library("Lex People Lib");
+    store.upsert_library(&lib).await.expect("library");
+    let now = OffsetDateTime::now_utc();
+    let mut documentary =
+        make_work_of_kind(library_id(&lib), WorkKind::Movie, "Being Wren Okafor", now);
+    documentary.sort_title = "being wren okafor".to_string();
+    let film = make_work_of_kind(library_id(&lib), WorkKind::Movie, "Harbor Lights", now);
+    let uncredited = make_work_of_kind(library_id(&lib), WorkKind::Movie, "Quiet Water", now);
+    let series = make_work_of_kind(library_id(&lib), WorkKind::Series, "Night Shift", now);
+    let mut regular_episode = make_work_of_kind(library_id(&lib), WorkKind::Episode, "Pilot", now);
+    regular_episode.parent_id = Some(series.id);
+    let other_series = make_work_of_kind(library_id(&lib), WorkKind::Series, "Tideline", now);
+    let mut guest_episode =
+        make_work_of_kind(library_id(&lib), WorkKind::Episode, "The Visitor", now);
+    guest_episode.parent_id = Some(other_series.id);
+    let works = [
+        &documentary,
+        &film,
+        &uncredited,
+        &series,
+        &regular_episode,
+        &other_series,
+        &guest_episode,
+    ];
+    for work in works {
+        store.upsert_work(work).await.expect("work");
+    }
+
+    let wren = make_tag("person", "wren-okafor-lex", "Wren Okafor");
+    let wren_id = store.upsert_tag(&wren).await.expect("person");
+    // Only a person tag is a credit, however its display reads.
+    let studio = make_tag("studio", "wren-okafor-films-lex", "Wren Okafor Films");
+    let studio_id = store.upsert_tag(&studio).await.expect("studio");
+    store
+        .assign_tag(studio_id, TagTarget::Work(uncredited.id), 1.0, "test")
+        .await
+        .expect("assign studio");
+    for work in [&film, &series, &regular_episode, &guest_episode] {
+        store
+            .assign_tag(wren_id, TagTarget::Work(work.id), 1.0, "test")
+            .await
+            .expect("assign person");
+    }
+
+    let hits = store
+        .search_lexical("wren okafor", &[], None, 10)
+        .await
+        .expect("search");
+    let found = hits.iter().map(|hit| hit.work).collect::<Vec<_>>();
+    assert_eq!(found[0], documentary.id, "a title match leads: {hits:?}");
+    assert_eq!(hits[0].matched_fields, [crate::search::MATCHED_TITLE]);
+    assert_eq!(
+        found[1..3]
+            .iter()
+            .copied()
+            .collect::<std::collections::HashSet<_>>(),
+        [film.id, series.id].into_iter().collect(),
+        "movies and series before episodes: {hits:?}"
+    );
+    assert_eq!(hits[1].matched_fields, [crate::search::MATCHED_CREDITS]);
+    assert_eq!(found[3], guest_episode.id, "a guest star's episode counts");
+    assert_eq!(found.len(), 4, "the regular's episode stays out: {hits:?}");
+
+    // Asking for episodes means wanting them, regular or guest.
+    let episodes = store
+        .search_lexical("wren okafor", &[WorkKind::Episode], None, 10)
+        .await
+        .expect("episodes");
+    assert_eq!(episodes.len(), 2);
+
+    for work in works {
+        store.delete_work(work.id).await.ok();
+    }
     store.delete_library(lib.id).await.ok();
 }
 

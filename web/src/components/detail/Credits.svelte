@@ -11,7 +11,8 @@
 
   const initials = (name) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
   const hue = (name) => [...name].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 360;
-  const searchFor = (name) => `/search?q=${encodeURIComponent(name)}`;
+  // Exact words: a filmography, without the nearest neighbours a name also has.
+  const searchFor = (name) => `/search?q=${encodeURIComponent(name)}&mode=LEXICAL`;
 </script>
 
 {#if credits.length}

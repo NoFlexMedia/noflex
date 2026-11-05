@@ -16,6 +16,7 @@
   import { availableCategories } from "$lib/categories.js";
   import { app } from "$lib/session.svelte.js";
   import BrandMark from "$components/BrandMark.svelte";
+  import ServerStatus from "$components/ServerStatus.svelte";
   import Tip from "$components/ui/Tip.svelte";
 
   const LIBRARY_ICON = { MOVIES: FilmStrip, SHOWS: Television, MUSIC: MusicNotes, AUDIOBOOKS: BookOpen, PHOTOS: ImageIcon, MIXED: Stack };
@@ -59,10 +60,7 @@
   </nav>
   <div class="foot">
     {#if app.viewer?.isAdmin}{@render item({ href: "/admin", label: "Administration", icon: ShieldCheck })}{/if}
-    <div class="server" title="{app.server?.name ?? 'NoFlex'} · v{app.server?.version}">
-      <span class="dot on"></span>
-      <span class="label"><strong>{app.server?.name ?? "NoFlex"}</strong><small>v{app.server?.version} · {app.server?.backend}</small></span>
-    </div>
+    <ServerStatus />
   </div>
 </aside>
 
@@ -90,25 +88,9 @@
   /* Labels return once the sidebar has opened enough to hold them, and leave at once. */
   .label, .wordmark { transition: opacity 180ms var(--ease-out) 90ms; }
   .foot { display: grid; gap: 2px; padding-top: 10px; border-top: 1px solid var(--line); }
-  .server { display: flex; align-items: center; gap: 12px; padding: 10px 14px 4px calc((var(--rail-w) - 24px - 8px) / 2); }
-  .server .label { display: grid; }
-  .server strong { font-size: 0.84rem; font-weight: 600; }
-  .server small { font-size: 0.74rem; color: var(--text-3); }
 
-  @media (min-width: 1180px) {
-    :global(:root[data-sidebar="collapsed"]) .label, :global(:root[data-sidebar="collapsed"]) .wordmark { opacity: 0; transition-duration: 110ms; transition-delay: 0ms; }
-    :global(:root[data-sidebar="collapsed"]) .heading::after { opacity: 1; }
-  }
-  @media (max-width: 1179px) {
-    .sidebar { padding-inline: 10px; }
-    .wordmark, .label, .server .label, .heading { display: none; }
-    .brand { justify-content: center; padding-inline: 0; }
-    .item { justify-content: center; padding: 0; height: 46px; }
-    .item[aria-current="page"]::before { left: -10px; }
-    .heading { display: block; height: 1px; padding: 0; margin: 12px 10px; background: var(--line); font-size: 0; }
-    .heading::after { display: none; }
-    .server { justify-content: center; padding-inline: 0; }
-  }
+  :global(:root[data-sidebar="collapsed"]) .label, :global(:root[data-sidebar="collapsed"]) .wordmark { opacity: 0; transition-duration: 110ms; transition-delay: 0ms; }
+  :global(:root[data-sidebar="collapsed"]) .heading::after { opacity: 1; }
   @media (max-width: 759px) { .sidebar { display: none; } }
   @media (prefers-reduced-motion: reduce) { .label, .wordmark, .heading::after { transition: none; } }
 </style>

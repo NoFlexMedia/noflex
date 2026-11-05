@@ -56,15 +56,15 @@
 </header>
 
 <style>
-  .topbar { position: fixed; z-index: 30; top: 0; right: 0; left: var(--nav-w); height: var(--topbar-h); display: flex; align-items: center; gap: 14px; padding: 0 var(--gutter); transition: background 300ms var(--ease-out), backdrop-filter 300ms, border-color 300ms; border-bottom: 1px solid transparent; view-transition-name: chrome-top; }
+  /* The left padding keeps the search field clear of the sidebar toggle where the gutter is too narrow to hold it. */
+  .topbar { position: fixed; z-index: 30; top: 0; right: 0; left: var(--nav-w); height: var(--topbar-h); display: flex; align-items: center; gap: 14px; padding: 0 var(--gutter) 0 max(var(--gutter), 44px); transition: background 300ms var(--ease-out), backdrop-filter 300ms, border-color 300ms; border-bottom: 1px solid transparent; view-transition-name: chrome-top; }
   /* A single flex row is cheap to lay out per frame, and unlike a transform it keeps the right-hand controls on screen. */
   :global(:root[data-sidebar-motion]) .topbar { transition: left var(--nav-t) var(--ease-out), background 300ms var(--ease-out), backdrop-filter 300ms, border-color 300ms; }
   .topbar.scrolled { background: rgb(7 8 11 / 0.72); backdrop-filter: blur(22px) saturate(1.5); border-bottom-color: var(--line); }
   .mobile-brand { display: none; }
-  /* Only the wide layout has a sidebar to collapse. */
-  /* Sits in the gutter, against the sidebar it controls. */
+  /* Sits in the gutter, against the sidebar it controls. Phones have no sidebar. */
   .sidebar-toggle { display: none; position: absolute; left: 6px; top: 50%; translate: 0 -50%; }
-  @media (min-width: 1180px) { .sidebar-toggle { display: block; } }
+  @media (min-width: 760px) { .sidebar-toggle { display: block; } }
   .search { display: flex; align-items: center; gap: 10px; width: min(420px, 100%); height: 40px; padding: 0 8px 0 14px; border-radius: 999px; background: rgb(255 255 255 / 0.07); border: 1px solid var(--line); color: var(--text-3); font-size: 0.9rem; backdrop-filter: blur(16px); transition: background var(--t), border-color var(--t), color var(--t); }
   .search:hover { background: rgb(255 255 255 / 0.1); border-color: var(--line-strong); color: var(--text-2); }
   .search span { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -19,8 +19,8 @@ pub struct SearchQuery;
 
 #[Object]
 impl SearchQuery {
-    /// Search every library by title/overview text and, when an
-    /// embedder plugin is loaded, semantic similarity. Hits are
+    /// Search every library by title, credited people and overview text
+    /// and, when an embedder plugin is loaded, semantic similarity. Hits are
     /// score-ranked, best first; cursors are rank positions, so paging
     /// re-runs the search and reaches at most the top 100 hits. `first`
     /// defaults to 20, max 100. `kinds` omitted or empty searches all

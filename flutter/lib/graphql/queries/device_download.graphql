@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/download_fields.graphql'
+
+query DeviceDownload($device: ID!, $media: ID!) {
+  deviceDownload(deviceId: $device, mediaFileId: $media) { ...DownloadFields }
+}

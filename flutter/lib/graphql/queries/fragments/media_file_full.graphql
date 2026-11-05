@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+fragment MediaFileFull on MediaFile {
+  id
+  editionId
+  path
+  partIndex
+  sizeBytes
+  container
+  probe
+  subtitleTracks { language codec default forced external title srtCompatible path streamIndex }
+}

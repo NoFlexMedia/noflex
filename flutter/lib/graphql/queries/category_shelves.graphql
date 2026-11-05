@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/work_card.graphql'
+
+query CategoryShelves($category: ContentCategory!) {
+  recommendations(category: $category, first: 24) { nodes { ...WorkCard } }
+  newlyReleased: works(category: $category, sort: DATE_RELEASED_DESC, first: 24) { nodes { ...WorkCard } }
+  recentlyAdded: works(category: $category, sort: DATE_ADDED_DESC, first: 24) { nodes { ...WorkCard } }
+}

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+fragment DeviceFields on Device {
+  id
+  name
+  smartTranscode
+  maxBitrateBps
+  allowedVideoCodecs
+  smartDownloads
+  downloadBudgetBytes
+  downloadsWifiOnly
+  createdAt
+  lastSeenAt
+}

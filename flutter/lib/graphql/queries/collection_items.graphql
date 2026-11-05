@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/work_card.graphql'
+
+query CollectionItems($id: ID!, $after: String) {
+  collection(id: $id) {
+    id
+    title
+    overview
+    items(first: 60, after: $after) {
+      nodes { ...WorkCard }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}

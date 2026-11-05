@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation Login($username: String!, $password: String!, $client: String!, $device: String!) {
+  login(username: $username, password: $password, client: $client, device: $device) { token refreshToken }
+}

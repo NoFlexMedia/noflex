@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/device_fields.graphql'
+
+mutation UpdateDevice($id: ID!, $smartTranscode: Boolean, $maxBitrateBps: Int, $clearMaxBitrate: Boolean, $smartDownloads: Boolean, $downloadBudgetBytes: Int, $clearDownloadBudget: Boolean, $downloadsWifiOnly: Boolean) {
+  updateDevice(id: $id, smartTranscode: $smartTranscode, maxBitrateBps: $maxBitrateBps, clearMaxBitrate: $clearMaxBitrate, smartDownloads: $smartDownloads, downloadBudgetBytes: $downloadBudgetBytes, clearDownloadBudget: $clearDownloadBudget, downloadsWifiOnly: $downloadsWifiOnly) { ...DeviceFields }
+}

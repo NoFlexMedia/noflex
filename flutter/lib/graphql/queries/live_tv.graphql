@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query LiveTv {
+  liveTvChannels(first: 100) { nodes { id sourceId name number logoUrl group enabled } }
+  recordingSchedules(first: 40) { nodes { id channelId programId startAt endAt status } }
+  recordings(first: 40) { nodes { id scheduleId channelId status error sizeBytes startedAt completedAt createdAt } }
+}

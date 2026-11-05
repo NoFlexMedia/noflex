@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/work_card.graphql'
+
+query PlaylistItems($id: ID!, $after: String) {
+  playlist(id: $id) {
+    id
+    title
+    overview
+    items(first: 60, after: $after) {
+      nodes { kind work { ...WorkCard } }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}

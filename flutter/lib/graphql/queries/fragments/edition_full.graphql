@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+fragment EditionFull on Edition {
+  id
+  workId
+  name
+  runtimeMs
+  introStartMs
+  introEndMs
+  creditsStartMs
+  chapters { positionMs title }
+  trickplay {
+    intervalMs
+    thumbWidth
+    thumbHeight
+    tileColumns
+    tileRows
+    sheets { index tileCount url }
+    chapterCues { positionMs title x y width height sheetUrl }
+  }
+}

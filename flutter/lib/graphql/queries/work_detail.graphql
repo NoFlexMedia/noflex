@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/edition_full.graphql'
+#import 'fragments/work_card.graphql'
+
+query WorkDetail($id: ID!) {
+  work(id: $id) {
+    ...WorkCard
+    sortTitle
+    releaseDate
+    overview
+    tagline
+    originalTitle
+    metadataStatus
+    addedAt
+    seriesTitle
+    credits { personId name role character }
+    tags(namespaces: ["parental", "genre"]) { id namespace display }
+    userData { played positionMs playCount rating favorite lastPlayed }
+  }
+  editions(workId: $id) { ...EditionFull }
+}

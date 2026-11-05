@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/work_card.graphql'
+
+query LibraryWorks($library: ID!, $filter: WorkFilterInput, $sort: SortOrder, $after: String) {
+  works(libraryId: $library, filter: $filter, sort: $sort, first: 48, after: $after) {
+    nodes { ...WorkCard }
+    pageInfo { hasNextPage endCursor }
+  }
+}

@@ -16,6 +16,8 @@ NoFlex is a self-hosted media server for movies, shows, music, audiobooks, and p
 
 **🌐 Web — SvelteKit.** `web/` is a Svelte 5 client using Houdini for GraphQL, embedded into the server binary and served from the same origin.
 
+**📱 Apps — Flutter.** `flutter/` is one app for Android, iOS, macOS, Windows and Linux, adapting from phones to foldables to desktop windows. It plays through libmpv, preferring what each device decodes in hardware, and keeps titles offline with Smart Downloads.
+
 **🗃️ Storage — Turso.** An in-process, SQLite-compatible engine by default, behind a backend-agnostic `Storage` trait.
 
 **❄️ Nix.** One flake provides the dev shell, the packages, CI checks, and a hardened NixOS module.

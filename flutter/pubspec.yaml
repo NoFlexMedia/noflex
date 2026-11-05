@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: noflex
+description: "NoFlex for phones, tablets, foldables and desktops."
+publish_to: 'none'
+
+version: 0.0.1+1
+
+environment:
+  sdk: ^3.13.0
+  flutter: ^3.47.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Reactivity. The whole app's state model; see AGENTS.md "Reactivity".
+  # Pinned together: mismatched versions throw at runtime.
+  signals: ^7.1.0
+  signals_flutter: ^7.1.0
+
+  # Dependency injection.
+  get_it: ^9.3.0
+
+  # GraphQL. No ferry_flutter: its Operation widget would be a second
+  # reactivity model; lib/graphql/query.dart mirrors requests into signals.
+  ferry: ^0.16.1
+  ferry_exec: ^0.7.0
+  gql_http_link: ^1.2.0
+  gql_websocket_link: ^2.1.0
+  gql_exec: ^1.0.0
+  gql_link: ^1.1.0
+  gql: ^1.0.1
+  http: ^1.6.0
+  built_value: ^8.12.6
+  built_collection: ^5.1.1
+
+  # Playback. libmpv with dav1d on every platform; see AGENTS.md "Playback".
+  media_kit: ^1.2.6
+  media_kit_video: ^2.0.1
+  media_kit_libs_video: ^1.0.7
+  wakelock_plus: ^1.8.2
+  window_manager: ^0.5.2
+
+  # Downloads. URLSession and WorkManager underneath; see AGENTS.md "Downloads".
+  background_downloader: ^9.6.5
+  workmanager: ^0.10.10
+  connectivity_plus: ^7.3.2
+  file_picker: ^13.3.2
+  path_provider: ^2.1.5
+  path: ^1.9.1
+
+  # Storage.
+  flutter_secure_storage: ^11.2.0
+  shared_preferences: ^2.5.3
+
+  # Icons: Phosphor, as on the web. A fork, as upstream's phosphor_flutter
+  # doesn't compile against a final IconData.
+  phosphor_icons: ^3.0.1
+  cached_network_image: ^4.0.6
+
+  device_info_plus: ^13.3.0
+  package_info_plus: ^10.2.2
+  uuid: ^4.5.1
+  intl: ^0.20.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  ferry_generator: ^0.12.0
+  build_runner: ^2.4.13
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/decoder-probes/
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Variable.ttf
+
+# media_kit has declared limited maintenance and its last release predates a
+# year of fixes on main: memory leaks, the raster thread blocking on Linux, a
+# newer libmpv on Apple platforms. Move to a release when one catches up.
+dependency_overrides:
+  media_kit:
+    git:
+      url: https://github.com/media-kit/media-kit.git
+      ref: c533e446755f
+      path: media_kit
+  media_kit_video:
+    git:
+      url: https://github.com/media-kit/media-kit.git
+      ref: c533e446755f
+      path: media_kit_video
+  media_kit_libs_video:
+    git:
+      url: https://github.com/media-kit/media-kit.git
+      ref: c533e446755f
+      path: libs/universal/media_kit_libs_video
+  media_kit_libs_android_video:
+    git:
+      url: https://github.com/media-kit/media-kit.git
+      ref: c533e446755f
+      path: libs/android/media_kit_libs_android_video
+  media_kit_libs_ios_video:
+    git:
+      url: https://github.com/media-kit/media-kit.git
+      ref: c533e446755f
+      path: libs/ios/media_kit_libs_ios_video
+  media_kit_libs_macos_video:
+    git:
+      url: https://github.com/media-kit/media-kit.git
+      ref: c533e446755f
+      path: libs/macos/media_kit_libs_macos_video
+  media_kit_libs_windows_video:
+    git:
+      url: https://github.com/media-kit/media-kit.git
+      ref: c533e446755f
+      path: libs/windows/media_kit_libs_windows_video
+  media_kit_libs_linux:
+    git:
+      url: https://github.com/media-kit/media-kit.git
+      ref: c533e446755f
+      path: libs/linux/media_kit_libs_linux

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# What a poster card, rail or row needs.
+fragment WorkCard on Work {
+  id
+  kind
+  parentId
+  libraryId
+  title
+  year
+  communityRating
+  indexNumber
+  indexEnd
+  parentIndex
+  runtimeMs
+  externalIds { kind value }
+  images { kind url }
+  userData { played positionMs favorite }
+}

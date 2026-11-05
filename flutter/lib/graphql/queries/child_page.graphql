@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/work_card.graphql'
+
+# One page of a container's children, for walking them in code.
+query ChildPage($library: ID!, $parent: ID!, $after: String) {
+  works(libraryId: $library, filter: { parentId: $parent, recursive: false }, sort: TITLE_ASC, first: 60, after: $after) {
+    nodes { ...WorkCard overview }
+    pageInfo { hasNextPage endCursor }
+  }
+}

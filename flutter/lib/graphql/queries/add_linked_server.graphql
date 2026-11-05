@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation AddLinkedServer($origin: String!, $name: String!, $key: String!) {
+  addLinkedServer(origin: $origin, name: $name, apiKey: $key) { id }
+}

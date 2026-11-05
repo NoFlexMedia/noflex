@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation CancelExportJob($id: ID!) {
+  cancelExportJob(id: $id) { id editionId format status progress error createdAt finishedAt }
+}

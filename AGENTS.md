@@ -1,6 +1,6 @@
 # NoFlex
 
-NoFlex is a self-hosted media server: a Rust backend whose only client surface is a GraphQL API, WASM plugins for every provider integration, and a SvelteKit web client.
+NoFlex is a self-hosted media server: a Rust backend whose only client surface is a GraphQL API, WASM plugins for every provider integration, a SvelteKit web client, and a Flutter app for phones, tablets, foldables and desktops.
 
 ## Read every `AGENTS.md` on your path
 
@@ -8,11 +8,13 @@ Each project subdirectory owns an `AGENTS.md` describing its stack, commands, an
 
 - [`backend/AGENTS.md`](backend/AGENTS.md) — Rust workspace, plugins, architecture invariants.
 - [`web/AGENTS.md`](web/AGENTS.md) — SvelteKit client.
+- [`flutter/AGENTS.md`](flutter/AGENTS.md) — Flutter app: signals, playback, downloads, test devices.
 
 ## Layout
 
 - `backend/` — Cargo workspace: crates in `backend/crates/`, first-party WASM plugins in `backend/plugins/`, `cargo xtask` in `backend/xtask/`.
 - `web/` — SvelteKit client, embedded into the server binary at build time.
+- `flutter/` — Flutter app for Android, iOS, macOS, Windows and Linux.
 - `nix/` — NixOS module. `flake.nix` at the root provides the dev shell, packages, and checks.
 - `docs/` — operator and contributor docs, linked from `README.md`.
 
@@ -25,7 +27,7 @@ Each project subdirectory owns an `AGENTS.md` describing its stack, commands, an
 
 ## Conventions
 
-- The toolchain comes from the Nix flake — enter it with `nix develop` or `direnv`. Never `rustup`, never a system `cargo` or `node`. Need a tool? Add it to `flake.nix`.
+- The toolchain comes from the Nix flake — enter it with `nix develop` or `direnv`. Never `rustup`, never a system `cargo`, `node` or `flutter`. Need a tool? Add it to `flake.nix`, in the group its shell composes from.
 - License is AGPL-3.0-only. Every source file starts with an SPDX header (`// SPDX-License-Identifier: AGPL-3.0-only`, or the file type's comment equivalent).
 - Comments explain **why**, not what. Keep them minimal.
 - No back-compat shims for hypothetical changes. Pre-1.0, breaking changes land cleanly.
@@ -42,4 +44,5 @@ CI runs these; run them before committing (details in each subdirectory's `AGENT
 nix flake check                                          # repo root: release package + fmt
 cd backend && cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 cd web && npm run check
+cd flutter && flutter analyze --no-pub && flutter test --no-pub
 ```

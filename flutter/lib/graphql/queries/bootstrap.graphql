@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/library_fields.graphql'
+#import 'fragments/linked_server_fields.graphql'
+#import 'fragments/user_fields.graphql'
+
+query Bootstrap {
+  viewer { ...UserFields }
+  libraries { ...LibraryFields }
+  contentCategories { category workCount }
+  preferences { key value }
+  linkedServers { ...LinkedServerFields }
+  serverInfo { name version backend isConfigured }
+}

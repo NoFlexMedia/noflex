@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'work_card.graphql'
+
+fragment WatchRoomFields on WatchRoom {
+  id
+  hostUserId
+  mediaFileId
+  state
+  positionMs
+  sequence
+  createdAt
+  updatedAt
+  work { ...WorkCard }
+}

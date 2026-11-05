@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'work_card.graphql'
+
+fragment DownloadFields on SmartDownload {
+  work { ...WorkCard seriesTitle overview }
+  partIndex
+  url
+  sizeBytes
+  optimized
+  subtitles { index language title forced default url }
+}

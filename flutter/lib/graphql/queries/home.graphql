@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/work_card.graphql'
+
+query Home {
+  contentCategories { category workCount }
+  continueWatching(first: 16) { nodes { ...WorkCard seriesTitle seriesExternalIds { kind value } } }
+  recentlyAdded(first: 24) { nodes { ...WorkCard overview } }
+  recentlyPlayed(first: 16) { nodes { ...WorkCard seriesTitle } }
+  recommendations(first: 16) { nodes { ...WorkCard } }
+}

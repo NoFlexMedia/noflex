@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query WatchSyncItems($since: DateTime!) {
+  watchSyncItems(since: $since) {
+    externalIds { kind value }
+    season
+    episode
+    played
+    positionMs
+    lastPlayed
+  }
+}

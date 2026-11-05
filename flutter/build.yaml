@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Ferry codegen: `dart run build_runner build --delete-conflicting-outputs`.
+# Reads lib/graphql/schema.graphql, a symlink to the server's committed SDL
+# snapshot, and every operation under lib/graphql/queries/.
+#
+# Each custom scalar needs a type_overrides entry here and a serializer in
+# lib/graphql/scalars.dart.
+
+targets:
+  $default:
+    builders:
+      ferry_generator|graphql_builder:
+        enabled: true
+        options:
+          schema: noflex|lib/graphql/schema.graphql
+          type_overrides:
+            DateTime:
+              name: DateTime
+            JSON:
+              name: JsonObject
+              import: "package:built_value/json_object.dart"
+          custom_serializers:
+            - import: "package:noflex/graphql/scalars.dart"
+              name: DateTimeSerializer
+      ferry_generator|serializer_builder:
+        enabled: true
+        options:
+          schema: noflex|lib/graphql/schema.graphql
+          custom_serializers:
+            - import: "package:noflex/graphql/scalars.dart"
+              name: DateTimeSerializer

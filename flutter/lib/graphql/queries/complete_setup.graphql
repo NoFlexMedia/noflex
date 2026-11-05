@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation CompleteSetup($username: String!, $password: String!) {
+  completeSetupWizard(username: $username, password: $password) { accessToken refreshToken }
+}

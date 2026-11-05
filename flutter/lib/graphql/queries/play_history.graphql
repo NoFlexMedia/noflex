@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/work_card.graphql'
+
+query PlayHistory($after: String) {
+  playHistory(first: 50, after: $after) {
+    nodes { id targetKind data { played positionMs lastPlayed playCount } work { ...WorkCard seriesTitle } }
+    pageInfo { hasNextPage endCursor }
+  }
+}

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation CreateExportJob($edition: ID!, $format: ExportFormat!) {
+  createExportJob(editionId: $edition, format: $format) { id editionId format status progress error createdAt finishedAt }
+}

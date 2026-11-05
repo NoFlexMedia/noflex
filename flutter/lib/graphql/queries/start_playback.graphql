@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation StartPlayback($media: ID!, $capabilities: ClientCapabilities!, $subtitle: Int, $start: Int, $audio: Int) {
+  startPlaybackSession(mediaFileId: $media, capabilities: $capabilities, burnSubtitle: $subtitle, startPositionMs: $start, audioStream: $audio) {
+    sessionId
+    route
+    url
+    jobId
+    startPositionMs
+    subtitles { index language title forced default url }
+    decision {
+      route
+      plan
+      reasons { code description }
+      source { container videoCodec videoProfile videoLevel bitDepth width height videoRange audioCodec audioChannels bitrateBps }
+      target { container videoCodec videoProfile videoLevel bitDepth width height videoRange audioCodec audioChannels bitrateBps }
+      encoder
+      audioEncoder
+      hardware
+      tonemap
+    }
+  }
+}

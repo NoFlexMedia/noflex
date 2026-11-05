@@ -4,7 +4,7 @@ Thanks for your interest in NoFlex! This page covers how changes land. For build
 
 ## Workflow
 
-- Work in the Nix dev shell (`nix develop`). It is the only supported toolchain.
+- Work in the Nix dev shell (`nix develop`). It is the only supported toolchain. The default shell has everything, including Flutter and several gigabytes of Android SDK. If you don't touch the app, use `nix develop .#no-flutter`; if you only touch the app, `nix develop .#flutter-only`. With direnv, set `export NOFLEX_SHELL=no-flutter` in `.envrc.local`.
 - Keep commits small and focused: `area: imperative summary` (`scanner: keep year-like numbers in movie titles`), then a body explaining **why**.
 - Before opening a pull request, run the gates CI runs:
 
@@ -14,6 +14,7 @@ Thanks for your interest in NoFlex! This page covers how changes land. For build
   cargo clippy --workspace --all-targets -- -D warnings
   cargo test --workspace
   cd ../web && npm run check
+  cd ../flutter && flutter analyze --no-pub && flutter test --no-pub
   cd .. && nix flake check
   ```
 

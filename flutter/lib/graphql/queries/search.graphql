@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/work_card.graphql'
+
+query Search($text: String!, $mode: SearchMode!, $kinds: [WorkKind!], $after: String) {
+  search(text: $text, mode: $mode, kinds: $kinds, first: 48, after: $after) {
+    nodes { id score matchedFields work { ...WorkCard overview seriesTitle seriesExternalIds { kind value } } }
+    pageInfo { hasNextPage endCursor }
+  }
+}

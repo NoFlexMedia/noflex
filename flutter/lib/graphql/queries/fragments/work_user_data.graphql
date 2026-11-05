@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'user_data_fields.graphql'
+
+# Written into the cache after a playback-state mutation, which returns the
+# bare UserData rather than its work.
+fragment WorkUserData on Work {
+  id
+  userData { ...UserDataFields }
+}

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation CancelRecordingSchedule($id: ID!) {
+  cancelRecordingSchedule(id: $id) { id status }
+}

@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query LiveTvGuide($channelIds: [ID!]!, $start: DateTime!, $end: DateTime!, $after: String) {
+  liveTvGuide(channelIds: $channelIds, start: $start, end: $end, first: 1000, after: $after) {
+    nodes { id channelId title subtitle description category startAt endAt }
+    pageInfo { hasNextPage endCursor }
+  }
+}

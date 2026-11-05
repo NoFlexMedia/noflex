@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation LinkedServerSynced($id: ID!, $until: DateTime!) {
+  updateLinkedServer(id: $id, syncedUntil: $until) { id }
+}

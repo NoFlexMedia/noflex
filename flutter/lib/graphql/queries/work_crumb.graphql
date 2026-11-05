@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/work_card.graphql'
+
+query WorkCrumb($id: ID!) {
+  work(id: $id) { ...WorkCard seriesTitle }
+}

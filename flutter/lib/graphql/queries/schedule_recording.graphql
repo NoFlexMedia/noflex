@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation ScheduleRecording($channel: ID!, $program: ID, $start: DateTime!, $end: DateTime!, $before: Int!, $after: Int!) {
+  scheduleRecording(channelId: $channel, programId: $program, startAt: $start, endAt: $end, paddingBeforeSecs: $before, paddingAfterSecs: $after) { id status startAt endAt }
+}

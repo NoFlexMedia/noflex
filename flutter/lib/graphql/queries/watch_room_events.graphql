@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/watch_room_fields.graphql'
+
+subscription WatchRoomEvents($room: ID!) {
+  watchRoomEvents(roomId: $room) {
+    action
+    sequence
+    serverTimestamp
+    room { ...WatchRoomFields }
+  }
+}

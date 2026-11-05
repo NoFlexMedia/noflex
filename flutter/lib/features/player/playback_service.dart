@@ -197,12 +197,15 @@ List<SubtitleChoice> subtitleChoicesOf(GMediaFileFull file) => [
     ),
 ];
 
-/// Physical pixels on this display, the most picture a version can usefully have.
+/// Physical pixels of the screen, the most picture a version can usefully have.
+/// The screen rather than the window: a small window may yet go fullscreen.
 int displayPixels() {
   final views = WidgetsBinding.instance.platformDispatcher.views;
   if (views.isEmpty) return pixels1080p;
-  final size = views.first.physicalSize;
-  final pixels = (size.width * size.height).round();
+  final view = views.first;
+  final window = view.physicalSize.width * view.physicalSize.height;
+  final screen = view.display.size.width * view.display.size.height;
+  final pixels = (screen > window ? screen : window).round();
   return pixels > 0 ? pixels : pixels1080p;
 }
 

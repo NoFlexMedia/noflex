@@ -26,7 +26,12 @@ Future<void> main() async {
   configureDependencies();
   await getIt<TokenStore>().load();
   await getIt<DeviceIdentity>().load();
-  await getIt<DownloadsService>().load();
+  try {
+    await getIt<DownloadsService>().load();
+  } catch (error) {
+    // Streaming doesn't need any of this; a broken downloader mustn't stop the app.
+    debugPrint('downloads unavailable: $error');
+  }
   runApp(const NoFlexApp());
   unawaited(getIt<SessionService>().start());
   unawaited(scheduleSmartSync());

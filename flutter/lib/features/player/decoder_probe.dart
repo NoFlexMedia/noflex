@@ -151,20 +151,26 @@ class DecoderProbeService {
   }
 
   /// The hwdec libmpv settled on for a clip, or null for software or failure.
+  /// Opened paused: the decoder still comes up for the first frame, and stays
+  /// up. A clip left playing is over before a slow one such as Vulkan reports,
+  /// and libmpv's properties empty out at the end of a file.
   Future<String?> _decodeWith(
     NativePlayer native,
     Player player,
     String clip,
   ) async {
-    await player.open(Media('$_clipDir/$clip.mkv'));
-    final deadline = DateTime.now().add(const Duration(milliseconds: 2500));
+    await player.open(Media('$_clipDir/$clip.mkv'), play: false);
+    final deadline = DateTime.now().add(const Duration(seconds: 3));
     while (DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 40));
       final current = await native.getProperty('hwdec-current');
       if (current.isNotEmpty && current != 'no') return current;
       // A frame out of the decoder means it has made up its mind.
       final format = await native.getProperty('video-params/pixelformat');
-      if (format.isNotEmpty) return null;
+      if (format.isNotEmpty) {
+        final settled = await native.getProperty('hwdec-current');
+        return settled.isNotEmpty && settled != 'no' ? settled : null;
+      }
     }
     return null;
   }

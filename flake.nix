@@ -270,15 +270,18 @@
             wayland
           ];
 
-        flutterPkgs = with pkgsFlutter; [
-          flutter
-          jdk
-          androidSdk
-          git
-          curl
-          unzip
-          pkg-config
-        ];
+        flutterPkgs = with pkgsFlutter;
+          [
+            flutter
+            jdk
+            androidSdk
+            git
+            curl
+            unzip
+            pkg-config
+          ]
+          # path_provider asks this for the documents folder on Linux.
+          ++ lib.optional stdenv.hostPlatform.isLinux xdg-user-dirs;
 
         flutterEnv = {
           # ANDROID_SDK_ROOT is deprecated, but older tools still consult it.

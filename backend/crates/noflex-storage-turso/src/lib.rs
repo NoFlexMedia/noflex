@@ -1492,6 +1492,27 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.writer().await?;
         repo::export_jobs::delete(&conn, id).await
     }
+    async fn finished_export_job(
+        &self,
+        edition: noflex_core::EditionId,
+        format: noflex_storage::domain::ExportFormat,
+    ) -> StorageResult<Option<ExportJob>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::export_jobs::finished(&conn, edition, format).await
+    }
+    async fn user_export_job(
+        &self,
+        user: UserId,
+        edition: noflex_core::EditionId,
+        format: noflex_storage::domain::ExportFormat,
+    ) -> StorageResult<Option<ExportJob>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::export_jobs::for_user(&conn, user, edition, format).await
+    }
+    async fn export_output_in_use(&self, output_path: &str) -> StorageResult<bool> {
+        let (_schema, conn) = self.reader().await?;
+        repo::export_jobs::output_in_use(&conn, output_path).await
+    }
 
     // ---- Collections ---------------------------------------------------
     async fn create_collection(&self, collection: &Collection) -> StorageResult<()> {

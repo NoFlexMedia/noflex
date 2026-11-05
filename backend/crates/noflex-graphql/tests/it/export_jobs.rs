@@ -11,7 +11,7 @@ use noflex_graphql::{
 };
 use noflex_storage::{
     RequestUser, Storage,
-    domain::{ExportJobStatus, User},
+    domain::{ExportFormat, ExportJob, ExportJobStatus, User},
 };
 use noflex_storage_turso::TursoStore;
 use time::OffsetDateTime;
@@ -199,6 +199,65 @@ async fn export_names_its_work_only_while_the_viewer_can_see_it() {
     let response = f.schema.execute(request(&query, &f.owner)).await;
     assert!(response.errors.is_empty(), "hidden: {:?}", response.errors);
     assert!(response.data.into_json().unwrap()["exportJob"]["work"].is_null());
+}
+
+#[tokio::test]
+async fn removing_a_shared_copy_keeps_the_file_until_the_last_one_goes() {
+    let f = fixture().await;
+    let temp = tempfile::tempdir().expect("temp");
+    let output = temp.path().join("copy.mp4");
+    std::fs::write(&output, b"movie").expect("output");
+    let now = time::OffsetDateTime::now_utc();
+    let finished = |user: &User| ExportJob {
+        id: noflex_core::ExportJobId::new(),
+        user_id: user.id,
+        edition_id: f.edition_id,
+        format: ExportFormat::Mp4,
+        status: ExportJobStatus::Completed,
+        progress: 1.0,
+        output_path: Some(output.to_string_lossy().into_owned()),
+        error: None,
+        created_at: now,
+        started_at: Some(now),
+        finished_at: Some(now),
+    };
+    let mine = finished(&f.owner);
+    let theirs = finished(&f.other);
+    f.storage.create_export_job(&mine).await.expect("mine");
+    f.storage.create_export_job(&theirs).await.expect("theirs");
+    let remove = |id| format!(r#"mutation {{ deleteExportJob(id: "{id}") }}"#);
+
+    let refused = f.schema.execute(request(remove(theirs.id), &f.owner)).await;
+    assert_eq!(refused.errors[0].message, "export job not found");
+
+    let done = f.schema.execute(request(remove(mine.id), &f.owner)).await;
+    assert!(done.errors.is_empty(), "{:?}", done.errors);
+    assert!(output.exists(), "someone else still has it");
+
+    let done = f.schema.execute(request(remove(theirs.id), &f.other)).await;
+    assert!(done.errors.is_empty(), "{:?}", done.errors);
+    assert!(!output.exists(), "nobody has it now");
+}
+
+#[tokio::test]
+async fn asking_twice_is_one_export_and_one_in_progress_cannot_be_removed() {
+    let f = fixture().await;
+    let first = create_job(&f, &f.owner).await;
+    let second = create_job(&f, &f.owner).await;
+    assert_eq!(first["id"], second["id"]);
+
+    let id = first["id"].as_str().expect("id");
+    let response = f
+        .schema
+        .execute(request(
+            format!(r#"mutation {{ deleteExportJob(id: "{id}") }}"#),
+            &f.owner,
+        ))
+        .await;
+    assert_eq!(
+        response.errors[0].message,
+        "cancel this export before removing it"
+    );
 }
 
 #[tokio::test]

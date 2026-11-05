@@ -10,7 +10,7 @@ use std::{
 use noflex_graphql::ExportEventBroadcaster;
 use noflex_storage::{
     Storage,
-    domain::{ExportFormat, ExportJobStatus},
+    domain::{ExportFormat, ExportJobStatus, MediaFile},
     error::StorageResult,
     store::ExportJobLease,
 };
@@ -101,6 +101,9 @@ impl DownloadWorker {
             self.fail_job(&lease, "edition has no media file").await?;
             return Ok(());
         };
+        if self.share_finished_copy(&lease, &media_file).await? {
+            return Ok(());
+        }
         let runtime_ms = self
             .storage
             .get_edition(job.edition_id)
@@ -251,6 +254,41 @@ impl DownloadWorker {
             }
         }
         Ok(())
+    }
+
+    /// Someone else's finished copy is this job's too: it's a stream copy of the
+    /// same file, so another run would only write the same bytes again. Jobs run
+    /// one at a time, so a second job waiting on a first finds the result here.
+    async fn share_finished_copy(
+        &self,
+        lease: &ExportJobLease,
+        media_file: &MediaFile,
+    ) -> StorageResult<bool> {
+        let job = &lease.job;
+        let Some(finished) = self
+            .storage
+            .finished_export_job(job.edition_id, job.format)
+            .await?
+        else {
+            return Ok(false);
+        };
+        let Some(output) = finished.output_path.as_deref() else {
+            return Ok(false);
+        };
+        let current = finished
+            .finished_at
+            .is_some_and(|finished_at| finished_at >= media_file.mtime);
+        if !current || tokio::fs::metadata(output).await.is_err() {
+            return Ok(false);
+        }
+        if self
+            .storage
+            .complete_export_job(job.id, &lease.lease_token, output)
+            .await?
+        {
+            self.emit_status(job.id, ExportJobStatus::Completed, 1.0);
+        }
+        Ok(true)
     }
 
     async fn renew(

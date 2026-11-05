@@ -1380,6 +1380,11 @@ type Mutation {
 	createExportJob(editionId: ID!, format: ExportFormat!): ExportJob!
 	cancelExportJob(id: ID!): ExportJob!
 	"""
+	Say the caller no longer needs this copy. The file goes once nobody else's
+	job shares it. One still queued or running has to be cancelled first.
+	"""
+	deleteExportJob(id: ID!): Boolean!
+	"""
 	Report the current playback position for a work or edition.
 	`state: STOPPED` additionally logs a `play.progress` activity
 	row so the activity feed reflects the session end.

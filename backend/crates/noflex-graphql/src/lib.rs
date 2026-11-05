@@ -1137,6 +1137,14 @@ impl CoreMutation {
             return Err(async_graphql::Error::new("edition not found"));
         }
         devices::require_downloads_allowed(storage).await?;
+        // Asking twice for what's already there or on its way is one request.
+        if let Some(existing) = storage
+            .user_export_job(user.user_id, ed_id, format)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+        {
+            return Ok(existing);
+        }
         let job = ExportJob {
             id: noflex_core::ExportJobId::new(),
             user_id: user.user_id,
@@ -1176,6 +1184,47 @@ impl CoreMutation {
             return Err(async_graphql::Error::new("export job cannot be cancelled"));
         }
         Ok(cancellation.job)
+    }
+
+    /// Say the caller no longer needs this copy. The file goes once nobody else's
+    /// job shares it. One still queued or running has to be cancelled first.
+    async fn delete_export_job(
+        &self,
+        ctx: &Context<'_>,
+        id: ExportJobId,
+    ) -> async_graphql::Result<bool> {
+        let storage = ctx
+            .data::<Arc<dyn Storage>>()
+            .map_err(|_| async_graphql::Error::new("storage not configured"))?;
+        let user = access::request_user(ctx)?;
+        let job = storage
+            .get_export_job(id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .filter(|job| job.user_id == user.user_id)
+            .ok_or_else(|| async_graphql::Error::new("export job not found"))?;
+        if matches!(
+            job.status,
+            ExportJobStatus::Queued | ExportJobStatus::Running | ExportJobStatus::CancelRequested
+        ) {
+            return Err(async_graphql::Error::new(
+                "cancel this export before removing it",
+            ));
+        }
+        storage
+            .delete_export_job(id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        if let Some(output) = job.output_path.as_deref()
+            && !storage
+                .export_output_in_use(output)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            && let Err(error) = tokio::fs::remove_file(output).await
+        {
+            tracing::warn!(%error, output, "unused export not removed");
+        }
+        Ok(true)
     }
 }
 

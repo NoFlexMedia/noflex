@@ -465,6 +465,66 @@ async fn completed_job_outside_download_root_is_rejected() {
 }
 
 #[tokio::test]
+async fn a_second_export_of_the_same_edition_shares_the_first_ones_file() {
+    let temp = tempfile::tempdir().expect("temp");
+    let output = temp.path().join("first.mp4");
+    std::fs::write(&output, b"movie").expect("output");
+    let store = TursoStore::open_temp().await.expect("store");
+    store.migrate().await.expect("migrate");
+    let (user_id, edition_id, _) = seed_with_real_file(&store, temp.path()).await;
+    let store: Arc<dyn Storage> = Arc::new(store);
+    // Later than the source's mtime, and on disk.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    insert_completed_job(&store, user_id, edition_id, &output).await;
+
+    let second = noflex_storage::domain::User {
+        id: noflex_core::UserId::new(),
+        name: "second".to_string(),
+        password_hash: "argon2id$placeholder".to_string(),
+        is_admin: false,
+        role: noflex_core::UserRole::User,
+        created_at: OffsetDateTime::now_utc(),
+    };
+    store.upsert_user(&second).await.expect("second user");
+    let job = noflex_storage::domain::ExportJob {
+        id: noflex_core::ExportJobId::new(),
+        user_id: second.id,
+        edition_id,
+        format: noflex_storage::domain::ExportFormat::Mp4,
+        status: noflex_storage::domain::ExportJobStatus::Queued,
+        progress: 0.0,
+        output_path: None,
+        error: None,
+        created_at: OffsetDateTime::now_utc(),
+        started_at: None,
+        finished_at: None,
+    };
+    store.create_export_job(&job).await.expect("queue");
+
+    // An ffmpeg that can't run proves the copy wasn't made again.
+    let mut worker = DownloadWorker::new(
+        store.clone(),
+        temp.path().join("no-such-ffmpeg"),
+        temp.path().join("exports"),
+    );
+    assert!(worker.tick().await.expect("tick"));
+
+    let done = store
+        .get_export_job(job.id)
+        .await
+        .expect("get")
+        .expect("job");
+    assert_eq!(
+        done.status,
+        noflex_storage::domain::ExportJobStatus::Completed
+    );
+    assert_eq!(
+        done.output_path.as_deref(),
+        Some(output.to_string_lossy().as_ref())
+    );
+}
+
+#[tokio::test]
 async fn a_finished_export_stays_put_on_a_server_that_refuses_downloads() {
     use noflex_server::{download_serve::serve_download_job, file_serve::RootCapability};
 

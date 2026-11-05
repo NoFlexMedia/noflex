@@ -382,6 +382,73 @@ pub(crate) async fn delete(conn: &Connection, id: ExportJobId) -> StorageResult<
     Ok(())
 }
 
+pub(crate) async fn finished(
+    conn: &Connection,
+    edition: EditionId,
+    format: ExportFormat,
+) -> StorageResult<Option<ExportJob>> {
+    let sql = format!(
+        "SELECT {COLUMNS} FROM export_jobs \
+         WHERE edition_id = ?1 AND format = ?2 AND status = 'completed' \
+             AND output_path IS NOT NULL \
+         ORDER BY finished_at DESC LIMIT 1"
+    );
+    let mut rows = conn
+        .query(
+            &sql,
+            vec![
+                Value::Blob(uuid_to_blob(edition.into_uuid())),
+                Value::Text(format_to_text(format).to_string()),
+            ],
+        )
+        .await
+        .map_err(map_turso)?;
+    match rows.next().await.map_err(map_turso)? {
+        Some(row) => Ok(Some(row_to_job(&row)?)),
+        None => Ok(None),
+    }
+}
+
+pub(crate) async fn for_user(
+    conn: &Connection,
+    user: UserId,
+    edition: EditionId,
+    format: ExportFormat,
+) -> StorageResult<Option<ExportJob>> {
+    let sql = format!(
+        "SELECT {COLUMNS} FROM export_jobs \
+         WHERE user_id = ?1 AND edition_id = ?2 AND format = ?3 \
+             AND status NOT IN ('failed', 'cancelled', 'cancel_requested') \
+         ORDER BY created_at DESC LIMIT 1"
+    );
+    let mut rows = conn
+        .query(
+            &sql,
+            vec![
+                Value::Blob(uuid_to_blob(user.into_uuid())),
+                Value::Blob(uuid_to_blob(edition.into_uuid())),
+                Value::Text(format_to_text(format).to_string()),
+            ],
+        )
+        .await
+        .map_err(map_turso)?;
+    match rows.next().await.map_err(map_turso)? {
+        Some(row) => Ok(Some(row_to_job(&row)?)),
+        None => Ok(None),
+    }
+}
+
+pub(crate) async fn output_in_use(conn: &Connection, output_path: &str) -> StorageResult<bool> {
+    let mut rows = conn
+        .query(
+            "SELECT 1 FROM export_jobs WHERE output_path = ?1 LIMIT 1",
+            vec![Value::Text(output_path.to_string())],
+        )
+        .await
+        .map_err(map_turso)?;
+    Ok(rows.next().await.map_err(map_turso)?.is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

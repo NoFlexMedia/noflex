@@ -16,14 +16,14 @@ use tokio::io::AsyncWrite;
 use crate::{
     domain::{
         ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount, Device, DevicePin,
-        Edition, EmbeddingEndpoint, EmbeddingModel, EpgProgram, ExportJob, ExportJobStatus,
-        ExternalIdentity, HistoryPage, Image, ImageSource, ImageTarget, IntroMarkers, Invite,
-        Library, LinkedServer, LiveTvChannel, LiveTvSource, MediaFile, OptimizedVersion,
-        PlaySession, Playlist, PluginOverrideRow, PluginTaskPayload, PluginTaskState, Recording,
-        RecordingSchedule, RecordingStatus, RefreshTokenLookup, ScanEvent, Session,
-        SmartTranscodingSettings, Tag, TagAssignment, TagSummary, TrickplayAsset, User, UserData,
-        UserPluginSecret, UserPreference, UserRestrictions, WatchRoom, WatchRoomMember,
-        WatchRoomState, WatchedWork, Work, WorkFeatures,
+        Edition, EmbeddingEndpoint, EmbeddingModel, EpgProgram, ExportFormat, ExportJob,
+        ExportJobStatus, ExternalIdentity, HistoryPage, Image, ImageSource, ImageTarget,
+        IntroMarkers, Invite, Library, LinkedServer, LiveTvChannel, LiveTvSource, MediaFile,
+        OptimizedVersion, PlaySession, Playlist, PluginOverrideRow, PluginTaskPayload,
+        PluginTaskState, Recording, RecordingSchedule, RecordingStatus, RefreshTokenLookup,
+        ScanEvent, Session, SmartTranscodingSettings, Tag, TagAssignment, TagSummary,
+        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
+        WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork, Work, WorkFeatures,
     },
     error::StorageResult,
     query::{
@@ -980,6 +980,25 @@ pub trait Storage: Send + Sync + 'static {
     ) -> StorageResult<Option<ExportJobCancellation>>;
 
     async fn delete_export_job(&self, id: ExportJobId) -> StorageResult<()>;
+
+    /// The newest finished copy of `edition` in `format`, whoever asked for it.
+    /// One stream copy is as good as another, so a later job can share its file.
+    async fn finished_export_job(
+        &self,
+        edition: EditionId,
+        format: ExportFormat,
+    ) -> StorageResult<Option<ExportJob>>;
+
+    /// `user`'s own job for this, unless it failed or was cancelled.
+    async fn user_export_job(
+        &self,
+        user: UserId,
+        edition: EditionId,
+        format: ExportFormat,
+    ) -> StorageResult<Option<ExportJob>>;
+
+    /// Whether any job still points at `output_path`.
+    async fn export_output_in_use(&self, output_path: &str) -> StorageResult<bool>;
 
     // ---- Collections ---------------------------------------------------
     /// Insert a new collection row.

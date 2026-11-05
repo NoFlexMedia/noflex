@@ -9594,6 +9594,95 @@ async fn export_job_lease_protocol<S: Storage + ?Sized>(store: &S) {
     for job in &jobs {
         store.delete_export_job(job.id).await.expect("delete job");
     }
+
+    let finished_at = base + minute;
+    let shared = |user: UserId, status, output: Option<&str>, finished| ExportJob {
+        id: noflex_core::ExportJobId::new(),
+        user_id: user,
+        edition_id: edition.id,
+        format: ExportFormat::Mp4,
+        status,
+        progress: 0.0,
+        output_path: output.map(str::to_string),
+        error: None,
+        created_at: base,
+        started_at: None,
+        finished_at: finished,
+    };
+    let first = shared(
+        owner.id,
+        ExportJobStatus::Completed,
+        Some("/out/a.mp4"),
+        Some(finished_at),
+    );
+    let failed = shared(
+        stranger.id,
+        ExportJobStatus::Failed,
+        None,
+        Some(finished_at),
+    );
+    store.create_export_job(&first).await.expect("first");
+    store.create_export_job(&failed).await.expect("failed");
+    let found = store
+        .finished_export_job(edition.id, ExportFormat::Mp4)
+        .await
+        .expect("finished")
+        .expect("a finished copy");
+    assert_eq!(found.id, first.id);
+    assert!(
+        store
+            .finished_export_job(edition.id, ExportFormat::Mkv)
+            .await
+            .expect("other format")
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .user_export_job(owner.id, edition.id, ExportFormat::Mp4)
+            .await
+            .expect("own job")
+            .map(|job| job.id),
+        Some(first.id)
+    );
+    assert!(
+        store
+            .user_export_job(stranger.id, edition.id, ExportFormat::Mp4)
+            .await
+            .expect("failed doesn't count")
+            .is_none()
+    );
+    let second = shared(
+        stranger.id,
+        ExportJobStatus::Completed,
+        Some("/out/a.mp4"),
+        Some(finished_at),
+    );
+    store.create_export_job(&second).await.expect("second");
+    store
+        .delete_export_job(first.id)
+        .await
+        .expect("delete first");
+    assert!(
+        store
+            .export_output_in_use("/out/a.mp4")
+            .await
+            .expect("in use")
+    );
+    store
+        .delete_export_job(second.id)
+        .await
+        .expect("delete second");
+    assert!(
+        !store
+            .export_output_in_use("/out/a.mp4")
+            .await
+            .expect("free")
+    );
+    store
+        .delete_export_job(failed.id)
+        .await
+        .expect("delete failed");
+
     store.delete_work(work.id).await.ok();
     store.delete_library(lib.id).await.ok();
     store.delete_user(owner.id).await.ok();

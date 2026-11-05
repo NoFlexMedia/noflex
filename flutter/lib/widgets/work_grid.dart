@@ -6,6 +6,7 @@ import 'package:signals_flutter/signals_flutter.dart';
 import '../graphql/query.dart';
 import '../layout/window.dart';
 import '../models/work.dart';
+import 'nf_button.dart';
 import 'nf_state.dart';
 import 'work_card.dart';
 
@@ -56,30 +57,50 @@ class SliverWorkGrid extends StatelessWidget {
         }
         return SliverPadding(
           padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 32),
-          sliver: SliverLayoutBuilder(
-            builder: (context, constraints) {
-              final columns = posterColumns(constraints.crossAxisExtent);
-              final cell =
-                  (constraints.crossAxisExtent - (columns - 1) * 12) / columns;
-              return SliverGrid.builder(
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: columns,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 16,
-                  mainAxisExtent: cell * 3 / 2 + 46,
-                ),
-                itemCount: items.length,
-                itemBuilder: (context, index) {
-                  if (index >= items.length - columns * 3 &&
-                      pager.hasMore.value) {
-                    WidgetsBinding.instance.addPostFrameCallback(
-                      (_) => pager.loadMore(),
-                    );
-                  }
-                  return WorkCard(work: items[index]);
+          sliver: SliverMainAxisGroup(
+            slivers: [
+              SliverLayoutBuilder(
+                builder: (context, constraints) {
+                  final columns = posterColumns(constraints.crossAxisExtent);
+                  final cell =
+                      (constraints.crossAxisExtent - (columns - 1) * 12) /
+                      columns;
+                  return SliverGrid.builder(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: columns,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 16,
+                      mainAxisExtent: cell * 3 / 2 + 46,
+                    ),
+                    itemCount: items.length,
+                    itemBuilder: (context, index) {
+                      // Failing rebuilds this, so asking again from here would
+                      // retry for as long as the failure lasts. The button does.
+                      if (failure == null &&
+                          index >= items.length - columns * 3 &&
+                          pager.hasMore.value) {
+                        WidgetsBinding.instance.addPostFrameCallback(
+                          (_) => pager.loadMore(),
+                        );
+                      }
+                      return WorkCard(work: items[index]);
+                    },
+                  );
                 },
-              );
-            },
+              ),
+              if (failure != null)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 20),
+                    child: Center(
+                      child: NfButton(
+                        label: 'Load more',
+                        onPressed: pager.loadMore,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         );
       },

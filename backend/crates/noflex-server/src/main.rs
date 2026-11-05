@@ -589,6 +589,7 @@ async fn run() -> anyhow::Result<()> {
 
     let app = Router::new()
         .merge(noflex_server::web::routes())
+        .merge(noflex_server::attributions::routes())
         .route("/health", get(health))
         .route("/healthz/deep", get(healthz_deep))
         .route("/graphql", post(graphql_handler).get(graphiql))

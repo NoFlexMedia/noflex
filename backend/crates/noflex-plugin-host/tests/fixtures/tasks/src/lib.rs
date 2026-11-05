@@ -93,6 +93,10 @@ impl background::Guest for Fixture {
 }
 
 impl metadata::Guest for Fixture {
+    fn attribution() -> Option<metadata::ProviderAttribution> {
+        None
+    }
+
     fn supports(kind: metadata::WorkKind) -> bool {
         matches!(kind, metadata::WorkKind::Movie)
     }

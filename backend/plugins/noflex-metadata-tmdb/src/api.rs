@@ -237,6 +237,16 @@ pub fn images_url(id: TmdbId, language: Option<&str>) -> String {
     url
 }
 
+/// The number `/find` wants from a `series/{id}` or `movie/{id}` TVDB id, the
+/// forms that name a TVDB record directly. TMDb can't look up the
+/// `series/{id}/season/{n}` forms.
+pub fn tvdb_record_number(value: &str) -> Option<&str> {
+    match value.trim().split('/').collect::<Vec<_>>().as_slice() {
+        ["series" | "movie", id] if id.bytes().all(|b| b.is_ascii_digit()) => Some(id),
+        _ => None,
+    }
+}
+
 /// Resolves an IMDb or TVDB id to TMDb records.
 pub fn find_url(source: FindSource, id: &str) -> String {
     let param = match source {
@@ -700,7 +710,7 @@ fn parse_series(body: &[u8]) -> Result<Payload, String> {
         ids.push((IdKind::Imdb, imdb));
     }
     if let Some(tvdb) = s.external_ids.tvdb_id {
-        ids.push((IdKind::Tvdb, tvdb.to_string()));
+        ids.push((IdKind::Tvdb, format!("series/{tvdb}")));
     }
     let mut studios = names(s.networks);
     for studio in names(s.production_companies) {
@@ -1292,7 +1302,7 @@ mod tests {
             vec![
                 (IdKind::Tmdb, "tv/1399".to_string()),
                 (IdKind::Imdb, "tt0944947".to_string()),
-                (IdKind::Tvdb, "121361".to_string())
+                (IdKind::Tvdb, "series/121361".to_string())
             ]
         );
         assert_eq!(s.images[0].kind, ArtKind::Primary);

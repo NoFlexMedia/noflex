@@ -103,6 +103,7 @@ fn seed_work(library: LibraryId, kind: WorkKind, title: &str, year: Option<i32>)
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     }
@@ -264,6 +265,7 @@ async fn images_query_exposes_serving_urls() {
         width: Some(1920),
         height: Some(1080),
         language: None,
+        provider: None,
     };
     store.upsert_image(&image).await.expect("image");
 

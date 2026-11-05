@@ -80,6 +80,18 @@ interface types {
         confidence: f32,
     }
 
+    /// How a provider is credited wherever its data or artwork shows.
+    record provider-attribution {
+        /// A sentence or two, shown as written. At most 300 characters.
+        text: string,
+        /// Where following the credit leads; `http` or `https`.
+        url: option<string>,
+        /// The provider's logo, drawn beside `text` on a dark surface: an SVG
+        /// document, or PNG, JPEG, WebP or GIF bytes, told apart by content.
+        /// At most 256 KiB. Anything else is dropped and `text` stands alone.
+        logo: option<list<u8>>,
+    }
+
     record metadata-image {
         kind: image-kind,
         url: string,

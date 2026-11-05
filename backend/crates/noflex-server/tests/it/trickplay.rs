@@ -74,6 +74,7 @@ async fn seed(root: &std::path::Path) -> (Arc<dyn Storage>, Edition, MediaFile) 
         parent_index: None,
         metadata_status: MetadataStatus::Unconfirmed,
         locked_fields: Vec::new(),
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     };

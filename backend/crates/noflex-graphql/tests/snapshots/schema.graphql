@@ -2354,6 +2354,37 @@ type ProcessStatus {
 	openFilesLimit: Int
 }
 
+"""
+How a metadata provider asks to be credited wherever its data shows.
+"""
+type ProviderAttribution {
+	"""
+	The plugin's id, as in `MetadataMatch.provider` and `Plugin.id`.
+	"""
+	provider: String!
+	"""
+	The plugin's display name.
+	"""
+	name: String!
+	"""
+	The credit, shown as the provider wrote it.
+	"""
+	text: String!
+	"""
+	Where following the credit leads.
+	"""
+	url: String
+	"""
+	`image/svg+xml` or a raster type; null without a logo.
+	"""
+	logoMime: String
+	"""
+	Where the logo is served from, relative to this server. It needs no
+	credential, so `<img src>` works as is. Null without a logo.
+	"""
+	logoUrl: String
+}
+
 type Query {
 	serverInfo: ServerInfo!
 	"""
@@ -2366,6 +2397,13 @@ type Query {
 	library(id: ID!): Library
 	libraryScanStatus(id: ID!): LibraryScanStatus!
 	searchMetadata(query: String!, kind: WorkKind!, year: Int): [MetadataMatch!]!
+	"""
+	How to credit each metadata provider this server has loaded, removed
+	ones included, for anything that names a provider by id:
+	`MetadataMatch.provider`, `Plugin.id`, `preferredProviders`. A title's
+	own credits are on `Work.attributions`.
+	"""
+	providerAttributions: [ProviderAttribution!]!
 	"""
 	Snapshot the active priority table for the admin UI. Returns
 	the full set of (plugin, hook, work_kind) entries the
@@ -3845,6 +3883,12 @@ type Work {
 	lockedFields: [WorkField!]!
 	addedAt: DateTime!
 	updatedAt: DateTime!
+	"""
+	Who to credit for what this work shows: the provider of its metadata,
+	then the providers of any artwork in use from elsewhere. A provider
+	that asked for no credit is left out.
+	"""
+	attributions: [ProviderAttribution!]!
 	"""
 	People credited on this work, in billing order, one entry per part.
 	Empty when no provider named any.

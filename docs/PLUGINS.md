@@ -11,7 +11,7 @@ They live in `backend/plugins/`, outside the main Cargo workspace because they b
 | Path                           | Plugin ID        | Purpose                                                                  |
 | ------------------------------ | ---------------- | ------------------------------------------------------------------------ |
 | `noflex-metadata-tmdb/`        | `tmdb`           | The Movie Database — movies and series metadata and artwork              |
-| `noflex-metadata-tvdb/`        | `tvdb`           | TheTVDB — series-first metadata and artwork                              |
+| `noflex-metadata-tvdb/`        | `tvdb`           | TheTVDB — series and movie metadata and artwork                          |
 | `noflex-metadata-musicbrainz/` | `musicbrainz`    | MusicBrainz — albums, artists, tracks                                    |
 | `noflex-auth-oidc/`            | `oidc`           | OpenID Connect login and local-account linking                           |
 | `noflex-embeddings/`           | `embeddings`     | Local Model2Vec embeddings that fill the vector search index             |
@@ -90,6 +90,10 @@ Hooks are `async func`s on the WASI 0.3 native-async ABI: one instance serves ma
    struct MyPlugin;
 
    impl metadata::Guest for MyPlugin {
+       fn attribution() -> Option<metadata::ProviderAttribution> {
+           None
+       }
+
        fn supports(kind: metadata::WorkKind) -> bool {
            matches!(kind, metadata::WorkKind::Movie)
        }
@@ -197,6 +201,26 @@ When several plugins implement the same hook, the host:
 3. Falls back to the next candidate only when `fetch()` fails (unavailable, not found, rate limited, internal error, or timeout). A full call queue (`Overloaded`) isn't a failure — the fetch never ran — so the host retries the same provider briefly and otherwise leaves the work for later.
 
 `image` has its own priority axis, so one plugin can lead for metadata while another leads for artwork. A library's provider order (set per library in the admin UI) and `[plugin.overrides]` in the server config both reorder candidates.
+
+## Attribution
+
+A provider's terms often require crediting it wherever its data shows, so `metadata` plugins answer `attribution()`, or `None` to ask for no credit:
+
+```rust
+fn attribution() -> Option<metadata::ProviderAttribution> {
+    Some(metadata::ProviderAttribution {
+        text: "Metadata provided by Example.".into(), // at most 300 characters
+        url: Some("https://example.com".into()),      // http or https
+        logo: Some(include_bytes!("../assets/logo.svg").to_vec()),
+    })
+}
+```
+
+- `logo` is an SVG document, or PNG, JPEG, WebP or GIF bytes, at most 256 KiB. The host tells them apart by content. Clients draw it unchanged at small sizes on a dark surface, so ship the variant made for dark backgrounds. A logo or URL the host rejects is dropped with a warning and the text stands alone.
+- The host reads it once per load and stores it, so titles stay credited after the plugin is removed.
+- A title is credited to the plugin that supplied its fields, then to any plugin whose artwork it is showing. Clients read `Work.attributions`; `providerAttributions` lists every credit by plugin id, for anything naming a provider.
+- Logos are served from `/attributions/<plugin-id>/logo` without a credential, sandboxed by a content security policy.
+- Check the provider's terms before shipping its logo, and keep a `NOTICE.md` beside it saying where it came from and under what license: it isn't covered by your plugin's license.
 
 ## Concurrency, deadlines, and backpressure
 

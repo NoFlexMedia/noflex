@@ -39,8 +39,15 @@ struct Harness {
 impl Harness {
     /// `None` when the fixtures cannot be built here.
     async fn new(plugins: &[&str]) -> Option<Self> {
+        let store = TursoStore::open_temp().await.expect("store");
+        store.migrate().await.expect("migrate");
+        let storage: Arc<dyn Storage> = Arc::new(store);
         let engine = build_engine(&EngineConfig::default()).expect("engine");
-        let registry = Arc::new(PluginRegistry::new(engine).expect("registry"));
+        let registry = Arc::new(
+            PluginRegistry::new(engine)
+                .expect("registry")
+                .with_storage(storage.clone()),
+        );
         for plugin in plugins {
             let wasm = match *plugin {
                 ART => crate::fixtures::wasm("artwork")?,
@@ -49,11 +56,9 @@ impl Harness {
             };
             registry.load_from(&wasm).expect("load fixture");
         }
-        let store = TursoStore::open_temp().await.expect("store");
-        store.migrate().await.expect("migrate");
         Some(Self {
             registry,
-            storage: Arc::new(store),
+            storage,
             image_dir: tempfile::tempdir().expect("image dir"),
         })
     }
@@ -116,6 +121,7 @@ impl Harness {
             parent_index: None,
             metadata_status: MetadataStatus::Unconfirmed,
             locked_fields: vec![],
+            metadata_provider: None,
             added_at: now,
             updated_at: now,
         };
@@ -240,6 +246,7 @@ async fn refresh_applies_the_payload_and_stores_provider_art() {
                 width: None,
                 height: None,
                 language: None,
+                provider: None,
             })
             .await
             .expect("seed image");
@@ -279,6 +286,39 @@ async fn refresh_applies_the_payload_and_stores_provider_art() {
 }
 
 #[tokio::test]
+async fn a_loaded_plugin_says_how_to_credit_it() {
+    let h = harness!(ART, CONCURRENCY);
+    let credit = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let rows = h.storage.list_provider_attributions().await.expect("list");
+            if let Some(row) = rows.into_iter().find(|row| row.provider == ART) {
+                return row;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the fixture's credit is stored after it loads");
+    assert_eq!(credit.name, "Artwork Test Fixture");
+    assert_eq!(credit.text, "Data from the fixture.");
+    assert_eq!(credit.url.as_deref(), Some("https://fixture.example"));
+    assert_eq!(credit.logo_mime.as_deref(), Some("image/png"));
+    let logo = h
+        .storage
+        .provider_attribution_logo(ART)
+        .await
+        .expect("logo")
+        .expect("the fixture has a logo");
+    assert!(logo.bytes.starts_with(b"\x89PNG"));
+
+    let rows = h.storage.list_provider_attributions().await.expect("list");
+    assert!(
+        !rows.iter().any(|row| row.provider == CONCURRENCY),
+        "the concurrency fixture asks for no credit"
+    );
+}
+
+#[tokio::test]
 async fn artwork_falls_back_to_the_next_image_provider() {
     let h = harness!(ART, CONCURRENCY);
     // The concurrency fixture wins the metadata fetch, but its image
@@ -294,6 +334,22 @@ async fn artwork_falls_back_to_the_next_image_provider() {
         h.provider_art(work.id).await,
         vec![(ImageKind::Primary, None)],
         "the winner's payload lists only a poster, fetched from the fallback"
+    );
+    assert_eq!(refreshed.metadata_provider.as_deref(), Some(CONCURRENCY));
+    let poster = h
+        .storage
+        .image(
+            ImageTarget::Work(work.id),
+            ImageKind::Primary,
+            &[ImageSource::Provider],
+        )
+        .await
+        .expect("image")
+        .expect("poster");
+    assert_eq!(
+        poster.provider.as_deref(),
+        Some(ART),
+        "art is credited to whoever supplied it, not to the metadata's provider"
     );
 }
 

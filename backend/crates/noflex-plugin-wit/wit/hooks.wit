@@ -8,9 +8,15 @@ package noflex:plugin@0.1.0;
 /// across providers in v1.
 interface metadata {
     use types.{
-        search-query, metadata-match, metadata-payload,
+        search-query, metadata-match, metadata-payload, provider-attribution,
         external-id, work-id, work-kind, plugin-error,
     };
+
+    /// How to credit this provider, or `none` if it asks for no credit. Read
+    /// once per load and kept by the host, so a title stays credited after
+    /// the plugin is removed. Covers everything the plugin supplies, artwork
+    /// from its `image` hook included. Pure and non-blocking, as `supports` is.
+    attribution: func() -> option<provider-attribution>;
 
     /// Capability claim — does this provider produce metadata for the
     /// given kind? Called at registration time, not per request. Pure and

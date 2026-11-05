@@ -37,6 +37,10 @@ thread_local! {
 struct Fixture;
 
 impl metadata::Guest for Fixture {
+    fn attribution() -> Option<metadata::ProviderAttribution> {
+        None
+    }
+
     fn supports(_kind: metadata::WorkKind) -> bool {
         true
     }

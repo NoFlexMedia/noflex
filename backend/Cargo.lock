@@ -2698,6 +2698,7 @@ dependencies = [
  "bytes",
  "directories",
  "futures",
+ "hex",
  "noflex-core",
  "noflex-metadata",
  "noflex-plugin-wit",

@@ -17,19 +17,21 @@ use crate::{
     repo::{search::parse_missing_cursor, works::row_to_work},
 };
 
-const COLUMNS: &str = "target_kind, target_id, kind, path, width, height, language, source";
+const COLUMNS: &str =
+    "target_kind, target_id, kind, path, width, height, language, source, provider";
 
 const UPSERT: &str = "INSERT INTO images \
-    (target_kind, target_id, kind, path, width, height, language, source) \
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+    (target_kind, target_id, kind, path, width, height, language, source, provider) \
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
     ON CONFLICT(target_kind, target_id, kind, source) DO UPDATE SET \
         path = excluded.path, \
         width = excluded.width, \
         height = excluded.height, \
-        language = excluded.language";
+        language = excluded.language, \
+        provider = excluded.provider";
 
 const LIST_FOR_LIBRARY_WORKS: &str = "SELECT i.target_kind, i.target_id, i.kind, i.path, \
-    i.width, i.height, i.language, i.source \
+    i.width, i.height, i.language, i.source, i.provider \
     FROM images i JOIN works w ON i.target_id = w.id \
     WHERE i.target_kind = 'work' AND w.library_id = ?1 \
     ORDER BY i.target_id, i.kind, i.source";
@@ -40,7 +42,7 @@ const DELETE: &str =
 const WORK_COLUMNS: &str = "w.id, w.kind, w.parent_id, w.library_id, w.title, \
     w.sort_title, w.year, w.release_date, w.overview, w.external_ids_json, w.index_number, \
     w.index_end, w.parent_index, w.metadata_status, w.added_at, w.updated_at, w.tagline, \
-    w.original_title, w.community_rating, w.locked_fields_json";
+    w.original_title, w.community_rating, w.locked_fields_json, w.metadata_provider";
 
 /// serde writes ids as `{"kind":"Tmdb","value":…}` without spaces and
 /// escapes quotes inside values, so a `"kind":"` that survives removing
@@ -87,6 +89,11 @@ pub(crate) async fn upsert(conn: &Connection, image: &Image) -> StorageResult<()
             .map(Value::Text)
             .unwrap_or(Value::Null),
         Value::Text(image.source.as_str().to_string()),
+        image
+            .provider
+            .clone()
+            .map(Value::Text)
+            .unwrap_or(Value::Null),
     ];
     conn.execute(UPSERT, params).await.map_err(map_turso)?;
     Ok(())
@@ -240,6 +247,7 @@ fn row_to_image(row: &turso::Row) -> StorageResult<Image> {
     let height = row.get_value(5).map_err(map_turso)?;
     let language = row.get_value(6).map_err(map_turso)?;
     let source = row.get_value(7).map_err(map_turso)?;
+    let provider = row.get_value(8).map_err(map_turso)?;
 
     let kind_text = col_text(&kind)?;
     let source_text = col_text(&source)?;
@@ -271,5 +279,6 @@ fn row_to_image(row: &turso::Row) -> StorageResult<Image> {
         width: col_int_opt(&width)?.map(|w| w as u32),
         height: col_int_opt(&height)?.map(|h| h as u32),
         language: col_text_opt(&language)?,
+        provider: col_text_opt(&provider)?,
     })
 }

@@ -51,6 +51,7 @@ async fn lookup_work_by_id_returns_inserted_work() {
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: OffsetDateTime::now_utc(),
         updated_at: OffsetDateTime::now_utc(),
     };

@@ -18,8 +18,8 @@ use crate::{
 const UPSERT_WORK: &str = "INSERT INTO works (\
     id, kind, parent_id, library_id, title, sort_title, year, release_date, overview, \
     external_ids_json, index_number, index_end, parent_index, metadata_status, added_at, updated_at, \
-    tagline, original_title, community_rating, locked_fields_json, root_id\
-) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21) \
+    tagline, original_title, community_rating, locked_fields_json, metadata_provider, root_id\
+) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22) \
 ON CONFLICT(id) DO UPDATE SET \
     kind = excluded.kind, \
     parent_id = excluded.parent_id, \
@@ -39,12 +39,13 @@ ON CONFLICT(id) DO UPDATE SET \
     original_title = excluded.original_title, \
     community_rating = excluded.community_rating, \
     locked_fields_json = excluded.locked_fields_json, \
+    metadata_provider = excluded.metadata_provider, \
     updated_at = excluded.updated_at";
 
 const GET_BY_ID: &str = "SELECT id, kind, parent_id, library_id, title, sort_title, year, \
     release_date, overview, external_ids_json, index_number, index_end, parent_index, \
     metadata_status, added_at, updated_at, tagline, original_title, community_rating, \
-    locked_fields_json FROM works WHERE id = ?1";
+    locked_fields_json, metadata_provider FROM works WHERE id = ?1";
 
 const DELETE: &str = "DELETE FROM works WHERE id = ?1";
 
@@ -56,7 +57,7 @@ const INSERT_EXT_ID: &str = "INSERT INTO work_external_ids(kind, value, work_id)
 const BY_EXT_ID: &str = "SELECT w.id, w.kind, w.parent_id, w.library_id, w.title, w.sort_title, \
     w.year, w.release_date, w.overview, w.external_ids_json, w.index_number, w.index_end, \
     w.parent_index, w.metadata_status, w.added_at, w.updated_at, w.tagline, w.original_title, \
-    w.community_rating, w.locked_fields_json \
+    w.community_rating, w.locked_fields_json, w.metadata_provider \
     FROM works w JOIN work_external_ids x ON x.work_id = w.id \
     WHERE x.kind = ?1 AND x.value = ?2";
 
@@ -132,6 +133,10 @@ pub(crate) async fn upsert(conn: &Connection, work: &Work) -> StorageResult<()> 
             .map(|r| Value::Real(r as f64))
             .unwrap_or(Value::Null),
         Value::Text(to_json(&work.locked_fields)?),
+        work.metadata_provider
+            .clone()
+            .map(Value::Text)
+            .unwrap_or(Value::Null),
         Value::Blob(root.clone()),
     ];
     conn.execute(UPSERT_WORK, params).await.map_err(map_turso)?;
@@ -190,7 +195,7 @@ pub(crate) async fn get_many(conn: &Connection, ids: &[WorkId]) -> StorageResult
         "SELECT id, kind, parent_id, library_id, title, sort_title, year, \
          release_date, overview, external_ids_json, index_number, index_end, parent_index, \
          metadata_status, added_at, updated_at, tagline, original_title, community_rating, \
-         locked_fields_json FROM works WHERE id IN ({placeholders})"
+         locked_fields_json, metadata_provider FROM works WHERE id IN ({placeholders})"
     );
     let params = ids
         .iter()
@@ -250,6 +255,7 @@ pub(crate) fn row_to_work(row: &turso::Row) -> StorageResult<Work> {
     let original_title = row.get_value(17).map_err(map_turso)?;
     let community_rating = row.get_value(18).map_err(map_turso)?;
     let locked_fields = row.get_value(19).map_err(map_turso)?;
+    let metadata_provider = row.get_value(20).map_err(map_turso)?;
 
     let parent = col_blob_opt(&parent_id)?
         .map(|b| blob_to_uuid(&b).map(WorkId::from_uuid))
@@ -276,6 +282,7 @@ pub(crate) fn row_to_work(row: &turso::Row) -> StorageResult<Work> {
         original_title: col_text_opt(&original_title)?,
         community_rating: col_real_opt(&community_rating)?,
         locked_fields,
+        metadata_provider: col_text_opt(&metadata_provider)?,
         added_at: text_to_dt(col_text(&added_at)?)?,
         updated_at: text_to_dt(col_text(&updated_at)?)?,
     })

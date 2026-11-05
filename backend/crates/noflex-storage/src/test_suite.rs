@@ -128,6 +128,7 @@ where
     session_prune_idle(store).await;
     session_refresh_token_lookup(store).await;
     plugin_override_persistence(store).await;
+    provider_attribution_lifecycle(store).await;
     session_rotate_refresh_token(store).await;
     session_retired_refresh_tokens_die_with_session(store).await;
     api_key_lifecycle(store).await;
@@ -520,6 +521,7 @@ async fn round_trip_work_edition_media<S: Storage + ?Sized>(store: &S) {
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     };
@@ -707,6 +709,7 @@ async fn works_by_external_id_roundtrip<S: Storage + ?Sized>(store: &S) {
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     };
@@ -767,6 +770,7 @@ async fn index_end_roundtrip<S: Storage + ?Sized>(store: &S) {
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     };
@@ -799,6 +803,7 @@ async fn index_end_roundtrip<S: Storage + ?Sized>(store: &S) {
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     };
@@ -875,6 +880,7 @@ async fn metadata_status_roundtrip<S: Storage + ?Sized>(store: &S) {
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     };
@@ -1183,6 +1189,7 @@ fn make_work_of_kind(
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     }
@@ -1941,6 +1948,80 @@ async fn session_lifecycle<S: Storage + ?Sized>(store: &S) {
     assert!(listed_after.is_empty());
 
     store.delete_user(user.id).await.ok();
+}
+
+/// A credit round-trips, its logo is read apart from its row, and storing one
+/// without a logo clears the old logo.
+async fn provider_attribution_lifecycle<S: Storage + ?Sized>(store: &S) {
+    use crate::domain::{AttributionLogo, ProviderAttribution};
+
+    let mine = |rows: Vec<ProviderAttribution>| -> Vec<ProviderAttribution> {
+        rows.into_iter()
+            .filter(|row| row.provider == "attr-tmdb")
+            .collect()
+    };
+    let with_logo = ProviderAttribution {
+        provider: "attr-tmdb".into(),
+        name: "The Movie Database".into(),
+        text: "Data from TMDB.".into(),
+        url: Some("https://www.themoviedb.org".into()),
+        logo_mime: Some("image/svg+xml".into()),
+        logo_digest: Some("abc".into()),
+    };
+    store
+        .upsert_provider_attribution(&with_logo, Some(b"<svg/>"))
+        .await
+        .expect("insert");
+    assert_eq!(
+        mine(store.list_provider_attributions().await.expect("list")),
+        std::slice::from_ref(&with_logo)
+    );
+    assert_eq!(
+        store
+            .provider_attribution_logo("attr-tmdb")
+            .await
+            .expect("logo"),
+        Some(AttributionLogo {
+            mime: "image/svg+xml".into(),
+            bytes: b"<svg/>".to_vec(),
+        })
+    );
+
+    let text_only = ProviderAttribution {
+        text: "Data from TMDB, reworded.".into(),
+        url: None,
+        logo_mime: None,
+        logo_digest: None,
+        ..with_logo
+    };
+    store
+        .upsert_provider_attribution(&text_only, None)
+        .await
+        .expect("replace");
+    assert_eq!(
+        mine(store.list_provider_attributions().await.expect("list")),
+        [text_only]
+    );
+    assert_eq!(
+        store
+            .provider_attribution_logo("attr-tmdb")
+            .await
+            .expect("logo"),
+        None
+    );
+
+    store
+        .delete_provider_attribution("attr-tmdb")
+        .await
+        .expect("delete");
+    assert!(mine(store.list_provider_attributions().await.expect("list")).is_empty());
+    assert_eq!(
+        store
+            .provider_attribution_logo("attr-missing")
+            .await
+            .expect("logo"),
+        None
+    );
 }
 
 /// Refresh-token lookup resolves a live session by its current hash and
@@ -4116,6 +4197,7 @@ fn make_image(
         width: Some(1920),
         height: Some(1080),
         language: Some("en".to_string()),
+        provider: None,
     }
 }
 

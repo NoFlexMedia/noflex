@@ -51,6 +51,7 @@ async fn setup(
         width: Some(200),
         height: Some(100),
         language: None,
+        provider: None,
     };
     store.upsert_image(&image).await.expect("upsert image");
 
@@ -106,6 +107,7 @@ async fn source_outside_image_cache_is_rejected() {
             width: Some(2),
             height: Some(2),
             language: None,
+            provider: None,
         })
         .await
         .expect("replace image");
@@ -292,6 +294,7 @@ async fn effective_source_follows_the_library_preference() {
         parent_index: None,
         metadata_status: noflex_core::MetadataStatus::Unconfirmed,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     };
@@ -309,6 +312,7 @@ async fn effective_source_follows_the_library_preference() {
                 width: None,
                 height: None,
                 language: None,
+                provider: None,
             })
             .await
             .expect("image");

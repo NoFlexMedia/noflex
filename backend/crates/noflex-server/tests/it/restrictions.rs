@@ -94,6 +94,7 @@ async fn fixture() -> Fixture {
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     };
@@ -223,6 +224,7 @@ async fn seed_images_and_trickplay(
                 width: Some(2),
                 height: Some(2),
                 language: None,
+                provider: None,
             })
             .await
             .expect("image row");

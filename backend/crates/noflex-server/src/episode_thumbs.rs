@@ -201,6 +201,7 @@ impl EpisodeThumbWorker {
             width: None,
             height: None,
             language: None,
+            provider: None,
         };
         self.storage.upsert_image(&image).await?;
         Ok(Some(image))

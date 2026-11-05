@@ -30,6 +30,7 @@ url = { workspace = true }
 
 wasmtime = { workspace = true }
 wasmtime-wasi = { workspace = true }
+hex = { workspace = true }
 sha2 = { workspace = true }
 directories = { workspace = true }
 notify = { workspace = true }

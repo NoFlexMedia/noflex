@@ -14,7 +14,7 @@ use wasmtime::{Engine, component::Linker};
 
 use crate::{
     EmbedInput, EngineConfig, HostError, LoadedPlugin, PluginCtx, PluginId, PluginManifest,
-    RemoteEmbedder,
+    RemoteEmbedder, attribution,
     bindings::embedder::noflex::plugin::types as embedder_types,
     manifest::{EmbeddingClaim, HookKind},
     priority::{Overrides, PriorityTable},
@@ -248,6 +248,12 @@ impl PluginRegistry {
             let mut guard = self.plugins.write().expect("registry mutex poisoned");
             guard.insert(id.clone(), Arc::clone(&plugin));
             self.embedder_changed.notify_one();
+        }
+        if plugin.exports(HookKind::Metadata)
+            && let Some(storage) = self.storage.clone()
+        {
+            let plugin = Arc::clone(&plugin);
+            tokio::spawn(async move { attribution::sync(&plugin, storage.as_ref()).await });
         }
         let handles = if plugin.manifest.tasks.is_empty() {
             Vec::new()

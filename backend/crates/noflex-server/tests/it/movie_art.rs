@@ -62,6 +62,7 @@ fn movie(library: LibraryId, title: &str, age: Duration) -> Work {
         parent_index: None,
         metadata_status: MetadataStatus::Unconfirmed,
         locked_fields: Vec::new(),
+        metadata_provider: None,
         added_at: added,
         updated_at: added,
     }
@@ -212,6 +213,7 @@ async fn only_what_is_missing_is_generated_and_real_art_outranks_it() {
         width: None,
         height: None,
         language: None,
+        provider: None,
     };
     f.storage
         .upsert_image(&provider_poster)

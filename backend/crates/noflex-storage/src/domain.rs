@@ -53,6 +53,11 @@ pub struct Work {
     /// writers, not the type).
     #[serde(default)]
     pub locked_fields: Vec<WorkField>,
+    /// The plugin whose fetch last supplied this work's fields. `None`
+    /// until a provider matches it. Clients read [`Work::attributions`].
+    #[serde(default)]
+    #[graphql(skip)]
+    pub metadata_provider: Option<String>,
     pub added_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
 }
@@ -1173,6 +1178,49 @@ pub struct Image {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub language: Option<String>,
+    /// The plugin behind a [`ImageSource::Provider`] row; `None` for any
+    /// other source. Clients read [`Work::attributions`].
+    #[graphql(skip)]
+    pub provider: Option<String>,
+}
+
+/// How a metadata provider asks to be credited wherever its data shows.
+// The logo's bytes stay out of this row: clients fetch them from `logo_url`,
+// and `Storage::provider_attribution_logo` reads them for that route.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
+pub struct ProviderAttribution {
+    /// The plugin's id, as in `MetadataMatch.provider` and `Plugin.id`.
+    pub provider: String,
+    /// The plugin's display name.
+    pub name: String,
+    /// The credit, shown as the provider wrote it.
+    pub text: String,
+    /// Where following the credit leads.
+    pub url: Option<String>,
+    /// `image/svg+xml` or a raster type; null without a logo.
+    pub logo_mime: Option<String>,
+    /// Changes with the logo's bytes, so its URL can be cached for good.
+    #[graphql(skip)]
+    pub logo_digest: Option<String>,
+}
+
+#[async_graphql::ComplexObject]
+impl ProviderAttribution {
+    /// Where the logo is served from, relative to this server. It needs no
+    /// credential, so `<img src>` works as is. Null without a logo.
+    async fn logo_url(&self) -> Option<String> {
+        self.logo_digest
+            .as_ref()
+            .map(|digest| format!("/attributions/{}/logo?v={digest}", self.provider))
+    }
+}
+
+/// A plugin's logo, for the route that serves it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttributionLogo {
+    pub mime: String,
+    pub bytes: Vec<u8>,
 }
 
 impl Image {
@@ -1659,6 +1707,46 @@ async fn load_visible_work(
 
 #[async_graphql::ComplexObject]
 impl Work {
+    /// Who to credit for what this work shows: the provider of its metadata,
+    /// then the providers of any artwork in use from elsewhere. A provider
+    /// that asked for no credit is left out.
+    #[graphql(complexity = 5)]
+    async fn attributions(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Vec<ProviderAttribution>> {
+        crate::access::request_user(ctx)?;
+        let storage = complex_storage(ctx)?;
+        let mut providers: Vec<String> = self.metadata_provider.iter().cloned().collect();
+        let library = storage
+            .get_library(self.library_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let order = library
+            .map(|library| library.config.artwork_preference)
+            .unwrap_or_default();
+        let images = storage
+            .list_images(ImageTarget::Work(self.id), order.source_order())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        for provider in images.into_iter().filter_map(|image| image.provider) {
+            if !providers.contains(&provider) {
+                providers.push(provider);
+            }
+        }
+        if providers.is_empty() {
+            return Ok(Vec::new());
+        }
+        let known = storage
+            .list_provider_attributions()
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(providers
+            .iter()
+            .filter_map(|id| known.iter().find(|a| a.provider == *id).cloned())
+            .collect())
+    }
+
     /// People credited on this work, in billing order, one entry per part.
     /// Empty when no provider named any.
     #[graphql(complexity = 5)]

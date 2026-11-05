@@ -54,6 +54,7 @@ fn work(library: LibraryId, kind: WorkKind, parent: Option<WorkId>, title: &str)
         parent_index: None,
         metadata_status: MetadataStatus::Unconfirmed,
         locked_fields: Vec::new(),
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     }
@@ -140,6 +141,7 @@ async fn seed(root: &Path) -> Fixture {
             width: None,
             height: None,
             language: None,
+            provider: None,
         })
         .await
         .expect("local thumb");

@@ -23,6 +23,10 @@ use exports::noflex::plugin::{background, image, metadata};
 struct Tvdb;
 
 impl metadata::Guest for Tvdb {
+    fn attribution() -> Option<metadata::ProviderAttribution> {
+        None
+    }
+
     fn supports(kind: metadata::WorkKind) -> bool {
         matches!(
             kind,

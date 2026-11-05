@@ -121,6 +121,7 @@ fn work(library_id: LibraryId, title: &str, year: Option<i32>, overview: Option<
         parent_index: None,
         metadata_status: MetadataStatus::Unconfirmed,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     }

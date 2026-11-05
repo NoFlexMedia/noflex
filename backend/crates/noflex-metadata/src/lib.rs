@@ -270,6 +270,7 @@ mod tests {
             parent_index: None,
             metadata_status: MetadataStatus::Unconfirmed,
             locked_fields: vec![],
+            metadata_provider: None,
             added_at: now,
             updated_at: now,
         }

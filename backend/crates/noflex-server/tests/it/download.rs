@@ -58,6 +58,7 @@ async fn seed_with_real_file(
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     };
@@ -322,6 +323,7 @@ async fn worker_marks_missing_media_file_as_failed() {
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     };

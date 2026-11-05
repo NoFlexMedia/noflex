@@ -70,6 +70,7 @@ fn work(library_id: LibraryId, title: &str) -> Work {
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     }
@@ -190,6 +191,7 @@ async fn work_images_user_data_and_runtime_resolve() {
             width: Some(1000),
             height: Some(1500),
             language: None,
+            provider: None,
         })
         .await
         .expect("image");
@@ -231,6 +233,7 @@ async fn work_images_follow_the_library_artwork_preference() {
                 width: None,
                 height: None,
                 language: None,
+                provider: None,
             })
             .await
             .expect("image");

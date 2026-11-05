@@ -22,7 +22,7 @@ use crate::{
 const SELECT_BASE: &str = "SELECT id, kind, parent_id, library_id, title, sort_title, \
     year, release_date, overview, external_ids_json, index_number, index_end, \
     parent_index, metadata_status, added_at, updated_at, tagline, original_title, \
-    community_rating, locked_fields_json FROM works";
+    community_rating, locked_fields_json, metadata_provider FROM works";
 
 /// Whether a row of `works` is anime: its library says so, or its library
 /// defers to per-work tags and it carries the anime tag. The tag values match
@@ -35,8 +35,8 @@ const IS_ANIME: &str = "(library_id IN (SELECT id FROM libraries \
                 AND t.namespace = 'category' AND t.slug = 'anime')))";
 
 /// Index of the extra `LOWER(title)` column appended for title sorts;
-/// `row_to_work` reads fixed indices 0..19, so it rides along unused.
-const LOWERED_TITLE_COL: usize = 20;
+/// `row_to_work` reads fixed indices 0..20, so it rides along unused.
+const LOWERED_TITLE_COL: usize = 21;
 
 pub(crate) async fn list(conn: &Connection, q: &ListWorksQuery) -> StorageResult<ItemPage<Work>> {
     // Title sorts need the cursor key exactly as SQLite compares it:

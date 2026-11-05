@@ -4,6 +4,7 @@
 // loading, capability wrappers, audit logging, hot reload, lifecycle events,
 // host imports, and provider priority.
 
+mod attribution;
 pub mod audit;
 mod bindings;
 pub mod discovery;

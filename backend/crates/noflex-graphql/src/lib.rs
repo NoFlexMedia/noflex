@@ -259,6 +259,21 @@ impl CoreQuery {
         search.search_metadata(query, kind, year).await
     }
 
+    /// How to credit each metadata provider this server has loaded, removed
+    /// ones included, for anything that names a provider by id:
+    /// `MetadataMatch.provider`, `Plugin.id`, `preferredProviders`. A title's
+    /// own credits are on `Work.attributions`.
+    async fn provider_attributions(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<Vec<noflex_storage::domain::ProviderAttribution>> {
+        access::request_user(ctx)?;
+        storage(ctx)?
+            .list_provider_attributions()
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))
+    }
+
     /// Snapshot the active priority table for the admin UI. Returns
     /// the full set of (plugin, hook, work_kind) entries the
     /// dispatcher consults at request time.

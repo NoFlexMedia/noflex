@@ -88,6 +88,7 @@ mod fixture {
             original_title: None,
             community_rating: None,
             locked_fields: vec![],
+            metadata_provider: None,
             added_at: now,
             updated_at: now,
         }
@@ -129,6 +130,7 @@ mod fixture {
             width: Some(1920),
             height: Some(1080),
             language: Some("en".to_string()),
+            provider: None,
         }
     }
 

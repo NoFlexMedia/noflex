@@ -51,6 +51,14 @@ fn hint<'a>(hints: &'a [String], prefix: &str) -> Option<&'a str> {
 }
 
 impl metadata::Guest for Fixture {
+    fn attribution() -> Option<metadata::ProviderAttribution> {
+        Some(metadata::ProviderAttribution {
+            text: "Data from the fixture.".into(),
+            url: Some("https://fixture.example".into()),
+            logo: Some(PNG.to_vec()),
+        })
+    }
+
     fn supports(kind: metadata::WorkKind) -> bool {
         !matches!(kind, metadata::WorkKind::Track | metadata::WorkKind::Photo)
     }

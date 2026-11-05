@@ -310,6 +310,7 @@ impl MovieArtWorker {
             width: Some(width),
             height: Some(height),
             language: None,
+            provider: None,
         };
         self.storage.upsert_image(&image).await?;
         Ok(Some(image))

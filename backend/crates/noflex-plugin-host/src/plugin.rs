@@ -61,7 +61,10 @@ use crate::{
     dispatch::{CallTable, PluginCtxParts},
     manifest::{EmbeddingClaim, TaskRegistration},
     metadata_and_image::noflex::plugin::types as image_types,
-    plugin_metadata::{MetadataMatch as WitMetadataMatch, MetadataPayload as WitMetadataPayload},
+    plugin_metadata::{
+        MetadataMatch as WitMetadataMatch, MetadataPayload as WitMetadataPayload,
+        ProviderAttribution as WitProviderAttribution,
+    },
 };
 
 const CALL_QUEUE_CAPACITY: usize = 64;
@@ -105,6 +108,9 @@ type SearchOutcome = Result<Result<Vec<WitMetadataMatch>, WitPluginError>, HostE
 
 /// `call_supports`'s wire result.
 type SupportsOutcome = Result<bool, HostError>;
+
+/// `call_attribution`'s wire result.
+type AttributionOutcome = Result<Option<WitProviderAttribution>, HostError>;
 
 /// `call_fetch_image`'s wire result: dispatch error outside, plugin error inside.
 type FetchImageOutcome =
@@ -331,6 +337,9 @@ enum HookCall {
         kind: WitWorkKind,
         respond: oneshot::Sender<SupportsOutcome>,
     },
+    Attribution {
+        respond: oneshot::Sender<AttributionOutcome>,
+    },
     FetchImage {
         id: image_types::ExternalId,
         kind: image_types::ImageKind,
@@ -400,6 +409,7 @@ impl HookCall {
         match self {
             Self::Search { respond, .. } => respond.is_closed(),
             Self::Supports { respond, .. } => respond.is_closed(),
+            Self::Attribution { respond } => respond.is_closed(),
             Self::FetchImage { respond, .. } => respond.is_closed(),
             Self::FetchMetadata { respond, .. } => respond.is_closed(),
             Self::RunTask { respond, .. } => respond.is_closed(),
@@ -424,6 +434,9 @@ impl HookCall {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
             HookCall::Supports { respond, .. } => {
+                let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
+            }
+            HookCall::Attribution { respond } => {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
             HookCall::FetchImage { respond, .. } => {
@@ -602,6 +615,17 @@ impl LoadedPlugin {
         let (respond, answer) = oneshot::channel();
         self.instance
             .enqueue(&self.id, HookCall::Supports { kind, respond })?;
+        answer
+            .await
+            .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
+    }
+
+    /// Ask the plugin's `metadata.attribution()` export how to credit it.
+    /// Errors when the plugin exports no metadata hook or the call fails.
+    pub async fn call_attribution(&self) -> AttributionOutcome {
+        let (respond, answer) = oneshot::channel();
+        self.instance
+            .enqueue(&self.id, HookCall::Attribution { respond })?;
         answer
             .await
             .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
@@ -1641,6 +1665,20 @@ fn dispatch_call<'a>(
                 move |deadline| async move {
                     let func = metadata.noflex_plugin_metadata().func_supports();
                     invoke(accessor, calls, deadline, func, (kind,), None, "supports")
+                        .await
+                        .map(|(r,)| r)
+                },
+            ),
+            None => missing_export(respond, "metadata"),
+        },
+        HookCall::Attribution { respond } => match &hooks.metadata {
+            Some(metadata) => env.track(
+                inflight,
+                HookKind::Metadata,
+                respond,
+                move |deadline| async move {
+                    let func = metadata.noflex_plugin_metadata().func_attribution();
+                    invoke(accessor, calls, deadline, func, (), None, "attribution")
                         .await
                         .map(|(r,)| r)
                 },

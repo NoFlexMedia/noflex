@@ -617,6 +617,7 @@ impl<'a> ScanRun<'a> {
             width: None,
             height: None,
             language: None,
+            provider: None,
         };
         match self.storage.upsert_image(&image).await {
             Ok(()) => true,
@@ -923,6 +924,7 @@ impl<'a> ScanRun<'a> {
             original_title: None,
             community_rating: None,
             locked_fields: vec![],
+            metadata_provider: None,
             added_at: now,
             updated_at: now,
         };

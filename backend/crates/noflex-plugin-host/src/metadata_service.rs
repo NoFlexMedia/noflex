@@ -258,6 +258,7 @@ impl MetadataService {
         library: Option<&Library>,
     ) -> Result<Work, MetadataError> {
         let report = apply_payload(&mut work, payload);
+        work.metadata_provider = Some(provider.0.clone());
         persist_tags(self.storage.as_ref(), work.id, &provider.0, &report.tags).await?;
         work.updated_at = OffsetDateTime::now_utc();
         self.storage.upsert_work(&work).await?;
@@ -668,6 +669,7 @@ async fn fetch_one(
 /// One image answer, already checked to be a format the image route can
 /// serve and resize.
 struct FetchedArt {
+    provider: String,
     bytes: Vec<u8>,
     ext: &'static str,
     language: Option<String>,
@@ -713,6 +715,7 @@ async fn fetch_image(
                 return None;
             };
             Some(FetchedArt {
+                provider: plugin.id.0.clone(),
                 bytes,
                 ext,
                 language: meta.language.filter(|l| !l.is_empty()),
@@ -733,7 +736,7 @@ async fn fetch_image(
 
 /// File extension for bytes the image route can decode, by magic number
 /// rather than the plugin's claimed MIME type.
-fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
+pub(crate) fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
         Some("jpg")
     } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
@@ -797,6 +800,7 @@ async fn store_art(
             width: art.width,
             height: art.height,
             language: art.language,
+            provider: Some(art.provider),
         })
         .await?;
     if let Some(previous) = previous
@@ -971,6 +975,7 @@ mod tests {
     #[test]
     fn language_match_compares_primary_subtags() {
         let art = |language: Option<&str>| FetchedArt {
+            provider: "p".into(),
             bytes: vec![],
             ext: "jpg",
             language: language.map(str::to_string),

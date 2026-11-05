@@ -130,6 +130,15 @@ mod guest {
     }
 
     impl metadata::Guest for MusicBrainz {
+        fn attribution() -> Option<metadata::ProviderAttribution> {
+            Some(metadata::ProviderAttribution {
+                // The wording MetaBrainz's brand guidelines give as an example.
+                text: "Powered with data from MusicBrainz".into(),
+                url: Some("https://musicbrainz.org".into()),
+                logo: Some(include_bytes!("../assets/musicbrainz-logo.svg").to_vec()),
+            })
+        }
+
         fn supports(kind: metadata::WorkKind) -> bool {
             entity_kind(kind).is_some()
         }

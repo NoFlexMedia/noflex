@@ -85,7 +85,7 @@ const EMB_FETCH: &str = "SELECT e.target_kind, e.target_id, e.namespace, e.model
 const MISSING_EMBEDDING: &str = "SELECT w.id, w.kind, w.parent_id, w.library_id, w.title, w.sort_title, \
     w.year, w.release_date, w.overview, w.external_ids_json, w.index_number, w.index_end, \
     w.parent_index, w.metadata_status, w.added_at, w.updated_at, w.tagline, w.original_title, \
-    w.community_rating, w.locked_fields_json \
+    w.community_rating, w.locked_fields_json, w.metadata_provider \
     FROM works w \
     WHERE NOT EXISTS (SELECT 1 FROM embeddings e \
         WHERE e.target_kind = 'work' AND e.target_id = w.id AND e.namespace = ?1)";

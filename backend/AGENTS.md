@@ -101,6 +101,7 @@ Don't break these without an architecture discussion in the PR description.
 - **Plugins own egress.** The host never fetches provider URLs itself; network access goes through `host-net`, allowlisted and audit-logged. The one exception is the embeddings endpoint an administrator configures, whose URL comes from them and not from a plugin.
 - **Models run in the host.** Plugins bring the tokenizer and prompts and call `host-inference`; the operator chooses the device. WASM can't reach an accelerator, and a plugin holding the GPU couldn't coordinate with transcodes.
 - **Provider-exclusive fetch.** `fetch()` runs on exactly one candidate per work; fields never mix across providers. Fall back to the next candidate only on `fetch()` failure.
+- **Credit follows the data.** `metadata.attribution()` is stored per plugin in `provider_attributions` when it loads and outlives the plugin. `Work.metadata_provider` and `Image.provider` say who to credit; every provider-written row sets them.
 - **Trust by default** for now: plugins in the search path load immediately, every capability use audit-logged.
 - Args and returns are owned, serializable, and `Send` — they cross the WIT boundary. No `&dyn Trait`, no host-pinned lifetimes.
 - Plugins may use any license; see [`docs/PLUGIN_LICENSING.md`](../docs/PLUGIN_LICENSING.md).

@@ -31,6 +31,15 @@ pub struct MetadataMatch {
     pub provider: String,
 }
 
+/// How a provider is credited wherever its data or artwork shows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Attribution {
+    pub text: String,
+    pub url: Option<String>,
+    /// An SVG document, or PNG, JPEG, WebP or GIF bytes.
+    pub logo: Option<Vec<u8>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataImage {
     pub kind: ImageKind,
@@ -82,6 +91,11 @@ pub trait MetadataProvider: Send + Sync {
 
     /// Which work kinds this provider can produce metadata for.
     fn supports(&self, kind: WorkKind) -> bool;
+
+    /// How to credit this provider. Default asks for no credit.
+    fn attribution(&self) -> Option<Attribution> {
+        None
+    }
 
     async fn search(&self, query: &SearchQuery) -> PluginResult<Vec<MetadataMatch>>;
 

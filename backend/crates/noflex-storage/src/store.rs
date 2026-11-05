@@ -790,6 +790,26 @@ pub trait Storage: Send + Sync + 'static {
         library: LibraryId,
     ) -> StorageResult<Vec<MediaFile>>;
 
+    // ---- Provider attributions -----------------------------------------
+    /// Inserts or replaces `attribution`, whose `logo_mime` and `logo_digest`
+    /// describe `logo`. `None` clears a previous logo.
+    async fn upsert_provider_attribution(
+        &self,
+        attribution: &crate::domain::ProviderAttribution,
+        logo: Option<&[u8]>,
+    ) -> StorageResult<()>;
+    /// Removes `provider`'s attribution, if it has one.
+    async fn delete_provider_attribution(&self, provider: &str) -> StorageResult<()>;
+    /// Every attribution, ordered by provider id.
+    async fn list_provider_attributions(
+        &self,
+    ) -> StorageResult<Vec<crate::domain::ProviderAttribution>>;
+    /// `provider`'s logo; `None` when it has no attribution or no logo.
+    async fn provider_attribution_logo(
+        &self,
+        provider: &str,
+    ) -> StorageResult<Option<crate::domain::AttributionLogo>>;
+
     // ---- Images --------------------------------------------------------
     /// Inserts or replaces the row keyed by (target, kind, source); rows
     /// of the same kind from other sources are untouched.

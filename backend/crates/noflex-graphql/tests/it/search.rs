@@ -39,6 +39,7 @@ fn seed_work(library: LibraryId, kind: WorkKind, title: &str) -> Work {
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     }

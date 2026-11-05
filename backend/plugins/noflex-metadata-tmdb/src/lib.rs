@@ -175,19 +175,22 @@ mod guest {
     /// The TMDb record behind `id`: TMDb ids parse directly, IMDb and TVDB
     /// ids resolve through `/find`.
     async fn resolve(id: &ExternalId) -> Result<TmdbId, PluginError> {
-        let source = match id.kind {
+        let (source, value) = match id.kind {
             ExternalIdKind::Tmdb => {
                 return TmdbId::parse(&id.value).map_err(PluginError::BadInput);
             }
-            ExternalIdKind::Imdb => FindSource::Imdb,
-            ExternalIdKind::Tvdb => FindSource::Tvdb,
+            ExternalIdKind::Imdb => (FindSource::Imdb, id.value.as_str()),
+            ExternalIdKind::Tvdb => (
+                FindSource::Tvdb,
+                api::tvdb_record_number(&id.value).ok_or(PluginError::NotFound)?,
+            ),
             _ => {
                 return Err(PluginError::BadInput(
                     "tmdb: unsupported external id kind".into(),
                 ));
             }
         };
-        let body = get_api(api::find_url(source, &id.value)).await?;
+        let body = get_api(api::find_url(source, value)).await?;
         api::parse_find(&body, source == FindSource::Tvdb)
             .map_err(PluginError::Internal)?
             .ok_or(PluginError::NotFound)
@@ -277,6 +280,18 @@ mod guest {
     struct Tmdb;
 
     impl metadata::Guest for Tmdb {
+        fn attribution() -> Option<metadata::ProviderAttribution> {
+            Some(metadata::ProviderAttribution {
+                // TMDB's required clause, word for word, with "product" for its
+                // bracket. Their terms also ask that the logo is not recoloured
+                // or reshaped.
+                text: "This product uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB."
+                    .into(),
+                url: Some("https://www.themoviedb.org".into()),
+                logo: Some(include_bytes!("../assets/tmdb-logo.svg").to_vec()),
+            })
+        }
+
         fn supports(kind: metadata::WorkKind) -> bool {
             matches!(
                 kind,

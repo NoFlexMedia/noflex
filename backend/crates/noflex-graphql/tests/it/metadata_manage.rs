@@ -105,6 +105,7 @@ fn seed_work(library: LibraryId, title: &str) -> Work {
         original_title: None,
         community_rating: None,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     }
@@ -319,6 +320,92 @@ async fn refresh_metadata_guards() {
         "no provider: {:?}",
         resp.errors
     );
+}
+
+#[tokio::test]
+async fn attributions_credit_metadata_then_art_in_use() {
+    use noflex_core::ImageKind;
+    use noflex_storage::domain::{
+        ArtworkPreference, Image, ImageSource, ImageTarget, ProviderAttribution,
+    };
+
+    let (schema, jwt, store) = authed_schema().await;
+    let admin = setup_admin(&schema, &jwt).await;
+    let mut lib = seed_library(&store, "Films").await;
+    for (provider, logo) in [("meta", Some("d1")), ("art", None), ("other", None)] {
+        store
+            .upsert_provider_attribution(
+                &ProviderAttribution {
+                    provider: provider.into(),
+                    name: provider.to_uppercase(),
+                    text: format!("Data from {provider}."),
+                    url: None,
+                    logo_mime: logo.map(|_| "image/png".to_string()),
+                    logo_digest: logo.map(str::to_string),
+                },
+                logo.map(|_| &b"\x89PNG"[..]),
+            )
+            .await
+            .expect("attribution");
+    }
+    let mut work = seed_work(lib.id, "Alien");
+    work.metadata_provider = Some("meta".into());
+    store.upsert_work(&work).await.expect("work");
+    let image = |kind, source, provider: Option<&str>| Image {
+        target: ImageTarget::Work(work.id),
+        kind,
+        source,
+        path: "/art.png".into(),
+        width: None,
+        height: None,
+        language: None,
+        provider: provider.map(str::to_string),
+    };
+    for row in [
+        image(ImageKind::Primary, ImageSource::Provider, Some("art")),
+        image(ImageKind::Logo, ImageSource::Provider, Some("meta")),
+        image(ImageKind::Backdrop, ImageSource::Provider, Some("gone")),
+    ] {
+        store.upsert_image(&row).await.expect("image");
+    }
+
+    let credits = |schema: noflex_graphql::NoflexSchema| {
+        let query = format!(
+            r#"{{ work(id: "{}") {{ attributions {{ provider name logoUrl logoMime }} }} }}"#,
+            work.id
+        );
+        async move {
+            let resp = schema
+                .execute(Request::new(query).data(admin).data(as_request_user(admin)))
+                .await;
+            assert!(resp.errors.is_empty(), "{:?}", resp.errors);
+            resp.data.into_json().expect("json")["work"]["attributions"].clone()
+        }
+    };
+    assert_eq!(
+        credits(schema.clone()).await,
+        serde_json::json!([
+            { "provider": "meta", "name": "META", "logoUrl": "/attributions/meta/logo?v=d1", "logoMime": "image/png" },
+            { "provider": "art", "name": "ART", "logoUrl": null, "logoMime": null },
+        ]),
+        "metadata first, each provider once, and one with no stored credit left out"
+    );
+
+    // A local poster in use takes the art provider's credit with it.
+    lib.config.artwork_preference = ArtworkPreference::PreferLocal;
+    store.upsert_library(&lib).await.expect("library");
+    store
+        .upsert_image(&image(ImageKind::Primary, ImageSource::Local, None))
+        .await
+        .expect("image");
+    let names: Vec<String> = credits(schema.clone())
+        .await
+        .as_array()
+        .expect("list")
+        .iter()
+        .map(|credit| credit["provider"].as_str().expect("id").to_string())
+        .collect();
+    assert_eq!(names, ["meta"]);
 }
 
 #[tokio::test]

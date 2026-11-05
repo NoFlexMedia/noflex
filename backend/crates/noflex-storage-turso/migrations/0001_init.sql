@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS works (
     -- JSON array of snake_case `WorkField` names the user locked against
     -- provider refreshes; empty means nothing is locked.
     locked_fields_json  TEXT NOT NULL DEFAULT '[]',
+    -- The plugin whose fetch last supplied this work's fields.
+    metadata_provider   TEXT,
     -- The top of the work's parent chain, itself for a top-level work: what
     -- a file or a play counts towards, without walking up to it.
     root_id             BLOB
@@ -247,7 +249,21 @@ CREATE TABLE IF NOT EXISTS images (
     width       INTEGER,
     height      INTEGER,
     language    TEXT,
+    -- The plugin behind a `provider` row.
+    provider    TEXT,
     PRIMARY KEY (target_kind, target_id, kind, source)
+);
+
+-- How each metadata plugin asks to be credited. Kept past the plugin's removal,
+-- because the titles it described still show what it supplied.
+CREATE TABLE IF NOT EXISTS provider_attributions (
+    provider    TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    url         TEXT,
+    logo        BLOB,
+    logo_mime   TEXT,
+    logo_digest TEXT
 );
 
 -- Lexical search is a case-insensitive LIKE on the works table

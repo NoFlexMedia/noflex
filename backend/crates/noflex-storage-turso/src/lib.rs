@@ -1195,7 +1195,7 @@ impl Storage for TursoStore {
                         year, release_date, overview, external_ids_json, \
                         index_number, index_end, parent_index, metadata_status, \
                         added_at, updated_at, tagline, original_title, \
-                        community_rating, locked_fields_json \
+                        community_rating, locked_fields_json, metadata_provider \
                  FROM works \
                  WHERE parent_id IS NULL \
                  ORDER BY added_at DESC \
@@ -1225,7 +1225,7 @@ impl Storage for TursoStore {
                         w.year, w.release_date, w.overview, w.external_ids_json, \
                         w.index_number, w.index_end, w.parent_index, w.metadata_status, \
                         w.added_at, w.updated_at, w.tagline, w.original_title, \
-                        w.community_rating, w.locked_fields_json \
+                        w.community_rating, w.locked_fields_json, w.metadata_provider \
                  FROM user_data ud \
                  JOIN works w ON w.id = ud.target_id \
                  WHERE ud.user_id = ?1 AND ud.target_kind = 'work' AND ud.last_played IS NOT NULL \
@@ -1258,6 +1258,35 @@ impl Storage for TursoStore {
     ) -> StorageResult<Vec<MediaFile>> {
         let (_schema, conn) = self.reader().await?;
         repo::media_files::for_library(&conn, library).await
+    }
+
+    async fn upsert_provider_attribution(
+        &self,
+        attribution: &noflex_storage::domain::ProviderAttribution,
+        logo: Option<&[u8]>,
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::provider_attributions::upsert(&conn, attribution, logo).await
+    }
+
+    async fn delete_provider_attribution(&self, provider: &str) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::provider_attributions::delete(&conn, provider).await
+    }
+
+    async fn list_provider_attributions(
+        &self,
+    ) -> StorageResult<Vec<noflex_storage::domain::ProviderAttribution>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::provider_attributions::list(&conn).await
+    }
+
+    async fn provider_attribution_logo(
+        &self,
+        provider: &str,
+    ) -> StorageResult<Option<noflex_storage::domain::AttributionLogo>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::provider_attributions::logo(&conn, provider).await
     }
 
     // ---- Images --------------------------------------------------------

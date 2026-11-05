@@ -232,6 +232,7 @@ async fn rescan_tracks_added_and_removed_artwork_for_unchanged_media() {
                 width: None,
                 height: None,
                 language: None,
+                provider: None,
             })
             .await
             .expect("seed provider image");

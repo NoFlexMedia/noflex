@@ -126,6 +126,7 @@ fn work(library_id: LibraryId, title: &str, year: Option<i32>, ids: Vec<External
         parent_index: None,
         metadata_status: noflex_core::MetadataStatus::Unconfirmed,
         locked_fields: vec![],
+        metadata_provider: None,
         added_at: now,
         updated_at: now,
     }

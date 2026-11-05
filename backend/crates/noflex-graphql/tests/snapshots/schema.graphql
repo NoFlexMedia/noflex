@@ -1437,6 +1437,12 @@ type Mutation {
 	"""
 	updateSmartTranscoding(directory: String, maxStorageGb: Int, maxVersionGb: Int): SmartTranscoding!
 	"""
+	Whether this server offers its media for keeping on a device, through
+	`deviceDownload`, `smartDownloads` and export jobs. Streaming is unaffected,
+	and copies already on a device stay there. Administrator only.
+	"""
+	setDownloadsAllowed(allowed: Boolean!): Boolean!
+	"""
 	Change one of the caller's devices; omitted settings stay. Pass
 	`clearMaxBitrate` or `clearDownloadBudget` to remove a limit.
 	"""
@@ -2925,6 +2931,11 @@ type ServerInfo {
 	version: String!
 	backend: String!
 	isConfigured: Boolean!
+	"""
+	Whether this server offers its media for keeping on a device. A client
+	asks the server a title came from, as each decides for itself.
+	"""
+	downloadsAllowed: Boolean!
 }
 
 type ServerRuntime {

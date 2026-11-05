@@ -240,3 +240,54 @@ async fn refuses_someone_elses_device_and_a_title_outside_their_libraries() {
         .await;
     assert_eq!(resp.errors[0].message, "media file not found");
 }
+
+#[tokio::test]
+async fn only_an_administrator_turns_downloads_off_and_then_none_are_offered() {
+    let fixture = fixture().await;
+    let schema = schema(&fixture, true);
+    let as_user = |query: &str, is_admin: bool| {
+        Request::new(query)
+            .data(Principal {
+                user_id: fixture.viewer.id,
+                is_admin,
+                session_id: None,
+            })
+            .data(RequestUser {
+                user_id: fixture.viewer.id,
+                is_admin,
+            })
+    };
+    let turn_off = "mutation { setDownloadsAllowed(allowed: false) }";
+
+    let refused = schema.execute(as_user(turn_off, false)).await;
+    assert_eq!(refused.errors[0].message, "administrator required");
+    let allowed = schema.execute("{ serverInfo { downloadsAllowed } }").await;
+    assert_eq!(
+        allowed.data.into_json().expect("json")["serverInfo"]["downloadsAllowed"],
+        true
+    );
+
+    let done = schema.execute(as_user(turn_off, true)).await;
+    assert!(done.errors.is_empty(), "{:?}", done.errors);
+    let info = schema.execute("{ serverInfo { downloadsAllowed } }").await;
+    assert_eq!(
+        info.data.into_json().expect("json")["serverInfo"]["downloadsAllowed"],
+        false
+    );
+
+    let resp = schema
+        .execute(request(&fixture, &fixture.viewer, fixture.device))
+        .await;
+    assert_eq!(
+        resp.errors[0].message,
+        "This server doesn’t allow downloads."
+    );
+    let code = resp.errors[0]
+        .extensions
+        .as_ref()
+        .and_then(|extensions| extensions.get("code"));
+    assert_eq!(
+        code,
+        Some(&async_graphql::Value::from("DOWNLOADS_NOT_ALLOWED"))
+    );
+}

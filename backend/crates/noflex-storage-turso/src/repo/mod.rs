@@ -24,6 +24,7 @@ pub(crate) mod plugin_tasks;
 pub(crate) mod restrictions;
 pub(crate) mod scan_events;
 pub(crate) mod search;
+pub(crate) mod server_settings;
 pub(crate) mod sessions;
 pub(crate) mod tags;
 pub(crate) mod trickplay;

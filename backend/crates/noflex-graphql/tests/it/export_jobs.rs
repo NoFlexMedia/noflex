@@ -202,6 +202,24 @@ async fn export_names_its_work_only_while_the_viewer_can_see_it() {
 }
 
 #[tokio::test]
+async fn no_export_starts_on_a_server_that_refuses_downloads() {
+    let f = fixture().await;
+    f.storage
+        .set_downloads_allowed(false)
+        .await
+        .expect("turn off");
+    let mutation = format!(
+        r#"mutation {{ createExportJob(editionId: "{}", format: MP4) {{ id }} }}"#,
+        f.edition_id
+    );
+    let response = f.schema.execute(request(mutation, &f.owner)).await;
+    assert_eq!(
+        response.errors[0].message,
+        "This server doesn’t allow downloads."
+    );
+}
+
+#[tokio::test]
 async fn anonymous_export_operations_are_denied() {
     let f = fixture().await;
     for operation in [

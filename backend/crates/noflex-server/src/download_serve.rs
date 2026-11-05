@@ -29,6 +29,17 @@ pub async fn serve_download_job(
         return (StatusCode::UNAUTHORIZED, "authentication required").into_response();
     }
 
+    match storage.downloads_allowed().await {
+        Ok(true) => {}
+        Ok(false) => {
+            return (StatusCode::FORBIDDEN, "this server doesn't allow downloads").into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "storage error reading download setting");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response();
+        }
+    }
+
     let job = match storage.get_export_job(job_id).await {
         Ok(Some(j)) => j,
         Ok(None) => return (StatusCode::NOT_FOUND, "job not found").into_response(),

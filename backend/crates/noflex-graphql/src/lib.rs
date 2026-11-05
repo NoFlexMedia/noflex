@@ -142,6 +142,9 @@ struct ServerInfo {
     version: String,
     backend: String,
     is_configured: bool,
+    /// Whether this server offers its media for keeping on a device. A client
+    /// asks the server a title came from, as each decides for itself.
+    downloads_allowed: bool,
 }
 
 #[Object]
@@ -163,6 +166,10 @@ impl CoreQuery {
             version: env!("CARGO_PKG_VERSION").to_string(),
             backend: health.backend,
             is_configured: !users.is_empty(),
+            downloads_allowed: storage
+                .downloads_allowed()
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?,
         })
     }
 
@@ -1129,6 +1136,7 @@ impl CoreMutation {
         if !access::can_edition(storage, user, ed_id).await? {
             return Err(async_graphql::Error::new("edition not found"));
         }
+        devices::require_downloads_allowed(storage).await?;
         let job = ExportJob {
             id: noflex_core::ExportJobId::new(),
             user_id: user.user_id,

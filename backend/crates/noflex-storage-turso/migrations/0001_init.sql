@@ -793,6 +793,13 @@ CREATE TABLE IF NOT EXISTS smart_transcoding_settings (
     max_version_gb INTEGER
 );
 
+-- Server-wide choices an administrator made that have no configuration key.
+
+CREATE TABLE IF NOT EXISTS server_settings (
+    id                INTEGER PRIMARY KEY CHECK (id = 1),
+    downloads_allowed INTEGER NOT NULL DEFAULT 1
+);
+
 -- Transcoding choices an administrator made from the web UI. A null column falls
 -- back to the server's configuration.
 

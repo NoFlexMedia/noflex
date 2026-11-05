@@ -465,6 +465,26 @@ async fn completed_job_outside_download_root_is_rejected() {
 }
 
 #[tokio::test]
+async fn a_finished_export_stays_put_on_a_server_that_refuses_downloads() {
+    use noflex_server::{download_serve::serve_download_job, file_serve::RootCapability};
+
+    let temp = tempfile::tempdir().expect("temp");
+    let output = temp.path().join("movie.mp4");
+    std::fs::write(&output, b"movie").expect("output");
+    let store = TursoStore::open_temp().await.expect("store");
+    store.migrate().await.expect("migrate");
+    let (user_id, edition_id, _) = seed_with_real_file(&store, temp.path()).await;
+    let store: Arc<dyn Storage> = Arc::new(store);
+    let job_id = insert_completed_job(&store, user_id, edition_id, &output).await;
+    let root = RootCapability::new(temp.path()).await.expect("root");
+    store.set_downloads_allowed(false).await.expect("turn off");
+
+    let response =
+        serve_download_job(&store, &principal_for(user_id, true), job_id, &root, None).await;
+    assert_eq!(response.status(), axum::http::StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn serve_byte_range_returns_206_with_first_100_bytes() {
     use noflex_server::download_serve::serve_download_job;
     let work_dir = std::env::temp_dir().join(format!("noflex-srv-range-{}", uuid::Uuid::now_v7()));

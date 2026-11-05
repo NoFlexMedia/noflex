@@ -519,6 +519,11 @@ pub trait Storage: Send + Sync + 'static {
         settings: &SmartTranscodingSettings,
     ) -> StorageResult<()>;
 
+    /// Whether this server offers its media for keeping on a device. True until
+    /// an administrator says otherwise.
+    async fn downloads_allowed(&self) -> StorageResult<bool>;
+    async fn set_downloads_allowed(&self, allowed: bool) -> StorageResult<()>;
+
     /// The categories with at least one top-level work, in
     /// [`ContentCategory::ALL`][crate::domain::ContentCategory::ALL] order.
     /// `access_user_id` applies that user's library grants and parental

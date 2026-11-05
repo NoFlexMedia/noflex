@@ -896,6 +896,14 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.writer().await?;
         repo::optimized_versions::set_settings(&conn, settings).await
     }
+    async fn downloads_allowed(&self) -> StorageResult<bool> {
+        let (_schema, conn) = self.reader().await?;
+        repo::server_settings::downloads_allowed(&conn).await
+    }
+    async fn set_downloads_allowed(&self, allowed: bool) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::server_settings::set_downloads_allowed(&conn, allowed).await
+    }
     async fn content_category_counts(
         &self,
         access_user_id: Option<UserId>,

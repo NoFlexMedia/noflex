@@ -78,6 +78,7 @@ where
     devices_belong_to_their_user(store).await;
     optimized_versions_queue_by_priority(store).await;
     smart_transcoding_settings_round_trip(store).await;
+    downloads_allowed_round_trip(store).await;
     invites_can_only_be_spent_while_valid(store).await;
     linked_servers_belong_to_their_user(store).await;
     applied_watch_state_keeps_its_original_time(store).await;
@@ -3198,6 +3199,14 @@ async fn devices_belong_to_their_user<S: Storage + ?Sized>(store: &S) {
 
     store.delete_user(owner.id).await.ok();
     store.delete_user(other.id).await.ok();
+}
+
+async fn downloads_allowed_round_trip<S: Storage + ?Sized>(store: &S) {
+    assert!(store.downloads_allowed().await.expect("default"));
+    store.set_downloads_allowed(false).await.expect("refuse");
+    assert!(!store.downloads_allowed().await.expect("refused"));
+    store.set_downloads_allowed(true).await.expect("allow");
+    assert!(store.downloads_allowed().await.expect("allowed"));
 }
 
 async fn smart_transcoding_settings_round_trip<S: Storage + ?Sized>(store: &S) {

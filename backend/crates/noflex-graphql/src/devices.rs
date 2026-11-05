@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use async_graphql::{Context, Json, Object, SimpleObject};
+use async_graphql::{Context, ErrorExtensions, Json, Object, SimpleObject};
 use noflex_core::{DeviceId, MediaFileId, TonemapCurve, VideoCodec};
 use noflex_plugin_host::PluginRegistry;
 use noflex_storage::{
@@ -205,7 +205,9 @@ async fn smart_downloads(
     let principal = authed_principal(ctx)?;
     let storage = storage(ctx)?;
     let device = owned_device(storage, principal.user_id, device_id).await?;
-    if !device.smart_downloads {
+    // Empty rather than an error: this is polled, and the answer is that the
+    // server wants nothing kept here.
+    if !device.smart_downloads || !storage.downloads_allowed().await.map_err(gql_err)? {
         return Ok(Vec::new());
     }
     let Ok(service) = ctx.data::<Arc<dyn PlaybackSessionService>>() else {
@@ -276,6 +278,7 @@ async fn device_download(
     let principal = authed_principal(ctx)?;
     let storage = storage(ctx)?;
     let device = owned_device(storage, principal.user_id, device_id).await?;
+    require_downloads_allowed(storage).await?;
     let Ok(service) = ctx.data::<Arc<dyn PlaybackSessionService>>() else {
         return Err(async_graphql::Error::new("playback is not available"));
     };
@@ -319,6 +322,19 @@ async fn device_download(
         optimized: file.optimized,
         subtitles: file.subtitles,
     }))
+}
+
+/// Refuses a new download on a server whose administrator has turned them off.
+pub(crate) async fn require_downloads_allowed(
+    storage: &Arc<dyn Storage>,
+) -> async_graphql::Result<()> {
+    if storage.downloads_allowed().await.map_err(gql_err)? {
+        return Ok(());
+    }
+    Err(
+        async_graphql::Error::new("This server doesn’t allow downloads.")
+            .extend_with(|_, ext| ext.set("code", "DOWNLOADS_NOT_ALLOWED")),
+    )
 }
 
 async fn owned_device(
@@ -427,6 +443,22 @@ impl DevicesMutation {
             .await
             .map_err(gql_err)?;
         smart_transcoding(ctx).await
+    }
+
+    /// Whether this server offers its media for keeping on a device, through
+    /// `deviceDownload`, `smartDownloads` and export jobs. Streaming is unaffected,
+    /// and copies already on a device stay there. Administrator only.
+    async fn set_downloads_allowed(
+        &self,
+        ctx: &Context<'_>,
+        allowed: bool,
+    ) -> async_graphql::Result<bool> {
+        access::require_admin(ctx)?;
+        storage(ctx)?
+            .set_downloads_allowed(allowed)
+            .await
+            .map_err(gql_err)?;
+        Ok(allowed)
     }
 
     /// Change one of the caller's devices; omitted settings stay. Pass

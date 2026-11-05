@@ -9,7 +9,11 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use noflex_core::{DomainEventBus, LibraryId};
 use noflex_storage::Storage;
-use notify::{Event, RecursiveMode, Watcher as NotifyWatcher, recommended_watcher};
+use notify::{
+    Event, EventKind, RecursiveMode, Watcher as NotifyWatcher,
+    event::{AccessKind, AccessMode},
+    recommended_watcher,
+};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -51,6 +55,16 @@ impl Drop for Watcher {
 ///
 /// Errors here come from `notify` initialisation (missing root, EPERM, …);
 /// per-event errors are logged and swallowed.
+/// Reading isn't a change. inotify reports every open and close, so counting them
+/// would have a scan's own reads, or anyone streaming a film, start the next scan.
+/// A close after writing is a change: it's when a copied file is finally whole.
+fn changes_library(kind: EventKind) -> bool {
+    match kind {
+        EventKind::Access(access) => access == AccessKind::Close(AccessMode::Write),
+        _ => true,
+    }
+}
+
 pub fn start(
     storage: Arc<dyn Storage>,
     library: LibraryId,
@@ -61,10 +75,11 @@ pub fn start(
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
 
     let mut notify_watcher = recommended_watcher(move |res: notify::Result<Event>| match res {
-        Ok(_event) => {
-            // We coalesce: any event is just a poke to trigger a rescan.
+        // We coalesce: any change is just a poke to trigger a rescan.
+        Ok(event) if changes_library(event.kind) => {
             let _ = event_tx.send(());
         }
+        Ok(_) => {}
         Err(err) => {
             tracing::warn!(%err, "notify error");
         }
@@ -107,4 +122,35 @@ pub fn start(
         shutdown_tx: Some(shutdown_tx),
         handle: Some(handle),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use notify::event::{CreateKind, ModifyKind, RemoveKind};
+
+    use super::*;
+
+    #[test]
+    fn reading_a_library_is_not_a_change() {
+        for access in [
+            AccessKind::Read,
+            AccessKind::Open(AccessMode::Read),
+            AccessKind::Open(AccessMode::Any),
+            AccessKind::Close(AccessMode::Read),
+        ] {
+            assert!(!changes_library(EventKind::Access(access)), "{access:?}");
+        }
+    }
+
+    #[test]
+    fn writing_to_a_library_is() {
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Modify(ModifyKind::Any),
+            EventKind::Remove(RemoveKind::File),
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+        ] {
+            assert!(changes_library(kind), "{kind:?}");
+        }
+    }
 }

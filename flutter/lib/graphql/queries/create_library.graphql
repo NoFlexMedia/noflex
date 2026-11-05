@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/admin_library_fields.graphql'
+
+mutation CreateLibrary($name: String!, $kind: LibraryKind!, $paths: [String!]!) {
+  createLibrary(name: $name, kind: $kind, paths: $paths) { ...AdminLibraryFields }
+}

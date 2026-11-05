@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query AdminPlayChart($range: StatsRange!, $library: ID, $user: ID, $offset: Int) {
+  playHistoryChart(range: $range, libraryId: $library, userId: $user, utcOffsetMinutes: $offset) {
+    bucket
+    totalPlays
+    totalWatchedMs
+    points { start plays watchedMs }
+  }
+}

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+fragment AdminLibraryFields on Library {
+  id
+  name
+  kind
+  paths
+  config { preferredLanguages preferredProviders excludedFolders watchEnabled scanSchedule artworkPreference contentCategory }
+}

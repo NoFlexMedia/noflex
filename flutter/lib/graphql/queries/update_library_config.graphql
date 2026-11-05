@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/admin_library_fields.graphql'
+
+mutation UpdateLibraryConfig($id: ID!, $languages: [String!], $providers: [String!], $excluded: [String!], $watching: Boolean, $schedule: ScanSchedule, $artwork: ArtworkPreference, $category: LibraryCategory) {
+  updateLibraryConfig(id: $id, preferredLanguages: $languages, preferredProviders: $providers, excludedFolders: $excluded, watchEnabled: $watching, scanSchedule: $schedule, artworkPreference: $artwork, contentCategory: $category) { ...AdminLibraryFields }
+}

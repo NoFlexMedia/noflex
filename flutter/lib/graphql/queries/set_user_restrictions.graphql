@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation SetUserRestrictions($user: ID!, $input: UserRestrictionsInput!) {
+  setUserRestrictions(userId: $user, input: $input) { userId allowUnrated maxStreamBitrateBps maxConcurrentTranscodes allowedParentalRatingIds }
+}

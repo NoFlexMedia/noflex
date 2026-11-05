@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/work_card.graphql'
+
+query AdminTopPlayed($range: StatsRange!, $offset: Int) {
+  topPlayed(range: $range, utcOffsetMinutes: $offset, limit: 8) {
+    plays
+    library { id name kind }
+    items { plays watchedMs users work { ...WorkCard } }
+  }
+}

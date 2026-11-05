@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+fragment AdminUserFields on User {
+  id
+  name
+  isAdmin
+  role
+  createdAt
+  libraryAccess
+}

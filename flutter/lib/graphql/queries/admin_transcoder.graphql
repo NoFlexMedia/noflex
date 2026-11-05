@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query AdminTranscoder {
+  transcoderInfo {
+    ffmpeg { command overrideEnv path version buildFlags error }
+    ffprobe { command overrideEnv path version buildFlags error }
+    configuredHwaccel
+    fallback
+    resolvedBackend
+    hardwareAccelerated
+    fellBack
+    hwaccels
+    vaapiDevice
+    gpuTonemap
+    encoders { name media backend available }
+    decoders { name media backend available }
+    ladder { maxPixels videoCodec videoProfile audioCodec container bitrateKbps encoder encoderAvailable }
+    transcodeDir
+  }
+}

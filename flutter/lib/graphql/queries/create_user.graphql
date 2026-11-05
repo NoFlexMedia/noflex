@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/admin_user_fields.graphql'
+
+mutation CreateUser($username: String!, $password: String!, $role: UserRole!) {
+  createUser(username: $username, password: $password, role: $role) { ...AdminUserFields }
+}

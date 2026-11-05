@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/admin_library_fields.graphql'
+#import 'fragments/scan_status_fields.graphql'
+#import 'fragments/index_run_fields.graphql'
+
+query AdminIndexing {
+  scannerStatus {
+    library { ...AdminLibraryFields }
+    scan { ...ScanStatusFields }
+    activeScan { ...IndexRunFields }
+    lastScan { ...IndexRunFields }
+    watcher { state since error }
+    roots { path exists isDir readable error }
+    recentFailures { at path stage error }
+    failureCount
+  }
+  searchIndexStatus { embedderPlugins remoteHost inferenceDevice namespace modelId dimensions pendingWorks pendingIsLowerBound }
+}

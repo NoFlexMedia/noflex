@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query AdminLogs($minLevel: LogLevel, $target: String, $contains: String, $after: String) {
+  recentLogs(first: 200, after: $after, minLevel: $minLevel, target: $target, contains: $contains) {
+    pageInfo { hasNextPage endCursor }
+    nodes { id at level target message fields { name value } spans }
+  }
+}

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/admin_user_fields.graphql'
+
+mutation UpdateUser($id: ID!, $role: UserRole, $libraries: [ID!]) {
+  updateUser(id: $id, role: $role, libraryIds: $libraries) { ...AdminUserFields }
+}

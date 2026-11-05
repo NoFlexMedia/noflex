@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/work_card.graphql'
+
+query AdminPlaySessions($range: StatsRange, $user: ID, $library: ID, $offset: Int, $after: String) {
+  playSessions(range: $range, userId: $user, libraryId: $library, utcOffsetMinutes: $offset, first: 30, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      startedAt
+      lastSeenAt
+      watchedMs
+      positionMs
+      ended
+      device
+      work { ...WorkCard }
+      rootWork { id title }
+    }
+  }
+}

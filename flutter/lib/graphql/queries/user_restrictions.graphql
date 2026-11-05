@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query UserRestrictions($user: ID!) {
+  userRestrictions(userId: $user) { userId allowedParentalRatingIds allowUnrated maxStreamBitrateBps maxConcurrentTranscodes }
+}

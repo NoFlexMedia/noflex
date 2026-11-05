@@ -17,6 +17,7 @@ import '../../theme.dart';
 import '../../utils/format.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_state.dart';
+import '../admin/admin_screen.dart';
 import '../downloads/leave_account.dart';
 import 'account_controller.dart';
 import 'devices_section.dart';
@@ -95,12 +96,35 @@ class _Stacked extends StatelessWidget {
           padding: EdgeInsets.fromLTRB(gutter, 20, gutter, 10),
           sliver: const SliverToBoxAdapter(child: _Header(stacked: false)),
         ),
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(gutter, 0, gutter, 6),
+          sliver: const SliverToBoxAdapter(child: _AdminEntry()),
+        ),
         SliverToBoxAdapter(child: _SectionChips(controller: controller)),
         SliverPadding(
           padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 32),
           sliver: _SectionSliver(controller: controller),
         ),
       ],
+    );
+  }
+}
+
+/// The way in for those it's for. A sidebar has its own link, but neither a
+/// phone's bottom bar nor a rail has room for one.
+class _AdminEntry extends SignalWidget {
+  const _AdminEntry();
+
+  @override
+  Widget build(BuildContext context) {
+    if (getIt<SessionService>().viewer.value?.isAdmin != true) {
+      return const SizedBox.shrink();
+    }
+    return NfButton(
+      label: 'Administration',
+      icon: const Icon(PhosphorIconsRegular.shieldCheck),
+      expand: true,
+      onPressed: () => unawaited(getIt<NavService>().push(const AdminScreen())),
     );
   }
 }
@@ -118,7 +142,9 @@ class _SideNav extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 20, 12, 24),
       children: [
         const _Header(stacked: true),
-        const SizedBox(height: 20),
+        const SizedBox(height: 14),
+        const _AdminEntry(),
+        const SizedBox(height: 14),
         SignalBuilder(
           builder: (context) => Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

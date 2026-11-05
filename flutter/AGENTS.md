@@ -56,6 +56,10 @@ No router, no named routes. `_AppFrame` in `app.dart` switches on `SessionServic
 
 Decide from available width through `layout/window.dart`, never from device checks. Navigation goes bottom bar, then rail (`>= 600`), then sidebar (`>= 1100`). Use `AdaptivePanes` for two-pane content: it splits on a vertical fold when one runs through the middle, so neither pane straddles the hinge. The shell moves display features into its content's coordinates (`FoldsFromContent`), because a pane has no position of its own until after its first layout, and a route's transition moves it after that. In tabletop posture the player gives the picture the top half and the controls the bottom. Rails and grids size from width, so more room shows more cards rather than bigger ones.
 
+## Administration
+
+`features/admin/` is the web's Administration page: one section list beside the open section, or leading to it on a phone. The open section is a signal rather than a route, so unfolding keeps the place. Each section asks for what it needs and stops when it's closed; only the libraries, users and plugins (`AdminController.admin`) and the live host sample (`LiveStatus`) are shared. The entry shows only for `viewer.isAdmin`: in the sidebar, and on the You screen for widths without one. Polled queries use `FetchPolicy.NoCache`, or the normalized cache would keep every log line and stream forever. A plugin's homepage is shown to copy, since nothing in the app opens links.
+
 ## GraphQL
 
 Ferry, against `lib/graphql/schema.graphql`, a symlink to `backend/crates/noflex-graphql/tests/snapshots/schema.graphql`.
@@ -65,6 +69,7 @@ Ferry, against `lib/graphql/schema.graphql`, a symlink to `backend/crates/noflex
 - Ferry calls a response carrying only GraphQL errors "loading". `run` and `Query` account for that; anything new reading a response directly must too.
 - Map generated types to `WorkSummary` where they arrive. Generated classes differ per operation and can't hold a linked server or sit in the offline manifest.
 - `WatchStateService` holds progress and favorites as they change here, so cards update without refetching or writing to the cache. Read play state through it inside a reactive scope.
+- Subscriptions go over `/graphql/ws`, which refuses an upgrade that names no subprotocol. `gql_websocket_link` speaks the legacy `graphql-ws`, so `_Transport` asks for it.
 - Linked servers: pass `server:` to `GraphqlService.run` or `clientFor`. API responses use paths relative to the server that sent them; `TokenStore.absolute` resolves the home server's, `WorkSummary.fromCard(server:)` a linked one's.
 
 ## Playback

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query ParentalTags {
+  tags(namespaces: ["parental"], first: 200) { nodes { tag { id display } workCount } }
+}

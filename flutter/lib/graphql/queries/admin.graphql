@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/admin_library_fields.graphql'
+#import 'fragments/admin_user_fields.graphql'
+
+query Admin {
+  serverInfo { name version backend downloadsAllowed }
+  libraries { ...AdminLibraryFields }
+  users { ...AdminUserFields }
+  sessions { id userId client device remoteAddr createdAt lastSeenAt expiresAt }
+  plugins {
+    id
+    displayName
+    version
+    apiVersion
+    hooks
+    capabilities
+    license
+    author
+    homepage
+    tasks { name intervalMs lastRunAt consecutiveFailures totalRuns }
+    instanceRestarts
+    circuitOpen
+  }
+  pluginOverrides { pluginId hook workKind priority adminSet }
+}

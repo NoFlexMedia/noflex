@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation EnqueuePluginTask($plugin: String!, $task: String!, $payload: String) {
+  enqueuePluginTask(pluginId: $plugin, task: $task, payload: $payload)
+}

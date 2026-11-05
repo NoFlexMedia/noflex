@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+fragment StreamSummaryFields on StreamSummary {
+  container
+  videoCodec
+  videoProfile
+  videoLevel
+  bitDepth
+  width
+  height
+  videoRange
+  audioCodec
+  audioChannels
+  bitrateBps
+}

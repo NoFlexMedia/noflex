@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/stream_summary_fields.graphql'
+
+query AdminActiveStreams {
+  activeStreams {
+    id
+    user { id name }
+    work { id title kind year runtimeMs parentId }
+    mediaFileId
+    channelId
+    device
+    startedAt
+    lastActiveAt
+    positionMs
+    decision {
+      route
+      plan
+      reasons { code description }
+      source { ...StreamSummaryFields }
+      target { ...StreamSummaryFields }
+      encoder
+      audioEncoder
+      hardware
+      tonemap
+    }
+    transcode { jobId status encoder hardware fps speed outTimeMs error }
+  }
+}

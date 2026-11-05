@@ -160,6 +160,24 @@ class SessionService {
     }
   }
 
+  /// What a scan or a library change moved. Best effort, since what's on screen
+  /// still works and the next launch catches up.
+  Future<void> refreshLibraries() async {
+    try {
+      final data = await graphql.run(
+        GBootstrapReq((b) => b..fetchPolicy = FetchPolicy.NetworkOnly),
+      );
+      batch(() {
+        libraries.value = data.libraries.toList();
+        categories.value = {
+          for (final row in data.contentCategories) row.category: row.workCount,
+        };
+      });
+    } on Exception {
+      return;
+    }
+  }
+
   static Object? _preference(GBootstrapData data, String key) {
     for (final preference in data.preferences) {
       if (preference.key == key) {

@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation ClearPluginOverride($plugin: String!, $hook: HookKind!, $kind: WorkKindFilter!) {
+  clearPluginOverride(pluginId: $plugin, hook: $hook, workKind: $kind) { pluginId hook workKind priority adminSet }
+}

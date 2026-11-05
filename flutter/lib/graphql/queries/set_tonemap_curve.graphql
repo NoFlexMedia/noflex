@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation SetTonemapCurve($curve: TonemapCurve) {
+  setTonemapCurve(curve: $curve)
+}

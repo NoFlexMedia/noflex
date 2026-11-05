@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query AdminSmartTranscoding {
+  smartTranscoding { enabled directory maxStorageGb maxVersionGb defaultDirectory defaultMaxStorageGb defaultMaxVersionGb }
+}

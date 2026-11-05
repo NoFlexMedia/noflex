@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query AdminPluginEvents($after: String) {
+  pluginEvents(first: 30, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes { id at event { kind pluginId path sha256 hooks reason trap } }
+  }
+}

@@ -51,7 +51,7 @@ class HomeScreen extends SignalWidget {
                 icon: PhosphorIconsRegular.sparkle,
                 title: 'Welcome, ${session.viewer.value?.name ?? 'there'}.',
                 message: admin
-                    ? 'Your libraries are empty so far. Add a library and run a scan from the web admin.'
+                    ? 'Your libraries are empty so far. Add a library and run a scan from Administration.'
                     : 'Nothing has been shared with you yet. Ask the server’s administrator to grant you a library.',
               ),
             ),

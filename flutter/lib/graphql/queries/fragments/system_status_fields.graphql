@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# The live host and server sample: the query and the subscription share it.
+fragment SystemStatusFields on SystemStatus {
+  sampledAt
+  activeScans
+  server {
+    version
+    startedAt
+    uptimeSeconds
+    bind
+    publicUrl
+    dataDir
+    cacheDir
+    config { key value redacted }
+    database { backend engineVersion schemaVersion healthy notes path sizeBytes walSizeBytes error }
+  }
+  host { hostname osName osVersion kernelVersion arch bootedAt uptimeSeconds }
+  cpu { usagePercent brand physicalCores logicalCores loadAverage { one five fifteen } cores { index usagePercent frequencyMhz } }
+  memory { totalBytes usedBytes availableBytes swapTotalBytes swapUsedBytes cgroupLimitBytes }
+  process { pid cpuPercent cpuPercentOfHost rssBytes virtualBytes threads openFiles openFilesLimit }
+  network { name loopback state macAddress addresses rxBytesPerSec txBytesPerSec rxTotalBytes txTotalBytes rxErrorsTotal txErrorsTotal }
+  networkTotal { rxBytesPerSec txBytesPerSec }
+  storage { kind path libraryId libraryName exists mountPoint fileSystem totalBytes availableBytes usedBytes contentBytes error }
+  plugins { loaded circuitOpen instanceRestarts loadFailures traps }
+  logs { warnings errors lastError { id at level target message } }
+}

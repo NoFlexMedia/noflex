@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/system_status_fields.graphql'
+
+query AdminSystemStatus {
+  systemStatus { ...SystemStatusFields }
+  systemStatusHistory { at cpuPercent memoryUsedBytes processCpuPercent processRssBytes rxBytesPerSec txBytesPerSec loadOne }
+}

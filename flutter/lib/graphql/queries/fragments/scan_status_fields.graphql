@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+fragment ScanStatusFields on LibraryScanStatus {
+  state
+  startedAt
+  finishedAt
+  error
+  summary { added updated removed errored }
+}

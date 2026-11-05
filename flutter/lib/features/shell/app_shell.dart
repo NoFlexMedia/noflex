@@ -17,6 +17,7 @@ import '../../theme.dart';
 import '../../utils/categories.dart';
 import '../../widgets/brand_mark.dart';
 import '../account/account_screen.dart';
+import '../admin/admin_screen.dart';
 import '../browse/browse_screen.dart';
 import '../browse/category_screen.dart';
 import '../browse/collections_screen.dart';
@@ -359,6 +360,12 @@ class _Sidebar extends SignalWidget {
               icon: PhosphorIconsRegular.broadcast,
               onTap: () => nav.push(const WatchRoomsScreen()),
             ),
+            if (session.viewer.value?.isAdmin ?? false)
+              _SidebarItem(
+                label: 'Administration',
+                icon: PhosphorIconsRegular.shieldCheck,
+                onTap: () => nav.push(const AdminScreen()),
+              ),
             const SizedBox(height: 12),
             _SidebarItem(
               label: session.viewer.value?.name ?? 'You',

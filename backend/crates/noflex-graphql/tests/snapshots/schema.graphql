@@ -2531,6 +2531,13 @@ type Query {
 	"""
 	smartDownloads(deviceId: ID!): [SmartDownload!]!
 	"""
+	One media file as the caller's device should hold it, for a title the
+	viewer chose to keep: the file itself when it plays directly, otherwise
+	a ready optimized version. Null while neither exists; an export job can
+	stand in. Answers regardless of the device's smart downloads setting.
+	"""
+	deviceDownload(deviceId: ID!, mediaFileId: ID!): SmartDownload
+	"""
 	Every invite, newest first. Administrator only.
 	"""
 	invites: [Invite!]!

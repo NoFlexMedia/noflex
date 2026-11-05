@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use async_graphql::{Context, Json, Object, SimpleObject};
-use noflex_core::{DeviceId, TonemapCurve, VideoCodec};
+use noflex_core::{DeviceId, MediaFileId, TonemapCurve, VideoCodec};
 use noflex_plugin_host::PluginRegistry;
 use noflex_storage::{
     RequestUser, Storage,
@@ -183,6 +183,19 @@ impl DevicesQuery {
         // root's, and this one is large enough to overflow a worker's stack.
         Box::pin(smart_downloads(ctx, device_id)).await
     }
+
+    /// One media file as the caller's device should hold it, for a title the
+    /// viewer chose to keep: the file itself when it plays directly, otherwise
+    /// a ready optimized version. Null while neither exists; an export job can
+    /// stand in. Answers regardless of the device's smart downloads setting.
+    async fn device_download(
+        &self,
+        ctx: &Context<'_>,
+        device_id: DeviceId,
+        media_file_id: MediaFileId,
+    ) -> async_graphql::Result<Option<SmartDownload>> {
+        Box::pin(device_download(ctx, device_id, media_file_id)).await
+    }
 }
 
 async fn smart_downloads(
@@ -253,6 +266,59 @@ async fn smart_downloads(
         }
     }
     Ok(out)
+}
+
+async fn device_download(
+    ctx: &Context<'_>,
+    device_id: DeviceId,
+    media_file_id: MediaFileId,
+) -> async_graphql::Result<Option<SmartDownload>> {
+    let principal = authed_principal(ctx)?;
+    let storage = storage(ctx)?;
+    let device = owned_device(storage, principal.user_id, device_id).await?;
+    let Ok(service) = ctx.data::<Arc<dyn PlaybackSessionService>>() else {
+        return Err(async_graphql::Error::new("playback is not available"));
+    };
+    let user = RequestUser {
+        user_id: principal.user_id,
+        is_admin: principal.is_admin,
+    };
+    let not_found = || async_graphql::Error::new("media file not found");
+    if !noflex_storage::access::user_can_access_media_file(storage.as_ref(), user, media_file_id)
+        .await
+        .map_err(gql_err)?
+    {
+        return Err(not_found());
+    }
+    let media = storage
+        .media_file_by_id(media_file_id)
+        .await
+        .map_err(gql_err)?
+        .ok_or_else(not_found)?;
+    let work = storage
+        .work_for_media_file(media_file_id)
+        .await
+        .map_err(gql_err)?
+        .ok_or_else(not_found)?;
+    let capabilities = serde_json::from_value::<ClientCapabilities>(device.capabilities.0)
+        .map_err(|_| async_graphql::Error::new("device capabilities are unreadable"))?;
+    let file = service
+        .smart_download(
+            principal.user_id,
+            principal.session_id,
+            &media,
+            &capabilities,
+        )
+        .await
+        .map_err(gql_err)?;
+    Ok(file.map(|file| SmartDownload {
+        work,
+        part_index: media.part_index,
+        url: file.url,
+        size_bytes: file.size_bytes,
+        optimized: file.optimized,
+        subtitles: file.subtitles,
+    }))
 }
 
 async fn owned_device(

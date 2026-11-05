@@ -52,6 +52,10 @@ use crate::{
 // Header-less players fetch the minted URLs directly, so the TTL spans a
 // long viewing session.
 const MEDIA_TOKEN_TTL: Duration = Duration::from_secs(6 * 60 * 60);
+/// Downloads run in the background of a device that may wait days for Wi-Fi,
+/// and their retries reuse the URL they were given. The token still dies with
+/// the login it's bound to.
+const DOWNLOAD_TOKEN_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 /// `?token=` on byte routes: a scoped media token standing in for a
 /// session credential on players that can't set headers.
@@ -628,6 +632,16 @@ impl ServerPlaybackSessions {
     ) -> anyhow::Result<String> {
         issue_media_token(&self.jwt, user, session, target, MEDIA_TOKEN_TTL)
             .map_err(|e| anyhow::anyhow!("mint media token: {e}"))
+    }
+
+    fn download_token(
+        &self,
+        user: UserId,
+        session: Option<SessionId>,
+        target: &str,
+    ) -> anyhow::Result<String> {
+        issue_media_token(&self.jwt, user, session, target, DOWNLOAD_TOKEN_TTL)
+            .map_err(|e| anyhow::anyhow!("mint download token: {e}"))
     }
 
     /// Resolve edition → work for event payloads. Best-effort: the
@@ -1406,7 +1420,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
         };
         let decision = decide(&probe, capabilities, &self.decide_options(false));
         let (url, size_bytes, optimized) = if matches!(decision.route, PlaybackRoute::Direct) {
-            let token = self.media_token(user, login, &format!("file:{}", media.id))?;
+            let token = self.download_token(user, login, &format!("file:{}", media.id))?;
             (
                 format!("/stream/{}/file?token={token}", media.id),
                 media.size_bytes,
@@ -1416,7 +1430,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
             let Some(version) = self.playable_version(media, capabilities).await? else {
                 return Ok(None);
             };
-            let token = self.media_token(user, login, &format!("optimized:{}", version.id))?;
+            let token = self.download_token(user, login, &format!("optimized:{}", version.id))?;
             (
                 format!("/optimized/{}/file?token={token}", version.id),
                 version.size_bytes.unwrap_or(0),

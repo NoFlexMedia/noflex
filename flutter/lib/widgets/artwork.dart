@@ -66,7 +66,7 @@ class Artwork extends StatelessWidget {
                 ? constraints.maxWidth * ratio
                 : 600.0;
             final absolute = getIt<TokenStore>().absolute(url);
-            final sized = sizedImage(absolute, width);
+            final sized = sizedImage(absolute, imageWidthStep(width));
             return CachedNetworkImage(
               imageUrl: sized,
               cacheKey: imageCacheKey(sized),
@@ -74,6 +74,8 @@ class Artwork extends StatelessWidget {
               width: double.infinity,
               height: double.infinity,
               fadeInDuration: NfMotion.base,
+              // Crossing a step while resizing shouldn't blank the picture.
+              useOldImageOnUrlChange: true,
               placeholder: (_, _) => const SizedBox.shrink(),
               errorWidget: (_, _, _) => fallback,
             );

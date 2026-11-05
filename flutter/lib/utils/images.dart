@@ -31,6 +31,11 @@ String? pickImage(List<ArtImage> images, ArtKind kind) {
   return kind == ArtKind.logo ? null : images.first.url;
 }
 
+/// What to ask the server for at [width]. In steps, since every distinct width
+/// is its own download and resize, and a window or sidebar moving through
+/// hundreds of them in a moment shouldn't mean hundreds of requests.
+double imageWidthStep(double width) => (width / 120).ceil() * 120.0;
+
 String sizedImage(String url, double width, {double? height}) {
   final params =
       'w=${width.round()}${height != null ? '&h=${height.round()}&fill=true' : ''}';

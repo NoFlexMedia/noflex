@@ -11,9 +11,14 @@ crate-type = ["cdylib"]
 
 [dependencies]
 noflex-plugin-sdk = { path = "../../crates/noflex-plugin-sdk" }
-wit-bindgen = { version = "0.60", default-features = false, features = ["macros", "realloc", "bitflags", "async"] }
+wit-bindgen = { version = "0.60", default-features = false, features = ["macros", "realloc", "bitflags", "async", "async-spawn"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Keep debug info in the released `.wasm` so trap backtraces name functions.
+[profile.release]
+debug = true
+strip = "none"
 
 [package.metadata.noflex-plugin]
 plugin_id = "tvdb"
@@ -21,11 +26,8 @@ display_name = "TheTVDB"
 hooks = ["metadata", "image"]
 capabilities = ["http.egress", "secrets.read"]
 http_egress_hosts = ["api4.thetvdb.com", "artworks.thetvdb.com"]
-secrets_read = ["tvdb.api_key", "tvdb.pin"]
+secrets_read = ["api_key", "pin"]
 
 [package.metadata.noflex-plugin.priority]
-# TVDB is the historical source-of-truth for TV; on movies it lags TMDb,
-# so manifest default biases series higher than movies. Server config can
-# override per work-kind.
 metadata = 90
 image    = 90

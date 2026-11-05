@@ -6,7 +6,7 @@ noflex_api_version = "0.1"
 hooks = ["metadata", "image"]
 capabilities = ["http.egress", "secrets.read"]
 http_egress_hosts = ["api4.thetvdb.com", "artworks.thetvdb.com"]
-secrets_read = ["tvdb.api_key", "tvdb.pin"]
+secrets_read = ["api_key", "pin"]
 license = "AGPL-3.0-only"
 
 [priority]

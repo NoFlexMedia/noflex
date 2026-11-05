@@ -1,0 +1,10 @@
+{
+  "status": "success",
+  "data": {
+    "series": { "id": 121361, "name": "Game of Thrones" },
+    "episodes": [
+      { "id": 3254641, "name": "Winter Is Coming", "number": 1, "seasonNumber": 1, "aired": "2011-04-17" }
+    ]
+  },
+  "links": { "next": null, "self": "/v4/series/121361/episodes/default?page=0" }
+}

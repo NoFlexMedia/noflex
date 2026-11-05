@@ -1,0 +1,29 @@
+{
+  "status": "success",
+  "data": [
+    {
+      "objectID": "series-121361",
+      "tvdb_id": "121361",
+      "type": "series",
+      "name": "Le Trône de fer",
+      "year": "2011",
+      "aliases": [ "Le Trone de Fer", "GoT" ],
+      "translations": { "eng": "Game of Thrones", "fra": "Le Trône de fer" }
+    },
+    {
+      "objectID": "series-400000",
+      "tvdb_id": "400000",
+      "type": "series",
+      "name": "Game of Thrones: The Documentary",
+      "year": "2011",
+      "translations": { "eng": "Game of Thrones: The Documentary" }
+    },
+    {
+      "objectID": "movie-1",
+      "tvdb_id": "1",
+      "type": "movie",
+      "name": "Game of Thrones",
+      "year": "2011"
+    }
+  ]
+}

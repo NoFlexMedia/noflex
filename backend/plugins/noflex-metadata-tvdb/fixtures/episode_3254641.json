@@ -1,0 +1,20 @@
+{
+  "status": "success",
+  "data": {
+    "id": 3254641,
+    "name": "L'hiver vient",
+    "number": 1,
+    "seasonNumber": 1,
+    "aired": "2011-04-17",
+    "runtime": 62,
+    "image": "https://artworks.thetvdb.com/banners/episodes/1.jpg",
+    "characters": [
+      { "name": "", "personName": "Timothy Van Patten", "peopleType": "Director", "sort": 1 }
+    ],
+    "remoteIds": [ { "id": "tt1480055", "type": 2, "sourceName": "IMDB" } ],
+    "translations": {
+      "nameTranslations": [ { "language": "eng", "name": "Winter Is Coming" } ],
+      "overviewTranslations": [ { "language": "eng", "overview": "Ned Stark is torn between his family and an old friend." } ]
+    }
+  }
+}

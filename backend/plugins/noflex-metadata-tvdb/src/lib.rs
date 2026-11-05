@@ -1,86 +1,477 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // TheTVDB metadata + image provider — first-party WASM plugin.
-// See `../noflex-metadata-tmdb/src/lib.rs` for the same pattern with
-// inline commentary. This file is intentionally a near-copy: per-provider
-// quirks (auth handshake, paginated season endpoints) land in followups.
+//
+// All egress goes through `host-net` to the manifest's two hosts. `/login`
+// trades the `api_key` secret (and `pin`, for a user-supported key) for a
+// month-long bearer token, held until the API refuses it. Both secrets live in
+// `tvdb.toml` in a secret tier. Request building and parsing live in `api` so
+// they are testable off-target; this module is only the WIT glue.
+//
+// Season and episode matches need no request: the host's search hints name the
+// parent series' id and the numbers, from which the child's id follows; `fetch`
+// then fails for numbers TVDB does not have.
 
-#![cfg(target_arch = "wasm32")]
+mod api;
 
-wit_bindgen::generate!({
-    path: "../../crates/noflex-plugin-wit/wit",
-    world: "metadata-image-plugin",
-    generate_all,
-});
+#[cfg(target_arch = "wasm32")]
+mod guest {
+    wit_bindgen::generate!({
+        path: "../../crates/noflex-plugin-wit/wit",
+        world: "metadata-image-plugin",
+        generate_all,
+    });
 
-#[unsafe(link_section = "noflex:manifest")]
-#[used]
-static NOFLEX_MANIFEST: [u8; include_bytes!("manifest.toml").len()] =
-    *include_bytes!("manifest.toml");
+    /// Embedded plugin manifest, preserved as a custom section in the
+    /// final component so the host can read it without a post-build step.
+    #[unsafe(link_section = "noflex:manifest")]
+    #[used]
+    static NOFLEX_MANIFEST: [u8; include_bytes!("manifest.toml").len()] =
+        *include_bytes!("manifest.toml");
 
-use exports::noflex::plugin::{background, image, metadata};
+    use std::{cell::RefCell, time::Duration};
 
-struct Tvdb;
+    use exports::noflex::plugin::{background, image, metadata};
+    use noflex::plugin::{
+        host_net, host_secrets,
+        types::{
+            ExternalId, ExternalIdKind, ImageKind, MetadataImage, MetadataPerson, PluginError,
+        },
+    };
+    use noflex_plugin_sdk::cache::TtlCache;
 
-impl metadata::Guest for Tvdb {
-    fn attribution() -> Option<metadata::ProviderAttribution> {
-        None
+    use crate::api::{self, ArtKind, IdKind, SearchKind, TvdbId};
+
+    const TIMEOUT_MS: u32 = 15_000;
+    const IMAGE_TIMEOUT_MS: u32 = 60_000;
+
+    thread_local! {
+        /// Read once: every secret read is audit-logged host-side.
+        static TOKEN: RefCell<Option<String>> = const { RefCell::new(None) };
+        /// Ten minutes covers the host fetching each kind of one record.
+        static ART: RefCell<TtlCache<String, Vec<api::ArtEntry>>> =
+            RefCell::new(TtlCache::new(64, Duration::from_secs(600)));
+        /// Every season and episode of a series needs its season ids.
+        static SEASONS: RefCell<TtlCache<u64, Vec<api::SeasonRef>>> =
+            RefCell::new(TtlCache::new(64, Duration::from_secs(600)));
     }
 
-    fn supports(kind: metadata::WorkKind) -> bool {
-        matches!(
-            kind,
-            metadata::WorkKind::Series | metadata::WorkKind::Season | metadata::WorkKind::Episode,
-        )
+    fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+        headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
-    async fn search(
-        _query: metadata::SearchQuery,
-    ) -> Result<Vec<metadata::MetadataMatch>, metadata::PluginError> {
-        Ok(Vec::new())
+    async fn secret(key: &str) -> Option<String> {
+        let value = host_secrets::read(key.into()).await.ok()?;
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_string())
     }
 
-    async fn fetch(
-        _id: metadata::ExternalId,
-    ) -> Result<metadata::MetadataPayload, metadata::PluginError> {
-        Err(metadata::PluginError::Unavailable(
-            "tvdb metadata fetch not yet wired".into(),
-        ))
+    /// A bearer token, logging in when none is held.
+    async fn token() -> Result<String, PluginError> {
+        if let Some(token) = TOKEN.with(|t| t.borrow().clone()) {
+            return Ok(token);
+        }
+        let key = secret("api_key").await.ok_or_else(|| {
+            PluginError::Unavailable("tvdb: secret `api_key` missing or empty".into())
+        })?;
+        let pin = secret("pin").await;
+        let response = host_net::request(host_net::HttpRequest {
+            method: "POST".into(),
+            url: format!("{}/login", api::API_BASE),
+            headers: vec![
+                ("accept".into(), "application/json".into()),
+                ("content-type".into(), "application/json".into()),
+                ("user-agent".into(), api::USER_AGENT.into()),
+            ],
+            body: Some(api::login_body(&key, pin.as_deref())),
+            timeout_ms: Some(TIMEOUT_MS),
+        })
+        .await
+        .map_err(|e| PluginError::Unavailable(format!("tvdb login failed: {e:?}")))?;
+        match response.status {
+            200 => {
+                let token = api::parse_login(&response.body).map_err(PluginError::Internal)?;
+                TOKEN.with(|t| *t.borrow_mut() = Some(token.clone()));
+                Ok(token)
+            }
+            401 => Err(PluginError::Unavailable(
+                "tvdb rejected the API key or PIN".into(),
+            )),
+            status => Err(PluginError::Unavailable(format!(
+                "tvdb login answered {status}"
+            ))),
+        }
     }
 
-    async fn fetch_children(
-        _parent: metadata::ExternalId,
-        _parent_work: metadata::WorkId,
-    ) -> Result<Vec<metadata::MetadataPayload>, metadata::PluginError> {
-        Ok(Vec::new())
+    async fn get_api(url: String) -> Result<Vec<u8>, PluginError> {
+        // A token expires after a month, or sooner if revoked: one fresh login.
+        for fresh_login in [false, true] {
+            let token = token().await?;
+            let response = host_net::request(host_net::HttpRequest {
+                method: "GET".into(),
+                url: url.clone(),
+                headers: vec![
+                    ("accept".into(), "application/json".into()),
+                    ("authorization".into(), format!("Bearer {token}")),
+                    ("user-agent".into(), api::USER_AGENT.into()),
+                ],
+                body: None,
+                timeout_ms: Some(TIMEOUT_MS),
+            })
+            .await
+            .map_err(|e| PluginError::Unavailable(format!("tvdb request failed: {e:?}")))?;
+            match response.status {
+                200 => return Ok(response.body),
+                401 if !fresh_login => TOKEN.with(|t| *t.borrow_mut() = None),
+                401 => {
+                    return Err(PluginError::Unavailable(
+                        "tvdb refused a fresh token".into(),
+                    ));
+                }
+                404 => return Err(PluginError::NotFound),
+                429 => {
+                    let retry_after = header(&response.headers, "retry-after")
+                        .and_then(|v| v.trim().parse().ok())
+                        .unwrap_or(1);
+                    return Err(PluginError::RateLimited(retry_after));
+                }
+                status => {
+                    return Err(PluginError::Unavailable(format!("tvdb answered {status}")));
+                }
+            }
+        }
+        unreachable!("the loop's last pass returns")
     }
+
+    /// Image CDN bytes plus the response content type.
+    async fn download(url: String) -> Result<(Vec<u8>, Option<String>), PluginError> {
+        let response = host_net::request(host_net::HttpRequest {
+            method: "GET".into(),
+            url,
+            headers: vec![("user-agent".into(), api::USER_AGENT.into())],
+            body: None,
+            timeout_ms: Some(IMAGE_TIMEOUT_MS),
+        })
+        .await
+        .map_err(|e| PluginError::Unavailable(format!("tvdb image request failed: {e:?}")))?;
+        match response.status {
+            200 => {
+                let mime = header(&response.headers, "content-type").map(str::to_string);
+                Ok((response.body, mime))
+            }
+            404 => Err(PluginError::NotFound),
+            status => Err(PluginError::Unavailable(format!(
+                "tvdb image CDN answered {status}"
+            ))),
+        }
+    }
+
+    /// The TVDB record behind `id`: TVDB ids parse directly, IMDb and TMDb
+    /// ids resolve through remote-id search.
+    async fn resolve(id: &ExternalId) -> Result<TvdbId, PluginError> {
+        let remote = match id.kind {
+            ExternalIdKind::Tvdb => return TvdbId::parse(&id.value).map_err(PluginError::BadInput),
+            ExternalIdKind::Imdb => id.value.as_str(),
+            ExternalIdKind::Tmdb => {
+                api::tmdb_record_number(&id.value).ok_or(PluginError::NotFound)?
+            }
+            _ => {
+                return Err(PluginError::BadInput(
+                    "tvdb: unsupported external id kind".into(),
+                ));
+            }
+        };
+        let body = get_api(api::remote_id_url(remote)).await?;
+        api::parse_remote_id(&body)
+            .map_err(PluginError::Internal)?
+            .ok_or(PluginError::NotFound)
+    }
+
+    /// The series' seasons in its default order, from the cache or `body`'s request.
+    async fn seasons_of(series: u64) -> Result<Vec<api::SeasonRef>, PluginError> {
+        if let Some(seasons) = SEASONS.with(|c| c.borrow_mut().get(&series)) {
+            return Ok(seasons);
+        }
+        let body = get_api(api::series_url(series)).await?;
+        let seasons = api::parse_seasons(&body).map_err(PluginError::Internal)?;
+        SEASONS.with(|c| c.borrow_mut().put(series, seasons.clone()));
+        Ok(seasons)
+    }
+
+    async fn season_id(series: u64, season: u32) -> Result<u64, PluginError> {
+        seasons_of(series)
+            .await?
+            .iter()
+            .find(|s| s.number == season)
+            .map(|s| s.id)
+            .ok_or(PluginError::NotFound)
+    }
+
+    async fn episode_id(series: u64, season: u32, episode: u32) -> Result<u64, PluginError> {
+        let body = get_api(api::episode_lookup_url(series, season, episode)).await?;
+        api::parse_episode_lookup(&body)
+            .map_err(PluginError::Internal)?
+            .ok_or(PluginError::NotFound)
+    }
+
+    /// The record's payload and every image it lists.
+    async fn details(id: TvdbId) -> Result<(api::Payload, Vec<api::ArtEntry>), PluginError> {
+        match id {
+            TvdbId::Movie(movie) => {
+                let body = get_api(api::movie_url(movie)).await?;
+                api::parse_movie(&body).map_err(PluginError::Internal)
+            }
+            TvdbId::Series(series) => {
+                let body = get_api(api::series_url(series)).await?;
+                if let Ok(seasons) = api::parse_seasons(&body) {
+                    SEASONS.with(|c| c.borrow_mut().put(series, seasons));
+                }
+                api::parse_series(&body).map_err(PluginError::Internal)
+            }
+            TvdbId::Season { series, season } => {
+                let record = season_id(series, season).await?;
+                let body = get_api(api::season_url(record)).await?;
+                api::parse_season(series, season, &body).map_err(PluginError::Internal)
+            }
+            TvdbId::Episode {
+                series,
+                season,
+                episode,
+            } => {
+                let record = episode_id(series, season, episode).await?;
+                let body = get_api(api::episode_url(record)).await?;
+                api::parse_episode(series, season, episode, &body).map_err(PluginError::Internal)
+            }
+        }
+    }
+
+    fn id_kind(kind: IdKind) -> ExternalIdKind {
+        match kind {
+            IdKind::Tvdb => ExternalIdKind::Tvdb,
+            IdKind::Imdb => ExternalIdKind::Imdb,
+            IdKind::Tmdb => ExternalIdKind::Tmdb,
+        }
+    }
+
+    fn wit_kind(kind: ArtKind) -> ImageKind {
+        match kind {
+            ArtKind::Primary => ImageKind::Primary,
+            ArtKind::Backdrop => ImageKind::Backdrop,
+            ArtKind::Logo => ImageKind::Logo,
+            ArtKind::Thumb => ImageKind::Thumb,
+        }
+    }
+
+    fn art_kind(kind: ImageKind) -> Option<ArtKind> {
+        Some(match kind {
+            ImageKind::Primary => ArtKind::Primary,
+            ImageKind::Backdrop => ArtKind::Backdrop,
+            ImageKind::Logo => ArtKind::Logo,
+            ImageKind::Thumb => ArtKind::Thumb,
+            _ => return None,
+        })
+    }
+
+    fn to_wit(payload: api::Payload) -> metadata::MetadataPayload {
+        metadata::MetadataPayload {
+            external_ids: payload
+                .ids
+                .into_iter()
+                .map(|(kind, value)| ExternalId {
+                    kind: id_kind(kind),
+                    value,
+                })
+                .collect(),
+            title: payload.title,
+            sort_title: None,
+            original_title: payload.original_title,
+            year: payload.year,
+            release_date: payload.release_date,
+            overview: payload.overview,
+            tagline: payload.tagline,
+            runtime_ms: payload.runtime_ms,
+            genres: payload.genres,
+            studios: payload.studios,
+            people: payload
+                .people
+                .into_iter()
+                .map(|p| MetadataPerson {
+                    name: p.name,
+                    role: p.role,
+                    character: p.character,
+                    photo_url: p.photo_url,
+                })
+                .collect(),
+            images: payload
+                .images
+                .into_iter()
+                .map(|a| MetadataImage {
+                    kind: wit_kind(a.kind),
+                    url: a.url,
+                    language: a.language,
+                    width: a.width,
+                    height: a.height,
+                })
+                .collect(),
+            rating: payload.rating,
+            community_rating: None,
+            original_language: payload.original_language,
+            origin_countries: payload.origin_countries,
+            keywords: Vec::new(),
+            budget_usd: payload.budget_usd,
+        }
+    }
+
+    struct Tvdb;
+
+    impl metadata::Guest for Tvdb {
+        fn attribution() -> Option<metadata::ProviderAttribution> {
+            Some(metadata::ProviderAttribution {
+                // TheTVDB's sample wording. Its terms ask for a direct link
+                // shown to whoever is viewing the metadata.
+                text: "Metadata provided by TheTVDB. Please consider adding missing information or subscribing."
+                    .into(),
+                url: Some("https://thetvdb.com/subscribe".into()),
+                logo: Some(include_bytes!("../assets/tvdb-logo.png").to_vec()),
+            })
+        }
+
+        fn supports(kind: metadata::WorkKind) -> bool {
+            matches!(
+                kind,
+                metadata::WorkKind::Movie
+                    | metadata::WorkKind::Series
+                    | metadata::WorkKind::Season
+                    | metadata::WorkKind::Episode,
+            )
+        }
+
+        async fn search(
+            query: metadata::SearchQuery,
+        ) -> Result<Vec<metadata::MetadataMatch>, metadata::PluginError> {
+            let kind = match query.kind {
+                metadata::WorkKind::Movie => SearchKind::Movie,
+                metadata::WorkKind::Series => SearchKind::Series,
+                metadata::WorkKind::Season | metadata::WorkKind::Episode => {
+                    let episode = query.kind == metadata::WorkKind::Episode;
+                    return Ok(api::child_from_hints(&query.hints, episode)
+                        .map(|id| metadata::MetadataMatch {
+                            external_id: ExternalId {
+                                kind: ExternalIdKind::Tvdb,
+                                value: id.path(),
+                            },
+                            title: query.title.clone(),
+                            year: query.year,
+                            confidence: 1.0,
+                        })
+                        .into_iter()
+                        .collect());
+                }
+                _ => {
+                    return Err(PluginError::BadInput("tvdb: unsupported work kind".into()));
+                }
+            };
+            let body = get_api(api::search_url(kind, &query.title, query.year)).await?;
+            let matches = api::parse_search(kind, &body, &query.title, query.year)
+                .map_err(PluginError::Internal)?;
+            Ok(matches
+                .into_iter()
+                .map(|m| metadata::MetadataMatch {
+                    external_id: ExternalId {
+                        kind: ExternalIdKind::Tvdb,
+                        value: m.id.path(),
+                    },
+                    title: m.title,
+                    year: m.year,
+                    confidence: m.confidence,
+                })
+                .collect())
+        }
+
+        async fn fetch(
+            id: metadata::ExternalId,
+        ) -> Result<metadata::MetadataPayload, metadata::PluginError> {
+            let tvdb = resolve(&id).await?;
+            let (payload, art) = details(tvdb).await?;
+            ART.with(|c| c.borrow_mut().put(tvdb.path(), art));
+            Ok(to_wit(payload))
+        }
+
+        async fn fetch_children(
+            parent: metadata::ExternalId,
+            _parent_work: metadata::WorkId,
+        ) -> Result<Vec<metadata::MetadataPayload>, metadata::PluginError> {
+            let children = match resolve(&parent).await? {
+                TvdbId::Series(series) => {
+                    let body = get_api(api::series_url(series)).await?;
+                    api::parse_series_children(series, &body).map_err(PluginError::Internal)?
+                }
+                TvdbId::Season { series, season } => {
+                    let record = season_id(series, season).await?;
+                    let body = get_api(api::season_url(record)).await?;
+                    api::parse_season_children(series, season, &body)
+                        .map_err(PluginError::Internal)?
+                }
+                TvdbId::Movie(_) | TvdbId::Episode { .. } => Vec::new(),
+            };
+            Ok(children.into_iter().map(to_wit).collect())
+        }
+    }
+
+    impl image::Guest for Tvdb {
+        async fn fetch(
+            id: image::ExternalId,
+            kind: image::ImageKind,
+            language: Option<String>,
+        ) -> Result<(image::ImageMeta, wit_bindgen::StreamReader<u8>), image::PluginError> {
+            let art = art_kind(kind).ok_or(PluginError::NotFound)?;
+            let tvdb = resolve(&id).await?;
+            let cached = ART.with(|c| c.borrow_mut().get(&tvdb.path()));
+            let entries = match cached {
+                Some(entries) => entries,
+                None => {
+                    let (_, entries) = details(tvdb).await?;
+                    ART.with(|c| c.borrow_mut().put(tvdb.path(), entries.clone()));
+                    entries
+                }
+            };
+            let chosen = api::choose(&entries, tvdb, art, language.as_deref())
+                .ok_or(PluginError::NotFound)?;
+            let (bytes, content_type) = download(chosen.url.clone()).await?;
+            let meta = image::ImageMeta {
+                kind,
+                language: chosen.language,
+                mime: api::image_mime(content_type.as_deref(), &chosen.url),
+                width: chosen.width,
+                height: chosen.height,
+            };
+            let (mut writer, reader) = wit_stream::new::<u8>();
+            // The host reads only after this returns the read end, so an
+            // inline (backpressured) write would deadlock.
+            wit_bindgen::spawn_local(async move {
+                writer.write_all(bytes).await;
+            });
+            Ok((meta, reader))
+        }
+    }
+
+    // -------- Background hook (stub — this plugin registers no [[tasks]]) --------
+
+    impl background::Guest for Tvdb {
+        async fn run_task(
+            task: String,
+            cursor: Option<String>,
+            payload: Option<String>,
+        ) -> Result<background::TaskOutcome, background::PluginError> {
+            let _ = (cursor, payload);
+            Err(background::PluginError::BadInput(format!(
+                "tvdb: unknown background task `{task}`"
+            )))
+        }
+    }
+
+    export!(Tvdb);
 }
-
-impl image::Guest for Tvdb {
-    async fn fetch(
-        _id: image::ExternalId,
-        _kind: image::ImageKind,
-        _language: Option<String>,
-    ) -> Result<(image::ImageMeta, wit_bindgen::StreamReader<u8>), image::PluginError> {
-        Err(image::PluginError::Unavailable(
-            "tvdb image fetch not yet wired".into(),
-        ))
-    }
-}
-
-// -------- Background hook (stub — this plugin registers no [[tasks]]) --------
-
-impl background::Guest for Tvdb {
-    async fn run_task(
-        task: String,
-        cursor: Option<String>,
-        payload: Option<String>,
-    ) -> Result<background::TaskOutcome, background::PluginError> {
-        let _ = (cursor, payload);
-        Err(background::PluginError::BadInput(format!(
-            "tvdb: unknown background task `{task}`"
-        )))
-    }
-}
-
-export!(Tvdb);

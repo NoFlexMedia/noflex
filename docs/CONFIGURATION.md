@@ -225,7 +225,7 @@ priorities.metadata.movie = 200
 - **Env:** not supported (use TOML)
 
 Per-plugin TOML blob passed to the plugin via `host_config::read()`. Use
-this for plugin-specific settings (e.g. TMDb API base URL, TVDB pin).
+this for plugin-specific settings (e.g. TMDb API base URL).
 
 For the first-party OIDC plugin, register
 `${public_url}/auth/oidc/callback` with the identity provider and configure:
@@ -263,6 +263,15 @@ or the v3 key. Store it the same way, as `tmdb.toml` in a secret tier:
 
 ```toml
 api_key = "replace-me"
+```
+
+The first-party TheTVDB plugin needs an API key from
+<https://thetvdb.com/api-information>, stored as `tvdb.toml`. `pin` is your
+subscriber PIN, only for a user-supported key:
+
+```toml
+api_key = "replace-me"
+# pin = "replace-me"
 ```
 
 ### Live TV source URLs

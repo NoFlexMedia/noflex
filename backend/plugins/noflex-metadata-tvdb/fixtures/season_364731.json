@@ -1,0 +1,17 @@
+{
+  "status": "success",
+  "data": {
+    "id": 364731,
+    "seriesId": 121361,
+    "number": 1,
+    "image": "https://artworks.thetvdb.com/banners/seasons/1.jpg",
+    "type": { "id": 1, "name": "Aired Order", "type": "official" },
+    "episodes": [
+      { "id": 3254641, "name": "Winter Is Coming", "number": 1, "seasonNumber": 1, "aired": "2011-04-17", "runtime": 62, "overview": "Ned Stark is torn.", "image": "/banners/episodes/1.jpg" }
+    ],
+    "artwork": [],
+    "translations": [
+      { "language": "eng", "name": "Season 1" }
+    ]
+  }
+}

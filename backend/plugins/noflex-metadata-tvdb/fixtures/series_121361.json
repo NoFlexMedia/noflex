@@ -1,0 +1,66 @@
+{
+  "status": "success",
+  "data": {
+    "id": 121361,
+    "name": "Le Trône de fer",
+    "slug": "game-of-thrones",
+    "image": "https://artworks.thetvdb.com/banners/posters/record.jpg",
+    "firstAired": "2011-04-17",
+    "year": "2011",
+    "averageRuntime": 57,
+    "score": 1000,
+    "originalCountry": "usa",
+    "originalLanguage": "eng",
+    "defaultSeasonType": 1,
+    "originalNetwork": { "id": 8, "name": "HBO" },
+    "companies": [
+      { "id": 8, "name": "HBO", "primaryCompanyType": 1 },
+      { "id": 9, "name": "Television 360", "primaryCompanyType": 3 },
+      { "id": 10, "name": "Warner Bros. Television Distribution", "primaryCompanyType": 4 }
+    ],
+    "genres": [
+      { "id": 1, "name": "Drama", "slug": "drama" },
+      { "id": 2, "name": "Fantasy", "slug": "fantasy" }
+    ],
+    "characters": [
+      { "id": 3, "name": "Tyrion Lannister", "personName": "Peter Dinklage", "peopleType": "Actor", "sort": 2, "personImgURL": "/banners/person/dinklage.jpg" },
+      { "id": 2, "name": "Daenerys Targaryen", "personName": "Emilia Clarke", "peopleType": "Actor", "sort": 1, "personImgURL": "https://artworks.thetvdb.com/banners/person/clarke.jpg" },
+      { "id": 4, "name": "", "personName": "David Benioff", "peopleType": "Writer", "sort": 3 },
+      { "id": 5, "name": "", "personName": "A Crew Member", "peopleType": "Crew", "sort": 4 }
+    ],
+    "contentRatings": [
+      { "id": 1, "name": "15", "country": "gbr" },
+      { "id": 2, "name": "TV-MA", "country": "usa" }
+    ],
+    "remoteIds": [
+      { "id": "tt0944947", "type": 2, "sourceName": "IMDB" },
+      { "id": "1399", "type": 12, "sourceName": "TheMovieDB.com" },
+      { "id": "82", "type": 19, "sourceName": "TV Maze" }
+    ],
+    "artworks": [
+      { "id": 1, "image": "https://artworks.thetvdb.com/banners/posters/textfree.jpg", "type": 2, "language": null, "score": 900, "width": 680, "height": 1000 },
+      { "id": 2, "image": "https://artworks.thetvdb.com/banners/posters/english.jpg", "type": 2, "language": "eng", "score": 100, "width": 680, "height": 1000 },
+      { "id": 3, "image": "https://artworks.thetvdb.com/banners/posters/german.jpg", "type": 2, "language": "deu", "score": 50, "width": 680, "height": 1000 },
+      { "id": 4, "image": "https://artworks.thetvdb.com/banners/backgrounds/titled.jpg", "type": 3, "language": "eng", "score": 900, "width": 1920, "height": 1080 },
+      { "id": 5, "image": "https://artworks.thetvdb.com/banners/backgrounds/clean.jpg", "type": 3, "language": null, "score": 10, "width": 1920, "height": 1080 },
+      { "id": 6, "image": "https://artworks.thetvdb.com/banners/clearlogo.png", "type": 23, "language": "eng", "score": 10, "width": 800, "height": 310 },
+      { "id": 7, "image": "https://artworks.thetvdb.com/banners/banner.jpg", "type": 1, "language": "eng", "score": 10, "width": 758, "height": 140 }
+    ],
+    "seasons": [
+      { "id": 364730, "number": 0, "seriesId": 121361, "type": { "id": 1, "name": "Aired Order", "type": "official" }, "year": "2010" },
+      { "id": 364731, "number": 1, "name": "Season 1", "seriesId": 121361, "type": { "id": 1, "name": "Aired Order", "type": "official" }, "image": "https://artworks.thetvdb.com/banners/seasons/1.jpg", "year": "2011" },
+      { "id": 500001, "number": 1, "seriesId": 121361, "type": { "id": 2, "name": "DVD Order", "type": "dvd" } }
+    ],
+    "translations": {
+      "nameTranslations": [
+        { "language": "fra", "name": "Le Trône de fer", "isPrimary": true },
+        { "language": "eng", "name": "A Song of Ice and Fire", "isAlias": true },
+        { "language": "eng", "name": "Game of Thrones" }
+      ],
+      "overviewTranslations": [
+        { "language": "fra", "overview": "Sept familles nobles se disputent Westeros." },
+        { "language": "eng", "overview": "Seven noble families fight for control of Westeros." }
+      ]
+    }
+  }
+}

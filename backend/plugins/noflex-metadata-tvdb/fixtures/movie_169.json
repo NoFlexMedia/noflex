@@ -1,0 +1,36 @@
+{
+  "status": "success",
+  "data": {
+    "id": 169,
+    "name": "The Matrix",
+    "image": "https://artworks.thetvdb.com/banners/movies/record.jpg",
+    "year": "1999",
+    "runtime": 136,
+    "budget": "63000000",
+    "first_release": { "country": "usa", "date": "1999-03-31" },
+    "originalCountry": "usa",
+    "originalLanguage": "eng",
+    "studios": [ { "id": 1, "name": "Warner Bros." } ],
+    "companies": {
+      "studio": [ { "id": 1, "name": "Warner Bros." } ],
+      "production": [ { "id": 2, "name": "Village Roadshow" } ]
+    },
+    "genres": [ { "id": 3, "name": "Science Fiction" } ],
+    "characters": [
+      { "name": "Neo", "personName": "Keanu Reeves", "peopleType": "Actor", "sort": 1 }
+    ],
+    "contentRatings": [ { "name": "R", "country": "usa" } ],
+    "remoteIds": [
+      { "id": "tt0133093", "type": 2, "sourceName": "IMDB" },
+      { "id": "603", "type": 12, "sourceName": "TheMovieDB.com" }
+    ],
+    "artworks": [
+      { "image": "https://artworks.thetvdb.com/banners/movies/poster.jpg", "type": 14, "language": "eng", "score": 10 },
+      { "image": "https://artworks.thetvdb.com/banners/movies/background.jpg", "type": 15, "language": null, "score": 10 }
+    ],
+    "translations": {
+      "nameTranslations": [ { "language": "eng", "name": "The Matrix", "isPrimary": true } ],
+      "overviewTranslations": [ { "language": "eng", "overview": "A hacker learns what the world really is." } ]
+    }
+  }
+}

@@ -22,6 +22,7 @@ class Artwork extends StatelessWidget {
     this.fit = BoxFit.cover,
     this.radius = NfRadii.m,
     this.localPath,
+    this.previewWidth,
   });
 
   final WorkSummary work;
@@ -31,6 +32,10 @@ class Artwork extends StatelessWidget {
 
   /// An offline copy, preferred over the network.
   final String? localPath;
+
+  /// A width this picture has already been drawn at, shown until this size
+  /// arrives.
+  final double? previewWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -67,6 +72,10 @@ class Artwork extends StatelessWidget {
                 : 600.0;
             final absolute = getIt<TokenStore>().absolute(url);
             final sized = sizedImage(absolute, imageWidthStep(width));
+            final preview = switch (previewWidth) {
+              final seen? => sizedImage(absolute, imageWidthStep(seen * ratio)),
+              null => null,
+            };
             return CachedNetworkImage(
               imageUrl: sized,
               cacheKey: imageCacheKey(sized),
@@ -76,7 +85,18 @@ class Artwork extends StatelessWidget {
               fadeInDuration: NfMotion.base,
               // Crossing a step while resizing shouldn't blank the picture.
               useOldImageOnUrlChange: true,
-              placeholder: (_, _) => const SizedBox.shrink(),
+              placeholder: (_, _) => preview == null
+                  ? const SizedBox.shrink()
+                  : Image(
+                      image: CachedNetworkImageProvider(
+                        preview,
+                        cacheKey: imageCacheKey(preview),
+                      ),
+                      fit: fit,
+                      width: double.infinity,
+                      height: double.infinity,
+                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                    ),
               errorWidget: (_, _, _) => fallback,
             );
           },

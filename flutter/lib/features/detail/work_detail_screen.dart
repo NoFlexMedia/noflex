@@ -32,6 +32,7 @@ import '../../widgets/artwork.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_overlays.dart';
 import '../../widgets/nf_state.dart';
+import '../../widgets/poster_flight.dart';
 import '../downloads/download_models.dart';
 import '../downloads/downloads_service.dart';
 import '../player/decoder_probe.dart';
@@ -48,11 +49,13 @@ class WorkDetailScreen extends StatefulWidget {
     required this.workId,
     this.server,
     this.seed,
+    this.flight,
   });
 
   final String workId;
   final ServerRef? server;
   final WorkSummary? seed;
+  final PosterFlight? flight;
 
   @override
   State<WorkDetailScreen> createState() => _WorkDetailScreenState();
@@ -63,6 +66,7 @@ class _WorkDetailScreenState extends State<WorkDetailScreen> {
     workId: widget.workId,
     server: widget.server,
     seed: widget.seed,
+    flight: widget.flight,
   );
 
   @override
@@ -263,7 +267,7 @@ class _Wide extends StatelessWidget {
                   children: [
                     SizedBox(
                       width: posterWidth,
-                      child: _Poster(work: work),
+                      child: _Poster(work: work, flight: controller.flight),
                     ),
                     SizedBox(width: gap),
                     Expanded(
@@ -335,16 +339,19 @@ class _Banner extends StatelessWidget {
 
 /// An episode's picture is a wide frame from it; anything else has a poster.
 class _Poster extends StatelessWidget {
-  const _Poster({required this.work});
+  const _Poster({required this.work, required this.flight});
   final WorkSummary work;
+  final PosterFlight? flight;
 
   @override
   Widget build(BuildContext context) => AspectRatio(
     aspectRatio: work.isEpisode ? 16 / 9 : 2 / 3,
-    child: Artwork(
+    child: PosterHero(
+      tag: flight?.tag,
       work: work,
       kind: work.isEpisode ? ArtKind.thumb : ArtKind.poster,
       radius: NfRadii.l,
+      previewWidth: flight?.width,
     ),
   );
 }
@@ -381,7 +388,7 @@ class _Summary extends StatelessWidget {
             children: [
               SizedBox(
                 width: work.isEpisode ? 240 : 150,
-                child: _Poster(work: work),
+                child: _Poster(work: work, flight: controller.flight),
               ),
               const SizedBox(height: 18),
               _Crumbs(controller: controller),

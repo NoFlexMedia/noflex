@@ -28,6 +28,7 @@ import '../../services/session.dart';
 import '../../services/toast_service.dart';
 import '../../services/watch_state.dart';
 import '../../utils/tracks.dart';
+import '../../widgets/poster_flight.dart';
 import '../player/decoder_probe.dart';
 import '../player/decoders.dart';
 import '../player/playback_service.dart';
@@ -40,7 +41,12 @@ class UpNext {
 }
 
 class WorkDetailController {
-  WorkDetailController({required this.workId, this.server, this.seed}) {
+  WorkDetailController({
+    required this.workId,
+    this.server,
+    this.seed,
+    this.flight,
+  }) {
     query = Query(
       _graphql.clientFor(server),
       GWorkDetailReq((b) => b.vars.id = workId),
@@ -69,6 +75,7 @@ class WorkDetailController {
   final String workId;
   final ServerRef? server;
   final WorkSummary? seed;
+  final PosterFlight? flight;
 
   GraphqlService get _graphql => getIt<GraphqlService>();
   late final Query<GWorkDetailData, GWorkDetailVars> query;

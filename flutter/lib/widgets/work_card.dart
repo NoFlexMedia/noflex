@@ -14,12 +14,18 @@ import '../services/watch_state.dart';
 import '../theme.dart';
 import '../utils/format.dart';
 import '../utils/images.dart';
-import 'artwork.dart';
 import 'nf_press.dart';
+import 'poster_flight.dart';
 
-void openWork(WorkSummary work) => getIt<NavService>().push(
-  WorkDetailScreen(workId: work.id, server: work.server, seed: work),
-);
+void openWork(WorkSummary work, {PosterFlight? flight}) =>
+    getIt<NavService>().push(
+      WorkDetailScreen(
+        workId: work.id,
+        server: work.server,
+        seed: work,
+        flight: flight,
+      ),
+    );
 
 /// A poster, or a wide thumbnail for shelves like Continue Watching. Shows
 /// progress and watched state as they change on this device.
@@ -37,6 +43,11 @@ class WorkCard extends StatefulWidget {
 class _WorkCardState extends State<WorkCard> {
   final _press = Press();
   final _hovered = signal(false);
+  final _posterTag = Object();
+
+  /// Whether the page this opens draws the same picture in the same shape: an
+  /// episode's wide frame, or anything else's poster.
+  bool get _flies => widget.wide == widget.work.isEpisode;
 
   @override
   void dispose() {
@@ -61,7 +72,12 @@ class _WorkCardState extends State<WorkCard> {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          Artwork(work: work, kind: wide ? ArtKind.thumb : ArtKind.poster),
+          PosterHero(
+            tag: _flies ? _posterTag : null,
+            work: work,
+            kind: wide ? ArtKind.thumb : ArtKind.poster,
+            radius: NfRadii.m,
+          ),
           if (wide)
             Positioned.fill(
               child: DecoratedBox(
@@ -132,7 +148,12 @@ class _WorkCardState extends State<WorkCard> {
       label: [work.heading, line].where((part) => part.isNotEmpty).join(', '),
       excludeSemantics: true,
       child: InkWell(
-        onTap: () => openWork(work),
+        onTap: () => openWork(
+          work,
+          flight: _flies
+              ? PosterFlight(tag: _posterTag, width: context.size!.width)
+              : null,
+        ),
         onHighlightChanged: _press.update,
         onHover: (hovering) => _hovered.value = hovering,
         // The lift says it instead, and a tint would show around the poster.

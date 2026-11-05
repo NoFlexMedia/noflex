@@ -85,8 +85,22 @@ class AppShell extends SignalWidget {
   }
 }
 
-class _Content extends StatelessWidget {
+class _Content extends StatefulWidget {
   const _Content();
+
+  @override
+  State<_Content> createState() => _ContentState();
+}
+
+class _ContentState extends State<_Content> {
+  // MaterialApp only gives its own navigator one, and heroes need it to fly.
+  final _heroes = MaterialApp.createMaterialHeroController();
+
+  @override
+  void dispose() {
+    _heroes.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => NavigatorPopHandler(
@@ -98,12 +112,15 @@ class _Content extends StatelessWidget {
         nav.tab.value = ShellTab.home;
       }
     },
-    child: Navigator(
-      key: contentNavigatorKey,
-      observers: [getIt<NavService>().placeObserver],
-      onGenerateRoute: (settings) => MaterialPageRoute<void>(
-        settings: settings,
-        builder: (_) => const _TabStack(),
+    child: HeroControllerScope(
+      controller: _heroes,
+      child: Navigator(
+        key: contentNavigatorKey,
+        observers: [getIt<NavService>().placeObserver],
+        onGenerateRoute: (settings) => MaterialPageRoute<void>(
+          settings: settings,
+          builder: (_) => const _TabStack(),
+        ),
       ),
     ),
   );

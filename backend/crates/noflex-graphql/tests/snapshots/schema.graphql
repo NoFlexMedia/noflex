@@ -624,6 +624,11 @@ type ExportJob {
 	createdAt: DateTime!
 	startedAt: DateTime
 	finishedAt: DateTime
+	"""
+	The work this was exported from. Null when it no longer exists or
+	the viewer can't access it.
+	"""
+	work: Work
 }
 
 type ExportJobConnection {

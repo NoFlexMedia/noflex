@@ -1517,6 +1517,7 @@ pub enum ExportJobStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
 pub struct ExportJob {
     pub id: ExportJobId,
     pub user_id: UserId,
@@ -1850,6 +1851,33 @@ impl WatchRoom {
         let user = crate::access::request_user(ctx)?;
         let Some(work) = storage
             .work_for_media_file(self.media_file_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+        else {
+            return Ok(None);
+        };
+        crate::access::visible_work(storage.as_ref(), user, work)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))
+    }
+}
+
+#[async_graphql::ComplexObject]
+impl ExportJob {
+    /// The work this was exported from. Null when it no longer exists or
+    /// the viewer can't access it.
+    async fn work(&self, ctx: &async_graphql::Context<'_>) -> async_graphql::Result<Option<Work>> {
+        let storage = complex_storage(ctx)?;
+        let user = crate::access::request_user(ctx)?;
+        let Some(edition) = storage
+            .get_edition(self.edition_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let Some(work) = storage
+            .get_work(edition.work_id)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?
         else {

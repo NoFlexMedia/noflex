@@ -177,6 +177,31 @@ async fn owner_can_create_list_get_and_cancel_export() {
 }
 
 #[tokio::test]
+async fn export_names_its_work_only_while_the_viewer_can_see_it() {
+    let f = fixture().await;
+    let job = create_job(&f, &f.owner).await;
+    let id = job["id"].as_str().expect("job id");
+    let query = format!(r#"{{ exportJob(id: "{id}") {{ work {{ title }} }} }}"#);
+
+    let response = f.schema.execute(request(&query, &f.owner)).await;
+    assert!(response.errors.is_empty(), "work: {:?}", response.errors);
+    assert_eq!(
+        response.data.into_json().unwrap()["exportJob"]["work"]["title"],
+        "Alien"
+    );
+
+    let edition = f.storage.get_edition(f.edition_id).await.unwrap().unwrap();
+    let work = f.storage.get_work(edition.work_id).await.unwrap().unwrap();
+    f.storage
+        .revoke_library_access(f.owner.id, work.library_id)
+        .await
+        .expect("revoke");
+    let response = f.schema.execute(request(&query, &f.owner)).await;
+    assert!(response.errors.is_empty(), "hidden: {:?}", response.errors);
+    assert!(response.data.into_json().unwrap()["exportJob"]["work"].is_null());
+}
+
+#[tokio::test]
 async fn anonymous_export_operations_are_denied() {
     let f = fixture().await;
     for operation in [

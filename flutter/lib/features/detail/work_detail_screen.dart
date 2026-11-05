@@ -104,7 +104,15 @@ class _WorkDetailScreenState extends State<WorkDetailScreen> {
             final failure = _controller.query.error.value;
             if (work == null) {
               if (_controller.query.waiting.value) {
-                return const _DetailSkeleton();
+                return const Center(
+                  child: SizedBox(
+                    width: 180,
+                    child: AspectRatio(
+                      aspectRatio: 2 / 3,
+                      child: NfSkeleton(radius: NfRadii.l),
+                    ),
+                  ),
+                );
               }
               return failure != null
                   ? NfState.error(
@@ -123,67 +131,6 @@ class _WorkDetailScreenState extends State<WorkDetailScreen> {
         ),
       ],
     ),
-  );
-}
-
-/// The poster and text of a page opened with nothing to show yet. A card opens
-/// it with what it already knows, so this is for everywhere else.
-class _DetailSkeleton extends StatelessWidget {
-  const _DetailSkeleton();
-
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) {
-      final wide = constraints.maxWidth >= 760;
-      final gutter = context.gutter;
-      final poster = SizedBox(
-        width: wide ? (constraints.maxWidth * 0.2).clamp(180.0, 290.0) : 150,
-        child: const AspectRatio(
-          aspectRatio: 2 / 3,
-          child: NfSkeleton(radius: NfRadii.l),
-        ),
-      );
-      final text = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const NfSkeleton(width: 120, height: 18, radius: NfRadii.xs),
-          const SizedBox(height: 14),
-          FractionallySizedBox(
-            widthFactor: 0.8,
-            child: const NfSkeleton(height: 52, radius: NfRadii.s),
-          ),
-          const SizedBox(height: 14),
-          const NfSkeleton(height: 88, radius: NfRadii.s),
-        ],
-      );
-      return SingleChildScrollView(
-        physics: const NeverScrollableScrollPhysics(),
-        padding: EdgeInsets.fromLTRB(
-          gutter,
-          MediaQuery.paddingOf(context).top + (wide ? 72 : 64),
-          gutter,
-          40,
-        ),
-        child: wide
-            ? Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  poster,
-                  SizedBox(width: (constraints.maxWidth * 0.04).clamp(24, 56)),
-                  Expanded(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 640),
-                      child: text,
-                    ),
-                  ),
-                ],
-              )
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [poster, const SizedBox(height: 18), text],
-              ),
-      );
-    },
   );
 }
 

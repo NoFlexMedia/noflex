@@ -15,6 +15,7 @@ import 'package:ferry/ferry.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show IconData, KeyEventResult;
+import 'package:http/http.dart' as http;
 import 'package:media_kit/media_kit.dart' hide SubtitleTrack;
 import 'package:media_kit/media_kit.dart' as mk show SubtitleTrack;
 import 'package:media_kit_video/media_kit_video.dart';
@@ -43,6 +44,9 @@ import 'playback_service.dart';
 /// libmpv's GL output can't get a context under the Android emulator's EGL
 /// translation, so test devices build with `mediacodec_embed`; see AGENTS.md.
 const _androidVo = String.fromEnvironment('NOFLEX_ANDROID_VO');
+
+/// How long a stream may take to produce its first playlist.
+const _playlistPatience = Duration(minutes: 1);
 
 const _chromeIdle = Duration(milliseconds: 2600);
 const _heartbeat = Duration(seconds: 15);
@@ -196,6 +200,40 @@ class PlayerController {
     return _isDesktop ? 'auto' : 'auto-safe';
   }
 
+  /// Hold until the encoder has written a playlist. libmpv gives up on the first
+  /// failed fetch, with a timeout shorter than the server will hold the request
+  /// for, and a live channel can't have one until its first segment has aired.
+  /// Whatever's still wrong at the deadline is left for libmpv to report.
+  Future<void> _awaitPlaylist(String master) async {
+    final Uri media;
+    try {
+      final uri = Uri.parse(master);
+      final entry = (await http.get(uri)).body
+          .split('\n')
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty && !line.startsWith('#'))
+          .firstOrNull;
+      if (entry == null) return;
+      media = uri.resolve(entry);
+    } on Exception {
+      return;
+    }
+    final deadline = DateTime.now().add(_playlistPatience);
+    while (!_disposed &&
+        _openedUrl == master &&
+        DateTime.now().isBefore(deadline)) {
+      try {
+        final response = await http
+            .get(media)
+            .timeout(const Duration(seconds: 20));
+        if (response.statusCode == 200) return;
+      } on Exception {
+        // Not there yet, or the request was held too long. Both clear up.
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+  }
+
   Future<void> _open(ActivePlayback next) async {
     batch(() {
       error.value = '';
@@ -213,7 +251,9 @@ class PlayerController {
         'demuxer-lavf-o',
         next.live ? '' : 'live_start_index=0',
       );
-      await _native.setProperty('force-seekable', 'yes');
+      // Live can't seek, and has to say so: libmpv seeks to attach its video
+      // output once playing, and a stream claiming it can never recovers.
+      await _native.setProperty('force-seekable', next.live ? 'no' : 'yes');
     } else {
       await _native.setProperty('demuxer-lavf-o', '');
       await _native.setProperty('force-seekable', 'no');
@@ -223,6 +263,10 @@ class PlayerController {
     if (Platform.isAndroid && _androidVo.isEmpty) {
       final hdr = next.version?.probe.video?.isHdr ?? false;
       await _native.setProperty('hwdec', hdr ? 'mediacodec-copy' : 'auto-safe');
+    }
+    if (next.transcoding || next.live) {
+      await _awaitPlaylist(next.url);
+      if (_disposed || _openedUrl != next.url) return;
     }
     // A transcode already starts at the resume point; direct play seeks to it.
     final local = next.resumeMs - next.offsetMs;
@@ -334,8 +378,14 @@ class PlayerController {
 
   void _onError(String message) {
     debugPrint('player: $message');
-    // libmpv reports recoverable things here too; only an empty player is fatal.
-    if (_player.state.duration == Duration.zero && !_player.state.playing) {
+    // libmpv reports recoverable things here too, like a hardware decoder it
+    // then falls back from. It also still calls itself playing when a stream
+    // has failed to open, so that has to be picked out by name.
+    final state = _player.state;
+    if (state.duration > Duration.zero || state.position > Duration.zero) {
+      return;
+    }
+    if (!state.playing || message.startsWith('Failed to open')) {
       error.value = 'This stream couldn’t be played.';
       waiting.value = false;
     }

@@ -3,9 +3,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:phosphor_icons/phosphor_icons.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
+import '../../di.dart';
+import '../../services/toast_service.dart';
+import '../../services/tokens.dart';
 import '../../theme.dart';
 import '../../utils/format.dart';
 import '../../widgets/nf_button.dart';
@@ -74,17 +78,169 @@ IconData _iconFor(String? device, String? client) {
 String? _deviceName(AccountSession session) =>
     (session.device?.isEmpty ?? true) ? null : session.device;
 
+const _prepareQualities = [
+  (null, 'Best it can play'),
+  (20000000, 'Up to 20 Mbps'),
+  (8000000, 'Up to 8 Mbps'),
+  (4000000, 'Up to 4 Mbps'),
+];
+
+/// What someone comes here to do first, then the lists, which can run long. Wider
+/// than the other sections, as these rows hold several controls each.
 class DevicesSection extends StatelessWidget {
   const DevicesSection({super.key, required this.controller});
   final AccountController controller;
 
   @override
-  Widget build(BuildContext context) => AccountColumn(
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      _LinkDevicePanel(controller: controller),
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final keys = _ApiKeysPanel(controller: controller);
+          final link = _LinkDevicePanel(controller: controller);
+          if (constraints.maxWidth < 680) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [keys, const SizedBox(height: 14), link],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: keys),
+              const SizedBox(width: 14),
+              Expanded(child: link),
+            ],
+          );
+        },
+      ),
+      const SizedBox(height: 14),
+      _SmartTranscodingPanel(controller: controller),
+      const SizedBox(height: 14),
       _SessionsPanel(controller: controller),
-      _RegisteredPanel(controller: controller),
     ],
+  );
+}
+
+class _ApiKeysPanel extends StatefulWidget {
+  const _ApiKeysPanel({required this.controller});
+  final AccountController controller;
+
+  @override
+  State<_ApiKeysPanel> createState() => _ApiKeysPanelState();
+}
+
+class _ApiKeysPanelState extends State<_ApiKeysPanel> {
+  final _name = TextEditingController();
+  final _hasName = signal(false);
+  final _busy = signal(false);
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _create() async {
+    final name = _name.text.trim();
+    if (name.isEmpty || _busy.value) return;
+    _busy.value = true;
+    final key = await widget.controller.createApiKey(name);
+    if (!mounted) return;
+    _busy.value = false;
+    if (key == null) return;
+    _name.clear();
+    _hasName.value = false;
+    unawaited(_showKey(name, key));
+  }
+
+  /// There's no seeing it again, so this stays up until they've dealt with it.
+  Future<void> _showKey(String name, String key) async {
+    final copy = await confirmAction(
+      title: 'Your new API key',
+      message:
+          'Copy it now. NoFlex stores only a hash, so this is the only time it’s shown.\n\n$name\n$key',
+      confirmLabel: 'Copy key',
+      cancelLabel: 'Done',
+    );
+    if (!copy) return;
+    await Clipboard.setData(ClipboardData(text: key));
+    getIt<ToastService>().show('API key copied', kind: ToastKind.success);
+  }
+
+  Future<void> _revoke(AccountApiKey key) async {
+    final confirmed = await confirmAction(
+      title: 'Revoke “${key.name}”?',
+      message: 'Anything using this key loses access straight away.',
+      confirmLabel: 'Revoke key',
+      danger: true,
+    );
+    if (confirmed) await widget.controller.revokeApiKey(key.id);
+  }
+
+  @override
+  Widget build(BuildContext context) => AccountPanel(
+    icon: PhosphorIconsRegular.key,
+    title: 'API keys',
+    detail: 'For scripts, automations and trusted apps',
+    child: SignalBuilder(
+      builder: (context) {
+        final keys = widget.controller.apiKeys.value;
+        final revoked = widget.controller.revokedApiKeys.value;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (keys.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(
+                  revoked > 0
+                      ? 'No active keys · $revoked revoked.'
+                      : 'No active keys.',
+                  style: NfType.small,
+                ),
+              ),
+            for (final key in keys)
+              AccountRow(
+                title: key.name,
+                detail: 'Created ${formatDate(key.createdAt)}',
+                trailing: NfButton(
+                  label: 'Revoke',
+                  semanticLabel: 'Revoke ${key.name}',
+                  style: NfButtonStyle.ghost,
+                  size: NfButtonSize.small,
+                  onPressed: () => unawaited(_revoke(key)),
+                ),
+              ),
+            const SizedBox(height: 6),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: NfField(
+                    controller: _name,
+                    label: 'New key name',
+                    hint: 'Home Assistant',
+                    textInputAction: TextInputAction.done,
+                    onChanged: (value) =>
+                        _hasName.value = value.trim().isNotEmpty,
+                    onSubmitted: (_) => unawaited(_create()),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                NfButton(
+                  label: 'Create',
+                  icon: const Icon(PhosphorIconsRegular.plus),
+                  busy: _busy.value,
+                  onPressed: _hasName.value ? () => unawaited(_create()) : null,
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    ),
   );
 }
 
@@ -100,11 +256,53 @@ class _LinkDevicePanelState extends State<_LinkDevicePanel> {
   final _pin = TextEditingController();
   final _hasPin = signal(false);
   final _busy = signal(false);
+  final _generated = signal<String?>(null);
+  final _approved = signal(false);
+  final _generating = signal(false);
+  Timer? _poll;
 
   @override
   void dispose() {
+    _poll?.cancel();
     _pin.dispose();
     super.dispose();
+  }
+
+  Future<void> _generate() async {
+    if (_generating.value) return;
+    _generating.value = true;
+    final pin = await widget.controller.generatePin();
+    if (!mounted) return;
+    _generating.value = false;
+    if (pin == null) return;
+    batch(() {
+      _generated.value = pin;
+      _approved.value = false;
+    });
+    _poll?.cancel();
+    _poll = Timer.periodic(const Duration(seconds: 3), (_) => _check(pin));
+  }
+
+  Future<void> _check(String pin) async {
+    try {
+      final approved = await widget.controller.pinApproved(pin);
+      if (!mounted || !approved) return;
+      _poll?.cancel();
+      _approved.value = true;
+    } on ServerUnreachable {
+      // Keep asking; the code outlives a blip.
+    } on ApiError {
+      // Expired.
+      _dismiss();
+    }
+  }
+
+  void _dismiss() {
+    _poll?.cancel();
+    batch(() {
+      _generated.value = null;
+      _approved.value = false;
+    });
   }
 
   Future<void> _approve() async {
@@ -124,30 +322,96 @@ class _LinkDevicePanelState extends State<_LinkDevicePanel> {
   Widget build(BuildContext context) => AccountPanel(
     icon: PhosphorIconsRegular.television,
     title: 'Link a device',
-    detail: 'A new TV or phone signs in by showing a code. Approve it here.',
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+    detail: 'Approve the code shown on a TV or another screen',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: NfField(
-            controller: _pin,
-            label: 'Device PIN',
-            hint: 'K7M2QX',
-            textCapitalization: TextCapitalization.characters,
-            textInputAction: TextInputAction.done,
-            autocorrect: false,
-            onChanged: (value) => _hasPin.value = value.trim().isNotEmpty,
-            onSubmitted: (_) => unawaited(_approve()),
-          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: NfField(
+                controller: _pin,
+                label: 'Device PIN',
+                hint: 'K7M2QX',
+                textCapitalization: TextCapitalization.characters,
+                textInputAction: TextInputAction.done,
+                autocorrect: false,
+                onChanged: (value) => _hasPin.value = value.trim().isNotEmpty,
+                onSubmitted: (_) => unawaited(_approve()),
+              ),
+            ),
+            const SizedBox(width: 10),
+            SignalBuilder(
+              builder: (context) => NfButton(
+                label: 'Approve',
+                style: NfButtonStyle.primary,
+                busy: _busy.value,
+                onPressed: _hasPin.value ? () => unawaited(_approve()) : null,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 10),
+        const SizedBox(height: 12),
+        const Divider(height: 1, color: NfColors.line),
+        const SizedBox(height: 12),
         SignalBuilder(
-          builder: (context) => NfButton(
-            label: 'Approve',
-            style: NfButtonStyle.primary,
-            busy: _busy.value,
-            onPressed: _hasPin.value ? () => unawaited(_approve()) : null,
-          ),
+          builder: (context) {
+            final generated = _generated.value;
+            if (generated == null) {
+              return Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                alignment: WrapAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Need a code for this device instead?',
+                    style: NfType.small,
+                  ),
+                  NfButton(
+                    label: 'Generate a PIN',
+                    size: NfButtonSize.small,
+                    busy: _generating.value,
+                    onPressed: () => unawaited(_generate()),
+                  ),
+                ],
+              );
+            }
+            final approved = _approved.value;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  approved ? 'APPROVED' : 'ENTER ON A SIGNED-IN DEVICE',
+                  style: NfType.eyebrow,
+                ),
+                const SizedBox(height: 6),
+                SelectableText(
+                  generated,
+                  style: nfText(
+                    26,
+                    weight: 700,
+                    color: approved ? NfColors.success : NfColors.text,
+                  ).copyWith(letterSpacing: 4),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  approved
+                      ? 'This PIN has been used.'
+                      : 'Waiting for approval.',
+                  style: NfType.small,
+                ),
+                const SizedBox(height: 6),
+                NfButton(
+                  label: 'Dismiss',
+                  style: NfButtonStyle.ghost,
+                  size: NfButtonSize.small,
+                  onPressed: _dismiss,
+                ),
+              ],
+            );
+          },
         ),
       ],
     ),
@@ -260,8 +524,8 @@ class _SessionRow extends StatelessWidget {
   }
 }
 
-class _RegisteredPanel extends SignalWidget {
-  const _RegisteredPanel({required this.controller});
+class _SmartTranscodingPanel extends SignalWidget {
+  const _SmartTranscodingPanel({required this.controller});
   final AccountController controller;
 
   Future<void> _forget(AccountDevice device) async {
@@ -274,13 +538,93 @@ class _RegisteredPanel extends SignalWidget {
     if (confirmed) await controller.forgetDevice(device.id);
   }
 
+  Future<void> _chooseQuality(AccountDevice device) async {
+    const best = -1;
+    final choice = await pickOption<int>(
+      title: 'Quality limit for ${device.name}',
+      selected: device.maxBitrateBps ?? best,
+      options: [
+        for (final (value, label) in _prepareQualities)
+          NfOption(value ?? best, label),
+      ],
+    );
+    if (choice == null) return;
+    await controller.setQualityLimit(device, choice == best ? null : choice);
+  }
+
+  Widget _smartRow(AccountDevice device) {
+    final name = Row(
+      children: [
+        Switch(
+          value: device.smartTranscode,
+          onChanged: (enabled) =>
+              unawaited(controller.setSmartTranscode(device, enabled)),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: AccountRow(
+            title: device.name,
+            isCurrent: controller.isThisDevice(device.id),
+            currentLabel: 'This device',
+            detail: 'Last seen ${ago(device.lastSeenAt)}',
+          ),
+        ),
+      ],
+    );
+    final actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        NfButton(
+          label: _prepareQualities
+              .firstWhere(
+                (quality) => quality.$1 == device.maxBitrateBps,
+                orElse: () => _prepareQualities.first,
+              )
+              .$2,
+          semanticLabel: 'Quality limit for ${device.name}',
+          style: NfButtonStyle.ghost,
+          size: NfButtonSize.small,
+          icon: const Icon(PhosphorIconsRegular.caretDown),
+          onPressed: () => unawaited(_chooseQuality(device)),
+        ),
+        if (!controller.isThisDevice(device.id)) ...[
+          const SizedBox(width: 6),
+          NfButton(
+            label: 'Forget',
+            semanticLabel: 'Forget ${device.name}',
+            style: NfButtonStyle.ghost,
+            size: NfButtonSize.small,
+            onPressed: () => unawaited(_forget(device)),
+          ),
+        ],
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: LayoutBuilder(
+        builder: (context, constraints) => constraints.maxWidth < 560
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [name, actions],
+              )
+            : Row(
+                children: [
+                  Expanded(child: name),
+                  const SizedBox(width: 10),
+                  actions,
+                ],
+              ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final devices = controller.devices.value;
     return AccountPanel(
-      icon: PhosphorIconsRegular.deviceMobile,
-      title: 'Registered devices',
-      detail: 'What the server prepares and keeps titles for',
+      icon: PhosphorIconsRegular.devices,
+      title: 'Smart transcoding',
+      detail: 'The server can prepare what you’re likely to watch next while it’s idle, so playback starts without a live transcode',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -290,23 +634,7 @@ class _RegisteredPanel extends SignalWidget {
               style: NfType.small,
             )
           else
-            for (final device in devices)
-              AccountRow(
-                icon: _iconFor(device.name, null),
-                title: device.name,
-                isCurrent: controller.isThisDevice(device.id),
-                currentLabel: 'This device',
-                detail: 'Last seen ${ago(device.lastSeenAt)}',
-                trailing: controller.isThisDevice(device.id)
-                    ? null
-                    : NfButton(
-                        label: 'Forget',
-                        semanticLabel: 'Forget ${device.name}',
-                        style: NfButtonStyle.ghost,
-                        size: NfButtonSize.small,
-                        onPressed: () => unawaited(_forget(device)),
-                      ),
-              ),
+            for (final device in devices) _smartRow(device),
         ],
       ),
     );

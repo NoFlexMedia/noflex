@@ -90,6 +90,7 @@ Future<bool> confirmAction({
   required String title,
   required String message,
   required String confirmLabel,
+  String cancelLabel = 'Cancel',
   bool danger = false,
 }) async {
   final result = await getIt<NavService>().openSheet<bool>(
@@ -107,7 +108,7 @@ Future<bool> confirmAction({
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               NfButton(
-                label: 'Cancel',
+                label: cancelLabel,
                 style: NfButtonStyle.ghost,
                 onPressed: () => Navigator.of(context).pop(false),
               ),

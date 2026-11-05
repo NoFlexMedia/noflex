@@ -236,20 +236,23 @@
         # read-only store, so every compileSdk and the NDK a plugin asks for
         # must be composed here.
         androidBuildTools = "36.0.0";
-        androidComposition = (pkgsFlutter.androidenv.override {licenseAccepted = true;}).composeAndroidPackages {
-          buildToolsVersions = [androidBuildTools "35.0.0"];
-          cmakeVersions = ["3.22.1"];
-          platformVersions = ["36" "35" "34" "33"];
-          abiVersions = ["x86_64" "arm64-v8a"];
-          # Google publishes no emulator for arm64 Linux.
-          includeEmulator = !(pkgsFlutter.stdenv.hostPlatform.isLinux && pkgsFlutter.stdenv.hostPlatform.isAarch64);
-          includeSystemImages = true;
-          systemImageTypes = ["google_apis_playstore"];
-          includeNDK = true;
-          ndkVersions = ["28.2.13676358"];
-        };
-        androidSdk = androidComposition.androidsdk;
-        androidSdkRoot = "${androidSdk}/libexec/android-sdk";
+        # The system images and emulator are what fill a CI runner's disk, and
+        # only running the app on a virtual device needs them.
+        composeAndroidSdk = {emulator}:
+          ((pkgsFlutter.androidenv.override {licenseAccepted = true;}).composeAndroidPackages {
+            buildToolsVersions = [androidBuildTools "35.0.0"];
+            cmakeVersions = ["3.22.1"];
+            platformVersions = ["36" "35" "34" "33"];
+            abiVersions = ["x86_64" "arm64-v8a"];
+            # Google publishes no emulator for arm64 Linux.
+            includeEmulator = emulator && !(pkgsFlutter.stdenv.hostPlatform.isLinux && pkgsFlutter.stdenv.hostPlatform.isAarch64);
+            includeSystemImages = emulator;
+            systemImageTypes = ["google_apis_playstore"];
+            includeNDK = true;
+            ndkVersions = ["28.2.13676358"];
+          }).androidsdk;
+        androidSdk = composeAndroidSdk {emulator = true;};
+        androidBuildSdk = composeAndroidSdk {emulator = false;};
 
         # mpv.pc lists every optional library mpv was built with, and pkg-config
         # insists on them all just to compile against its client header.
@@ -270,11 +273,9 @@
             wayland
           ];
 
-        flutterPkgs = with pkgsFlutter;
+        flutterBasePkgs = with pkgsFlutter;
           [
             flutter
-            jdk
-            androidSdk
             git
             curl
             unzip
@@ -284,16 +285,24 @@
           ++ lib.optional stdenv.hostPlatform.isLinux xdg-user-dirs;
 
         flutterEnv = {
-          # ANDROID_SDK_ROOT is deprecated, but older tools still consult it.
-          ANDROID_HOME = androidSdkRoot;
-          ANDROID_SDK_ROOT = androidSdkRoot;
-          JAVA_HOME = "${jdk.home}";
           # The wrapper only sets this when unset, and a stale value makes it
           # write a broken `flutter.sdk` into android/local.properties.
           FLUTTER_ROOT = "${flutter}";
-          # Gradle's bundled aapt2 is a glibc ELF that won't run on NixOS.
-          GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdkRoot}/build-tools/${androidBuildTools}/aapt2";
         };
+
+        androidEnvFor = sdk: let
+          root = "${sdk}/libexec/android-sdk";
+        in {
+          # ANDROID_SDK_ROOT is deprecated, but older tools still consult it.
+          ANDROID_HOME = root;
+          ANDROID_SDK_ROOT = root;
+          JAVA_HOME = "${jdk.home}";
+          # Gradle's bundled aapt2 is a glibc ELF that won't run on NixOS.
+          GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${root}/build-tools/${androidBuildTools}/aapt2";
+        };
+
+        flutterPkgs = flutterBasePkgs ++ [jdk androidSdk];
+        flutterAndroidEnv = flutterEnv // androidEnvFor androidSdk;
 
         flutterShellHook = ''
           export PROJECT_ROOT="$(git rev-parse --git-common-dir | xargs dirname | xargs realpath)"
@@ -305,7 +314,7 @@
             # media_kit opens libmpv by name at runtime rather than linking it.
             export LD_LIBRARY_PATH="${pkgsFlutter.lib.makeLibraryPath [pkgsFlutter.mpv-unwrapped]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           ''}
-          echo "🦋 Flutter ${flutter.version}, Java ${jdk.version}, Android SDK at \$ANDROID_HOME"
+          echo "🦋 Flutter ${flutter.version}''${ANDROID_HOME:+, Java ${jdk.version}, Android SDK at $ANDROID_HOME}"
           echo "   Test devices: see flutter/AGENTS.md"
           echo ""
         '';
@@ -328,7 +337,7 @@
               shellHook = rustShellHook + flutterShellHook;
             }
             // rustEnv
-            // flutterEnv);
+            // flutterAndroidEnv);
 
           # Server and web, without the Flutter and Android downloads.
           no-flutter = pkgs.mkShell ({
@@ -344,7 +353,23 @@
               buildInputs = flutterLinuxLibs;
               shellHook = flutterShellHook;
             }
+            // flutterAndroidEnv);
+
+          # What CI's analysis and tests need: no Android at all.
+          flutter-check = pkgsFlutter.mkShell ({
+              packages = flutterBasePkgs;
+              buildInputs = flutterLinuxLibs;
+              shellHook = flutterShellHook;
+            }
             // flutterEnv);
+
+          # Enough to build for Android, without a device to run it on.
+          flutter-android = pkgsFlutter.mkShell ({
+              packages = flutterBasePkgs ++ [jdk androidBuildSdk];
+              shellHook = flutterShellHook;
+            }
+            // flutterEnv
+            // androidEnvFor androidBuildSdk);
         };
 
         checks = {

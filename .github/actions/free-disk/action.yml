@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# A runner's disk is mostly toolchains we don't use, and the Nix store and Cargo's
+# target directory both share it. Running out shows up as anything from "No space
+# left on device" to the linker dying with a bus error.
+
+name: Free disk space
+description: Removes the toolchains GitHub preinstalls that NoFlex builds don't use.
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        df -h /
+        sudo rm -rf \
+          /usr/local/lib/android \
+          /usr/share/dotnet \
+          /opt/ghc \
+          /usr/local/.ghcup \
+          /opt/hostedtoolcache/CodeQL \
+          /usr/local/share/powershell \
+          /usr/share/swift
+        df -h /

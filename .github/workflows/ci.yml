@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/free-disk
       - uses: cachix/install-nix-action@v24
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
@@ -45,4 +46,4 @@ jobs:
       - uses: cachix/install-nix-action@v24
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
-      - run: nix develop .#flutter-only --command sh -c 'cd flutter && flutter pub get && dart run build_runner build && flutter analyze --no-pub && flutter test --no-pub'
+      - run: nix develop .#flutter-check --command sh -c 'cd flutter && flutter pub get && dart run build_runner build && flutter analyze --no-pub && flutter test --no-pub'

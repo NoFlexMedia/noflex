@@ -4,6 +4,7 @@ mutation StartPlayback($media: ID!, $capabilities: ClientCapabilities!, $subtitl
     sessionId
     route
     url
+    fileUrl
     jobId
     startPositionMs
     subtitles { index language title forced default url }

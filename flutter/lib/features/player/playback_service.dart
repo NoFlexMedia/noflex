@@ -65,6 +65,7 @@ class SessionInfo {
     required this.sessionId,
     required this.route,
     required this.url,
+    this.fileUrl,
     this.startPositionMs = 0,
     this.decision,
     this.subtitles = const [],
@@ -73,6 +74,9 @@ class SessionInfo {
   final String sessionId;
   final GPlaybackRouteKind route;
   final String url;
+
+  /// The whole file behind [url], when that's a ready version.
+  final String? fileUrl;
 
   /// Source position of the stream's time zero: a transcode's start offset.
   final int startPositionMs;
@@ -279,6 +283,10 @@ class PlaybackService {
       sessionId: session.sessionId,
       route: session.route,
       url: _absolute(session.url, server),
+      fileUrl: switch (session.fileUrl) {
+        final file? => _absolute(file, server),
+        null => null,
+      },
       startPositionMs: session.startPositionMs,
       decision: session.decision,
       subtitles: [

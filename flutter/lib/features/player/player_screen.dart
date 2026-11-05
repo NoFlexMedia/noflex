@@ -135,6 +135,7 @@ class _Picture extends StatelessWidget {
         _Flash(player: player),
         if (chrome) _Chrome(player: player, docked: false),
         _InfoPanel(player: player),
+        _Problem(player: player),
       ],
     ),
   );
@@ -175,9 +176,28 @@ class _Status extends SignalWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (player.error.value.isNotEmpty || !player.waiting.value) {
+      return const SizedBox.shrink();
+    }
+    return const IgnorePointer(
+      child: Center(child: CircularProgressIndicator(color: NfColors.text)),
+    );
+  }
+}
+
+/// Over everything, since a stream can fail with a frame still on screen and
+/// the chrome up, and nothing else there does anything by then.
+class _Problem extends SignalWidget {
+  const _Problem({required this.player});
+  final PlayerController player;
+
+  @override
+  Widget build(BuildContext context) {
     final problem = player.error.value;
-    if (problem.isNotEmpty) {
-      return Center(
+    if (problem.isEmpty) return const SizedBox.shrink();
+    return ColoredBox(
+      color: NfColors.bgOverlay,
+      child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -189,14 +209,23 @@ class _Status extends SignalWidget {
             const SizedBox(height: 10),
             Text(problem, style: NfType.body),
             const SizedBox(height: 14),
-            NfButton(label: 'Close', onPressed: player.close),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                NfButton(label: 'Close', onPressed: player.close),
+                if (player.canRetry) ...[
+                  const SizedBox(width: 10),
+                  NfButton(
+                    label: 'Try again',
+                    style: NfButtonStyle.primary,
+                    onPressed: player.retry,
+                  ),
+                ],
+              ],
+            ),
           ],
         ),
-      );
-    }
-    if (!player.waiting.value) return const SizedBox.shrink();
-    return const IgnorePointer(
-      child: Center(child: CircularProgressIndicator(color: NfColors.text)),
+      ),
     );
   }
 }

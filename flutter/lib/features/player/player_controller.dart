@@ -39,6 +39,7 @@ import '../../services/watch_state.dart';
 import '../downloads/downloads_service.dart';
 import 'decoder_probe.dart';
 import 'decoders.dart';
+import 'playback_position.dart';
 import 'playback_service.dart';
 
 /// libmpv's GL output can't get a context under the Android emulator's EGL
@@ -50,6 +51,10 @@ const _playlistPatience = Duration(minutes: 1);
 
 const _chromeIdle = Duration(milliseconds: 2600);
 const _heartbeat = Duration(seconds: 15);
+
+const _streamLost = 'The stream stopped before the end.';
+
+const _landingPatience = Duration(seconds: 30);
 
 bool get _isDesktop =>
     Platform.isLinux || Platform.isMacOS || Platform.isWindows;
@@ -97,9 +102,12 @@ class PlayerController {
       _player.stream.duration.listen((_) => _updateDuration()),
       _player.stream.buffer.listen(_onBuffer),
       _player.stream.playing.listen(_onPlaying),
-      _player.stream.buffering.listen((value) => waiting.value = value),
+      _player.stream.buffering.listen(
+        (value) => waiting.value = value || restarting.value != null,
+      ),
       _player.stream.completed.listen((done) {
-        if (done) unawaited(_onEnded());
+        // A stream on its way out running dry isn't the title ending.
+        if (done && restarting.value == null) unawaited(_onEnded());
       }),
       _player.stream.tracks.listen((tracks) {
         audioTracks.value = tracks.audio
@@ -140,6 +148,16 @@ class PlayerController {
   Timer? _statsTimer;
   Timer? _hwCheck;
   bool _finalized = false;
+
+  /// Where playback has really got to, in source time.
+  int _reached = 0;
+
+  /// The last place asked for, where a jump is expected.
+  int _requested = 0;
+  DateTime? _landingUntil;
+
+  /// Playing the HLS form of a ready file, where [_open] has the rule on seeks.
+  bool _onReadyHls = false;
   bool _disposed = false;
   bool _appliedResume = false;
 
@@ -240,6 +258,10 @@ class PlayerController {
       waiting.value = true;
       _finalized = false;
       _appliedResume = false;
+      _reached = next.resumeMs;
+      _requested = next.resumeMs;
+      _landingUntil = DateTime.now().add(_landingPatience);
+      position.value = next.resumeMs;
       subtitleIndex.value = next.subtitleIndex;
       burned.value = next.burnedSubtitle;
       audioIndex.value = next.audioStream;
@@ -265,22 +287,36 @@ class PlayerController {
       await _native.setProperty('hwdec', hdr ? 'mediacodec-copy' : 'auto-safe');
     }
     if (next.transcoding || next.live) {
+      // The server has dropped whatever's playing by now, and an encoder can
+      // take longer to start than libmpv has left in its buffer. Hold the last
+      // frame meanwhile, with the timeline on where this stream will start.
+      batch(() {
+        restarting.value ??= next.resumeMs;
+        buffered.value = 0;
+      });
+      if (_player.state.playing) await _player.pause();
       await _awaitPlaylist(next.url);
       if (_disposed || _openedUrl != next.url) return;
     }
     // A transcode already starts at the resume point; direct play seeks to it.
     final local = next.resumeMs - next.offsetMs;
+    // Android's libmpv can't seek in the HLS form of a ready file: it reads on
+    // to the end without ever landing. The file itself seeks, but having no index
+    // it opens by walking every fragment, which over a real connection takes far
+    // longer than HLS does. So it's only worth it for what HLS can't do.
+    final file = Platform.isAndroid ? next.session?.fileUrl : null;
+    final openFile = file != null && local > 1000;
+    _onReadyHls = file != null && !openFile;
     await _player.open(
       Media(
-        next.url,
+        openFile ? file : next.url,
         start: !next.live && local > 1000
             ? Duration(milliseconds: local)
             : null,
       ),
     );
     // A restarted transcode's time zero is its target, so source time is right
-    // again from here. libmpv may never have stopped playing, so waiting for
-    // that to change could leave the timeline frozen.
+    // again from here.
     if (restarting.value != null) restarting.value = null;
     await WakelockPlus.enable();
     _updateDuration();
@@ -320,7 +356,11 @@ class PlayerController {
     // runtime is the real length.
     final own = _player.state.duration.inMilliseconds;
     if (!current.transcoding) {
-      duration.value = own;
+      // Reopening reads as no length at all until the new stream has one, and
+      // the timeline shouldn't collapse under whoever just seeked on it.
+      if (own > 0 || (restarting.value == null && _landingUntil == null)) {
+        duration.value = own;
+      }
       return;
     }
     // This file's own length first: versions of an edition can differ.
@@ -332,13 +372,33 @@ class PlayerController {
     duration.value = known > 0 ? known : current.offsetMs + own;
   }
 
-  int get _sourceTime =>
-      restarting.value ??
-      (_current?.offsetMs ?? 0) + _player.state.position.inMilliseconds;
+  int get _sourceTime => restarting.value ?? _reached;
+
+  /// A resume reads as the start of the file until it lands, and leaving then
+  /// would lose the viewer's place. It gets a while, in case it never does.
+  bool _isStillLanding(int at) {
+    final until = _landingUntil;
+    if (until == null) return false;
+    if (isFarFrom(at, _requested) && DateTime.now().isBefore(until)) {
+      return true;
+    }
+    _landingUntil = null;
+    return false;
+  }
 
   void _onPosition(Duration value) {
     if (restarting.value != null || scrubbing.value) return;
-    position.value = (_current?.offsetMs ?? 0) + value.inMilliseconds;
+    final at = (_current?.offsetMs ?? 0) + value.inMilliseconds;
+    final falseEnd = isFalseEnd(
+      streamMs: value.inMilliseconds,
+      streamLengthMs: _player.state.duration.inMilliseconds,
+      atMs: at,
+      reachedMs: _reached,
+      requestedMs: _requested,
+    );
+    if (falseEnd || _isStillLanding(at)) return;
+    _reached = at;
+    position.value = at;
     if (inCredits.value &&
         nextUp.value != null &&
         countdown.value == null &&
@@ -349,11 +409,11 @@ class PlayerController {
   }
 
   void _onBuffer(Duration value) {
+    if (restarting.value != null) return;
     buffered.value = (_current?.offsetMs ?? 0) + value.inMilliseconds;
   }
 
   void _onPlaying(bool isPlaying) {
-    if (restarting.value != null && isPlaying) restarting.value = null;
     playing.value = isPlaying;
     getIt<PipService>().setPlaying(
       isPlaying,
@@ -455,6 +515,16 @@ class PlayerController {
   Future<void> _onEnded() async {
     final current = _current;
     if (current == null || _finalized) return;
+    // libmpv reports a stream it lost the same way, so a server or network going
+    // away mid-film would otherwise mark it watched and close the player.
+    if (!current.live &&
+        endedEarly(lengthMs: duration.value, reachedMs: _sourceTime)) {
+      batch(() {
+        error.value = _streamLost;
+        waiting.value = false;
+      });
+      return;
+    }
     if (current.nextParts.isNotEmpty) {
       await _finish();
       _openedUrl = null;
@@ -519,7 +589,7 @@ class PlayerController {
   // ---- controls ---------------------------------------------------------
 
   void toggle() {
-    if (isGuest.value) return;
+    if (isGuest.value || restarting.value != null) return;
     unawaited(_player.playOrPause());
     showChrome();
   }
@@ -540,11 +610,17 @@ class PlayerController {
     final current = _current!;
     final limit = duration.value > 0 ? duration.value : ms;
     final target = ms.clamp(0, limit);
+    final from = _reached;
     position.value = target;
+    _requested = target;
+    _reached = target;
+    _landingUntil = null;
     final local = target - current.offsetMs;
-    final reachable =
-        !current.transcoding ||
-        (local >= 0 && local <= _player.state.buffer.inMilliseconds);
+    final buffered = local >= 0 && local <= _player.state.buffer.inMilliseconds;
+    final reachable = current.transcoding
+        ? buffered
+        // Ahead into what's already here is the only seek its HLS form can do.
+        : !_onReadyHls || (buffered && target >= from);
     if (reachable) {
       _restartTimer?.cancel();
       if (restarting.value == null) {
@@ -571,14 +647,42 @@ class PlayerController {
     _restartTimer?.cancel();
     _restartTimer = Timer(const Duration(milliseconds: 350), () async {
       _heartbeatTimer?.cancel();
+      if (_onReadyHls) {
+        // The session's fine; this file just has to be opened the other way.
+        await _player.pause();
+        _openedUrl = null;
+        _service.current.value = _current?.copyWith(resumeMs: target);
+        return;
+      }
       final ok = await _service.restart(positionMs: target);
       if (!ok) {
         batch(() {
           restarting.value = null;
           waiting.value = false;
+          // Nothing's left playing to report this when it runs out.
+          if (_player.state.completed) error.value = _streamLost;
         });
       }
     });
+  }
+
+  /// A new session can pick up where a lost one stopped. A download has none to
+  /// start, and a channel has nowhere to pick up from.
+  bool get canRetry {
+    final current = _current;
+    return current != null &&
+        !current.live &&
+        current.session != null &&
+        current.version != null;
+  }
+
+  void retry() {
+    final at = _sourceTime;
+    error.value = '';
+    // A new session's address can match the old one, and it still has to open.
+    _openedUrl = null;
+    _onReadyHls = false;
+    _restartAt(at);
   }
 
   void startScrub(int ms) {
@@ -764,14 +868,12 @@ class PlayerController {
         !(current.session?.subtitles.any((s) => s.index == index) ?? false);
     if (needsBurn) {
       burned.value = index;
-      _openedUrl = null;
-      await _service.restart(positionMs: _sourceTime, burn: index);
+      await _replaceStream(burn: index);
       return;
     }
     if (burned.value != null) {
       burned.value = null;
-      _openedUrl = null;
-      await _service.restart(positionMs: _sourceTime, clearBurn: true);
+      await _replaceStream(clearBurn: true);
     }
     await _applySubtitle(index);
   }
@@ -781,11 +883,28 @@ class PlayerController {
     final current = _current;
     if (current == null) return;
     if (current.transcoding) {
-      _openedUrl = null;
-      await _service.restart(positionMs: _sourceTime, audio: index);
+      await _replaceStream(audio: index);
     } else {
       await _selectEmbeddedAudio(index);
     }
+  }
+
+  /// The same place in a stream the server makes differently.
+  Future<void> _replaceStream({
+    int? burn,
+    bool clearBurn = false,
+    int? audio,
+  }) async {
+    final at = _sourceTime;
+    restarting.value = at;
+    _openedUrl = null;
+    final ok = await _service.restart(
+      positionMs: at,
+      burn: burn,
+      clearBurn: clearBurn,
+      audio: audio,
+    );
+    if (!ok) restarting.value = null;
   }
 
   // ---- watch rooms ------------------------------------------------------

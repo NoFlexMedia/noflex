@@ -20,7 +20,16 @@ CREATE TABLE IF NOT EXISTS libraries (
     config_providers_json  TEXT NOT NULL DEFAULT '[]',
     config_excluded_json   TEXT NOT NULL DEFAULT '[]',
     config_watch_enabled   INTEGER NOT NULL DEFAULT 1,
-    config_scan_schedule   TEXT NOT NULL DEFAULT 'DISABLED'
+    config_scan_schedule   TEXT NOT NULL DEFAULT 'DISABLED',
+    -- Scanner layout version. When the scanner changes how it derives work
+    -- identity from paths, a library recorded under an older version has
+    -- every file re-planned once. 0 = never recorded.
+    scan_version           INTEGER NOT NULL DEFAULT 0,
+    -- Choice between provider and local artwork; provider-first by default.
+    config_artwork_preference TEXT NOT NULL DEFAULT 'PREFER_PROVIDER',
+    -- Override of anime classification for content-type browsing; by
+    -- default a library classifies per work.
+    config_content_category TEXT NOT NULL DEFAULT 'AUTO'
 );
 
 -- A Work whose `index_end` is non-NULL spans an inclusive index range
@@ -55,11 +64,19 @@ CREATE TABLE IF NOT EXISTS works (
     community_rating    REAL,
     -- JSON array of snake_case `WorkField` names the user locked against
     -- provider refreshes; empty means nothing is locked.
-    locked_fields_json  TEXT NOT NULL DEFAULT '[]'
+    locked_fields_json  TEXT NOT NULL DEFAULT '[]',
+    -- The top of the work's parent chain, itself for a top-level work: what
+    -- a file or a play counts towards, without walking up to it.
+    root_id             BLOB
 );
 
 CREATE INDEX IF NOT EXISTS works_library_kind     ON works(library_id, kind);
 CREATE INDEX IF NOT EXISTS works_parent_idx       ON works(parent_id, parent_index, index_number);
+CREATE INDEX IF NOT EXISTS works_root ON works(root_id);
+-- These let a grid sorted by them read in order and stop once a page is full.
+CREATE INDEX IF NOT EXISTS works_added ON works(added_at, id);
+CREATE INDEX IF NOT EXISTS works_year ON works(year, id);
+CREATE INDEX IF NOT EXISTS works_released ON works(release_date, id);
 
 CREATE TABLE IF NOT EXISTS work_external_ids (
     kind    TEXT NOT NULL,
@@ -70,16 +87,8 @@ CREATE TABLE IF NOT EXISTS work_external_ids (
 
 CREATE INDEX IF NOT EXISTS work_external_ids_work ON work_external_ids(work_id);
 
--- Codec/HDR columns are first-class because the direct-play decision
--- reads them; the richer per-file probe output stays in
--- `media_files.probe_json` for user inspection.
---
--- CIE 1931 chroma coordinates are stored as two INTEGERs at
--- 0.00002-unit resolution × 50000 = 0..50000. Min luminance at
--- 0.0001 cd/m² resolution. Max luminance at 1 cd/m² resolution.
--- Enum-typed columns (video_profile, pixel_format, …) store the
--- snake_case form per the serde rename in noflex-core. dovi_profile
--- is INTEGER (the spec numbers 5/7/8/9).
+-- An edition is a cut, and can hold several files with different pictures and
+-- sound, so facts about a file can't live on it. They're in `media_streams`.
 CREATE TABLE IF NOT EXISTS editions (
     id                         BLOB PRIMARY KEY,
     work_id                    BLOB NOT NULL REFERENCES works(id) ON DELETE CASCADE,
@@ -88,42 +97,12 @@ CREATE TABLE IF NOT EXISTS editions (
     intro_start_ms             INTEGER,
     intro_end_ms               INTEGER,
     credits_start_ms           INTEGER,
-    chapters_json              TEXT NOT NULL DEFAULT '[]',
-    codec_video                TEXT,
-    codec_audio                TEXT,
-    width                      INTEGER,
-    height                     INTEGER,
-    bit_depth                  INTEGER,
-    hdr_format                 TEXT,
-    audio_tracks_json          TEXT NOT NULL DEFAULT '[]',
-    subtitle_tracks_json       TEXT NOT NULL DEFAULT '[]',
-    video_codec                TEXT,
-    video_profile              TEXT,
-    video_level                REAL,
-    pixel_format               TEXT,
-    color_primaries            TEXT,
-    transfer_characteristics   TEXT,
-    matrix_coefficients        TEXT,
-    dovi_profile               INTEGER,
-    max_cll                    INTEGER,
-    max_fall                   INTEGER,
-    mastering_primary_r_x      INTEGER,
-    mastering_primary_r_y      INTEGER,
-    mastering_primary_g_x      INTEGER,
-    mastering_primary_g_y      INTEGER,
-    mastering_primary_b_x      INTEGER,
-    mastering_primary_b_y      INTEGER,
-    mastering_white_x          INTEGER,
-    mastering_white_y          INTEGER,
-    mastering_min_lum          INTEGER,
-    mastering_max_lum          INTEGER,
-    frame_rate                 REAL
+    chapters_json              TEXT NOT NULL DEFAULT '[]'
 );
 
 -- One edition per name within a work; also serves work_id lookups.
 CREATE UNIQUE INDEX IF NOT EXISTS editions_work_name ON editions(work_id, name);
-CREATE INDEX IF NOT EXISTS editions_codec_video ON editions(codec_video);
-CREATE INDEX IF NOT EXISTS editions_codec_audio ON editions(codec_audio);
+CREATE INDEX IF NOT EXISTS editions_name ON editions(name);
 
 CREATE TABLE IF NOT EXISTS media_files (
     id          BLOB PRIMARY KEY,
@@ -247,24 +226,29 @@ CREATE TABLE IF NOT EXISTS tag_assignments (
     target_id   BLOB NOT NULL,
     weight      REAL NOT NULL DEFAULT 1.0,
     source      TEXT NOT NULL,
+    -- What's true of a tag on one target rather than of the tag: a person's
+    -- role and character belong to the work, not to the person.
+    metadata    TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (tag_id, target_kind, target_id)
 );
 
 CREATE INDEX IF NOT EXISTS tag_assignments_target
     ON tag_assignments(target_kind, target_id);
 
+-- `source` is part of the primary key, so a work can hold a local and a
+-- provider poster at once and readers choose between them by preference. The
+-- primary key also serves lookups by target.
 CREATE TABLE IF NOT EXISTS images (
     target_kind TEXT NOT NULL,
     target_id   BLOB NOT NULL,
     kind        TEXT NOT NULL,
+    source      TEXT NOT NULL CHECK (source IN ('local', 'provider', 'generated')),
     path        TEXT NOT NULL,
     width       INTEGER,
     height      INTEGER,
     language    TEXT,
-    PRIMARY KEY (target_kind, target_id, kind)
+    PRIMARY KEY (target_kind, target_id, kind, source)
 );
-
-CREATE INDEX IF NOT EXISTS images_target ON images(target_kind, target_id);
 
 -- Lexical search is a case-insensitive LIKE on the works table
 -- (Turso 0.6 doesn't expose FTS5 — the FTS5 variant lands when the
@@ -284,6 +268,29 @@ CREATE TABLE IF NOT EXISTS embeddings (
 
 CREATE INDEX IF NOT EXISTS embeddings_target
     ON embeddings(target_kind, target_id);
+CREATE INDEX IF NOT EXISTS embeddings_namespace ON embeddings(namespace);
+
+-- Vectors from different models can't be compared, so the index records the model
+-- it belongs to, and notices when that changes. The endpoint is what an
+-- administrator configured instead of the local embedder, when they did.
+CREATE TABLE IF NOT EXISTS embedding_index (
+    id           INTEGER PRIMARY KEY CHECK (id = 1),
+    namespace    TEXT NOT NULL,
+    model_id     TEXT NOT NULL,
+    dimensions   INTEGER NOT NULL,
+    activated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS embedding_endpoint (
+    id                 INTEGER PRIMARY KEY CHECK (id = 1),
+    url                TEXT NOT NULL,
+    api_key            TEXT,
+    model              TEXT NOT NULL,
+    dimensions         INTEGER NOT NULL,
+    request_dimensions INTEGER,
+    query_prefix       TEXT NOT NULL,
+    document_prefix    TEXT NOT NULL
+);
 
 -- Admins see every library; non-admins only see rows in
 -- user_library_access. Guests default to no-access.
@@ -663,3 +670,180 @@ CREATE TABLE IF NOT EXISTS recordings (
 
 CREATE INDEX IF NOT EXISTS recordings_owner_id ON recordings(owner_id, id);
 CREATE INDEX IF NOT EXISTS recordings_status ON recordings(status, updated_at);
+
+-- Play history: one row per viewing, assembled from progress
+-- heartbeats. `root_work_id` (series / artist / movie) and
+-- `library_id` are denormalised at write time so per-library and
+-- top-played rollups need no parent-chain walk.
+
+CREATE TABLE IF NOT EXISTS play_sessions (
+    id           BLOB PRIMARY KEY,
+    user_id      BLOB NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    work_id      BLOB NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    root_work_id BLOB NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    library_id   BLOB NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    started_at   TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    watched_ms   INTEGER NOT NULL DEFAULT 0,
+    position_ms  INTEGER NOT NULL DEFAULT 0,
+    playing      INTEGER NOT NULL DEFAULT 0,
+    ended        INTEGER NOT NULL DEFAULT 0,
+    device       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS play_sessions_started
+    ON play_sessions(started_at DESC, id DESC);
+
+-- `open_play_session`: a user's latest live viewing of one work.
+CREATE INDEX IF NOT EXISTS play_sessions_user_work
+    ON play_sessions(user_id, work_id, last_seen_at);
+
+CREATE INDEX IF NOT EXISTS play_sessions_user_started
+    ON play_sessions(user_id, started_at);
+
+-- Registered client devices, and the optimized versions prepared for them.
+-- A version is derived from a media file and is never one itself: scans
+-- prune media_files, and clients list those rows as real versions.
+
+CREATE TABLE IF NOT EXISTS devices (
+    -- Chosen by the client, so it survives signing out.
+    id                    BLOB PRIMARY KEY,
+    user_id               BLOB NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name                  TEXT NOT NULL,
+    capabilities_json     TEXT NOT NULL,
+    smart_transcode       INTEGER NOT NULL DEFAULT 0,
+    max_bitrate_bps       INTEGER,
+    allowed_video_codecs_json TEXT NOT NULL DEFAULT '[]',
+    smart_downloads       INTEGER NOT NULL DEFAULT 0,
+    download_budget_bytes INTEGER,
+    downloads_wifi_only   INTEGER NOT NULL DEFAULT 1,
+    created_at            TEXT NOT NULL,
+    last_seen_at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id);
+
+CREATE TABLE IF NOT EXISTS optimized_versions (
+    id            BLOB PRIMARY KEY,
+    media_file_id BLOB NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
+    -- What the version contains; the same plan is never prepared twice.
+    variant_key   TEXT NOT NULL,
+    status        TEXT NOT NULL,           -- "queued" | "running" | "ready" | "failed"
+    -- Lower runs sooner.
+    priority      INTEGER NOT NULL,
+    plan_json     TEXT NOT NULL,
+    -- The source this was made from; a version of an older file is stale.
+    source_size   INTEGER NOT NULL,
+    source_mtime  TEXT NOT NULL,
+    progress      REAL NOT NULL DEFAULT 0.0,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    path          TEXT,
+    size_bytes    INTEGER,
+    index_json    TEXT,
+    probe_json    TEXT,
+    error         TEXT,
+    created_at    TEXT NOT NULL,
+    finished_at   TEXT,
+    last_used_at  TEXT,
+    UNIQUE (media_file_id, variant_key)
+);
+
+CREATE INDEX IF NOT EXISTS optimized_versions_claim ON optimized_versions(status, priority, created_at);
+
+-- Sharing a server by invite, and the other servers a user has linked.
+
+CREATE TABLE IF NOT EXISTS invites (
+    id               BLOB PRIMARY KEY,
+    -- SHA-256 hex; the plaintext only ever exists in the link.
+    token_hash       TEXT NOT NULL UNIQUE,
+    created_by       BLOB NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    library_ids_json TEXT NOT NULL,
+    max_uses         INTEGER NOT NULL,
+    uses             INTEGER NOT NULL DEFAULT 0,
+    expires_at       TEXT NOT NULL,
+    revoked_at       TEXT,
+    created_at       TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS linked_servers (
+    id           BLOB PRIMARY KEY,
+    user_id      BLOB NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    origin       TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    -- This user's key on that server, returned to their clients after sign-in
+    -- so linked servers follow them between devices. Held the way
+    -- user_plugin_secrets holds other services' credentials.
+    api_key      TEXT NOT NULL,
+    sync_enabled INTEGER NOT NULL DEFAULT 1,
+    synced_until TEXT,
+    created_at   TEXT NOT NULL,
+    UNIQUE (user_id, origin)
+);
+
+-- The web CSP is generated from every linked origin.
+CREATE INDEX IF NOT EXISTS linked_servers_origin ON linked_servers(origin);
+
+-- What an administrator changed about smart transcoding from the web UI. A null
+-- column falls back to the server's configuration.
+
+CREATE TABLE IF NOT EXISTS smart_transcoding_settings (
+    id             INTEGER PRIMARY KEY CHECK (id = 1),
+    dir            TEXT,
+    max_storage_gb INTEGER,
+    max_version_gb INTEGER
+);
+
+-- Transcoding choices an administrator made from the web UI. A null column falls
+-- back to the server's configuration.
+
+CREATE TABLE IF NOT EXISTS transcoding_settings (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    tonemap_curve TEXT
+);
+
+-- What a file holds, in columns that can be indexed: filters, and anything else
+-- asking "which titles are 4K", shouldn't have to read every probe to find out.
+-- `media_files.probe_json` stays the raw record these are derived from.
+--
+-- Class table inheritance: every stream has a kind, codec and language, and only
+-- its kind's table holds what's specific to it. Filled when a file is written.
+
+CREATE TABLE IF NOT EXISTS media_streams (
+    id            BLOB PRIMARY KEY,
+    media_file_id BLOB NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL CHECK (kind IN ('video', 'audio', 'subtitle')),
+    position      INTEGER NOT NULL,
+    codec         TEXT,
+    -- Canonical (`canonical_language`), null when undetermined.
+    language      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS media_streams_file ON media_streams(media_file_id);
+CREATE INDEX IF NOT EXISTS media_streams_codec ON media_streams(kind, codec);
+CREATE INDEX IF NOT EXISTS media_streams_language ON media_streams(kind, language);
+
+CREATE TABLE IF NOT EXISTS video_streams (
+    stream_id     BLOB PRIMARY KEY REFERENCES media_streams(id) ON DELETE CASCADE,
+    width         INTEGER NOT NULL,
+    height        INTEGER NOT NULL,
+    resolution    TEXT NOT NULL,
+    dynamic_range TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS video_streams_resolution ON video_streams(resolution);
+CREATE INDEX IF NOT EXISTS video_streams_dynamic_range ON video_streams(dynamic_range);
+
+CREATE TABLE IF NOT EXISTS audio_streams (
+    stream_id BLOB PRIMARY KEY REFERENCES media_streams(id) ON DELETE CASCADE,
+    channels  INTEGER NOT NULL,
+    layout    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS audio_streams_layout ON audio_streams(layout);
+
+CREATE TABLE IF NOT EXISTS subtitle_streams (
+    stream_id BLOB PRIMARY KEY REFERENCES media_streams(id) ON DELETE CASCADE,
+    -- A sidecar file beside the video, rather than muxed into it.
+    external  INTEGER NOT NULL,
+    forced    INTEGER NOT NULL
+);

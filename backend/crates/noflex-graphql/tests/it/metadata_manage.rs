@@ -5,7 +5,8 @@ use std::sync::Arc;
 use async_graphql::Request;
 use noflex_auth::{JwtConfig, Principal, verify_jwt};
 use noflex_core::{
-    ExternalId, ExternalIdKind, LibraryId, MetadataStatus, SessionId, UserId, WorkId, WorkKind,
+    EmbeddingTarget, ExternalId, ExternalIdKind, LibraryId, MetadataStatus, SessionId, UserId,
+    WorkId, WorkKind,
 };
 use noflex_graphql::{SchemaContext, build_schema};
 use noflex_plugin_host::{EngineConfig, PluginRegistry, build_engine};
@@ -116,6 +117,10 @@ async fn update_work_fields_edits_locks_and_marks_user_edited() {
     let lib = seed_library(&store, "Films").await;
     let work = seed_work(lib.id, "Alien");
     store.upsert_work(&work).await.expect("work");
+    store
+        .upsert_embedding(EmbeddingTarget::Work(work.id), "ns", "model", &[1.0, 0.0])
+        .await
+        .expect("vector");
 
     let edit = format!(
         r#"mutation {{ updateWorkFields(workId: "{}", fields: {{ title: "Alien: The Director's Cut", year: 1979 }}) {{ title year metadataStatus lockedFields }} }}"#,
@@ -134,6 +139,13 @@ async fn update_work_fields_edits_locks_and_marks_user_edited() {
     assert_eq!(data["year"], 1979);
     assert_eq!(data["metadataStatus"], "USER_EDITED");
     assert_eq!(data["lockedFields"], serde_json::json!(["TITLE", "YEAR"]));
+
+    // The vector described the old text, so it goes back in the queue.
+    let queued = store
+        .works_missing_embedding("ns", 10, None)
+        .await
+        .expect("missing");
+    assert!(queued.items.iter().any(|item| item.id == work.id));
 
     // Locks and status persist in storage, not just the response.
     let stored = store.get_work(work.id).await.expect("get").expect("work");

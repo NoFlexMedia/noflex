@@ -220,6 +220,11 @@ impl MetadataMutation {
         work.metadata_status = MetadataStatus::UserEdited;
         work.updated_at = OffsetDateTime::now_utc();
         storage.upsert_work(&work).await.map_err(gql_err)?;
+        // Vectors are computed from these fields. The next sweep redoes them, and
+        // search carries on without one in the meantime.
+        if let Err(error) = storage.delete_work_embeddings(work.id).await {
+            tracing::warn!(work = %work.id, %error, "stale embedding not cleared");
+        }
         Ok(work)
     }
 

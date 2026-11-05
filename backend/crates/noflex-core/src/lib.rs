@@ -23,7 +23,7 @@ pub use ids::{
 pub use model::{
     AudioCodec, AudioObjectType, ChannelLayout, ColorPrimaries, DolbyVisionProfile,
     EmbeddingTarget, ExternalId, ExternalIdKind, HdrTransfer, ImageKind, MatrixCoefficients,
-    MetadataStatus, PixelFormat, PlayTarget, PlayTargetKind, SubtitleCodec, TagTarget, UserRole,
-    VideoCodec, VideoProfile, WorkField, WorkKind,
+    MetadataStatus, PixelFormat, PlayTarget, PlayTargetKind, SubtitleCodec, TagTarget,
+    TonemapCurve, UserRole, VideoCodec, VideoProfile, WorkField, WorkKind,
 };
 pub use text::slugify;

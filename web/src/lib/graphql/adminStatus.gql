@@ -49,6 +49,7 @@ query AdminTranscoder {
     fellBack
     hwaccels
     vaapiDevice
+    gpuTonemap
     encoders { name media backend available }
     decoders { name media backend available }
     ladder { maxPixels videoCodec videoProfile audioCodec container bitrateKbps encoder encoderAvailable }

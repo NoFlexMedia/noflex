@@ -1568,6 +1568,11 @@ type Mutation {
 	"""
 	registerDevice(id: ID!, name: String!, capabilities: ClientCapabilities!): Device!
 	"""
+	Choose the curve HDR is tone-mapped with; null leaves it to the server's
+	configuration. Streams already running keep theirs. Administrator only.
+	"""
+	setTonemapCurve(curve: TonemapCurve): TonemapCurve!
+	"""
 	Set where smart transcoding writes and how much it may use. Null leaves
 	a setting to the server's configuration. Versions already prepared stay
 	where they are and keep playing. Administrator only.
@@ -2646,6 +2651,11 @@ type Query {
 	"""
 	myDevices: [Device!]!
 	"""
+	The curve HDR is tone-mapped with, for streams starting from now.
+	Administrator only.
+	"""
+	tonemapCurve: TonemapCurve!
+	"""
 	Where smart transcoding writes and how much it may use. Administrator
 	only.
 	"""
@@ -3400,6 +3410,30 @@ type TagSummaryEdge {
 	cursor: String!
 }
 
+"""
+The curve mapping HDR down to SDR when a re-encode has to. A matter of taste
+more than correctness, so an administrator picks.
+"""
+enum TonemapCurve {
+	"""
+	Filmic, with soft highlights.
+	"""
+	HABLE
+	"""
+	Keeps midtones close to the source and compresses only the highlights.
+	"""
+	MOBIUS
+	REINHARD
+	"""
+	Only on the GPU path; the CPU path uses [`TonemapCurve::Hable`] instead.
+	"""
+	SPLINE
+	"""
+	Only on the GPU path; the CPU path uses [`TonemapCurve::Hable`] instead.
+	"""
+	BT2390
+}
+
 type TopPlayedItem {
 	plays: Int!
 	watchedMs: Int!
@@ -3495,6 +3529,11 @@ type TranscoderInfo {
 	"""
 	hwaccels: [String!]!
 	vaapiDevice: String
+	"""
+	HDR is tone-mapped on the GPU, where the encoder allows it; otherwise
+	on the CPU.
+	"""
+	gpuTonemap: Boolean!
 	"""
 	Encoders the ladder can map to, with availability in this ffmpeg.
 	"""

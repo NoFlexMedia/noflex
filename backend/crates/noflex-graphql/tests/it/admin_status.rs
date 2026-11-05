@@ -94,6 +94,7 @@ impl AdminStatusService for StubService {
             fell_back: false,
             hwaccels: Vec::new(),
             vaapi_device: None,
+            gpu_tonemap: false,
             encoders: Vec::new(),
             decoders: Vec::new(),
             ladder: Vec::new(),

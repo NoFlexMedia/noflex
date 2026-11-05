@@ -69,6 +69,8 @@ pub struct TranscoderConfig {
     pub fallback: TranscodeFallback,
     pub ladder: Vec<LadderEntry>,
     pub optimize: OptimizeConfig,
+    /// The curve HDR is tone-mapped with; administrators can override it.
+    pub tonemap_curve: noflex_core::TonemapCurve,
 }
 
 /// Preparing versions ahead of time for registered devices.
@@ -245,6 +247,7 @@ impl Default for Config {
                 fallback: TranscodeFallback::Auto,
                 ladder: default_ladder(),
                 optimize: OptimizeConfig::default(),
+                tonemap_curve: noflex_core::TonemapCurve::default(),
             },
             plugin: PluginConfig {
                 search_path: default_search_path(),
@@ -385,6 +388,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("CROSS_ORIGIN", "cross_origin"),
     ("TRANSCODER_HWACCEL", "transcoder.hwaccel"),
     ("TRANSCODER_FALLBACK", "transcoder.fallback"),
+    ("TRANSCODER_TONEMAP_CURVE", "transcoder.tonemap_curve"),
     ("TRANSCODER_OPTIMIZE_ENABLED", "transcoder.optimize.enabled"),
     ("TRANSCODER_OPTIMIZE_DIR", "transcoder.optimize.dir"),
     (

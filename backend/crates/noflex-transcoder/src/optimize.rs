@@ -15,8 +15,8 @@ use crate::{
     },
     encoder::Encoder,
     ffmpeg_argv::{
-        LadderEntry, TranscodeInput, TranscodeRequest, audio_encoder_flag, push_video,
-        scaled_bitrate_kbps,
+        GPU_TONEMAP_DEVICE_ARGS, LadderEntry, TonemapOptions, TranscodeInput, TranscodeRequest,
+        audio_encoder_flag, push_video, scaled_bitrate_kbps,
     },
     hls::{HlsVariant, HlsVideoRange, audio_bitrate_bps, audio_codec_string, video_codec_string},
     package::{AudioRendition, PACKAGE_MOVFLAGS, PackageIndex, TrackKind, master_playlist},
@@ -387,6 +387,7 @@ pub fn build_optimize_argv(
     target: &OptimizeTarget,
     encoder: Encoder,
     vaapi_device: Option<&Path>,
+    tonemap: TonemapOptions,
     output: &Path,
 ) -> Vec<String> {
     let mut argv: Vec<String> = [
@@ -434,6 +435,18 @@ pub fn build_optimize_argv(
         },
     );
     request.vaapi_device = vaapi_device.map(Path::to_path_buf);
+    request.tonemap = tonemap;
+    // A device created after the input opened would be too late.
+    if request.tonemaps_on_gpu() {
+        let input_at = argv
+            .iter()
+            .position(|arg| arg == "-protocol_whitelist")
+            .unwrap_or(argv.len());
+        argv.splice(
+            input_at..input_at,
+            GPU_TONEMAP_DEVICE_ARGS.map(String::from),
+        );
+    }
     push_video(&mut argv, &request);
 
     for (output_index, track) in target.audio.iter().enumerate() {
@@ -774,7 +787,14 @@ mod tests {
             devices: vec![],
         };
         let raw = dir.join("raw.mp4");
-        let argv = build_optimize_argv(&input, &target, Encoder::Software264, None, &raw);
+        let argv = build_optimize_argv(
+            &input,
+            &target,
+            Encoder::Software264,
+            None,
+            TonemapOptions::default(),
+            &raw,
+        );
         let output = std::process::Command::new(&argv[0])
             .args(&argv[1..])
             .output()

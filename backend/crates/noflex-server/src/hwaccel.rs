@@ -234,6 +234,7 @@ mod tests {
             }
         }
         HwDetect {
+            gpu_tonemap: false,
             hwaccels,
             encoders,
             vaapi_device: has_vaapi_dev.then(|| PathBuf::from("/dev/dri/renderD128")),

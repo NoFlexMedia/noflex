@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use noflex_core::{AudioCodec, VideoCodec, VideoProfile};
+use noflex_core::{AudioCodec, TonemapCurve, VideoCodec, VideoProfile};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -148,7 +148,7 @@ pub struct SegmentConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaylistType {
-    Vod,
+    /// Grows as the encode goes; ffmpeg writes a VOD playlist only at the end.
     Event,
     /// Sliding window: no playlist type, old segments deleted.
     Live,
@@ -158,7 +158,7 @@ impl Default for SegmentConfig {
     fn default() -> Self {
         Self {
             duration_secs: 4,
-            playlist_type: PlaylistType::Vod,
+            playlist_type: PlaylistType::Event,
         }
     }
 }
@@ -188,6 +188,8 @@ pub struct TranscodeRequest {
     pub segment: SegmentConfig,
     /// Resolved VAAPI render node for `-vaapi_device` / `hwupload`.
     pub vaapi_device: Option<PathBuf>,
+    /// How to tone-map, when the plan does.
+    pub tonemap: TonemapOptions,
     pub start_secs: Option<f64>,
     /// Bounds the output; also lets progress report a percentage.
     pub duration_secs: Option<f64>,
@@ -217,6 +219,7 @@ impl TranscodeRequest {
             ladder,
             segment: SegmentConfig::default(),
             vaapi_device: None,
+            tonemap: TonemapOptions::default(),
             start_secs: None,
             duration_secs: None,
             audio_stream: None,
@@ -232,11 +235,6 @@ impl TranscodeRequest {
         }
     }
 }
-
-/// The standard HDR→SDR tonemap chain: linearise, map primaries to
-/// BT.709, Hable tonemap, back to BT.709 limited range.
-pub const HDR_TONEMAP_FILTER: &str = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,\
-     tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv";
 
 /// The argv the ffmpeg subprocess receives, `argv[0] == "ffmpeg"`.
 /// Pure over the request. Progress is written as `key=value` blocks
@@ -259,6 +257,9 @@ pub fn build_ffmpeg_argv(req: &TranscodeRequest) -> Vec<String> {
 
     if matches!(req.plan.video, VideoPlan::Encode { .. }) {
         argv.extend(req.encoder.extra_args(req.vaapi_device.as_deref()));
+    }
+    if req.tonemaps_on_gpu() {
+        argv.extend(GPU_TONEMAP_DEVICE_ARGS.map(String::from));
     }
     if let Some(start) = req.start_secs {
         argv.extend(["-ss".to_string(), format!("{start}")]);
@@ -346,9 +347,14 @@ pub(crate) fn push_video(argv: &mut Vec<String>, req: &TranscodeRequest) {
                 // and seekable.
                 "-force_key_frames".to_string(),
                 format!("expr:gte(t,n_forced*{})", req.segment.duration_secs.max(1)),
-                "-vf".to_string(),
-                video_filter(req, height, tonemap),
             ]);
+            if tonemap && !req.tonemaps_on_gpu() {
+                argv.extend([
+                    "-filter_threads".to_string(),
+                    CPU_TONEMAP_THREADS.to_string(),
+                ]);
+            }
+            argv.extend(["-vf".to_string(), video_filter(req, width, height, tonemap)]);
         }
     }
 }
@@ -403,15 +409,70 @@ pub fn audio_encoder_flag(codec: AudioCodec) -> &'static str {
     }
 }
 
+/// How to tone-map an HDR source.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TonemapOptions {
+    /// Run on the GPU where the encoder allows it; see
+    /// [`crate::hwdetect::gpu_tonemap_works`].
+    pub gpu: bool,
+    pub curve: TonemapCurve,
+}
+
+/// Filter threads for tone-mapping on the CPU. Its passes scale poorly: past
+/// this, more threads mostly burn CPU waiting on each other, and ffmpeg's
+/// default of one per core costs twice the CPU for about the same speed.
+const CPU_TONEMAP_THREADS: &str = "8";
+
+/// HDR to SDR at `width`×`height` on the CPU. Each pass touches every pixel in
+/// floating point, so there are as few as possible and they run at the output
+/// size: converting and scaling together means a 1080p encode of a 4K source
+/// never does this work at 4K.
+pub fn cpu_tonemap_filter(width: u32, height: u32, curve: TonemapCurve) -> String {
+    format!(
+        "zscale=w={width}:h={height}:t=linear:npl=100:p=bt709,format=gbrpf32le,\
+         tonemap=tonemap={}:desat=0,zscale=t=bt709:m=bt709:r=tv",
+        curve.cpu_name()
+    )
+}
+
+/// Arguments creating the device [`gpu_tonemap_filter`] runs on.
+pub const GPU_TONEMAP_DEVICE_ARGS: [&str; 4] =
+    ["-init_hw_device", "vulkan=vk", "-filter_hw_device", "vk"];
+
+/// [`cpu_tonemap_filter`] on the GPU, for a fraction of the CPU time. Peak
+/// detection stays off because a seek starts a new encode, and adapting from
+/// nothing would visibly shift the brightness each time.
+pub fn gpu_tonemap_filter(width: u32, height: u32, curve: TonemapCurve) -> String {
+    let curve = curve.gpu_name();
+    format!(
+        "format=yuv420p10le,hwupload,libplacebo=w={width}:h={height}:tonemapping={curve}:\
+         peak_detect=false:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:\
+         format=yuv420p,hwdownload,format=yuv420p"
+    )
+}
+
+impl TranscodeRequest {
+    /// Whether this request's tone-mapping runs on the GPU. VAAPI and QSV stay
+    /// on the CPU path: they bind the filter device to their own, which their
+    /// final upload needs.
+    pub(crate) fn tonemaps_on_gpu(&self) -> bool {
+        self.tonemap.gpu
+            && matches!(self.plan.video, VideoPlan::Encode { tonemap: true, .. })
+            && !matches!(self.encoder.backend(), HwBackend::Vaapi | HwBackend::Qsv)
+    }
+}
+
 /// Scale / tonemap / burn-in chain. VAAPI and QSV encode from hardware
 /// frames, so the chain ends in an upload; software-side work (tonemap,
 /// subtitles) always runs before it. Software and other encoders get an
 /// explicit 8-bit 4:2:0 format, or a 10-bit or tonemapped source would
 /// make libx264 emit High 10 / 4:4:4 that browsers can't decode.
-fn video_filter(req: &TranscodeRequest, height: u32, tonemap: bool) -> String {
+fn video_filter(req: &TranscodeRequest, width: u32, height: u32, tonemap: bool) -> String {
     let mut chain: Vec<String> = Vec::new();
-    if tonemap {
-        chain.push(HDR_TONEMAP_FILTER.to_string());
+    let on_gpu = req.tonemaps_on_gpu();
+    let width = width & !1;
+    if tonemap && !on_gpu {
+        chain.push(cpu_tonemap_filter(width, height, req.tonemap.curve));
     }
     let subtitles = req.subtitle_burn.as_ref().map(|source| match source {
         SubtitleBurnSource::Embedded(idx) => {
@@ -440,7 +501,11 @@ fn video_filter(req: &TranscodeRequest, height: u32, tonemap: bool) -> String {
             ));
         }
         backend => {
-            chain.push(format!("scale=-2:{height}"));
+            if on_gpu {
+                chain.push(gpu_tonemap_filter(width, height, req.tonemap.curve));
+            } else if !tonemap {
+                chain.push(format!("scale=-2:{height}"));
+            }
             if let Some(subtitles) = subtitles {
                 // An input seek restarts timestamps at zero, but the
                 // subtitles filter matches cues by source time: shift
@@ -476,7 +541,6 @@ fn push_hls(argv: &mut Vec<String>, req: &TranscodeRequest) {
         req.segment.duration_secs.to_string(),
     ]);
     match req.segment.playlist_type {
-        PlaylistType::Vod => argv.extend(["-hls_playlist_type", "vod"].map(String::from)),
         PlaylistType::Event => argv.extend(["-hls_playlist_type", "event"].map(String::from)),
         PlaylistType::Live => argv.extend(
             [
@@ -680,7 +744,7 @@ mod tests {
         let argv = build_ffmpeg_argv(&req(Encoder::Software264));
         assert_eq!(after(&argv, "-f"), "hls");
         assert_eq!(after(&argv, "-hls_time"), "4");
-        assert_eq!(after(&argv, "-hls_playlist_type"), "vod");
+        assert_eq!(after(&argv, "-hls_playlist_type"), "event");
         assert_eq!(
             after(&argv, "-hls_segment_filename"),
             "/cache/transcode/br/segment_%05d.ts"
@@ -729,16 +793,61 @@ mod tests {
     }
 
     #[test]
+    fn gpu_tonemap_replaces_the_cpu_chain_and_its_scale() {
+        let mut r = req(Encoder::Nvenc264);
+        r.plan = encode_plan(true);
+        r.tonemap.gpu = true;
+        let argv = build_ffmpeg_argv(&r);
+        assert!(!argv.contains(&"-filter_threads".to_string()));
+        let filter = vf(&argv);
+        assert!(
+            filter.starts_with(
+                "format=yuv420p10le,hwupload,libplacebo=w=1920:h=1080:tonemapping=hable:"
+            ),
+            "{filter}"
+        );
+        assert!(
+            !filter.contains("zscale") && !filter.contains("scale=-2"),
+            "{filter}"
+        );
+        assert!(
+            filter.ends_with("hwdownload,format=yuv420p,format=yuv420p"),
+            "{filter}"
+        );
+        // The device has to exist before the input opens.
+        let device = argv
+            .iter()
+            .position(|arg| arg == "-init_hw_device")
+            .expect("device");
+        assert!(device < argv.iter().position(|arg| arg == "-i").unwrap());
+        // An SDR encode has nothing to tone-map, so it wants no GPU device.
+        r.plan = encode_plan(false);
+        assert!(!build_ffmpeg_argv(&r).contains(&"-init_hw_device".to_string()));
+    }
+
+    #[test]
+    fn gpu_tonemap_leaves_vaapi_and_qsv_on_the_cpu_path() {
+        for encoder in [Encoder::Vaapi264, Encoder::Qsv264] {
+            let mut r = req(encoder);
+            r.plan = encode_plan(true);
+            r.tonemap.gpu = true;
+            let argv = build_ffmpeg_argv(&r);
+            assert!(vf(&argv).starts_with("zscale=w=1920:h=1080:"));
+            assert!(!argv.contains(&"-init_hw_device".to_string()));
+        }
+    }
+
+    #[test]
     fn tonemap_runs_first_and_vaapi_uploads_last() {
         let mut r = req(Encoder::Vaapi264);
         r.plan = encode_plan(true);
         let argv = build_ffmpeg_argv(&r);
         let chain = vf(&argv);
-        assert!(chain.starts_with(HDR_TONEMAP_FILTER), "{chain}");
         assert!(
-            chain.ends_with("scale=-2:1080,format=nv12,hwupload"),
+            chain.starts_with(&cpu_tonemap_filter(1920, 1080, TonemapCurve::Hable)),
             "{chain}"
         );
+        assert!(chain.ends_with("r=tv,format=nv12,hwupload"), "{chain}");
         let mut r = req(Encoder::Qsv264);
         r.plan = encode_plan(true);
         let argv = build_ffmpeg_argv(&r);
@@ -746,7 +855,30 @@ mod tests {
         let mut r = req(Encoder::Software264);
         r.plan = encode_plan(true);
         let argv = build_ffmpeg_argv(&r);
-        assert!(vf(&argv).ends_with("scale=-2:1080,format=yuv420p"));
+        assert!(vf(&argv).ends_with("r=tv,format=yuv420p"));
+    }
+
+    #[test]
+    fn the_curve_reaches_the_filter_and_falls_back_where_cpu_lacks_it() {
+        let mut r = req(Encoder::Software264);
+        r.plan = encode_plan(true);
+        r.tonemap.curve = TonemapCurve::Mobius;
+        assert!(vf(&build_ffmpeg_argv(&r)).contains("tonemap=tonemap=mobius:"));
+        r.tonemap.curve = TonemapCurve::Bt2390;
+        assert!(vf(&build_ffmpeg_argv(&r)).contains("tonemap=tonemap=hable:"));
+        r.tonemap.gpu = true;
+        assert!(vf(&build_ffmpeg_argv(&r)).contains("tonemapping=bt.2390:"));
+    }
+
+    #[test]
+    fn cpu_tonemap_holds_back_filter_threads() {
+        let mut r = req(Encoder::Software264);
+        r.plan = encode_plan(true);
+        let argv = build_ffmpeg_argv(&r);
+        assert_eq!(after(&argv, "-filter_threads"), CPU_TONEMAP_THREADS);
+        // Nothing else needs the cap.
+        r.plan = encode_plan(false);
+        assert!(!build_ffmpeg_argv(&r).contains(&"-filter_threads".to_string()));
     }
 
     #[test]

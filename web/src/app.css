@@ -100,6 +100,8 @@ dialog::backdrop { background: rgb(3 4 6 / 0.72); backdrop-filter: blur(6px); }
 
 /* ---------- Page scaffolding ---------- */
 .page { padding: calc(var(--topbar-h) + 20px) var(--gutter) 96px; max-width: 1680px; margin: 0 auto; }
+/* For pages of edge-to-edge art and rails, which the cap would cut off mid-screen. */
+.page.full-bleed { max-width: none; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; margin-bottom: 28px; }
 .page-head h1 { font-size: clamp(1.9rem, 3.2vw, 2.7rem); }
 .page-head p { color: var(--text-2); margin-top: 6px; }

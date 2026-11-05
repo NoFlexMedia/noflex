@@ -397,7 +397,7 @@
     {/if}
 
     {#if edition && !isContainer}
-      <TechSpecs {edition} file={mediaFile} onchapter={(ms) => play(false, ms)} />
+      <TechSpecs {edition} file={mediaFile} audio={chosenAudio} onchapter={(ms) => play(false, ms)} />
     {/if}
   </div>
 

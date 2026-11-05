@@ -625,6 +625,56 @@ mod tests {
         assert!(!kill.success(), "pid {pid} should be dead");
     }
 
+    /// What the server's shutdown relies on: dropping the runtime drops the
+    /// task watching ffmpeg, and that has to take ffmpeg with it.
+    #[test]
+    fn shutting_down_the_runtime_kills_the_subprocess() {
+        let dir = std::env::temp_dir().join(format!("noflex-job-test-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pidfile = dir.join("ffmpeg.pid");
+        // `exec` so the pid is the long-running process itself, not a shell
+        // whose death would leave its `sleep` behind.
+        let (mock, _) =
+            make_mock_ffmpeg(&format!("echo $$ > {}\nexec sleep 60", pidfile.display()));
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let pid: i32 = runtime.block_on(async {
+            let mgr = FfmpegJobManager::new(&mock, &dir);
+            mgr.start_job(
+                MediaFileId::from_uuid(uuid::Uuid::now_v7()),
+                make_request(dir.join("in.mp4"), dir.join("out.m3u8")),
+            )
+            .await
+            .expect("start_job");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(pid) = std::fs::read_to_string(&pidfile)
+                    .ok()
+                    .and_then(|s| s.trim().parse().ok())
+                {
+                    break pid;
+                }
+                assert!(Instant::now() < deadline, "pidfile never appeared");
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        });
+        runtime.shutdown_timeout(Duration::from_secs(5));
+        let alive = || {
+            std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+                !stat
+                    .rsplit(')')
+                    .next()
+                    .unwrap_or("")
+                    .trim_start()
+                    .starts_with('Z')
+            })
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while alive() {
+            assert!(Instant::now() < deadline, "pid {pid} outlived the runtime");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
     #[test]
     fn progress_parser_emits_one_block_per_progress_line() {
         let mut p = ProgressParser::default();

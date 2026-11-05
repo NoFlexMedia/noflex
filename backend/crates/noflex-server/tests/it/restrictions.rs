@@ -388,6 +388,7 @@ fn config() -> Arc<TranscoderConfig> {
         hwaccel: HwAccel::None,
         fallback: TranscodeFallback::Auto,
         optimize: Default::default(),
+        tonemap_curve: Default::default(),
         ladder: vec![ladder(480, 2_000), ladder(720, 4_000), ladder(1080, 8_000)],
     })
 }

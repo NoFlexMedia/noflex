@@ -26,7 +26,10 @@ pub async fn spawn(
             .stdin(Stdio::null())
             // stdout carries `-progress` blocks; stderr the error tail.
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            // Ties ffmpeg to the task watching it, so it can't outlive the
+            // server: shutting down the runtime drops that task.
+            .kill_on_drop(true);
         match cmd.spawn() {
             // Overlay filesystems (Nix store, some CI runners)
             // briefly report ETXTBSY when exec'ing a just-written

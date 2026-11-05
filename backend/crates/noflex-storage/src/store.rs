@@ -500,6 +500,12 @@ pub trait Storage: Send + Sync + 'static {
     /// Return running versions to the queue, for after a restart: nothing can
     /// still be working on them. Returns how many moved.
     async fn requeue_running_optimized_versions(&self) -> StorageResult<u64>;
+    /// The tone-mapping curve an administrator chose; `None` until they do.
+    async fn tonemap_curve(&self) -> StorageResult<Option<noflex_core::TonemapCurve>>;
+    async fn set_tonemap_curve(
+        &self,
+        curve: Option<noflex_core::TonemapCurve>,
+    ) -> StorageResult<()>;
     /// What an administrator has overridden; defaults until they do.
     async fn smart_transcoding_settings(&self) -> StorageResult<SmartTranscodingSettings>;
     async fn set_smart_transcoding_settings(

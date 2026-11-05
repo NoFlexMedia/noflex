@@ -352,7 +352,9 @@ async function codecSupport(codec: VideoCodec, supports: Probe, type: "media-sou
   const profiles = supportedProfiles(codec, ok);
   if (!profiles.length) return null;
   const top = profiles[0];
-  const level = highestLevel(codec, top, bitDepthCandidates(codec, top).at(-1), ok);
+  // Walk levels at a depth the profile accepts: Firefox takes AV1 Professional at 12 bits only.
+  const walkDepth = bitDepthCandidates(codec, top).findLast((depth) => ok(codecString(codec, top, undefined, depth)));
+  const level = highestLevel(codec, top, walkDepth, ok);
   const bitDepth = highestBitDepth(codec, top, level, ok);
   const codecs = codecString(codec, top, level, bitDepth);
   const [resolution, ranges] = await Promise.all([

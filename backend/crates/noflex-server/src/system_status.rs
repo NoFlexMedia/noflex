@@ -451,6 +451,7 @@ impl SystemStatusService {
             fell_back: configured.is_some_and(|c| c != resolved),
             hwaccels: det.hwaccels.clone(),
             vaapi_device: det.vaapi_device.as_ref().map(|p| p.display().to_string()),
+            gpu_tonemap: det.gpu_tonemap,
             encoders,
             decoders,
             ladder,

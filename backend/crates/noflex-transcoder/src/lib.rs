@@ -39,8 +39,8 @@ pub use explain::{
     PlaybackDecisionInfo, PlaybackPlanKind, PlaybackReason, PlaybackRouteKind, StreamSummary,
 };
 pub use ffmpeg_argv::{
-    HDR_TONEMAP_FILTER, InputError, LadderEntry, NETWORK_INPUT_SCHEMES, NETWORK_PROTOCOL_WHITELIST,
-    PlaylistType, SegmentConfig, SubtitleBurnSource, TranscodeInput, TranscodeRequest,
+    InputError, LadderEntry, NETWORK_INPUT_SCHEMES, NETWORK_PROTOCOL_WHITELIST, PlaylistType,
+    SegmentConfig, SubtitleBurnSource, TonemapOptions, TranscodeInput, TranscodeRequest,
     build_ffmpeg_argv, is_network_url, scaled_bitrate_kbps,
 };
 pub use hls::EncodedVideo;

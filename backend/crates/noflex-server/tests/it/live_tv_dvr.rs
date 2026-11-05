@@ -547,6 +547,7 @@ fn transcoder_config() -> Arc<TranscoderConfig> {
         hwaccel: HwAccel::None,
         fallback: TranscodeFallback::Auto,
         optimize: Default::default(),
+        tonemap_curve: Default::default(),
         ladder: vec![LadderEntry {
             max_pixels: 921_600,
             video_codec: VideoCodec::H264,

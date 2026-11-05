@@ -65,7 +65,7 @@
 
 <svelte:head><title>Home · NoFlex</title></svelte:head>
 
-<div class="page home">
+<div class="page home full-bleed">
   {#if $home.fetching && !$home.data}
     <div class="hero-skeleton skeleton" aria-hidden="true"></div>
     {#each [0, 1] as row}

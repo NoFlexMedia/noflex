@@ -865,6 +865,17 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.writer().await?;
         repo::optimized_versions::requeue_running(&conn).await
     }
+    async fn tonemap_curve(&self) -> StorageResult<Option<noflex_core::TonemapCurve>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::optimized_versions::tonemap_curve(&conn).await
+    }
+    async fn set_tonemap_curve(
+        &self,
+        curve: Option<noflex_core::TonemapCurve>,
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::optimized_versions::set_tonemap_curve(&conn, curve).await
+    }
     async fn smart_transcoding_settings(
         &self,
     ) -> StorageResult<noflex_storage::domain::SmartTranscodingSettings> {

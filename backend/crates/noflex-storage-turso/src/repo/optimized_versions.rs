@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use noflex_core::{MediaFileId, OptimizedVersionId};
+use noflex_core::{MediaFileId, OptimizedVersionId, TonemapCurve};
 use noflex_storage::{
     domain::{OptimizedVersion, OptimizedVersionStatus, SmartTranscodingSettings},
     error::StorageResult,
@@ -239,6 +239,37 @@ pub(crate) async fn set_settings(
             gb(settings.max_storage_gb),
             gb(settings.max_version_gb),
         ],
+    )
+    .await
+    .map_err(map_turso)?;
+    Ok(())
+}
+
+pub(crate) async fn tonemap_curve(conn: &Connection) -> StorageResult<Option<TonemapCurve>> {
+    let mut rows = conn
+        .query("SELECT tonemap_curve FROM transcoding_settings", ())
+        .await
+        .map_err(map_turso)?;
+    let Some(row) = rows.next().await.map_err(map_turso)? else {
+        return Ok(None);
+    };
+    col_text_opt(&row.get_value(0).map_err(map_turso)?)?
+        .map(|curve| parse_json(&curve))
+        .transpose()
+}
+
+pub(crate) async fn set_tonemap_curve(
+    conn: &Connection,
+    curve: Option<TonemapCurve>,
+) -> StorageResult<()> {
+    let curve = curve
+        .map(|curve| to_json(&curve))
+        .transpose()?
+        .map_or(Value::Null, Value::Text);
+    conn.execute(
+        "INSERT INTO transcoding_settings (id, tonemap_curve) VALUES (1, ?1) \
+         ON CONFLICT(id) DO UPDATE SET tonemap_curve = excluded.tonemap_curve",
+        vec![curve],
     )
     .await
     .map_err(map_turso)?;

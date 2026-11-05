@@ -248,6 +248,8 @@ fn worker(fixture: &Fixture, config: OptimizeConfig) -> OptimizeWorker {
         ffmpeg_path: "ffmpeg".into(),
         backend: HwBackend::Software,
         vaapi_device: None,
+        gpu_tonemap: false,
+        tonemap_curve: Default::default(),
         dir: fixture.dir.join("optimized"),
     }
 }

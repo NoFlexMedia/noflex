@@ -690,6 +690,8 @@ pub struct SchemaContext {
     /// Absent → `smartTranscoding` errors with "smart transcoding not
     /// configured".
     pub smart_transcoding: Option<devices::SmartTranscodingDefaults>,
+    /// The configured tone-mapping curve, until an administrator picks one.
+    pub tonemap_curve: Option<noflex_core::TonemapCurve>,
 }
 
 impl SchemaContext {
@@ -774,6 +776,9 @@ pub fn build_schema(ctx: SchemaContext) -> NoflexSchema {
     }
     if let Some(smart_transcoding) = ctx.smart_transcoding {
         builder = builder.data(smart_transcoding);
+    }
+    if let Some(tonemap_curve) = ctx.tonemap_curve {
+        builder = builder.data(tonemap_curve);
     }
     builder.finish()
 }

@@ -54,6 +54,10 @@ pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
         "0011_tag_assignment_metadata.sql",
         include_str!("../migrations/0011_tag_assignment_metadata.sql"),
     ),
+    (
+        "0012_transcoding_settings.sql",
+        include_str!("../migrations/0012_transcoding_settings.sql"),
+    ),
 ];
 
 const META_KEY_PREFIX: &str = "migration:";

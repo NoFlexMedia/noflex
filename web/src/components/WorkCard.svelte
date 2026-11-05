@@ -37,7 +37,8 @@
 </script>
 
 <div class="card" class:wide bind:this={card}>
-  <a class="hit" {href} onclick={() => markMorph(key, card)} aria-label={label}>
+  <!-- Preloading a linked server's title would switch servers for a page we may not open. -->
+  <a class="hit" {href} data-sveltekit-preload-data={work.server ? "off" : undefined} onclick={() => markMorph(key, card)} aria-label={label}>
     <div class="frame" use:tilt>
       <Artwork {work} kind={wide ? "thumb" : "poster"} {width} {eager} vt={!wide && morph.key === key ? "poster" : null} />
       <span class="glare" aria-hidden="true"></span>

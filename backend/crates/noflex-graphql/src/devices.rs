@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use async_graphql::{Context, Json, Object, SimpleObject};
-use noflex_core::{DeviceId, VideoCodec};
+use noflex_core::{DeviceId, TonemapCurve, VideoCodec};
 use noflex_plugin_host::PluginRegistry;
 use noflex_storage::{
     RequestUser, Storage,
@@ -46,6 +46,13 @@ pub struct SmartTranscoding {
     pub default_directory: String,
     pub default_max_storage_gb: u64,
     pub default_max_version_gb: Option<u64>,
+}
+
+async fn tonemap_curve(ctx: &Context<'_>) -> async_graphql::Result<TonemapCurve> {
+    let chosen = storage(ctx)?.tonemap_curve().await.map_err(gql_err)?;
+    Ok(chosen
+        .or_else(|| ctx.data_opt::<TonemapCurve>().copied())
+        .unwrap_or_default())
 }
 
 async fn smart_transcoding(ctx: &Context<'_>) -> async_graphql::Result<SmartTranscoding> {
@@ -131,6 +138,13 @@ impl DevicesQuery {
             .devices_for_user(principal.user_id)
             .await
             .map_err(gql_err)
+    }
+
+    /// The curve HDR is tone-mapped with, for streams starting from now.
+    /// Administrator only.
+    async fn tonemap_curve(&self, ctx: &Context<'_>) -> async_graphql::Result<TonemapCurve> {
+        access::require_admin(ctx)?;
+        tonemap_curve(ctx).await
     }
 
     /// Where smart transcoding writes and how much it may use. Administrator
@@ -301,6 +315,21 @@ impl DevicesMutation {
         device.capabilities = Json(capabilities);
         device.last_seen_at = now;
         store_device(storage, device).await
+    }
+
+    /// Choose the curve HDR is tone-mapped with; null leaves it to the server's
+    /// configuration. Streams already running keep theirs. Administrator only.
+    async fn set_tonemap_curve(
+        &self,
+        ctx: &Context<'_>,
+        curve: Option<TonemapCurve>,
+    ) -> async_graphql::Result<TonemapCurve> {
+        access::require_admin(ctx)?;
+        storage(ctx)?
+            .set_tonemap_curve(curve)
+            .await
+            .map_err(gql_err)?;
+        tonemap_curve(ctx).await
     }
 
     /// Set where smart transcoding writes and how much it may use. Null leaves

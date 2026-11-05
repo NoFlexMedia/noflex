@@ -346,6 +346,46 @@ impl FromStr for AudioCodec {
     }
 }
 
+/// The curve mapping HDR down to SDR when a re-encode has to. A matter of taste
+/// more than correctness, so an administrator picks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Enum)]
+#[serde(rename_all = "snake_case")]
+pub enum TonemapCurve {
+    /// Filmic, with soft highlights.
+    #[default]
+    Hable,
+    /// Keeps midtones close to the source and compresses only the highlights.
+    Mobius,
+    Reinhard,
+    /// Only on the GPU path; the CPU path uses [`TonemapCurve::Hable`] instead.
+    Spline,
+    /// Only on the GPU path; the CPU path uses [`TonemapCurve::Hable`] instead.
+    #[graphql(name = "BT2390")]
+    Bt2390,
+}
+
+impl TonemapCurve {
+    /// Its name to libplacebo's `tonemapping`.
+    pub fn gpu_name(self) -> &'static str {
+        match self {
+            Self::Hable => "hable",
+            Self::Mobius => "mobius",
+            Self::Reinhard => "reinhard",
+            Self::Spline => "spline",
+            Self::Bt2390 => "bt.2390",
+        }
+    }
+
+    /// Its name to ffmpeg's `tonemap` filter, which has fewer.
+    pub fn cpu_name(self) -> &'static str {
+        match self {
+            Self::Mobius => "mobius",
+            Self::Reinhard => "reinhard",
+            Self::Hable | Self::Spline | Self::Bt2390 => "hable",
+        }
+    }
+}
+
 /// H.264/H.265/AV1/VP9 codec profile tier. Drives direct-play
 /// decisions (e.g. a 10-bit HEVC Main stream on a Main10-only client).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Enum)]

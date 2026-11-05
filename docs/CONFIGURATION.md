@@ -161,6 +161,13 @@ What a re-encode can produce. A rung is a video profile and the largest picture 
 
 Live transcodes prefer codecs your hardware encoder has proven it can do at startup, in the order the ladder lists them, then H.264. Software HEVC and AV1 can't reliably keep up with playback, so they're only used for clients that can't decode H.264.
 
+### `transcoder.tonemap_curve`
+- **Type:** `hable` | `mobius` | `reinhard` | `spline` | `bt2390`
+- **Default:** `hable`
+- **Env:** `NOFLEX_TRANSCODER_TONEMAP_CURVE`
+
+The curve HDR is mapped to SDR with when a client can't present the HDR itself. Administrators can override it under Administration → Transcoding. Tone-mapping runs on the GPU when ffmpeg has libplacebo and a working Vulkan driver, except with VAAPI and Quick Sync, and on the CPU otherwise. `spline` and `bt2390` only exist on the GPU, so the CPU uses `hable` for them.
+
 ### `transcoder.optimize`
 - **Type:** table
 - **Env:** `NOFLEX_TRANSCODER_OPTIMIZE_<KEY>`, except `encode_video` (use TOML)

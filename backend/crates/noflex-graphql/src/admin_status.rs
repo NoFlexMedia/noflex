@@ -310,6 +310,9 @@ pub struct TranscoderInfo {
     /// `ffmpeg -hwaccels`.
     pub hwaccels: Vec<String>,
     pub vaapi_device: Option<String>,
+    /// HDR is tone-mapped on the GPU, where the encoder allows it; otherwise
+    /// on the CPU.
+    pub gpu_tonemap: bool,
     /// Encoders the ladder can map to, with availability in this ffmpeg.
     pub encoders: Vec<CodecSupport>,
     /// Decoders for common source codecs, including hardware variants.

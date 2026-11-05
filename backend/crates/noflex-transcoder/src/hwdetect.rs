@@ -14,7 +14,12 @@ use std::{
     time::Duration,
 };
 
-use crate::encoder::{Encoder, HwBackend};
+use noflex_core::TonemapCurve;
+
+use crate::{
+    encoder::{Encoder, HwBackend},
+    ffmpeg_argv::{GPU_TONEMAP_DEVICE_ARGS, gpu_tonemap_filter},
+};
 
 const ENCODER_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -28,6 +33,8 @@ pub struct HwDetect {
     pub encoders: Vec<String>,
     /// Resolved VAAPI render node, if any.
     pub vaapi_device: Option<PathBuf>,
+    /// HDR can be tone-mapped on the GPU; see [`gpu_tonemap_works`].
+    pub gpu_tonemap: bool,
 }
 
 impl HwDetect {
@@ -71,7 +78,34 @@ pub async fn detect(ffmpeg: &Path) -> HwDetect {
         hwaccels,
         encoders,
         vaapi_device: find_vaapi_device(),
+        gpu_tonemap: gpu_tonemap_works(ffmpeg).await,
     }
+}
+
+/// Whether ffmpeg can run [`gpu_tonemap_filter`] here, which takes libplacebo
+/// in the build, a Vulkan driver, and access to the GPU. Trying it on a frame
+/// answers all three at once.
+pub async fn gpu_tonemap_works(ffmpeg: &Path) -> bool {
+    let status = tokio::process::Command::new(ffmpeg)
+        .args(["-hide_banner", "-loglevel", "error", "-nostdin"])
+        .args(GPU_TONEMAP_DEVICE_ARGS)
+        .args([
+            "-f",
+            "lavfi",
+            "-i",
+            "color=black:s=1280x720:r=30,setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc",
+        ])
+        .args(["-frames:v", "1", "-vf", &gpu_tonemap_filter(1280, 720, TonemapCurve::Hable)])
+        .args(["-f", "null", "-"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .status();
+    matches!(
+        tokio::time::timeout(ENCODER_CHECK_TIMEOUT, status).await,
+        Ok(Ok(status)) if status.success()
+    )
 }
 
 /// Whether `encoder` actually produces a frame here. `-encoders` lists what
@@ -249,6 +283,7 @@ Encoders:
     #[test]
     fn has_predicates_reflect_parsed_fields() {
         let det = HwDetect {
+            gpu_tonemap: false,
             hwaccels: parse_hwaccels(HWACCELS_SAMPLE),
             encoders: parse_encoder_names(ENCODERS_SAMPLE),
             vaapi_device: Some(PathBuf::from("/dev/dri/renderD128")),
@@ -264,6 +299,7 @@ Encoders:
     fn has_vaapi_requires_device() {
         // vaapi method present but no render node: not usable.
         let det = HwDetect {
+            gpu_tonemap: false,
             hwaccels: vec!["vaapi".to_string()],
             encoders: vec![],
             vaapi_device: None,

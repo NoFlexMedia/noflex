@@ -36,7 +36,7 @@ use noflex_storage::{
 use noflex_transcoder::{
     AudioPlan, ClientCapabilities, DecideOptions, EncodedVideo, Encoder, FfmpegJobManager,
     HlsSegmentContainer, HwBackend, JobHandle, JobStatus, LadderEntry, PlaybackDecisionInfo,
-    PlaybackRoute, PlaylistType, SegmentConfig, SubtitleBurnSource, TranscodeInput,
+    PlaybackRoute, PlaylistType, SegmentConfig, SubtitleBurnSource, TonemapOptions, TranscodeInput,
     TranscodeJobRegistry, TranscodePlan, TranscodeReasons, TranscodeRequest, Transcoder, VideoPlan,
     decide, fit_pixels, hls::HlsVariant, optimize::version_plays, probe::ProbeReport,
     scaled_bitrate_kbps, subtitles,
@@ -505,6 +505,8 @@ pub struct ServerPlaybackSessions {
     cfg: Arc<TranscoderConfig>,
     /// Codecs to encode to live, preferred first.
     encode_video: Vec<VideoCodec>,
+    /// Tone-map HDR on the GPU; see [`noflex_transcoder::hwdetect::gpu_tonemap_works`].
+    gpu_tonemap: bool,
     /// Startup-resolved hardware family.
     backend: HwBackend,
     /// Detected VAAPI render node, threaded into the filter graph.
@@ -591,6 +593,7 @@ impl ServerPlaybackSessions {
             vaapi_device,
             jwt,
             encode_video,
+            gpu_tonemap: false,
             events: None,
             transcode_accounting: tokio::sync::Mutex::new(TranscodeAccounting::default()),
             active: tokio::sync::Mutex::new(HashMap::new()),
@@ -601,6 +604,12 @@ impl ServerPlaybackSessions {
     /// [`crate::hwaccel::live_codec_order`].
     pub fn with_encode_video(mut self, encode_video: Vec<VideoCodec>) -> Self {
         self.encode_video = encode_video;
+        self
+    }
+
+    /// Tone-map HDR on the GPU where the encoder allows it.
+    pub fn with_gpu_tonemap(mut self, gpu_tonemap: bool) -> Self {
+        self.gpu_tonemap = gpu_tonemap;
         self
     }
 
@@ -1210,6 +1219,17 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                 );
                 req.reasons = *reasons;
                 req.vaapi_device = self.vaapi_device.clone();
+                if matches!(plan.video, VideoPlan::Encode { tonemap: true, .. }) {
+                    req.tonemap = TonemapOptions {
+                        gpu: self.gpu_tonemap,
+                        curve: self
+                            .storage
+                            .tonemap_curve()
+                            .await
+                            .map_err(|e| anyhow::anyhow!("storage error: {e}"))?
+                            .unwrap_or(self.cfg.tonemap_curve),
+                    };
+                }
                 req.audio_stream = decision.audio_stream;
                 req.subtitle_burn = burn_source;
                 // A copied video stream can only start on a keyframe, so

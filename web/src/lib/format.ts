@@ -43,7 +43,7 @@ export function timecode(milliseconds: number): string {
 const CODEC_NAMES: Record<string, string> = { h264: "H.264", h265: "HEVC", hevc: "HEVC", av1: "AV1", vp9: "VP9", mpeg2video: "MPEG-2", vc1: "VC-1" };
 
 /** What HDR a probed video stream carries, as viewers name it; "" for SDR. */
-function dynamicRange(video: any): string {
+export function dynamicRange(video: any): string {
   const transfer = String(video?.transfer ?? "").toLowerCase();
   return video?.dovi_profile != null ? "Dolby Vision" : transfer === "pq" ? "HDR10" : transfer === "hlg" ? "HLG" : "";
 }
@@ -100,7 +100,7 @@ export function levelName(codec?: string | null, level?: number | null): string 
 /** A profile enum as it's usually written: `HEVC_MAIN10` → "Main 10". */
 export function profileName(profile?: string | null): string {
   if (!profile) return "";
-  return profile.replace(/^(H264|HEVC|AV1|VP9)_/, "").replace(/(\D)(\d+)$/, "$1 $2").replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+  return profile.replace(/^(H264|HEVC|AV1|VP9)_/i, "").replace(/(\D)(\d+)$/, "$1 $2").replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 }
 
 /** A picture area as the resolution people call it, e.g. 8294400 → "~4K". */

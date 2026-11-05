@@ -23,7 +23,7 @@ use noflex_storage::{
     domain::{Device, MediaFile, OptimizedVersion, OptimizedVersionStatus},
 };
 use noflex_transcoder::{
-    ClientCapabilities, DecideOptions, HwBackend, VideoPlan,
+    ClientCapabilities, DecideOptions, HwBackend, TonemapOptions, VideoPlan,
     optimize::{DeviceTarget, OptimizeTarget, build_optimize_argv, plan_versions},
     package::finalize,
     probe::ProbeReport,
@@ -59,6 +59,10 @@ pub struct OptimizeWorker {
     pub ffmpeg_path: PathBuf,
     pub backend: HwBackend,
     pub vaapi_device: Option<PathBuf>,
+    /// Tone-map HDR on the GPU; see [`noflex_transcoder::hwdetect::gpu_tonemap_works`].
+    pub gpu_tonemap: bool,
+    /// The configured curve, until an administrator picks one.
+    pub tonemap_curve: noflex_core::TonemapCurve,
     /// Finished versions live directly in here, as `{id}.mp4`, until an
     /// administrator picks somewhere else.
     pub dir: PathBuf,
@@ -443,6 +447,14 @@ impl OptimizeWorker {
             &target,
             encoder,
             self.vaapi_device.as_deref(),
+            TonemapOptions {
+                gpu: self.gpu_tonemap,
+                curve: self
+                    .storage
+                    .tonemap_curve()
+                    .await?
+                    .unwrap_or(self.tonemap_curve),
+            },
             &raw,
         );
         let mut child = Command::new(&self.ffmpeg_path)

@@ -14,6 +14,7 @@
   import { failure, fetchQuery, refetch } from "$lib/graphql.js";
   import { attempt, poll } from "$lib/ui.svelte.js";
   import State from "$components/State.svelte";
+  import Select from "$components/ui/Select.svelte";
   import { codec } from "./status/fmt.js";
 
   const transcoder = new AdminTranscoderStore();
@@ -61,6 +62,22 @@
     if (await attempt(() => saveSmart.mutate({ directory: draft.directory.trim() || null, storage: toGb(draft.storage), version: toGb(draft.version) }), "Smart transcoding settings saved")) refetch(smart);
     saving = false;
   }
+
+  const curve = graphql(`
+    query AdminTonemapCurve { tonemapCurve }
+  `);
+  const saveCurve = graphql(`
+    mutation SetTonemapCurve($curve: TonemapCurve) { setTonemapCurve(curve: $curve) }
+  `);
+  $effect(() => { fetchQuery(curve); });
+  const CURVES = [
+    { value: "HABLE", label: "Hable", hint: "Filmic, soft highlights" },
+    { value: "MOBIUS", label: "Möbius", hint: "Keeps midtones, compresses highlights" },
+    { value: "REINHARD", label: "Reinhard", hint: "Simple and even" },
+    { value: "SPLINE", label: "Spline", hint: "Bright midtones", gpu: true },
+    { value: "BT2390", label: "BT.2390", hint: "The broadcast standard; brightest", gpu: true },
+  ];
+  const chooseCurve = async (value) => { if (await attempt(() => saveCurve.mutate({ curve: value }), "Tone-mapping curve saved")) refetch(curve); };
 
   let info = $derived($transcoder.data?.transcoderInfo);
   let onlyAvailable = $state(false);
@@ -168,6 +185,13 @@
         <div><dt>Configured</dt><dd class="mono">{info.configuredHwaccel}</dd></div>
         <div><dt>Fallback</dt><dd class="mono">{info.fallback}</dd></div>
         <div><dt>VAAPI device</dt><dd class="mono">{info.vaapiDevice ?? "none"}</dd></div>
+        <div><dt>HDR tone-mapping</dt><dd>{info.gpuTonemap ? "GPU (Vulkan)" : "CPU"}</dd></div>
+        {#if $curve.data}
+          <div class="curve">
+            <dt>Tone-mapping curve</dt>
+            <dd><Select value={$curve.data.tonemapCurve} items={CURVES.map((item) => ({ ...item, disabled: item.gpu && !info.gpuTonemap, hint: item.gpu && !info.gpuTonemap ? "Needs GPU tone-mapping" : item.hint }))} label="Tone-mapping curve" onchange={chooseCurve} /></dd>
+          </div>
+        {/if}
         <div class="full"><dt>ffmpeg hwaccels</dt><dd class="chips">{#each info.hwaccels as accel (accel)}<span class="chip">{accel}</span>{:else}<span class="faint">None</span>{/each}</dd></div>
         <div class="full"><dt>Transcode cache</dt><dd class="mono">{info.transcodeDir}</dd></div>
       </dl>
@@ -253,6 +277,7 @@
 {/if}
 
 <style>
+  .curve { min-width: 200px; }
   .smart-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px 20px; align-items: start; margin-bottom: 14px; }
   .smart-form .wide { grid-column: 1 / -1; }
   .smart-actions { grid-column: 1 / -1; }

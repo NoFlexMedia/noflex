@@ -70,13 +70,42 @@ struct AppState {
 /// 2 MiB default in debug builds. Untouched pages cost nothing.
 const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
+/// How long a blocking task can hold up exit once asked to stop.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn main() -> anyhow::Result<()> {
-    tokio::runtime::Builder::new_multi_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_stack_size(WORKER_STACK_BYTES)
         .build()
-        .context("start runtime")?
-        .block_on(run())
+        .context("start runtime")?;
+    let result = runtime.block_on(run());
+    // Drops every task, and with them the ffmpeg each one is watching.
+    runtime.shutdown_timeout(SHUTDOWN_GRACE);
+    result
+}
+
+/// Resolves when the process is asked to stop. Without a handler those signals
+/// end it on the spot, leaving its ffmpeg children running.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = terminate.recv() => {}
+                    _ = tokio::signal::ctrl_c() => {}
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, "can't listen for SIGTERM");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -347,20 +376,32 @@ async fn run() -> anyhow::Result<()> {
     );
     // The session control plane lives behind GraphQL; it mints the
     // scoped media tokens the byte routes accept.
-    let mut ladder_codecs: Vec<noflex_core::VideoCodec> = Vec::new();
-    for rung in &cfg.transcoder.ladder {
-        if !ladder_codecs.contains(&rung.video_codec) {
-            ladder_codecs.push(rung.video_codec);
+    // In ladder order, then anything smart transcoding wants on top.
+    let mut wanted_codecs: Vec<noflex_core::VideoCodec> = Vec::new();
+    let ladder_codecs = cfg.transcoder.ladder.iter().map(|rung| rung.video_codec);
+    for codec in ladder_codecs.chain(cfg.transcoder.optimize.encode_video.iter().copied()) {
+        if !wanted_codecs.contains(&codec) {
+            wanted_codecs.push(codec);
         }
     }
-    let live_codecs = noflex_server::hwaccel::usable_codecs(
+    let usable_codecs = noflex_server::hwaccel::usable_codecs(
         &ffmpeg_path,
         resolved_hwaccel,
         &hw_detect,
-        &ladder_codecs,
+        &wanted_codecs,
     )
     .await;
-    tracing::info!(codecs = ?live_codecs, "usable live transcode codecs");
+    tracing::info!(codecs = ?usable_codecs, "usable transcode codecs");
+    let live_codecs = usable_codecs
+        .iter()
+        .copied()
+        .filter(|codec| {
+            cfg.transcoder
+                .ladder
+                .iter()
+                .any(|rung| rung.video_codec == *codec)
+        })
+        .collect::<Vec<_>>();
     let playback_sessions = Arc::new(
         stream::ServerPlaybackSessions::new(
             storage.clone(),
@@ -374,6 +415,7 @@ async fn run() -> anyhow::Result<()> {
             resolved_hwaccel,
             &live_codecs,
         ))
+        .with_gpu_tonemap(hw_detect.gpu_tonemap)
         .with_events(event_bus.clone()),
     );
     let live_tv = Arc::new(noflex_server::live_tv_runtime::ServerLiveTv::new(
@@ -429,6 +471,7 @@ async fn run() -> anyhow::Result<()> {
         watch_room_bus: Some(Arc::new(noflex_graphql::WatchRoomBus::default())),
         admin_status: Some(admin_status),
         metadata_service: Some(metadata_service),
+        tonemap_curve: Some(cfg.transcoder.tonemap_curve),
         smart_transcoding: Some(noflex_graphql::SmartTranscodingDefaults {
             enabled: cfg.transcoder.optimize.enabled,
             directory: optimized_dir.display().to_string(),
@@ -452,13 +495,9 @@ async fn run() -> anyhow::Result<()> {
     );
     let _download_handle = download_worker.spawn();
     let mut optimize_config = cfg.transcoder.optimize.clone();
-    optimize_config.encode_video = noflex_server::hwaccel::usable_codecs(
-        &ffmpeg_path,
-        resolved_hwaccel,
-        &hw_detect,
-        &optimize_config.encode_video,
-    )
-    .await;
+    optimize_config
+        .encode_video
+        .retain(|codec| usable_codecs.contains(codec));
     let _optimize_worker = Arc::new(noflex_server::optimize_worker::OptimizeWorker {
         storage: storage.clone(),
         playback: playback_sessions.clone(),
@@ -468,6 +507,8 @@ async fn run() -> anyhow::Result<()> {
         ffmpeg_path: ffmpeg_path.clone(),
         backend: resolved_hwaccel,
         vaapi_device: hw_detect.vaapi_device.clone(),
+        gpu_tonemap: hw_detect.gpu_tonemap,
+        tonemap_curve: cfg.transcoder.tonemap_curve,
         dir: optimized_dir,
     })
     .spawn();
@@ -557,12 +598,16 @@ async fn run() -> anyhow::Result<()> {
         .await
         .context("bind tcp")?;
     // Peer addresses feed the login throttle (`ClientAddr`).
-    axum::serve(
+    let serve = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .await
-    .context("serve")?;
+    );
+    // Not a graceful shutdown: a stream can stay open for hours, and a client
+    // whose connection drops just reconnects.
+    tokio::select! {
+        result = async { serve.await } => result.context("serve")?,
+        () = shutdown_signal() => info!("shutting down"),
+    }
     Ok(())
 }
 

@@ -3273,6 +3273,18 @@ async fn devices_belong_to_their_user<S: Storage + ?Sized>(store: &S) {
 async fn smart_transcoding_settings_round_trip<S: Storage + ?Sized>(store: &S) {
     use crate::domain::SmartTranscodingSettings;
 
+    assert_eq!(store.tonemap_curve().await.expect("unset"), None);
+    store
+        .set_tonemap_curve(Some(noflex_core::TonemapCurve::Bt2390))
+        .await
+        .expect("set curve");
+    assert_eq!(
+        store.tonemap_curve().await.expect("read"),
+        Some(noflex_core::TonemapCurve::Bt2390),
+    );
+    store.set_tonemap_curve(None).await.expect("clear curve");
+    assert_eq!(store.tonemap_curve().await.expect("cleared"), None);
+
     assert_eq!(
         store.smart_transcoding_settings().await.expect("defaults"),
         SmartTranscodingSettings::default(),

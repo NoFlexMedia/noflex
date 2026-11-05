@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/export_job_fields.graphql'
+
+# Asked of each linked server, as an export lives on the server that made it.
+query ExportJobs {
+  exportJobs(first: 25) { nodes { ...ExportJobFields } }
+}

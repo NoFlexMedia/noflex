@@ -57,6 +57,7 @@ class OfflineItem {
     required this.fileName,
     required this.addedAt,
     this.directory,
+    this.serverId,
     this.progress = 0,
     this.optimized = false,
     this.subtitles = const [],
@@ -75,6 +76,7 @@ class OfflineItem {
     fileName: json['fileName'] as String,
     addedAt: DateTime.parse(json['addedAt'] as String),
     directory: json['directory'] as String?,
+    serverId: json['serverId'] as String?,
     progress: (json['progress'] as num?)?.toDouble() ?? 0,
     optimized: json['optimized'] as bool? ?? false,
     subtitles: [
@@ -98,6 +100,9 @@ class OfflineItem {
   /// An absolute folder the viewer chose; null for the app's own storage, whose
   /// absolute path moves between launches on iOS and so is never stored.
   final String? directory;
+
+  /// The linked server it came from; null for the home server.
+  final String? serverId;
   final double progress;
   final bool optimized;
   final List<OfflineSubtitle> subtitles;
@@ -133,6 +138,7 @@ class OfflineItem {
     fileName: fileName,
     addedAt: addedAt,
     directory: directory,
+    serverId: serverId,
     progress: progress ?? this.progress,
     optimized: optimized,
     subtitles: subtitles ?? this.subtitles,
@@ -151,6 +157,7 @@ class OfflineItem {
     'fileName': fileName,
     'addedAt': addedAt.toIso8601String(),
     'directory': directory,
+    'serverId': serverId,
     'progress': progress,
     'optimized': optimized,
     'subtitles': [for (final subtitle in subtitles) subtitle.toJson()],
@@ -167,22 +174,26 @@ class PendingReport {
     required this.workId,
     required this.positionMs,
     this.played = false,
+    this.serverId,
   });
 
   factory PendingReport.fromJson(Map<String, dynamic> json) => PendingReport(
     workId: json['workId'] as String,
     positionMs: json['positionMs'] as int,
     played: json['played'] as bool? ?? false,
+    serverId: json['serverId'] as String?,
   );
 
   final String workId;
   final int positionMs;
   final bool played;
+  final String? serverId;
 
   Map<String, dynamic> toJson() => {
     'workId': workId,
     'positionMs': positionMs,
     'played': played,
+    'serverId': serverId,
   };
 }
 

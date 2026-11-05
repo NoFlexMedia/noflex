@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'work_card.graphql'
+
+fragment ExportJobFields on ExportJob {
+  id
+  format
+  status
+  progress
+  error
+  createdAt
+  finishedAt
+  work { ...WorkCard }
+}

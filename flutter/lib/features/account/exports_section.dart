@@ -24,12 +24,27 @@ import '../downloads/downloads_service.dart';
 import 'account_controller.dart';
 import 'account_widgets.dart';
 
-class ExportsSection extends SignalWidget {
+class ExportsSection extends StatefulWidget {
   const ExportsSection({super.key, required this.controller});
   final AccountController controller;
 
   @override
-  Widget build(BuildContext context) {
+  State<ExportsSection> createState() => _ExportsSectionState();
+}
+
+class _ExportsSectionState extends State<ExportsSection> {
+  AccountController get controller => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(controller.loadLinkedExports());
+  }
+
+  @override
+  Widget build(BuildContext context) => SignalBuilder(builder: _build);
+
+  Widget _build(BuildContext context) {
     final jobs = controller.exportJobs.value;
     final onDevice = {
       for (final item in getIt<DownloadsService>().items.value)
@@ -40,42 +55,55 @@ class ExportsSection extends SignalWidget {
         children: [
           NfState(
             icon: PhosphorIconsRegular.export,
-            title: 'No server exports',
-            message: 'Open a film or episode, choose ••• → Export a copy on the server, and it’ll be prepared here.',
+            title: 'No offline copies',
+            message: 'Open a film or episode, choose ••• → Make an offline copy, and it’ll be prepared here.',
           ),
         ],
       );
     }
     return AccountColumn(
       children: [
-        for (final job in jobs)
+        for (final entry in jobs)
           _ExportRow(
-            job: job,
-            local: onDevice[job.work?.id],
-            onCancel: () => unawaited(_cancel(job)),
-            onSave: () => unawaited(_save(job)),
+            job: entry.job,
+            serverName: entry.server?.name,
+            local: onDevice[entry.job.work?.id],
+            onCancel: () => unawaited(_cancel(entry)),
+            onRemove: () => unawaited(_remove(entry)),
+            onSave: () => unawaited(_save(entry)),
           ),
       ],
     );
   }
 
-  Future<void> _cancel(ExportJob job) async {
+  Future<void> _remove(ExportEntry entry) async {
     final confirmed = await confirmAction(
-      title: 'Cancel this export?',
-      message: 'Any partial output is discarded.',
-      confirmLabel: 'Cancel export',
+      title: 'Remove this offline copy?',
+      message: 'The server deletes its file once nobody else needs it. You can always make another.',
+      confirmLabel: 'Remove',
       danger: true,
     );
-    if (confirmed) await controller.cancelExport(job.id);
+    if (confirmed) await controller.removeExport(entry);
   }
 
-  Future<void> _save(ExportJob job) async {
+  Future<void> _cancel(ExportEntry entry) async {
+    final confirmed = await confirmAction(
+      title: 'Cancel this offline copy?',
+      message: 'Any partial output is discarded.',
+      confirmLabel: 'Cancel copy',
+      danger: true,
+    );
+    if (confirmed) await controller.cancelExport(entry);
+  }
+
+  Future<void> _save(ExportEntry entry) async {
+    final job = entry.job;
     final work = job.work;
     if (work == null) return;
     await getIt<ToastService>().attempt(
       () => getIt<DownloadsService>().fetchExport(
         jobId: job.id,
-        work: WorkSummary.fromCard(work),
+        work: WorkSummary.fromCard(work, server: entry.server),
       ),
       success: 'Saving to this device. Follow it under Downloads.',
     );
@@ -85,15 +113,21 @@ class ExportsSection extends SignalWidget {
 class _ExportRow extends StatelessWidget {
   const _ExportRow({
     required this.job,
+    required this.serverName,
     required this.local,
     required this.onCancel,
+    required this.onRemove,
     required this.onSave,
   });
   final ExportJob job;
 
+  /// The linked server it's on.
+  final String? serverName;
+
   /// Where its title stands in Downloads, if it's there.
   final OfflineStatus? local;
   final VoidCallback onCancel;
+  final VoidCallback onRemove;
   final VoidCallback onSave;
 
   @override
@@ -166,6 +200,7 @@ class _ExportRow extends StatelessWidget {
                   failed
                       ? job.error ?? 'The encoder stopped unexpectedly.'
                       : [
+                          ?serverName,
                           if (work != null) job.format.name,
                           'Requested ${ago(job.createdAt)}',
                           if (finished != null)
@@ -180,7 +215,7 @@ class _ExportRow extends StatelessWidget {
                 if (completed && work == null) ...[
                   const SizedBox(height: 3),
                   Text(
-                    'Save it from NoFlex on the web, under Account → Downloads.',
+                    'Save it from NoFlex on the web, under Account → Offline copies.',
                     style: NfType.caption,
                   ),
                 ] else if (completed && local == OfflineStatus.complete) ...[
@@ -235,6 +270,15 @@ class _ExportRow extends StatelessWidget {
               style: NfButtonStyle.ghost,
               size: NfButtonSize.small,
               onPressed: onCancel,
+            ),
+          ] else if (!isActiveExport(job)) ...[
+            const SizedBox(width: 8),
+            NfButton(
+              label: 'Remove',
+              semanticLabel: 'Remove ${work?.title ?? 'this offline copy'}',
+              style: NfButtonStyle.ghost,
+              size: NfButtonSize.small,
+              onPressed: onRemove,
             ),
           ],
         ],

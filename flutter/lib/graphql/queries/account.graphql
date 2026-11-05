@@ -1,13 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #import 'fragments/device_fields.graphql'
+#import 'fragments/export_job_fields.graphql'
 #import 'fragments/linked_server_fields.graphql'
 #import 'fragments/work_card.graphql'
 
 query Account {
   preferences { key value updatedAt }
   myDevices { ...DeviceFields }
+  apiKeys { id name createdAt revokedAt }
   mySessions { id client device deviceId appVersion remoteAddr createdAt lastSeenAt expiresAt }
   myRestrictions { maxStreamBitrateBps maxConcurrentTranscodes allowUnrated }
   linkedServers { ...LinkedServerFields }
-  exportJobs(first: 25) { nodes { id format status progress error createdAt finishedAt work { ...WorkCard } } }
+  exportJobs(first: 25) { nodes { ...ExportJobFields } }
 }

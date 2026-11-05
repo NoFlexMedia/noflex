@@ -27,6 +27,7 @@ import '../../graphql/__generated__/schema.schema.gql.dart';
 import '../../graphql/queries/__generated__/create_export_job.req.gql.dart';
 import '../../graphql/queries/__generated__/device_download.req.gql.dart';
 import '../../graphql/queries/__generated__/mark_played.req.gql.dart';
+import '../../graphql/queries/__generated__/register_device.req.gql.dart';
 import '../../graphql/queries/__generated__/report_progress.req.gql.dart';
 import '../../graphql/queries/__generated__/smart_downloads.req.gql.dart';
 import '../../graphql/queries/__generated__/update_device.req.gql.dart';
@@ -38,6 +39,8 @@ import '../../services/network_service.dart';
 import '../../services/session.dart';
 import '../../services/toast_service.dart';
 import '../../services/tokens.dart';
+import '../player/capabilities.dart';
+import '../player/decoder_probe.dart';
 import '../player/decoders.dart';
 import 'download_models.dart';
 import 'smart_planner.dart';
@@ -199,6 +202,7 @@ OfflineItem itemFor(
   fileName: offlineFileName(file.work, file.partIndex),
   addedAt: DateTime.now(),
   directory: directory,
+  serverId: file.work.server?.id,
   optimized: file.optimized,
   // What's been watched so far, so an offline resume starts in the right place.
   positionMs: file.work.userData?.positionMs ?? 0,
@@ -217,13 +221,14 @@ OfflineItem itemFor(
   ],
 );
 
-WantedFile wantedFromDownload(GDownloadFields download) {
+WantedFile wantedFromDownload(GDownloadFields download, {ServerRef? server}) {
   final work = download.work;
   return WantedFile(
     work: WorkSummary.fromCard(
       work,
       seriesTitle: work.seriesTitle,
       overview: work.overview,
+      server: server,
     ),
     partIndex: download.partIndex,
     url: download.url,
@@ -532,9 +537,15 @@ class DownloadsService {
   }
 
   /// Keep one version of a title on this device. Returns false when the server
-  /// has nothing this device can play yet; an export can stand in.
-  Future<bool> download(MediaVersion version, {WorkSummary? seed}) async {
+  /// has nothing this device can play yet; an export can stand in. [server] is
+  /// the linked server the title is on, which needs to know this device too.
+  Future<bool> download(
+    MediaVersion version, {
+    WorkSummary? seed,
+    ServerRef? server,
+  }) async {
     final identity = getIt<DeviceIdentity>();
+    if (server != null) await _registerOn(server);
     final data = await _graphql.run(
       GDeviceDownloadReq(
         (b) => b
@@ -542,14 +553,41 @@ class DownloadsService {
           ..vars.device = identity.id
           ..vars.media = version.id,
       ),
+      server: server,
     );
     final answer = data.deviceDownload;
     if (answer == null) return false;
-    final file = wantedFromDownload(answer);
+    final file = wantedFromDownload(answer, server: server);
     unawaited(_ensurePermission());
     await _enqueue(file, OfflineOrigin.manual);
     return true;
   }
+
+  Future<void> _registerOn(ServerRef server) async {
+    final identity = getIt<DeviceIdentity>();
+    final profile = await getIt<DecoderProbeService>().ready();
+    await _graphql.run(
+      GRegisterDeviceReq(
+        (b) => b.vars
+          ..id = identity.id
+          ..name = identity.name
+          ..capabilities.replace(buildCapabilities(profile)),
+      ),
+      server: server,
+    );
+  }
+
+  ServerRef? _linked(String? id) => id == null
+      ? null
+      : getIt<SessionService>().connectedServers
+            .peek()
+            .where((server) => server.id == id)
+            .firstOrNull;
+
+  /// [item]'s work, with its linked server if the session has that server.
+  WorkSummary workOf(OfflineItem item) => item.serverId == null
+      ? item.work
+      : item.work.withServer(_linked(item.serverId));
 
   Future<void> _ensurePermission() async {
     final permissions = FileDownloader().permissions;
@@ -578,8 +616,12 @@ class DownloadsService {
         if (other.key != item.key) other,
       item,
     ]);
-    await enqueueTransfer(item, tokens.absolute(file.url), wifiOnly: _wifiOnly);
-    await enqueueExtras(item, file, absolute: tokens.absolute);
+    final server = file.work.server;
+    String absolute(String url) => server != null && url.startsWith('/')
+        ? '${server.origin}$url'
+        : tokens.absolute(url);
+    await enqueueTransfer(item, absolute(file.url), wifiOnly: _wifiOnly);
+    await enqueueExtras(item, file, absolute: absolute);
   }
 
   /// Stop a transfer and delete what's on disk.
@@ -704,11 +746,17 @@ class DownloadsService {
     String workId, {
     required int positionMs,
     bool played = false,
+    ServerRef? server,
   }) {
     _store.reports = [
       for (final report in _store.reports)
         if (report.workId != workId) report,
-      PendingReport(workId: workId, positionMs: positionMs, played: played),
+      PendingReport(
+        workId: workId,
+        positionMs: positionMs,
+        played: played,
+        serverId: server?.id,
+      ),
     ];
     _saveDebounce?.cancel();
     _saveDebounce = Timer(const Duration(seconds: 2), _saveNow);
@@ -719,9 +767,18 @@ class DownloadsService {
     if (pending.isEmpty) return;
     final remaining = <PendingReport>[];
     for (final report in pending) {
+      final server = _linked(report.serverId);
+      // Its server isn't back yet, as far as this session knows.
+      if (report.serverId != null && server == null) {
+        remaining.add(report);
+        continue;
+      }
       try {
         if (report.played) {
-          await _graphql.run(GMarkPlayedReq((b) => b.vars.id = report.workId));
+          await _graphql.run(
+            GMarkPlayedReq((b) => b.vars.id = report.workId),
+            server: server,
+          );
         } else {
           await _graphql.run(
             GReportProgressReq(
@@ -730,6 +787,7 @@ class DownloadsService {
                 ..position = report.positionMs
                 ..state = GPlaybackState.STOPPED,
             ),
+            server: server,
           );
         }
       } on ServerUnreachable {
@@ -795,27 +853,34 @@ class DownloadsService {
 
   /// A copy packaged on the server, for a title with nothing ready for this
   /// device. It's a stream copy, so it changes the container and not the codecs.
-  Future<void> createExport(String editionId) async {
+  Future<void> createExport(
+    String editionId, {
+    ServerRef? server,
+    GExportFormat? format,
+  }) async {
     await getIt<ToastService>().attempt(
       () => _graphql.run(
         GCreateExportJobReq(
           (b) => b.vars
             ..edition = editionId
-            ..format = GExportFormat.MP4,
+            ..format = format ?? GExportFormat.MP4,
         ),
+        server: server,
       ),
-      success: 'Export queued. It’ll be under You → Server exports when ready.',
+      success: 'Making an offline copy. It’ll be under You → Offline copies when ready.',
     );
   }
 
   /// Bring a finished export onto this device. Unlike the token-bearing routes
-  /// this one wants a header, so the access token has to be fresh now.
+  /// this one wants a header, so on the home server the access token has to be
+  /// fresh now. A linked server's key doesn't expire.
   Future<void> fetchExport({
     required String jobId,
     required WorkSummary work,
   }) async {
     final tokens = getIt<TokenStore>();
-    await tokens.refresh();
+    final server = work.server;
+    if (server == null) await tokens.refresh();
     unawaited(_ensurePermission());
     final item = itemFor(
       WantedFile(work: work, partIndex: 0, url: '', sizeBytes: 0),
@@ -831,8 +896,12 @@ class DownloadsService {
       DownloadTask(
         taskId: item.taskId,
         group: _mediaGroup,
-        url: tokens.absolute('/download/$jobId/file'),
-        headers: tokens.authHeaders,
+        url: server != null
+            ? '${server.origin}/download/$jobId/file'
+            : tokens.absolute('/download/$jobId/file'),
+        headers: server != null
+            ? {'Authorization': 'Bearer ${server.apiKey}'}
+            : tokens.authHeaders,
         filename: item.fileName,
         directory: item.directory ?? _storageDir,
         baseDirectory: item.directory != null

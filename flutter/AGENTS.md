@@ -67,6 +67,7 @@ Ferry, against `lib/graphql/schema.graphql`, a symlink to `backend/crates/noflex
 - **One operation per file, one fragment per file.** Ferry sends the whole generated document with every request, so a file holding several operations gets refused as too complex, and imported fragments the operation doesn't use fail validation. Import with `#import 'fragments/work_card.graphql'`.
 - Reads that drive a screen use `Query` (signals, cache then network). One-shot reads and mutations use `GraphqlService.run`, which throws `ApiError`, `ServerUnreachable` or `SessionExpired`. Requests that must not answer from cache set `FetchPolicy.NetworkOnly`.
 - Ferry calls a response carrying only GraphQL errors "loading". `run` and `Query` account for that; anything new reading a response directly must too.
+- A server refusing a non-null field leaves it out of the data, and Ferry would turn that into a deserialization failure. `refusalOf`, in a link outside auth, raises the real error first, so "invalid username or password" doesn't read as an unreachable server.
 - Map generated types to `WorkSummary` where they arrive. Generated classes differ per operation and can't hold a linked server or sit in the offline manifest.
 - `WatchStateService` holds progress and favorites as they change here, so cards update without refetching or writing to the cache. Read play state through it inside a reactive scope.
 - Subscriptions go over `/graphql/ws`, which refuses an upgrade that names no subprotocol. `gql_websocket_link` speaks the legacy `graphql-ws`, so `_Transport` asks for it.
@@ -103,6 +104,10 @@ Only what the server put here (`OfflineOrigin.smart`) can be evicted. What the v
 - Discovering new titles uses `BGAppRefreshTask` (`background_sync.dart`, identifier in `Info.plist` and `AppDelegate.swift`), which runs when iOS sees fit, possibly rarely. The app also reconciles on launch, on regaining a network, after playback, and every 30 minutes while open.
 - Files live in Application Support, excluded from iCloud backup. Paths are stored relative because the container moves between launches.
 - The headless sync stands down while the app is on screen (a stamp it clears on pause), and the app reloads the manifest and tokens on resume. Two copies of the manifest would overwrite each other, and two refreshes of one token look like replay to the server, which revokes the session.
+
+A linked server's title downloads from that server, which each server's administrator can refuse (`serverInfo.downloadsAllowed`; ask the server the title came from). The manifest keeps only its `serverId`, never its key: `workOf` gets the `ServerRef` back from the session, and progress queued offline waits until that server is known again. Smart downloads stay on the home server.
+
+Offline copies (`ExportJob` in the API) live on the server that made them, so You → Offline copies asks every connected server. Finished copies of one edition and format share a file across users, and removing one only deletes the file once nobody else holds it.
 
 The target folder setting is hidden on iOS. Android lists its app-specific volumes, including SD cards, which need no permission. Desktop gets a folder picker.
 

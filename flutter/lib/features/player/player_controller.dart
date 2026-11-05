@@ -485,7 +485,11 @@ class PlayerController {
       );
     } on Exception {
       // Carried to the server once it's back; see DownloadsService.
-      downloads.queueProgress(work.id, positionMs: positionMs);
+      downloads.queueProgress(
+        work.id,
+        positionMs: positionMs,
+        server: work.server,
+      );
     }
   }
 
@@ -552,6 +556,7 @@ class PlayerController {
           work.id,
           positionMs: 0,
           played: true,
+          server: work.server,
         );
       }
     }

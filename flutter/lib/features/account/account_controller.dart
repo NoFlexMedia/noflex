@@ -21,15 +21,24 @@ import '../../graphql/queries/__generated__/account.var.gql.dart';
 import '../../graphql/queries/__generated__/authorize_device_pin.req.gql.dart';
 import '../../graphql/queries/__generated__/cancel_export_job.req.gql.dart';
 import '../../graphql/queries/__generated__/change_password.req.gql.dart';
+import '../../graphql/queries/__generated__/create_api_key.req.gql.dart';
+import '../../graphql/queries/__generated__/create_device_pin.req.gql.dart';
+import '../../graphql/queries/__generated__/delete_export_job.req.gql.dart';
+import '../../graphql/queries/__generated__/export_jobs.req.gql.dart';
 import '../../graphql/queries/__generated__/linked_servers.req.gql.dart';
 import '../../graphql/queries/__generated__/play_history.data.gql.dart';
 import '../../graphql/queries/__generated__/play_history.req.gql.dart';
 import '../../graphql/queries/__generated__/remove_device.req.gql.dart';
+import '../../graphql/queries/__generated__/poll_device_pin.req.gql.dart';
 import '../../graphql/queries/__generated__/remove_linked_server.req.gql.dart';
+import '../../graphql/queries/__generated__/revoke_api_key.req.gql.dart';
 import '../../graphql/queries/__generated__/revoke_session.req.gql.dart';
 import '../../graphql/queries/__generated__/set_preference.req.gql.dart';
+import '../../graphql/queries/__generated__/update_device.req.gql.dart';
 import '../../graphql/queries/__generated__/update_linked_server.req.gql.dart';
+import '../../graphql/queries/fragments/__generated__/export_job_fields.data.gql.dart';
 import '../../graphql/query.dart';
+import '../../models/work.dart';
 import '../../services/device_identity.dart';
 import '../../services/graphql.dart';
 import '../../services/nav_service.dart';
@@ -43,7 +52,8 @@ import '../player/decoders.dart';
 
 typedef AccountSession = GAccountData_mySessions;
 typedef AccountDevice = GAccountData_myDevices;
-typedef ExportJob = GAccountData_exportJobs_nodes;
+typedef ExportJob = GExportJobFields;
+typedef AccountApiKey = GAccountData_apiKeys;
 typedef HistoryRow = GPlayHistoryData_playHistory_nodes;
 
 enum AccountSection {
@@ -51,7 +61,7 @@ enum AccountSection {
   devices('Devices', PhosphorIconsRegular.devices),
   servers('Servers', PhosphorIconsRegular.hardDrives),
   history('History', PhosphorIconsRegular.clockCounterClockwise),
-  exports('Server exports', PhosphorIconsRegular.export);
+  exports('Offline copies', PhosphorIconsRegular.export);
 
   const AccountSection(this.label, this.icon);
   final String label;
@@ -64,6 +74,13 @@ const _activeExports = {
   GExportJobStatus.RUNNING,
   GExportJobStatus.CANCEL_REQUESTED,
 };
+
+/// An export and the linked server it lives on; null for the home server.
+class ExportEntry {
+  const ExportEntry(this.job, [this.server]);
+  final ExportJob job;
+  final ServerRef? server;
+}
 
 bool isActiveExport(ExportJob job) => _activeExports.contains(job.status);
 
@@ -158,7 +175,10 @@ class AccountController {
       untracked(() {
         _poll?.cancel();
         _poll = polling
-            ? Timer.periodic(_exportPoll, (_) => _query.value?.refetch())
+            ? Timer.periodic(_exportPoll, (_) {
+                _query.value?.refetch();
+                unawaited(loadLinkedExports());
+              })
             : null;
       });
     });
@@ -206,14 +226,52 @@ class AccountController {
     () => _data.value?.myDevices.toList() ?? const [],
   );
 
-  late final exportJobs = computed<List<ExportJob>>(() {
+  late final apiKeys = computed<List<AccountApiKey>>(
+    () => [
+      for (final key in _data.value?.apiKeys ?? const <AccountApiKey>[])
+        if (key.revokedAt == null) key,
+    ],
+  );
+
+  late final revokedApiKeys = computed(
+    () => (_data.value?.apiKeys.length ?? 0) - apiKeys.value.length,
+  );
+
+  final _linkedExports = signal<List<ExportEntry>>(const []);
+
+  late final exportJobs = computed<List<ExportEntry>>(() {
     final nodes = _data.value?.exportJobs.nodes;
-    if (nodes == null) return const [];
-    return nodes.toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return [
+      for (final ExportJob job in nodes ?? const <ExportJob>[])
+        ExportEntry(job),
+      ..._linkedExports.value,
+    ]..sort((a, b) => b.job.createdAt.compareTo(a.job.createdAt));
   });
 
+  /// A server that doesn't answer just has nothing to show for now.
+  Future<void> loadLinkedExports() async {
+    final servers = getIt<SessionService>().connectedServers.peek();
+    final answers = await Future.wait(
+      servers.map((server) async {
+        try {
+          final data = await _graphql.run(
+            GExportJobsReq((b) => b..fetchPolicy = FetchPolicy.NetworkOnly),
+            server: server,
+          );
+          return [
+            for (final job in data.exportJobs.nodes) ExportEntry(job, server),
+          ];
+        } on Exception {
+          return const <ExportEntry>[];
+        }
+      }),
+    );
+    _linkedExports.value = answers.expand((list) => list).toList();
+  }
+
   late final hasActiveExports = computed(
-    () => exportJobs.value.any(isActiveExport),
+    () =>
+        exportJobs.value.any((ExportEntry entry) => isActiveExport(entry.job)),
   );
 
   late final streamCapBps = computed(
@@ -389,6 +447,75 @@ class AccountController {
 
   bool isThisDevice(String id) => id == getIt<DeviceIdentity>().id;
 
+  Future<void> setSmartTranscode(AccountDevice device, bool enabled) async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(
+        GUpdateDeviceReq(
+          (b) => b.vars
+            ..id = device.id
+            ..smartTranscode = enabled,
+        ),
+      ),
+    );
+    if (data != null) query.refetch();
+  }
+
+  /// Null lifts the limit.
+  Future<void> setQualityLimit(AccountDevice device, int? maxBitrateBps) async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(
+        GUpdateDeviceReq(
+          (b) => b.vars
+            ..id = device.id
+            ..maxBitrateBps = maxBitrateBps
+            ..clearMaxBitrate = maxBitrateBps == null,
+        ),
+      ),
+    );
+    if (data != null) query.refetch();
+  }
+
+  /// The key itself, which the server keeps only a hash of.
+  Future<String?> createApiKey(String name) async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(GCreateApiKeyReq((b) => b.vars.name = name)),
+    );
+    if (data == null) return null;
+    query.refetch();
+    return data.createApiKey.key;
+  }
+
+  Future<void> revokeApiKey(String id) async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(GRevokeApiKeyReq((b) => b.vars.id = id)),
+      success: 'API key revoked',
+    );
+    if (data != null) query.refetch();
+  }
+
+  /// A code for another signed-in device to approve.
+  Future<String?> generatePin() async {
+    final identity = getIt<DeviceIdentity>();
+    final data = await _toasts.attempt(
+      () => _graphql.run(
+        GCreateDevicePinReq(
+          (b) => b.vars
+            ..client = identity.clientName
+            ..device = identity.name,
+        ),
+      ),
+    );
+    return data?.createDevicePin.pin;
+  }
+
+  /// Whether the code has been approved; asking again after that fails.
+  Future<bool> pinApproved(String pin) async {
+    final data = await _graphql.run(GPollDevicePinReq((b) => b.vars.pin = pin));
+    if (data.pollDevicePin == null) return false;
+    query.refetch();
+    return true;
+  }
+
   // ---- servers ----------------------------------------------------------
 
   /// The session holds these for everything that asks other servers; home and
@@ -423,12 +550,30 @@ class AccountController {
 
   // ---- exports ----------------------------------------------------------
 
-  Future<void> cancelExport(String id) async {
+  Future<void> removeExport(ExportEntry entry) async {
     final data = await _toasts.attempt(
-      () => _graphql.run(GCancelExportJobReq((b) => b.vars.id = id)),
-      success: 'Export cancelled',
+      () => _graphql.run(
+        GDeleteExportJobReq((b) => b.vars.id = entry.job.id),
+        server: entry.server,
+      ),
+      success: 'Offline copy removed',
     );
-    if (data != null) query.refetch();
+    if (data == null) return;
+    query.refetch();
+    await loadLinkedExports();
+  }
+
+  Future<void> cancelExport(ExportEntry entry) async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(
+        GCancelExportJobReq((b) => b.vars.id = entry.job.id),
+        server: entry.server,
+      ),
+      success: 'Offline copy cancelled',
+    );
+    if (data == null) return;
+    query.refetch();
+    await loadLinkedExports();
   }
 
   void dispose() {

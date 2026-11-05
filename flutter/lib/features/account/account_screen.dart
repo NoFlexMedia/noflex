@@ -173,7 +173,9 @@ int? _countOf(AccountController controller, AccountSection section) =>
             : controller.sessions.value.length,
       AccountSection.exports =>
         controller.hasActiveExports.value
-            ? controller.exportJobs.value.where(isActiveExport).length
+            ? controller.exportJobs.value
+                  .where((entry) => isActiveExport(entry.job))
+                  .length
             : null,
       _ => null,
     };

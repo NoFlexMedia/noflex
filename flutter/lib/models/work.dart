@@ -194,6 +194,29 @@ class WorkSummary {
     return year?.toString() ?? '';
   }
 
+  /// The offline manifest holds no credentials, so a downloaded work gets its
+  /// linked server back from the session.
+  WorkSummary withServer(ServerRef? server) => WorkSummary(
+    id: id,
+    kind: kind,
+    parentId: parentId,
+    libraryId: libraryId,
+    title: title,
+    year: year,
+    communityRating: communityRating,
+    indexNumber: indexNumber,
+    indexEnd: indexEnd,
+    parentIndex: parentIndex,
+    runtimeMs: runtimeMs,
+    externalIds: externalIds,
+    seriesExternalIds: seriesExternalIds,
+    images: images,
+    userData: userData,
+    seriesTitle: seriesTitle,
+    overview: overview,
+    server: server,
+  );
+
   WorkSummary withUserData(WatchData data) => WorkSummary(
     id: id,
     kind: kind,

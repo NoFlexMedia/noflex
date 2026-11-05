@@ -184,7 +184,9 @@ class _ItemRow extends SignalWidget {
     return NfPanel(
       padding: const EdgeInsets.all(10),
       onTap: item.isFinished
-          ? () => getIt<PlaybackService>().playWork(item.work)
+          ? () => getIt<PlaybackService>().playWork(
+              getIt<DownloadsService>().workOf(item),
+            )
           : null,
       child: Row(
         children: [

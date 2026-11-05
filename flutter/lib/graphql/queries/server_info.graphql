@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 query ServerInfo {
-  serverInfo { name version backend isConfigured }
+  serverInfo { name version backend isConfigured downloadsAllowed }
 }

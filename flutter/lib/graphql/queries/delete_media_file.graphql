@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation DeleteMediaFile($id: ID!, $files: Boolean!) {
+  deleteMediaFile(id: $id, deleteFile: $files)
+}

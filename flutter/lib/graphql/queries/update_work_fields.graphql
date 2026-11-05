@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation UpdateWorkFields($id: ID!, $fields: WorkFieldsInput!) {
+  updateWorkFields(workId: $id, fields: $fields) { id }
+}

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query CollectionMenu($library: ID!) {
+  collections(libraryId: $library, first: 100) {
+    edges { node { id title } }
+  }
+}

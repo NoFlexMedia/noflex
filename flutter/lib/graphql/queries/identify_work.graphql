@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation IdentifyWork($id: ID!, $provider: String!, $kind: ExternalIdKind!, $value: String!) {
+  identifyWork(workId: $id, provider: $provider, externalId: { kind: $kind, value: $value }) { id }
+}

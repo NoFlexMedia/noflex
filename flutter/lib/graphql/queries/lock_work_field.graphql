@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation LockWorkField($id: ID!, $field: WorkField!, $locked: Boolean!) {
+  setWorkFieldLock(workId: $id, field: $field, locked: $locked) { id }
+}

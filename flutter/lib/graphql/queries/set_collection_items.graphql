@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation SetCollectionItems($id: ID!, $items: [ID!]!) {
+  setCollectionItems(id: $id, workIds: $items) { id }
+}

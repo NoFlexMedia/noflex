@@ -4,6 +4,7 @@
 // foldable's hinge so neither runs across it.
 
 import 'package:built_collection/built_collection.dart';
+import 'package:ferry/ferry.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_icons/phosphor_icons.dart';
 import 'package:signals_flutter/signals_flutter.dart';
@@ -11,13 +12,17 @@ import 'package:signals_flutter/signals_flutter.dart';
 import '../../di.dart';
 import '../../graphql/__generated__/schema.schema.gql.dart';
 import '../../graphql/queries/__generated__/add_to_playlist.req.gql.dart';
+import '../../graphql/queries/__generated__/collection_items.req.gql.dart';
+import '../../graphql/queries/__generated__/collection_menu.req.gql.dart';
 import '../../graphql/queries/__generated__/create_watch_room.req.gql.dart';
+import '../../graphql/queries/__generated__/set_collection_items.req.gql.dart';
 import '../../graphql/queries/__generated__/playlist_menu.req.gql.dart';
 import '../../layout/window.dart';
 import '../../models/media_probe.dart';
 import '../../models/work.dart';
 import '../../services/graphql.dart';
 import '../../services/nav_service.dart';
+import '../../services/session.dart';
 import '../../services/toast_service.dart';
 import '../../services/watch_state.dart';
 import '../../theme.dart';
@@ -34,6 +39,7 @@ import '../player/decoders.dart';
 import '../player/playback_service.dart';
 import '../player/player_screen.dart';
 import '../rooms/watch_rooms_screen.dart';
+import 'manage_sheet.dart';
 import 'work_detail_controller.dart';
 
 class WorkDetailScreen extends StatefulWidget {
@@ -108,31 +114,178 @@ class _Layout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final summary = _Summary(controller: controller, work: work);
-    final body = _Body(controller: controller, work: work);
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth < 760) {
           return ListView(
             padding: EdgeInsets.zero,
-            children: [summary, body, const SizedBox(height: 40)],
+            children: [
+              _Summary(controller: controller, work: work),
+              _Body(controller: controller, work: work),
+              const SizedBox(height: 40),
+            ],
           );
         }
-        final pad = MediaQuery.paddingOf(context).top + 56;
-        return AdaptivePanes(
-          primaryFraction: 0.42,
-          primary: ListView(
-            padding: EdgeInsets.only(bottom: 32, top: pad * 0),
-            children: [summary],
-          ),
-          secondary: ListView(
-            padding: EdgeInsets.only(top: pad, bottom: 40),
-            children: [body],
-          ),
+        // A poster beside the text would put the hinge through the text, so an
+        // open book keeps one pane to each side of it.
+        if (context.fold?.isVertical ?? false) {
+          final pad = MediaQuery.paddingOf(context).top + 56;
+          return AdaptivePanes(
+            primaryFraction: 0.42,
+            primary: ListView(
+              padding: const EdgeInsets.only(bottom: 32),
+              children: [_Summary(controller: controller, work: work)],
+            ),
+            secondary: ListView(
+              padding: EdgeInsets.only(top: pad, bottom: 40),
+              children: [_Body(controller: controller, work: work)],
+            ),
+          );
+        }
+        return _Wide(
+          controller: controller,
+          work: work,
+          width: constraints.maxWidth,
+          height: constraints.maxHeight,
         );
       },
     );
   }
+}
+
+/// The poster beside the text under a banner across the whole window, with the
+/// rest of the title below, as on the web.
+class _Wide extends StatelessWidget {
+  const _Wide({
+    required this.controller,
+    required this.work,
+    required this.width,
+    required this.height,
+  });
+
+  final WorkDetailController controller;
+  final WorkSummary work;
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    final gutter = context.gutter;
+    final posterWidth = (width * 0.2).clamp(180.0, 290.0);
+    final gap = (width * 0.04).clamp(24.0, 56.0);
+    final bannerHeight = (height * 0.78).clamp(0.0, 820.0);
+    return SingleChildScrollView(
+      child: Stack(
+        // A short page mustn't cut off the banner's fade.
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: bannerHeight,
+            child: _Banner(work: work),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              gutter,
+              MediaQuery.paddingOf(context).top + 72,
+              gutter,
+              40,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _Crumbs(controller: controller),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: posterWidth,
+                      child: _Poster(work: work),
+                    ),
+                    SizedBox(width: gap),
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.topLeft,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 860),
+                          child: _Info(
+                            controller: controller,
+                            work: work,
+                            withVersions: true,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                _Body(
+                  controller: controller,
+                  work: work,
+                  inset: false,
+                  withVersions: false,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Banner extends StatelessWidget {
+  const _Banner({required this.work});
+  final WorkSummary work;
+
+  @override
+  Widget build(BuildContext context) => ShaderMask(
+    shaderCallback: (rect) => const LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      stops: [0, 0.3, 1],
+      colors: [Colors.white, Colors.white, Colors.transparent],
+    ).createShader(rect),
+    blendMode: BlendMode.dstIn,
+    child: Stack(
+      fit: StackFit.expand,
+      children: [
+        Opacity(
+          opacity: 0.55,
+          child: Artwork(work: work, kind: ArtKind.backdrop, radius: 0),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              stops: const [0, 0.45, 1],
+              colors: [
+                NfColors.bg.withValues(alpha: 0.92),
+                NfColors.bg.withValues(alpha: 0.5),
+                NfColors.bg.withValues(alpha: 0.2),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// An episode's picture is a wide frame from it; anything else has a poster.
+class _Poster extends StatelessWidget {
+  const _Poster({required this.work});
+  final WorkSummary work;
+
+  @override
+  Widget build(BuildContext context) => AspectRatio(
+    aspectRatio: work.isEpisode ? 16 / 9 : 2 / 3,
+    child: Artwork(
+      work: work,
+      kind: work.isEpisode ? ArtKind.thumb : ArtKind.poster,
+      radius: NfRadii.l,
+    ),
+  );
 }
 
 class _Summary extends StatelessWidget {
@@ -167,43 +320,84 @@ class _Summary extends StatelessWidget {
             children: [
               SizedBox(
                 width: work.isEpisode ? 240 : 150,
-                child: AspectRatio(
-                  aspectRatio: work.isEpisode ? 16 / 9 : 2 / 3,
-                  child: Artwork(
-                    work: work,
-                    kind: work.isEpisode ? ArtKind.thumb : ArtKind.poster,
-                    radius: NfRadii.l,
-                  ),
-                ),
+                child: _Poster(work: work),
               ),
               const SizedBox(height: 18),
               _Crumbs(controller: controller),
-              Text(titleCase(work.kind).toUpperCase(), style: NfType.eyebrow),
-              const SizedBox(height: 6),
-              if (pickImage(work.images, ArtKind.logo) != null)
-                SizedBox(
-                  height: 76,
-                  width: 300,
-                  child: Artwork(
-                    work: work,
-                    kind: ArtKind.logo,
-                    fit: BoxFit.contain,
-                    radius: 0,
-                  ),
-                )
-              else
-                Text(work.title, style: NfType.display),
-              const SizedBox(height: 10),
-              _Meta(controller: controller, work: work),
-              _Overview(controller: controller),
-              const SizedBox(height: 16),
-              _Actions(controller: controller, work: work),
-              const SizedBox(height: 16),
-              _Tracks(controller: controller),
+              _Info(controller: controller, work: work),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+class _Info extends StatelessWidget {
+  const _Info({
+    required this.controller,
+    required this.work,
+    this.withVersions = false,
+  });
+
+  final WorkDetailController controller;
+  final WorkSummary work;
+  final bool withVersions;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      _Eyebrow(controller: controller, work: work),
+      const SizedBox(height: 6),
+      if (pickImage(work.images, ArtKind.logo) != null)
+        SizedBox(
+          height: 76,
+          width: 300,
+          child: Artwork(
+            work: work,
+            kind: ArtKind.logo,
+            fit: BoxFit.contain,
+            radius: 0,
+          ),
+        )
+      else
+        Text(work.title, style: NfType.display),
+      const SizedBox(height: 10),
+      _Meta(controller: controller, work: work),
+      _Overview(controller: controller),
+      const SizedBox(height: 16),
+      _Actions(controller: controller, work: work),
+      const SizedBox(height: 16),
+      _Tracks(controller: controller),
+      if (withVersions) _Versions(controller: controller),
+    ],
+  );
+}
+
+class _Eyebrow extends SignalWidget {
+  const _Eyebrow({required this.controller, required this.work});
+
+  final WorkDetailController controller;
+  final WorkSummary work;
+
+  @override
+  Widget build(BuildContext context) {
+    final unconfirmed =
+        controller.query.data.value?.work?.metadataStatus ==
+        GMetadataStatus.UNCONFIRMED;
+    return Text.rich(
+      TextSpan(
+        text: titleCase(work.kind).toUpperCase(),
+        children: [
+          if (unconfirmed)
+            TextSpan(
+              text: ' · UNCONFIRMED MATCH',
+              style: NfType.eyebrow.copyWith(color: NfColors.warning),
+            ),
+        ],
+      ),
+      style: NfType.eyebrow,
     );
   }
 }
@@ -459,7 +653,7 @@ class _Actions extends SignalWidget {
           color: watch.played ? NfColors.accent : NfColors.text,
           onPressed: controller.togglePlayed,
         ),
-        if (!isContainer && controller.server == null)
+        if (!isContainer && (controller.downloadsAllowed.value || _isOnDevice))
           _DownloadButton(controller: controller, work: work),
       ],
     );
@@ -467,6 +661,9 @@ class _Actions extends SignalWidget {
 
   bool get _hasOffline =>
       getIt<DownloadsService>().completedFor(work.id) != null;
+
+  bool get _isOnDevice =>
+      getIt<DownloadsService>().itemsFor(work.id).isNotEmpty;
 }
 
 class _DownloadButton extends SignalWidget {
@@ -480,7 +677,7 @@ class _DownloadButton extends SignalWidget {
     if (version == null) return;
     final downloads = getIt<DownloadsService>();
     final started = await getIt<ToastService>().attempt(
-      () => downloads.download(version, seed: work),
+      () => downloads.download(version, seed: work, server: controller.server),
     );
     if (started == false) {
       final edition = controller.edition.value;
@@ -490,7 +687,9 @@ class _DownloadButton extends SignalWidget {
         message: 'The server can package this version as one file to save here. It keeps the original’s format, so this device may not play it well. It’ll be under You → Server exports when it’s ready.',
         confirmLabel: 'Export',
       );
-      if (confirmed) await downloads.createExport(edition.id);
+      if (confirmed) {
+        await downloads.createExport(edition.id, server: controller.server);
+      }
     }
   }
 
@@ -626,18 +825,32 @@ class _Tracks extends SignalWidget {
 }
 
 class _Body extends StatelessWidget {
-  const _Body({required this.controller, required this.work});
+  const _Body({
+    required this.controller,
+    required this.work,
+    this.inset = true,
+    this.withVersions = true,
+  });
 
   final WorkDetailController controller;
   final WorkSummary work;
 
+  /// Whether this brings its own gutters, rather than sitting inside a page's.
+  final bool inset;
+  final bool withVersions;
+
   @override
   Widget build(BuildContext context) => Padding(
-    padding: EdgeInsets.fromLTRB(context.gutter, 12, context.gutter, 0),
+    padding: EdgeInsets.fromLTRB(
+      inset ? context.gutter : 0,
+      12,
+      inset ? context.gutter : 0,
+      0,
+    ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _Versions(controller: controller),
+        if (withVersions) _Versions(controller: controller),
         if (work.isContainer) _Children(controller: controller),
         _Credits(controller: controller),
         if (!work.isContainer) _TechSpecs(controller: controller),
@@ -801,6 +1014,10 @@ class _EpisodeRow extends SignalWidget {
         ? (position / length).clamp(0.0, 1.0)
         : null;
     final isPlayable = !work.isContainer;
+    final windowWidth = MediaQuery.sizeOf(context).width;
+    final thumbWidth = windowWidth < 760
+        ? 132.0
+        : (windowWidth * 0.18).clamp(150.0, 240.0);
     return InkWell(
       borderRadius: BorderRadius.circular(NfRadii.m),
       onTap: () => isPlayable
@@ -818,7 +1035,7 @@ class _EpisodeRow extends SignalWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              width: 132,
+              width: thumbWidth,
               child: AspectRatio(
                 aspectRatio: 16 / 9,
                 child: Stack(
@@ -1105,8 +1322,18 @@ class _MoreMenu extends SignalWidget {
       icon: const Icon(PhosphorIconsBold.dotsThree),
       onPressed: () async {
         const playlist = 'playlist';
+        const collection = 'collection';
         const room = 'room';
-        const export = 'export';
+        const exportMp4 = 'mp4';
+        const exportMkv = 'mkv';
+        const manage = 'manage';
+        // A linked server's title belongs to that server's administrator, and
+        // its rooms to that server's list.
+        final linked = controller.server != null;
+        final manageable =
+            !linked && (getIt<SessionService>().viewer.value?.isAdmin ?? false);
+        final exportable =
+            !work.isContainer && controller.downloadsAllowed.value;
         final choice = await pickOption<String>(
           title: work.title,
           options: [
@@ -1115,39 +1342,126 @@ class _MoreMenu extends SignalWidget {
               'Add to playlist',
               leading: Icon(PhosphorIconsRegular.cardsThree, size: 18),
             ),
-            if (!work.isContainer) ...[
+            if (manageable)
+              const NfOption(
+                collection,
+                'Add to collection',
+                leading: Icon(PhosphorIconsRegular.books, size: 18),
+              ),
+            if (!work.isContainer && !linked)
               const NfOption(
                 room,
                 'Start a watch room',
                 leading: Icon(PhosphorIconsRegular.broadcast, size: 18),
               ),
+            if (exportable) ...[
               const NfOption(
-                export,
-                'Export a copy on the server',
-                leading: Icon(PhosphorIconsRegular.export, size: 18),
+                exportMp4,
+                'Make an offline copy (MP4)',
+                leading: Icon(PhosphorIconsRegular.downloadSimple, size: 18),
+              ),
+              const NfOption(
+                exportMkv,
+                'Make an offline copy (MKV)',
+                leading: Icon(PhosphorIconsRegular.downloadSimple, size: 18),
               ),
             ],
+            if (manageable)
+              const NfOption(
+                manage,
+                'Edit, identify & manage…',
+                leading: Icon(PhosphorIconsRegular.pencilSimple, size: 18),
+              ),
           ],
         );
+        Future<void> makeCopy(GExportFormat format) async {
+          final edition = controller.edition.value;
+          if (edition == null) return;
+          await getIt<DownloadsService>().createExport(
+            edition.id,
+            server: controller.server,
+            format: format,
+          );
+        }
+
         switch (choice) {
           case playlist:
-            await _addToPlaylist(work);
+            await _addToPlaylist(work, controller.server);
+          case collection:
+            await _addToCollection(work);
           case room:
             await _createRoom(controller);
-          case export:
-            final edition = controller.edition.value;
-            if (edition != null) {
-              await getIt<DownloadsService>().createExport(edition.id);
-            }
+          case exportMp4:
+            await makeCopy(GExportFormat.MP4);
+          case exportMkv:
+            await makeCopy(GExportFormat.MKV);
+          case manage:
+            await openManageSheet(controller);
         }
       },
     );
   }
 
-  static Future<void> _addToPlaylist(WorkSummary work) async {
+  static Future<void> _addToCollection(WorkSummary work) async {
     final graphql = getIt<GraphqlService>();
     final toasts = getIt<ToastService>();
-    final data = await toasts.attempt(() => graphql.run(GPlaylistMenuReq()));
+    final menu = await toasts.attempt(
+      () => graphql.run(
+        GCollectionMenuReq((b) => b.vars.library = work.libraryId),
+      ),
+    );
+    if (menu == null) return;
+    final collections = menu.collections.edges;
+    if (collections.isEmpty) {
+      toasts.show('No collections in this library yet.');
+      return;
+    }
+    final choice = await pickOption<String>(
+      title: 'Add to collection',
+      options: [
+        for (final edge in collections) NfOption(edge.node.id, edge.node.title),
+      ],
+    );
+    if (choice == null) return;
+    await toasts.attempt(() async {
+      // The mutation replaces the whole list, so it needs all of it first.
+      final ids = <String>[];
+      String? after;
+      do {
+        final page = await graphql.run(
+          GCollectionItemsReq(
+            (b) => b
+              ..fetchPolicy = FetchPolicy.NetworkOnly
+              ..vars.id = choice
+              ..vars.after = after,
+          ),
+        );
+        final items = page.collection?.items;
+        ids.addAll(items?.nodes.map((node) => node.id) ?? const []);
+        after = items?.pageInfo.hasNextPage ?? false
+            ? items?.pageInfo.endCursor
+            : null;
+      } while (after != null);
+      if (ids.contains(work.id)) return;
+      await graphql.run(
+        GSetCollectionItemsReq(
+          (b) => b.vars
+            ..id = choice
+            ..items = ListBuilder([...ids, work.id]),
+        ),
+      );
+    }, success: 'Added to collection');
+  }
+
+  static Future<void> _addToPlaylist(
+    WorkSummary work,
+    ServerRef? server,
+  ) async {
+    final graphql = getIt<GraphqlService>();
+    final toasts = getIt<ToastService>();
+    final data = await toasts.attempt(
+      () => graphql.run(GPlaylistMenuReq(), server: server),
+    );
     if (data == null) return;
     if (data.playlists.nodes.isEmpty) {
       toasts.show('No playlists yet. Create one under Collections.');
@@ -1167,6 +1481,7 @@ class _MoreMenu extends SignalWidget {
             ..id = choice
             ..items = ListBuilder([playTarget(work.id)]),
         ),
+        server: server,
       ),
       success: 'Added to playlist',
     );
@@ -1181,7 +1496,9 @@ class _MoreMenu extends SignalWidget {
       ),
     );
     if (data == null) return;
-    await getIt<NavService>().push(const WatchRoomsScreen());
+    await getIt<NavService>().push(
+      WatchRoomsScreen(roomId: data.createWatchRoom.id),
+    );
   }
 }
 

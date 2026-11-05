@@ -11,6 +11,7 @@ query WorkDetail($id: ID!) {
     tagline
     originalTitle
     metadataStatus
+    lockedFields
     addedAt
     seriesTitle
     credits { personId name role character }

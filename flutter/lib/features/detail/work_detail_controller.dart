@@ -13,6 +13,7 @@ import '../../di.dart';
 import '../../graphql/queries/__generated__/mark_played.req.gql.dart';
 import '../../graphql/queries/__generated__/mark_unplayed.req.gql.dart';
 import '../../graphql/queries/__generated__/media_files.req.gql.dart';
+import '../../graphql/queries/__generated__/server_info.req.gql.dart';
 import '../../graphql/queries/__generated__/set_favorite.req.gql.dart';
 import '../../graphql/queries/__generated__/work_crumb.req.gql.dart';
 import '../../graphql/queries/__generated__/work_detail.data.gql.dart';
@@ -50,6 +51,19 @@ class WorkDetailController {
         if (data != null) untracked(() => _onDetail(data));
       }),
     ];
+    unawaited(_loadDownloadsAllowed());
+  }
+
+  Future<void> _loadDownloadsAllowed() async {
+    try {
+      final data = await _graphql.run(
+        GServerInfoReq((b) => b..fetchPolicy = FetchPolicy.NetworkOnly),
+        server: server,
+      );
+      if (!_disposed) downloadsAllowed.value = data.serverInfo.downloadsAllowed;
+    } on Exception {
+      // Asking again is the download itself, which the server can refuse.
+    }
   }
 
   final String workId;
@@ -68,6 +82,9 @@ class WorkDetailController {
   final audioChoice = signal<int?>(null);
   final subtitleChoice = signal<int?>(null);
   final overviewExpanded = signal(false);
+
+  /// What the server this title is on says; the button only goes away on a no.
+  final downloadsAllowed = signal(true);
 
   /// The viewer picked; automatic choices stop.
   bool _editionPicked = false;

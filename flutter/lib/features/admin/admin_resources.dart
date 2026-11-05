@@ -7,6 +7,7 @@ import 'package:signals_flutter/signals_flutter.dart';
 import '../../graphql/__generated__/schema.schema.gql.dart';
 import '../../graphql/queries/fragments/__generated__/system_status_fields.data.gql.dart';
 import '../../theme.dart';
+import '../../widgets/nf_state.dart';
 import '../account/account_widgets.dart';
 import 'admin_controller.dart';
 import 'admin_format.dart';
@@ -45,10 +46,7 @@ class _ResourcesSectionState extends State<ResourcesSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             LiveBadge(live: live),
-            const Padding(
-              padding: EdgeInsets.all(40),
-              child: Center(child: CircularProgressIndicator()),
-            ),
+            const NfSkeletonRows(),
           ],
         );
       }

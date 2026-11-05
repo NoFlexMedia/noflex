@@ -195,10 +195,7 @@ class UsersSection extends StatelessWidget {
   Widget build(BuildContext context) => SignalBuilder(
     builder: (context) {
       if (controller.admin.waiting.value) {
-        return const Padding(
-          padding: EdgeInsets.all(40),
-          child: Center(child: CircularProgressIndicator()),
-        );
+        return const NfSkeletonRows();
       }
       final data = controller.admin.data.value;
       if (data == null) {
@@ -1196,10 +1193,7 @@ class _RestrictionsSheetState extends State<_RestrictionsSheet> {
         final error = _error.value;
         if (error != null) return Notice(error);
         if (!_loaded.value) {
-          return const Padding(
-            padding: EdgeInsets.all(32),
-            child: Center(child: CircularProgressIndicator()),
-          );
+          return const NfSkeletonRows();
         }
         final ids = _ids.value;
         final tags = _tags.value;

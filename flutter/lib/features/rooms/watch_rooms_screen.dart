@@ -290,9 +290,11 @@ class _WatchRoomsScreenState extends State<WatchRoomsScreen> {
             SignalBuilder(
               builder: (context) {
                 if (_rooms.waiting.value) {
-                  return const SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(child: CircularProgressIndicator()),
+                  return SliverPadding(
+                    padding: EdgeInsets.fromLTRB(gutter, 0, gutter, 24),
+                    sliver: const SliverToBoxAdapter(
+                      child: NfSkeletonRows(count: 3),
+                    ),
                   );
                 }
                 if (_rooms.data.value == null) {

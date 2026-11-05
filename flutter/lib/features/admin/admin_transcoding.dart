@@ -181,10 +181,7 @@ class _TranscodingSectionState extends State<TranscodingSection> {
   Widget build(BuildContext context) => SignalBuilder(
     builder: (context) {
       if (_transcoder.waiting.value) {
-        return const Padding(
-          padding: EdgeInsets.all(40),
-          child: Center(child: CircularProgressIndicator()),
-        );
+        return const NfSkeletonRows();
       }
       final info = _transcoder.data.value?.transcoderInfo;
       if (info == null) {

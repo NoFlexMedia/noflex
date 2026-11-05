@@ -117,10 +117,7 @@ class _PlaybackSectionState extends State<PlaybackSection> {
             ],
           ),
           if (_streams.waiting.value)
-            const Padding(
-              padding: EdgeInsets.all(40),
-              child: Center(child: CircularProgressIndicator()),
-            )
+            const NfSkeletonRows()
           else if (data == null)
             NfState.error(
               title: 'Couldn’t read active streams',

@@ -65,7 +65,18 @@ class _LiveTvScreenState extends State<LiveTvScreen> {
       builder: (context) {
         final live = _controller.live;
         if (live.waiting.value) {
-          return const Center(child: CircularProgressIndicator());
+          return GridView.builder(
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.fromLTRB(context.gutter, 6, context.gutter, 32),
+            gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 360,
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              mainAxisExtent: MediaQuery.textScalerOf(context).scale(142),
+            ),
+            itemCount: 12,
+            itemBuilder: (_, _) => const NfSkeleton(),
+          );
         }
         if (live.data.value == null) {
           return NfState.error(

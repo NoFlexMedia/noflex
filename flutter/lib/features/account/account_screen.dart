@@ -20,6 +20,7 @@ import '../../widgets/nf_state.dart';
 import '../admin/admin_screen.dart';
 import '../downloads/leave_account.dart';
 import 'account_controller.dart';
+import 'account_widgets.dart';
 import 'devices_section.dart';
 import 'exports_section.dart';
 import 'history_section.dart';
@@ -318,9 +319,9 @@ class _SectionSliver extends StatelessWidget {
       }
       final query = controller.query;
       if (query.waiting.value) {
-        return const SliverFillRemaining(
-          hasScrollBody: false,
-          child: Center(child: CircularProgressIndicator()),
+        return const SliverConstrainedCrossAxis(
+          maxExtent: accountMaxWidth,
+          sliver: SliverToBoxAdapter(child: NfSkeletonRows()),
         );
       }
       if (query.data.value == null) {

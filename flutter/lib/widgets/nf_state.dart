@@ -88,8 +88,8 @@ class NfState extends StatelessWidget {
   );
 }
 
-/// A placeholder block while content loads.
-class NfSkeleton extends StatelessWidget {
+/// A placeholder block while content loads, in the shape of what's coming.
+class NfSkeleton extends StatefulWidget {
   const NfSkeleton({
     super.key,
     this.width,
@@ -102,13 +102,88 @@ class NfSkeleton extends StatelessWidget {
   final double radius;
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: width,
-    height: height,
-    decoration: BoxDecoration(
-      color: NfColors.surface2,
-      borderRadius: BorderRadius.circular(radius),
+  State<NfSkeleton> createState() => _NfSkeletonState();
+}
+
+class _NfSkeletonState extends State<NfSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final _sweep = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1600),
+  );
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _sweep.stop();
+    } else if (!_sweep.isAnimating) {
+      _sweep.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _sweep.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => RepaintBoundary(
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(widget.radius),
+      child: CustomPaint(
+        foregroundPainter: _SweepPainter(_sweep),
+        child: Container(
+          width: widget.width,
+          height: widget.height,
+          color: NfColors.surface2,
+        ),
+      ),
     ),
+  );
+}
+
+class _SweepPainter extends CustomPainter {
+  _SweepPainter(this.sweep) : super(repaint: sweep);
+
+  final Animation<double> sweep;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (!sweep.isAnimating) return;
+    final band = Offset(size.width * (2 * sweep.value - 1), 0) & size;
+    canvas.drawRect(
+      band,
+      Paint()
+        ..shader = const LinearGradient(
+          colors: [Colors.transparent, NfColors.surface2, Colors.transparent],
+        ).createShader(band),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_SweepPainter oldDelegate) => false;
+}
+
+/// Rows of placeholder, for a list or section still loading.
+class NfSkeletonRows extends StatelessWidget {
+  const NfSkeletonRows({super.key, this.count = 4, this.height = 56});
+
+  final int count;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (var i = 0; i < count; i++)
+        Padding(
+          padding: EdgeInsets.only(top: i == 0 ? 0 : 10),
+          child: NfSkeleton(height: height),
+        ),
+    ],
   );
 }
 

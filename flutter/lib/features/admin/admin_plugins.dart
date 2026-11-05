@@ -221,10 +221,7 @@ class _PluginsSectionState extends State<PluginsSection> {
     builder: (context) {
       final controller = widget.controller;
       if (controller.admin.waiting.value) {
-        return const Padding(
-          padding: EdgeInsets.all(40),
-          child: Center(child: CircularProgressIndicator()),
-        );
+        return const NfSkeletonRows();
       }
       final data = controller.admin.data.value;
       final plugins = (data?.plugins.toList() ?? <_Plugin>[])

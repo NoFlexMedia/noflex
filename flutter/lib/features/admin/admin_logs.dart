@@ -180,10 +180,7 @@ class _LogsSectionState extends State<LogsSection> {
             style: NfType.caption,
           ),
           if (_pager.waiting.value)
-            const Padding(
-              padding: EdgeInsets.all(40),
-              child: Center(child: CircularProgressIndicator()),
-            )
+            const NfSkeletonRows()
           else if (rows.isEmpty && _pager.error.value != null)
             NfState.error(
               title: 'Couldn’t read the log',

@@ -191,10 +191,7 @@ class _IndexingSectionState extends State<IndexingSection> {
   Widget build(BuildContext context) => SignalBuilder(
     builder: (context) {
       if (_indexing.waiting.value) {
-        return const Padding(
-          padding: EdgeInsets.all(40),
-          child: Center(child: CircularProgressIndicator()),
-        );
+        return const NfSkeletonRows();
       }
       final data = _indexing.data.value;
       if (data == null) {

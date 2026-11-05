@@ -6,6 +6,7 @@ import 'package:signals_flutter/signals_flutter.dart';
 import '../graphql/query.dart';
 import '../layout/window.dart';
 import '../models/work.dart';
+import '../theme.dart';
 import 'nf_button.dart';
 import 'nf_state.dart';
 import 'work_card.dart';
@@ -33,9 +34,31 @@ class SliverWorkGrid extends StatelessWidget {
             (items.isEmpty &&
                 pager.hasMore.value &&
                 pager.error.value == null)) {
-          return const SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(child: CircularProgressIndicator()),
+          return SliverPadding(
+            padding: EdgeInsets.fromLTRB(gutter, 8, gutter, 32),
+            sliver: SliverLayoutBuilder(
+              builder: (context, constraints) {
+                final columns = posterColumns(constraints.crossAxisExtent);
+                return SliverGrid.builder(
+                  gridDelegate: _gridDelegate(
+                    columns,
+                    constraints.crossAxisExtent,
+                  ),
+                  itemCount: columns * 3,
+                  itemBuilder: (_, _) => const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: NfSkeleton()),
+                      SizedBox(height: 10),
+                      NfSkeleton(height: 12, width: 96, radius: NfRadii.xs),
+                      SizedBox(height: 8),
+                      NfSkeleton(height: 10, width: 60, radius: NfRadii.xs),
+                      SizedBox(height: 6),
+                    ],
+                  ),
+                );
+              },
+            ),
           );
         }
         final failure = pager.error.value;
@@ -62,15 +85,10 @@ class SliverWorkGrid extends StatelessWidget {
               SliverLayoutBuilder(
                 builder: (context, constraints) {
                   final columns = posterColumns(constraints.crossAxisExtent);
-                  final cell =
-                      (constraints.crossAxisExtent - (columns - 1) * 12) /
-                      columns;
                   return SliverGrid.builder(
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: columns,
-                      crossAxisSpacing: 12,
-                      mainAxisSpacing: 16,
-                      mainAxisExtent: cell * 3 / 2 + 46,
+                    gridDelegate: _gridDelegate(
+                      columns,
+                      constraints.crossAxisExtent,
                     ),
                     itemCount: items.length,
                     itemBuilder: (context, index) {
@@ -106,4 +124,14 @@ class SliverWorkGrid extends StatelessWidget {
       },
     );
   }
+}
+
+SliverGridDelegate _gridDelegate(int columns, double width) {
+  final cell = (width - (columns - 1) * 12) / columns;
+  return SliverGridDelegateWithFixedCrossAxisCount(
+    crossAxisCount: columns,
+    crossAxisSpacing: 12,
+    mainAxisSpacing: 16,
+    mainAxisExtent: cell * 3 / 2 + 46,
+  );
 }

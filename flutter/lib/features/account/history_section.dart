@@ -85,9 +85,9 @@ class HistorySection extends StatelessWidget {
           );
         }
         if (pager.loading.value || pager.hasMore.value) {
-          return const SliverFillRemaining(
-            hasScrollBody: false,
-            child: Center(child: CircularProgressIndicator()),
+          return const SliverConstrainedCrossAxis(
+            maxExtent: accountMaxWidth,
+            sliver: SliverToBoxAdapter(child: NfSkeletonRows(count: 6)),
           );
         }
         return const SliverFillRemaining(

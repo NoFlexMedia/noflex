@@ -349,10 +349,7 @@ class _ChartPanel extends SignalWidget {
               retry: () => chart?.refetch(),
             )
           else if (points.isEmpty)
-            const SizedBox(
-              height: 220,
-              child: Center(child: CircularProgressIndicator()),
-            )
+            const NfSkeleton(height: 220)
           else
             Stack(
               alignment: Alignment.center,
@@ -428,10 +425,7 @@ class _TopUsers extends SignalWidget {
   Widget build(BuildContext context) {
     final current = query;
     if (current == null || current.waiting.value) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return const NfSkeletonRows();
     }
     final rows = current.data.value?.topUsers.toList() ?? const [];
     if (rows.isEmpty) {
@@ -573,10 +567,7 @@ class _MostPlayed extends SignalWidget {
   Widget build(BuildContext context) {
     final current = query;
     if (current == null || current.waiting.value) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return const NfSkeletonRows();
     }
     final groups = current.data.value?.topPlayed.toList() ?? const [];
     if (groups.isEmpty) {
@@ -775,10 +766,7 @@ class _PlaySessionsSheetState extends State<_PlaySessionsSheet> {
       builder: (context) {
         final rows = _pager.items.value;
         if (_pager.waiting.value) {
-          return const Padding(
-            padding: EdgeInsets.all(32),
-            child: Center(child: CircularProgressIndicator()),
-          );
+          return const NfSkeletonRows();
         }
         if (rows.isEmpty) {
           if (_pager.error.value != null) {

@@ -20,6 +20,7 @@ import '../../graphql/query.dart';
 import '../../services/graphql.dart';
 import '../../theme.dart';
 import '../../widgets/nf_button.dart';
+import '../../widgets/nf_state.dart';
 import '../account/account_widgets.dart';
 import 'admin_controller.dart';
 import 'admin_format.dart';
@@ -162,12 +163,7 @@ class _OverviewSectionState extends State<OverviewSection> {
             ],
           ),
           if (status == null)
-            const Center(
-              child: Padding(
-                padding: EdgeInsets.all(40),
-                child: CircularProgressIndicator(),
-              ),
-            )
+            const NfSkeletonRows()
           else
             AdminColumns(
               minWidth: 165,

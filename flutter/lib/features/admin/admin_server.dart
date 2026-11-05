@@ -15,6 +15,7 @@ import '../../services/toast_service.dart';
 import '../../theme.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_field.dart';
+import '../../widgets/nf_state.dart';
 import '../account/account_widgets.dart';
 import 'admin_controller.dart';
 import 'admin_format.dart';
@@ -69,10 +70,7 @@ class _ServerSectionState extends State<ServerSection> {
     builder: (context) {
       final status = widget.controller.live.status.value;
       if (status == null) {
-        return const Padding(
-          padding: EdgeInsets.all(40),
-          child: Center(child: CircularProgressIndicator()),
-        );
+        return const NfSkeletonRows();
       }
       final server = status.server;
       final database = server.database;

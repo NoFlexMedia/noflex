@@ -282,10 +282,7 @@ class _LibrariesSectionState extends State<LibrariesSection> {
       final query = _controller.admin;
       final libraries = _libraries;
       if (query.waiting.value) {
-        return const Padding(
-          padding: EdgeInsets.all(40),
-          child: Center(child: CircularProgressIndicator()),
-        );
+        return const NfSkeletonRows();
       }
       if (libraries.isEmpty) {
         return NfState(

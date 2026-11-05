@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/provider_attribution_fields.graphql'
+
 query MetadataSearch($query: String!, $kind: WorkKind!, $year: Int) {
   searchMetadata(query: $query, kind: $kind, year: $year) {
     externalId { kind value }
@@ -7,4 +9,5 @@ query MetadataSearch($query: String!, $kind: WorkKind!, $year: Int) {
     confidence
     provider
   }
+  providerAttributions { ...ProviderAttributionFields }
 }

@@ -16,6 +16,7 @@ import '../../graphql/queries/__generated__/trigger_library_scan.req.gql.dart';
 import '../../graphql/queries/__generated__/update_library.req.gql.dart';
 import '../../graphql/queries/__generated__/update_library_config.req.gql.dart';
 import '../../graphql/queries/fragments/__generated__/admin_library_fields.data.gql.dart';
+import '../../graphql/queries/fragments/__generated__/provider_attribution_fields.data.gql.dart';
 import '../../graphql/queries/fragments/__generated__/scan_status_fields.data.gql.dart';
 import '../../services/graphql.dart';
 import '../../services/nav_service.dart';
@@ -25,6 +26,7 @@ import '../../utils/format.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_field.dart';
 import '../../widgets/nf_overlays.dart';
+import '../../widgets/provider_logo.dart';
 import '../../widgets/nf_state.dart';
 import '../account/account_widgets.dart';
 import '../browse/library_screen.dart';
@@ -218,9 +220,19 @@ class _LibrariesSectionState extends State<LibrariesSection> {
     ];
   }
 
+  Map<String, GProviderAttributionFields> _credits() {
+    final credits = _controller.admin.data.value?.providerAttributions;
+    if (credits == null) return const {};
+    return {for (final credit in credits) credit.provider: credit};
+  }
+
   Future<void> _openForm({AdminLibrary? library}) async {
     final result = await getIt<NavService>().openSheet<_FormResult>(
-      (context) => LibraryForm(library: library, providers: _providers()),
+      (context) => LibraryForm(
+        library: library,
+        providers: _providers(),
+        credits: _credits(),
+      ),
       wide: true,
     );
     if (result == null || !mounted) return;
@@ -479,9 +491,15 @@ bool _same(Iterable<String> a, Iterable<String> b) {
 /// Creating takes a dialog of its own; editing the same fields, seeded once so a
 /// background refresh can't clobber what's been typed.
 class LibraryForm extends StatefulWidget {
-  const LibraryForm({super.key, required this.providers, this.library});
+  const LibraryForm({
+    super.key,
+    required this.providers,
+    this.credits = const {},
+    this.library,
+  });
   final AdminLibrary? library;
   final List<String> providers;
+  final Map<String, GProviderAttributionFields> credits;
 
   @override
   State<LibraryForm> createState() => _LibraryFormState();
@@ -765,18 +783,30 @@ class _LibraryFormState extends State<LibraryForm> {
                               const SizedBox(width: 12),
                               Text('${index + 1}', style: NfType.caption),
                               const SizedBox(width: 10),
+                              if (widget.credits[id]?.logoUrl != null) ...[
+                                ProviderLogo(
+                                  credit: widget.credits[id]!,
+                                  height: 18,
+                                ),
+                                const SizedBox(width: 10),
+                              ],
                               Expanded(
                                 child: Tooltip(
                                   message: widget.providers.contains(id)
                                       ? ''
                                       : 'Not installed',
                                   child: Text(
-                                    id,
-                                    style: NfType.mono.copyWith(
-                                      decoration: widget.providers.contains(id)
-                                          ? null
-                                          : TextDecoration.lineThrough,
-                                    ),
+                                    widget.credits[id]?.name ?? id,
+                                    style:
+                                        (widget.credits.containsKey(id)
+                                                ? nfText(14, weight: 550)
+                                                : NfType.mono)
+                                            .copyWith(
+                                              decoration:
+                                                  widget.providers.contains(id)
+                                                  ? null
+                                                  : TextDecoration.lineThrough,
+                                            ),
                                   ),
                                 ),
                               ),
@@ -821,9 +851,21 @@ class _LibraryFormState extends State<LibraryForm> {
                   children: [
                     for (final id in available)
                       NfChoiceChip(
-                        label: id,
+                        label: widget.credits[id]?.name ?? id,
                         selected: false,
-                        leading: const Icon(PhosphorIconsBold.plus),
+                        leading: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(PhosphorIconsBold.plus),
+                            if (widget.credits[id]?.logoUrl != null) ...[
+                              const SizedBox(width: 6),
+                              ProviderLogo(
+                                credit: widget.credits[id]!,
+                                height: 14,
+                              ),
+                            ],
+                          ],
+                        ),
                         onTap: () => _chosen.value = [...chosen, id],
                       ),
                   ],

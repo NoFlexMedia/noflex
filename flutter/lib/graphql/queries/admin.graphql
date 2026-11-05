@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #import 'fragments/admin_library_fields.graphql'
 #import 'fragments/admin_user_fields.graphql'
+#import 'fragments/provider_attribution_fields.graphql'
 
 query Admin {
   serverInfo { name version backend downloadsAllowed }
   libraries { ...AdminLibraryFields }
   users { ...AdminUserFields }
   sessions { id userId client device remoteAddr createdAt lastSeenAt expiresAt }
+  providerAttributions { ...ProviderAttributionFields }
   plugins {
     id
     displayName

@@ -64,6 +64,11 @@ dependencies:
   uuid: ^4.5.1
   intl: ^0.20.2
 
+  # Provider credits. jovial_svg rather than flutter_svg, which ignores <style>
+  # and so draws most exported logos solid black.
+  jovial_svg: ^1.1.31
+  url_launcher: ^6.3.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

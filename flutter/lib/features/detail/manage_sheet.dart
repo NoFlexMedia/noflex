@@ -19,6 +19,7 @@ import '../../graphql/queries/__generated__/identify_work.req.gql.dart';
 import '../../graphql/queries/__generated__/lock_work_field.req.gql.dart';
 import '../../graphql/queries/__generated__/metadata_search.data.gql.dart';
 import '../../graphql/queries/__generated__/metadata_search.req.gql.dart';
+import '../../graphql/queries/fragments/__generated__/provider_attribution_fields.data.gql.dart';
 import '../../graphql/queries/__generated__/refresh_metadata.req.gql.dart';
 import '../../graphql/queries/__generated__/update_work_fields.req.gql.dart';
 import '../../services/graphql.dart';
@@ -29,6 +30,7 @@ import '../../utils/format.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_field.dart';
 import '../../widgets/nf_overlays.dart';
+import '../../widgets/provider_logo.dart';
 import 'work_detail_controller.dart';
 
 typedef _Match = GMetadataSearchData_searchMetadata;
@@ -55,6 +57,7 @@ class _ManageSheetState extends State<_ManageSheet> {
   final _query = TextEditingController();
   final _searchYear = TextEditingController();
   final _matches = signal<List<_Match>>(const []);
+  final _credits = signal<Map<String, GProviderAttributionFields>>(const {});
   final _busy = signal<String?>(null);
 
   late final _title = TextEditingController();
@@ -123,7 +126,15 @@ class _ManageSheetState extends State<_ManageSheet> {
     );
     if (!mounted) return;
     _busy.value = null;
-    if (data != null) _matches.value = data.searchMetadata.toList();
+    if (data != null) {
+      batch(() {
+        _credits.value = {
+          for (final credit in data.providerAttributions)
+            credit.provider: credit,
+        };
+        _matches.value = data.searchMetadata.toList();
+      });
+    }
   }
 
   Future<void> _identify(_Match match) async {
@@ -405,9 +416,9 @@ class _ManageSheetState extends State<_ManageSheet> {
                 enabled: busy != 'identify',
                 onTap: () => unawaited(_identify(match)),
                 title: Text(match.title, style: nfText(14.5, weight: 600)),
-                subtitle: Text(
-                  '${match.provider} · ${match.externalId.kind.name}:${match.externalId.value}',
-                  style: NfType.caption,
+                subtitle: _MatchSource(
+                  match: match,
+                  credit: _credits.value[match.provider],
                 ),
                 trailing: Text(
                   '${match.year ?? '—'} · ${(match.confidence * 100).round()}%',
@@ -512,4 +523,34 @@ class _ManageSheetState extends State<_ManageSheet> {
       );
     },
   );
+}
+
+/// Whose match this is: the provider's logo when it has one, then its id there.
+class _MatchSource extends StatelessWidget {
+  const _MatchSource({required this.match, this.credit});
+
+  final _Match match;
+  final GProviderAttributionFields? credit;
+
+  @override
+  Widget build(BuildContext context) {
+    final id = match.externalId.value;
+    final credit = this.credit;
+    if (credit?.logoUrl == null) {
+      return Text(
+        '${credit?.name ?? match.provider} · $id',
+        style: NfType.caption,
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: Row(
+        children: [
+          ProviderLogo(credit: credit!, height: 16),
+          const SizedBox(width: 8),
+          Flexible(child: Text(id, style: NfType.caption)),
+        ],
+      ),
+    );
+  }
 }

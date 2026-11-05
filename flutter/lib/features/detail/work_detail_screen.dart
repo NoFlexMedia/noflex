@@ -34,6 +34,7 @@ import '../../widgets/nf_button.dart';
 import '../../widgets/nf_overlays.dart';
 import '../../widgets/nf_state.dart';
 import '../../widgets/poster_flight.dart';
+import 'attributions.dart';
 import '../downloads/download_models.dart';
 import '../downloads/downloads_service.dart';
 import '../player/decoder_probe.dart';
@@ -885,6 +886,7 @@ class _Body extends StatelessWidget {
         if (work.isContainer) _Children(controller: controller),
         _Credits(controller: controller),
         if (!work.isContainer) _TechSpecs(controller: controller),
+        _Attributions(controller: controller),
       ],
     ),
   );
@@ -1144,6 +1146,18 @@ class _EpisodeRow extends SignalWidget {
       ),
     );
   }
+}
+
+class _Attributions extends SignalWidget {
+  const _Attributions({required this.controller});
+  final WorkDetailController controller;
+
+  @override
+  Widget build(BuildContext context) => WorkAttributions(
+    credits:
+        controller.query.data.value?.work?.attributions.toList() ?? const [],
+    server: controller.server?.origin,
+  );
 }
 
 class _Credits extends SignalWidget {

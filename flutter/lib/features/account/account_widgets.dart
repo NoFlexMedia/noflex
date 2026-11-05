@@ -13,11 +13,15 @@ class AccountPanel extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.child,
+    this.mark,
     this.detail,
     this.trailing,
   });
 
   final IconData icon;
+
+  /// Takes the icon's place: a logo that needs more room than a square.
+  final Widget? mark;
   final String title;
   final String? detail;
   final Widget? trailing;
@@ -31,7 +35,19 @@ class AccountPanel extends StatelessWidget {
       children: [
         Row(
           children: [
-            AccountGlyph(icon: icon),
+            if (mark case final mark?)
+              Container(
+                height: 38,
+                padding: const EdgeInsets.symmetric(horizontal: 9),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: NfColors.surface2,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: mark,
+              )
+            else
+              AccountGlyph(icon: icon),
             const SizedBox(width: 12),
             Expanded(
               child: Column(

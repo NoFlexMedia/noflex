@@ -16,6 +16,7 @@ import '../../graphql/queries/__generated__/admin_plugin_events.req.gql.dart';
 import '../../graphql/queries/__generated__/clear_plugin_override.req.gql.dart';
 import '../../graphql/queries/__generated__/enqueue_plugin_task.req.gql.dart';
 import '../../graphql/queries/__generated__/set_plugin_override.req.gql.dart';
+import '../../graphql/queries/fragments/__generated__/provider_attribution_fields.data.gql.dart';
 import '../../graphql/query.dart';
 import '../../services/graphql.dart';
 import '../../services/nav_service.dart';
@@ -26,6 +27,7 @@ import '../../widgets/nf_button.dart';
 import '../../widgets/nf_field.dart';
 import '../../widgets/nf_overlays.dart';
 import '../../widgets/nf_state.dart';
+import '../../widgets/provider_logo.dart';
 import '../account/account_widgets.dart';
 import 'admin_controller.dart';
 import 'admin_format.dart';
@@ -287,7 +289,13 @@ class _PluginsSectionState extends State<PluginsSection> {
               minWidth: 380,
               children: [
                 for (final plugin in plugins)
-                  _PluginCard(plugin: plugin, onRun: _runTask),
+                  _PluginCard(
+                    plugin: plugin,
+                    onRun: _runTask,
+                    credit: data?.providerAttributions
+                        .where((credit) => credit.provider == plugin.id)
+                        .firstOrNull,
+                  ),
               ],
             ),
             AccountPanel(
@@ -532,8 +540,9 @@ class _EventRow extends StatelessWidget {
 }
 
 class _PluginCard extends StatelessWidget {
-  const _PluginCard({required this.plugin, required this.onRun});
+  const _PluginCard({required this.plugin, required this.onRun, this.credit});
   final _Plugin plugin;
+  final GProviderAttributionFields? credit;
   final Future<void> Function(_Plugin, String) onRun;
 
   @override
@@ -543,12 +552,16 @@ class _PluginCard extends StatelessWidget {
       taskFailing: plugin.tasks.any((task) => task.consecutiveFailures > 0),
       restarts: plugin.instanceRestarts,
     );
+    final credit = this.credit;
     final homepage = plugin.homepage;
     final isWeb =
         homepage != null &&
         (homepage.startsWith('http://') || homepage.startsWith('https://'));
     return AccountPanel(
       icon: PhosphorIconsRegular.plug,
+      mark: credit?.logoUrl == null
+          ? null
+          : ProviderLogo(credit: credit!, height: 22),
       title: plugin.displayName,
       detail: '${plugin.id} · v${plugin.version}',
       trailing: StatePill(vital.label, tone: vital.tone),

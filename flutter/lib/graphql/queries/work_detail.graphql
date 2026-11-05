@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #import 'fragments/edition_full.graphql'
+#import 'fragments/provider_attribution_fields.graphql'
 #import 'fragments/work_card.graphql'
 
 query WorkDetail($id: ID!) {
@@ -17,6 +18,7 @@ query WorkDetail($id: ID!) {
     credits { personId name role character }
     tags(namespaces: ["parental", "genre"]) { id namespace display }
     userData { played positionMs playCount rating favorite lastPlayed }
+    attributions { ...ProviderAttributionFields }
   }
   editions(workId: $id) { ...EditionFull }
 }

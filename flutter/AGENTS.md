@@ -60,7 +60,7 @@ Decide from available width through `layout/window.dart`, never from device chec
 
 ## Administration
 
-`features/admin/` is the web's Administration page: one section list beside the open section, or leading to it on a phone. The open section is a signal rather than a route, so unfolding keeps the place. Each section asks for what it needs and stops when it's closed; only the libraries, users and plugins (`AdminController.admin`) and the live host sample (`LiveStatus`) are shared. The entry shows only for `viewer.isAdmin`: in the sidebar, and on the You screen for widths without one. Polled queries use `FetchPolicy.NoCache`, or the normalized cache would keep every log line and stream forever. A plugin's homepage is shown to copy, since nothing in the app opens links.
+`features/admin/` is the web's Administration page: one section list beside the open section, or leading to it on a phone. The open section is a signal rather than a route, so unfolding keeps the place. Each section asks for what it needs and stops when it's closed; only the libraries, users and plugins (`AdminController.admin`) and the live host sample (`LiveStatus`) are shared. The entry shows only for `viewer.isAdmin`: in the sidebar, and on the You screen for widths without one. Polled queries use `FetchPolicy.NoCache`, or the normalized cache would keep every log line and stream forever. A plugin's homepage is shown to copy. Only provider credits open a browser (`url_launcher`), since TheTVDB's terms ask for a direct link.
 
 ## GraphQL
 
@@ -130,7 +130,7 @@ A stale debug-only file (`Unhandled Exception: FormatException` from `NativeRefe
 ## House rules
 
 - Build UI from `widgets/` and the tokens in `theme.dart`; don't hard-code colors or radii.
-- Icons are Phosphor (`package:phosphor_icons`, a maintained fork of `phosphor_flutter`, which doesn't compile on current Flutter), never Material `Icons.*`. `actionIconTheme` covers the back and close arrows the framework draws itself. Fonts are bundled, as there's no fetching them from a CDN in a self-hosted app.
+- Icons are Phosphor (`package:phosphor_icons`, a maintained fork of `phosphor_flutter`, which doesn't compile on current Flutter), never Material `Icons.*`. `actionIconTheme` covers the back and close arrows the framework draws itself. Draw SVGs with `jovial_svg`, not `flutter_svg`: flutter_svg ignores `<style>`, which draws most exported logos solid black. Fonts are bundled, as there's no fetching them from a CDN in a self-hosted app.
 - Inter is a variable font: set weight through `nfText`, since `fontWeight` alone leaves the glyphs at the file's default.
 - Wrap user-triggered mutations in `ToastService.attempt`.
 - Every source file starts with an SPDX header, generated platform boilerplate included.

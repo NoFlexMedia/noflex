@@ -120,9 +120,16 @@
   async function authorize(event) {
     event.preventDefault();
     authorizing = true;
-    const ok = await attempt(() => authorizeDevicePin.mutate({ pin: pin.trim() }), "Device approved — it will finish signing in on its own");
+    const result = await attempt(() => authorizeDevicePin.mutate({ pin: pin.trim() }));
     authorizing = false;
-    if (ok) { pin = ""; refetch(account); }
+    if (!result) return;
+    if (result.data.authorizeDevicePin) {
+      toast("Device approved — it will finish signing in on its own", "success");
+      pin = "";
+      refetch(account);
+    } else {
+      toast("That PIN isn’t right, or it has expired", "error");
+    }
   }
 
   let generated = $state(null);
@@ -159,13 +166,68 @@
 
 {#if ($account.fetching && !$account.data)}
   <div class="grid" aria-busy="true">
+    <div class="panel"><div class="skeleton row-skel"></div><div class="skeleton row-skel short"></div></div>
+    <div class="panel"><div class="skeleton row-skel"></div><div class="skeleton row-skel short"></div></div>
     <div class="panel wide">{#each Array(3) as _}<div class="skeleton row-skel"></div>{/each}</div>
-    <div class="panel"><div class="skeleton row-skel"></div><div class="skeleton row-skel short"></div></div>
-    <div class="panel"><div class="skeleton row-skel"></div><div class="skeleton row-skel short"></div></div>
   </div>
 {:else if data}
   <div class="grid stagger">
-    <section class="panel wide" style:--i={0}>
+    <section class="panel" style:--i={0}>
+      <header class="panel-head">
+        <span class="panel-icon"><Key size={19} /></span>
+        <div><h2>API keys</h2><p>For scripts, automations and trusted apps</p></div>
+      </header>
+      {#if keys.length}
+        <ul class="list keys">
+          {#each keys as key (key.id)}
+            <li>
+              <span class="what"><strong>{key.name}</strong><small>Created {date(key.createdAt)}</small></span>
+              <button class="btn ghost sm" onclick={() => revokeKey(key)} aria-label="Revoke {key.name}">Revoke</button>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="empty-note">No active keys{revokedCount ? ` · ${revokedCount} revoked` : ""}.</p>
+      {/if}
+      <form class="inline-form" onsubmit={createKey}>
+        <label class="field grow">New key name<input bind:value={keyName} required maxlength="80" placeholder="Home Assistant" autocomplete="off" /></label>
+        <button class="btn sm" disabled={creating || !keyName.trim()}>{#if creating}<span class="spinner sm"></span>{:else}<Plus size={15} />{/if}Create</button>
+      </form>
+    </section>
+
+    <section class="panel" style:--i={1}>
+      <header class="panel-head">
+        <span class="panel-icon"><Television size={19} /></span>
+        <div><h2>Link a device</h2><p>Approve the code shown on a TV or another screen</p></div>
+      </header>
+      <form class="inline-form" onsubmit={authorize}>
+        <label class="field grow">Device PIN<input class="pin-input" bind:value={pin} oninput={() => (pin = pin.toUpperCase())} required autocapitalize="characters" autocomplete="off" placeholder="K7M2QX" spellcheck="false" /></label>
+        <button class="btn primary sm" disabled={authorizing || !pin.trim()}>{#if authorizing}<span class="spinner sm"></span>{/if}Approve</button>
+      </form>
+      <div class="divider"></div>
+      {#if generated}
+        <div class="pin-card fade-up" aria-live="polite">
+          <span class="eyebrow">{approved ? "Approved" : "Enter on a signed-in device"}</span>
+          <strong class="pin mono" class:done={approved}>{generated.pin}</strong>
+          {#if approved}
+            <small><CheckCircle size={14} />This PIN has been used.</small>
+          {:else}
+            <small class="tabular"><span class="spinner sm"></span>Waiting for approval · expires in {countdown(remaining)}</small>
+          {/if}
+          <div class="row">
+            {#if !approved}<button class="btn ghost sm" onclick={check}>Check now</button>{/if}
+            <button class="btn ghost sm" onclick={() => (generated = null)}>Dismiss</button>
+          </div>
+        </div>
+      {:else}
+        <div class="pin-offer">
+          <p>Need a code for this browser instead?</p>
+          <button class="btn outline sm" onclick={generate} disabled={generating}>{#if generating}<span class="spinner sm"></span>{/if}Generate a PIN</button>
+        </div>
+      {/if}
+    </section>
+
+    <section class="panel wide" style:--i={2}>
       <header class="panel-head">
         <span class="panel-icon"><Devices size={19} /></span>
         <div><h2>Smart transcoding</h2><p>The server can prepare what you’re likely to watch next while it’s idle, so playback starts without a live transcode</p></div>
@@ -185,7 +247,7 @@
       {/if}
     </section>
 
-    <section class="panel wide" style:--i={0}>
+    <section class="panel wide" style:--i={3}>
       <header class="panel-head">
         <span class="panel-icon"><Devices size={19} /></span>
         <div><h2>Signed-in devices</h2><p>{sessions.length} active {sessions.length === 1 ? "session" : "sessions"}</p></div>
@@ -216,61 +278,6 @@
         {/each}
       </ul>
     </section>
-
-    <section class="panel" style:--i={1}>
-      <header class="panel-head">
-        <span class="panel-icon"><Key size={19} /></span>
-        <div><h2>API keys</h2><p>For scripts, automations and trusted apps</p></div>
-      </header>
-      {#if keys.length}
-        <ul class="list keys">
-          {#each keys as key (key.id)}
-            <li>
-              <span class="what"><strong>{key.name}</strong><small>Created {date(key.createdAt)}</small></span>
-              <button class="btn ghost sm" onclick={() => revokeKey(key)} aria-label="Revoke {key.name}">Revoke</button>
-            </li>
-          {/each}
-        </ul>
-      {:else}
-        <p class="empty-note">No active keys{revokedCount ? ` · ${revokedCount} revoked` : ""}.</p>
-      {/if}
-      <form class="inline-form" onsubmit={createKey}>
-        <label class="field grow">New key name<input bind:value={keyName} required maxlength="80" placeholder="Home Assistant" autocomplete="off" /></label>
-        <button class="btn sm" disabled={creating || !keyName.trim()}>{#if creating}<span class="spinner sm"></span>{:else}<Plus size={15} />{/if}Create</button>
-      </form>
-    </section>
-
-    <section class="panel" style:--i={2}>
-      <header class="panel-head">
-        <span class="panel-icon"><Television size={19} /></span>
-        <div><h2>Link a device</h2><p>Approve the code shown on a TV or another screen</p></div>
-      </header>
-      <form class="inline-form" onsubmit={authorize}>
-        <label class="field grow">Device PIN<input class="pin-input" bind:value={pin} required inputmode="numeric" autocomplete="one-time-code" placeholder="123456" spellcheck="false" /></label>
-        <button class="btn primary sm" disabled={authorizing || !pin.trim()}>{#if authorizing}<span class="spinner sm"></span>{/if}Approve</button>
-      </form>
-      <div class="divider"></div>
-      {#if generated}
-        <div class="pin-card fade-up" aria-live="polite">
-          <span class="eyebrow">{approved ? "Approved" : "Enter on a signed-in device"}</span>
-          <strong class="pin mono" class:done={approved}>{generated.pin}</strong>
-          {#if approved}
-            <small><CheckCircle size={14} />This PIN has been used.</small>
-          {:else}
-            <small class="tabular"><span class="spinner sm"></span>Waiting for approval · expires in {countdown(remaining)}</small>
-          {/if}
-          <div class="row">
-            {#if !approved}<button class="btn ghost sm" onclick={check}>Check now</button>{/if}
-            <button class="btn ghost sm" onclick={() => (generated = null)}>Dismiss</button>
-          </div>
-        </div>
-      {:else}
-        <div class="pin-offer">
-          <p>Need a code for this browser instead?</p>
-          <button class="btn outline sm" onclick={generate} disabled={generating}>{#if generating}<span class="spinner sm"></span>{/if}Generate a PIN</button>
-        </div>
-      {/if}
-    </section>
   </div>
 {/if}
 
@@ -288,7 +295,8 @@
 <style>
   /* Fixed columns keep the selects lined up whether or not a row can be forgotten. */
   .smart-devices li { display: grid; grid-template-columns: minmax(0, 1fr) 190px 72px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 18px; align-items: start; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
+  @media (max-width: 820px) { .grid { grid-template-columns: minmax(0, 1fr); } }
   .wide { grid-column: 1 / -1; }
   .row-skel { height: 44px; margin-top: 12px; border-radius: 10px; }
   .row-skel.short { width: 60%; }

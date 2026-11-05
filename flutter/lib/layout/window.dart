@@ -5,7 +5,7 @@
 // desktop window are the same thing to a layout.
 
 import 'dart:math' as math;
-import 'dart:ui' show DisplayFeatureState, DisplayFeatureType;
+import 'dart:ui' show DisplayFeature, DisplayFeatureState, DisplayFeatureType;
 
 import 'package:flutter/material.dart';
 
@@ -49,7 +49,8 @@ extension WindowContext on BuildContext {
   double get gutter =>
       (MediaQuery.sizeOf(this).width * 0.036).clamp(16.0, 52.0).toDouble();
 
-  /// The fold across this window, if any. Bounds are in window coordinates.
+  /// The fold across this window, if any. Bounds are in window coordinates,
+  /// or the content's below a [FoldsFromContent].
   Fold? get fold {
     for (final feature in MediaQuery.displayFeaturesOf(this)) {
       if (feature.type == DisplayFeatureType.cutout) continue;
@@ -59,6 +60,35 @@ extension WindowContext on BuildContext {
       );
     }
     return null;
+  }
+}
+
+/// For content [left] into the window: folds below here are measured from its
+/// left edge, so [AdaptivePanes] can split on one without knowing what's beside
+/// it. It couldn't find out by measuring: it has no position until after its
+/// first layout, and a route's transition moves it for a while after that.
+class FoldsFromContent extends StatelessWidget {
+  const FoldsFromContent({super.key, required this.left, required this.child});
+
+  final double left;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    return MediaQuery(
+      data: media.copyWith(
+        displayFeatures: [
+          for (final feature in media.displayFeatures)
+            DisplayFeature(
+              bounds: feature.bounds.shift(Offset(-left, 0)),
+              type: feature.type,
+              state: feature.state,
+            ),
+        ],
+      ),
+      child: child,
+    );
   }
 }
 
@@ -94,13 +124,8 @@ class AdaptivePanes extends StatelessWidget {
             ],
           );
         }
-        final box = context.findRenderObject() as RenderBox?;
-        final origin = box != null && box.hasSize
-            ? box.localToGlobal(Offset.zero).dx
-            : 0.0;
         final widths = splitAroundFold(
           totalWidth: constraints.maxWidth,
-          origin: origin,
           fold: fold,
           primaryFraction: primaryFraction,
           gap: gap,
@@ -123,13 +148,12 @@ class AdaptivePanes extends StatelessWidget {
 /// navigation, say) is ignored so the panes aren't squeezed.
 ({double primary, double gap}) splitAroundFold({
   required double totalWidth,
-  required double origin,
   required Fold? fold,
   required double primaryFraction,
   required double gap,
 }) {
   if (fold != null && fold.isVertical) {
-    final left = fold.bounds.left - origin;
+    final left = fold.bounds.left;
     final inMiddle = left > totalWidth * 0.25 && left < totalWidth * 0.75;
     if (inMiddle) {
       return (primary: left, gap: math.max(fold.bounds.width, gap));

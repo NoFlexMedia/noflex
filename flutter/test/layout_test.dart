@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import 'dart:ui' show DisplayFeature, DisplayFeatureState, DisplayFeatureType;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:noflex/layout/window.dart';
@@ -10,11 +12,9 @@ Fold verticalFold(double x) =>
 void main() {
   group('splitAroundFold', () {
     test('splits on a fold through the middle of the panes', () {
-      // A Pixel Fold's crease at 420, with a 76 wide rail left of the panes.
       final widths = splitAroundFold(
         totalWidth: 765,
-        origin: 76,
-        fold: verticalFold(420),
+        fold: verticalFold(344),
         primaryFraction: 0.42,
         gap: 0,
       );
@@ -24,7 +24,6 @@ void main() {
     test('keeps a hinge with width clear of both panes', () {
       final widths = splitAroundFold(
         totalWidth: 800,
-        origin: 0,
         fold: Fold(const Rect.fromLTWH(400, 0, 28, 800), halfOpen: true),
         primaryFraction: 0.42,
         gap: 0,
@@ -36,7 +35,6 @@ void main() {
     test('ignores a fold near an edge rather than squeezing a pane', () {
       final widths = splitAroundFold(
         totalWidth: 1000,
-        origin: 0,
         fold: verticalFold(60),
         primaryFraction: 0.4,
         gap: 0,
@@ -47,7 +45,6 @@ void main() {
     test('a horizontal fold changes nothing side to side', () {
       final widths = splitAroundFold(
         totalWidth: 1000,
-        origin: 0,
         fold: Fold(const Rect.fromLTWH(0, 400, 1000, 0), halfOpen: true),
         primaryFraction: 0.4,
         gap: 0,
@@ -80,6 +77,47 @@ void main() {
       expect(find.byType(Row), findsOneWidget);
     },
   );
+
+  testWidgets('AdaptivePanes splits on the fold from its first frame', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(841, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const primary = Key('primary');
+    // A Pixel Fold's crease at 420, with a 76 wide rail beside the panes.
+    await tester.pumpWidget(
+      const Directionality(
+        textDirection: TextDirection.ltr,
+        child: MediaQuery(
+          data: MediaQueryData(
+            displayFeatures: [
+              DisplayFeature(
+                bounds: Rect.fromLTWH(420, 0, 0, 700),
+                type: DisplayFeatureType.fold,
+                state: DisplayFeatureState.postureFlat,
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              SizedBox(width: 76),
+              Expanded(
+                child: FoldsFromContent(
+                  left: 76,
+                  child: AdaptivePanes(
+                    primary: SizedBox(key: primary),
+                    secondary: SizedBox(),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(tester.getSize(find.byKey(primary)).width, 344);
+  });
 
   test('posterColumns never drops below two and grows with the window', () {
     expect(posterColumns(320), 2);

@@ -69,6 +69,11 @@ class AppShell extends StatelessWidget {
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final compact = WindowClass.ofWidth(width).isCompact;
+    final navigationWidth = compact
+        ? 0.0
+        : width < _sidebarMinWidth
+        ? NfSpacing.railWidth
+        : NfSpacing.sidebarWidth;
     return Scaffold(
       resizeToAvoidBottomInset: false,
       bottomNavigationBar: compact ? const _BottomNav() : null,
@@ -76,7 +81,12 @@ class AppShell extends StatelessWidget {
         children: [
           if (!compact && width < _sidebarMinWidth) const _Rail(),
           if (width >= _sidebarMinWidth) const _Sidebar(),
-          const Expanded(child: _Content()),
+          Expanded(
+            child: FoldsFromContent(
+              left: navigationWidth,
+              child: const _Content(),
+            ),
+          ),
         ],
       ),
     );

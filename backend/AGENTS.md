@@ -79,6 +79,7 @@ Don't break these without an architecture discussion in the PR description.
 - The `Storage` trait is backend-agnostic: no SQL, engine types, or row types in its surface. Methods are operation-level (`upsert_work`, `search_hybrid`), never query-level (`execute`).
 - Pagination uses opaque cursors, never `OFFSET`/`LIMIT`.
 - Migrations are per-backend, applied in lexical order, idempotent.
+- Model subtypes with Class Table Inheritance (CTI) whenever relevant. The parent table holds the shared columns and a `kind` discriminator; each subtype's table holds only what's specific to it, with a primary key that references the parent `ON DELETE CASCADE`. See `media_streams` and `video_streams` in `noflex-storage-turso`.
 - Every backend passes the shared conformance suite. New `Storage` methods get conformance tests.
 - Storage-shape domain types (`Library`, `Work`, `Edition`, `HistoryRow`, ...) derive `async_graphql::SimpleObject` in their home crate and are used directly by GraphQL — no `XxxGql` mirrors, `pub type` aliases, or re-tagging `From` impls. The trait surface itself stays GraphQL-free.
 

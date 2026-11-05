@@ -4,11 +4,20 @@ Everything you need to build and run NoFlex from source.
 
 ## Dev environment
 
-The Nix flake is the only supported toolchain. It pins Rust (from `backend/rust-toolchain.toml`), nightly `rustfmt`, Node.js, ffmpeg, SQLite, the `wasm32-wasip2` target and WASM tools, and the cargo extensions CI uses.
+The Nix flake is the only supported toolchain. It pins Rust (from `backend/rust-toolchain.toml`), nightly `rustfmt`, Node.js, ffmpeg, SQLite, the `wasm32-wasip2` target and WASM tools, the cargo extensions CI uses, and Flutter with an Android SDK.
 
 ```sh
 nix develop      # or: direnv allow, with the committed .envrc
 ```
+
+That default shell has everything, which means several gigabytes of Android SDK. If you only work on one side, pick a lighter one:
+
+```sh
+nix develop .#no-flutter     # server and web
+nix develop .#flutter-only   # just the app
+```
+
+Under direnv, put `export NOFLEX_SHELL=no-flutter` in `.envrc.local`.
 
 The shell also routes `rustc` through a shared `sccache`. If you juggle several branches, read [`GIT_WORKTREES.md`](GIT_WORKTREES.md) — it makes builds across worktrees share one cache.
 
@@ -39,6 +48,19 @@ See [`web/README.md`](../web/README.md) for how builds are embedded.
 
 Semantic search also needs the embedding model; `cargo xtask model-fetch <dir>`
 downloads it, then point `plugin.assets_dir` at `<dir>`.
+
+## Run the app
+
+The Flutter app lives in `flutter/`. It asks for your server's address on first launch.
+
+```sh
+cd flutter
+flutter pub get
+dart run build_runner build   # generates the GraphQL types
+flutter run -d linux          # or an Android device or emulator
+```
+
+From an Android emulator the server on your machine is at `10.0.2.2:8096`, and emulators need one extra build flag; see "Test devices" in [`flutter/AGENTS.md`](../flutter/AGENTS.md).
 
 ## Install plugins
 

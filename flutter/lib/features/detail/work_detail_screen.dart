@@ -486,8 +486,8 @@ class _DownloadButton extends SignalWidget {
       final edition = controller.edition.value;
       if (edition == null) return;
       final confirmed = await confirmAction(
-        title: 'This version can’t play here as it is',
-        message: 'The server can export a copy this device can play. It’ll appear under Downloads when it’s ready.',
+        title: 'Nothing’s ready for this device yet',
+        message: 'The server can package this version as one file to save here. It keeps the original’s format, so this device may not play it well. It’ll be under You → Server exports when it’s ready.',
         confirmLabel: 'Export',
       );
       if (confirmed) await downloads.createExport(edition.id);

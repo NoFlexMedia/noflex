@@ -116,6 +116,7 @@ class OfflineItem {
   OfflineItem copyWith({
     OfflineOrigin? origin,
     OfflineStatus? status,
+    int? sizeBytes,
     double? progress,
     int? positionMs,
     bool? played,
@@ -128,7 +129,7 @@ class OfflineItem {
     partIndex: partIndex,
     origin: origin ?? this.origin,
     status: status ?? this.status,
-    sizeBytes: sizeBytes,
+    sizeBytes: sizeBytes ?? this.sizeBytes,
     fileName: fileName,
     addedAt: addedAt,
     directory: directory,

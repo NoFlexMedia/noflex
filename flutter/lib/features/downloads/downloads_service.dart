@@ -84,7 +84,14 @@ class OfflineStore {
     }
   }
 
-  Future<void> save() async {
+  Future<void> _lastSave = Future.value();
+
+  /// One at a time: they share a temp file, which the first to finish would
+  /// rename away from the rest. Each writes what's current when its turn comes.
+  Future<void> save() =>
+      _lastSave = _lastSave.catchError((Object _) {}).then((_) => _write());
+
+  Future<void> _write() async {
     final file = await _file();
     final temp = File('${file.path}.tmp');
     await temp.writeAsString(
@@ -412,6 +419,20 @@ class DownloadsService {
         }(),
     ];
     if (changed) _setItems(next);
+    for (final item in next) {
+      if (item.isFinished) await _recordSize(item.taskId);
+    }
+  }
+
+  /// An export's size isn't known until it's here, and what's kept on the
+  /// device is counted from these.
+  Future<void> _recordSize(String taskId) async {
+    final item = _store.items.where((i) => i.taskId == taskId).firstOrNull;
+    if (item == null || item.sizeBytes > 0) return;
+    final path = await localPathOf(item);
+    if (path == null) return;
+    final size = await File(path).length();
+    _update(taskId, (item) => item.copyWith(sizeBytes: size));
   }
 
   static OfflineStatus _statusFrom(TaskStatus status) => switch (status) {
@@ -441,7 +462,10 @@ class DownloadsService {
             clearError: status != OfflineStatus.failed,
           ),
         );
-        if (status == OfflineStatus.complete) _saveNow();
+        if (status == OfflineStatus.complete) {
+          _saveNow();
+          unawaited(_recordSize(id));
+        }
       case TaskProgressUpdate():
         if (update.progress >= 0) {
           _update(
@@ -769,7 +793,8 @@ class DownloadsService {
     unawaited(reconcile());
   }
 
-  /// A server export to fetch, for a title with nothing this device can play.
+  /// A copy packaged on the server, for a title with nothing ready for this
+  /// device. It's a stream copy, so it changes the container and not the codecs.
   Future<void> createExport(String editionId) async {
     await getIt<ToastService>().attempt(
       () => _graphql.run(
@@ -779,7 +804,7 @@ class DownloadsService {
             ..format = GExportFormat.MP4,
         ),
       ),
-      success: 'Export queued. It’ll appear under Downloads when it’s ready.',
+      success: 'Export queued. It’ll be under You → Server exports when ready.',
     );
   }
 
@@ -791,6 +816,7 @@ class DownloadsService {
   }) async {
     final tokens = getIt<TokenStore>();
     await tokens.refresh();
+    unawaited(_ensurePermission());
     final item = itemFor(
       WantedFile(work: work, partIndex: 0, url: '', sizeBytes: 0),
       OfflineOrigin.manual,

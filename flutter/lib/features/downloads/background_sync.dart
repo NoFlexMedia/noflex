@@ -47,7 +47,8 @@ void smartSyncDispatcher() {
   Workmanager().executeTask((task, input) async {
     WidgetsFlutterBinding.ensureInitialized();
     try {
-      await runSmartSyncOnce();
+      // The OS only allows so long, and a stuck plugin call must not use it up.
+      await runSmartSyncOnce().timeout(const Duration(minutes: 5));
     } catch (error) {
       debugPrint('smart sync: $error');
     }
@@ -60,7 +61,7 @@ void smartSyncDispatcher() {
 Future<void> runSmartSyncOnce() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.reload();
-  // The running app reconciles for itself. Two copies of the manifest would
+  // An app on screen reconciles for itself. Two copies of the manifest would
   // overwrite each other, and two refreshes of one token would look like replay
   // to the server, which ends the session.
   final stamp = prefs.getInt(foregroundStampKey) ?? 0;

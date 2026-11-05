@@ -92,7 +92,7 @@ Only what the server put here (`OfflineOrigin.smart`) can be evicted. What the v
 - Wi-Fi only is `allowsCellularAccess = false`; the system holds the task until Wi-Fi returns.
 - Discovering new titles uses `BGAppRefreshTask` (`background_sync.dart`, identifier in `Info.plist` and `AppDelegate.swift`), which runs when iOS sees fit, possibly rarely. The app also reconciles on launch, on regaining a network, after playback, and every 30 minutes while open.
 - Files live in Application Support, excluded from iCloud backup. Paths are stored relative because the container moves between launches.
-- The headless sync skips if the app ran in the last 2 minutes. Two copies of the manifest would overwrite each other, and two refreshes of one token look like replay to the server, which revokes the session.
+- The headless sync stands down while the app is on screen (a stamp it clears on pause), and the app reloads the manifest and tokens on resume. Two copies of the manifest would overwrite each other, and two refreshes of one token look like replay to the server, which revokes the session.
 
 The target folder setting is hidden on iOS. Android lists its app-specific volumes, including SD cards, which need no permission. Desktop gets a folder picker.
 

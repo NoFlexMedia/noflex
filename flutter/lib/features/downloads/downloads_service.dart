@@ -15,6 +15,7 @@ import 'dart:io';
 
 import 'package:background_downloader/background_downloader.dart';
 import 'package:ferry/ferry.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleListener;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -47,7 +48,7 @@ const _storageDir = 'offline';
 const _targetKey = 'noflex.downloadDirectory';
 const _manifestName = 'manifest.json';
 
-/// Stamped while the app runs, so the headless sync knows to stay out of it.
+/// Stamped while the app is on screen, so the headless sync knows to stay out.
 const foregroundStampKey = 'noflex.foregroundAt';
 
 /// The offline manifest on disk, shared by the app and the headless sync.
@@ -265,6 +266,7 @@ class DownloadsService {
   Timer? _periodic;
   Timer? _saveDebounce;
   Timer? _stamp;
+  AppLifecycleListener? _lifecycle;
   void Function()? _stopWatching;
   bool _reconciling = false;
   String _supportPath = '';
@@ -308,6 +310,15 @@ class DownloadsService {
         });
       }
     });
+    _lifecycle = AppLifecycleListener(onResume: _onResume, onPause: _onPause);
+    await _startForegroundWork();
+  }
+
+  /// The headless sync stands down for what's marked here, and this stops when
+  /// the app leaves the screen, so it never has both copies working at once.
+  Future<void> _startForegroundWork() async {
+    _periodic?.cancel();
+    _stamp?.cancel();
     _periodic = Timer.periodic(
       const Duration(minutes: 30),
       (_) => unawaited(reconcile()),
@@ -317,6 +328,29 @@ class DownloadsService {
       const Duration(minutes: 1),
       (_) => unawaited(_markForeground()),
     );
+  }
+
+  void _onPause() {
+    _periodic?.cancel();
+    _stamp?.cancel();
+    _saveNow();
+    unawaited(_clearForeground());
+  }
+
+  /// The headless sync may have changed the manifest and rotated the session
+  /// while this isolate was frozen, and transfers carried on without it.
+  Future<void> _onResume() async {
+    await _startForegroundWork();
+    await getIt<TokenStore>().reloadTokens();
+    await _store.load();
+    items.value = _store.items;
+    await _syncWithDownloader();
+    await reconcile();
+  }
+
+  static Future<void> _clearForeground() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(foregroundStampKey);
   }
 
   static Future<void> _markForeground() async {
@@ -785,5 +819,6 @@ class DownloadsService {
     _stamp?.cancel();
     _saveDebounce?.cancel();
     _stopWatching?.call();
+    _lifecycle?.dispose();
   }
 }

@@ -12,6 +12,7 @@ import 'package:gql_exec/gql_exec.dart';
 import 'package:gql_http_link/gql_http_link.dart';
 import 'package:gql_websocket_link/gql_websocket_link.dart';
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models/work.dart';
 import 'tokens.dart';
@@ -164,8 +165,23 @@ class _Transport {
     http.Client httpClient,
     String Function() bearer,
   ) {
-    _ws = WebSocketLink(
+    final socket = Uri.parse(
       '${origin.replaceFirst(RegExp('^http'), 'ws')}/graphql/ws',
+    );
+    _ws = WebSocketLink(
+      null,
+      // The server refuses an upgrade that doesn't name a subprotocol, and this
+      // link speaks the older of the two it offers. Awaiting `ready` hands a
+      // refused socket to the link's reconnecting rather than leaving it
+      // unhandled.
+      channelGenerator: () async {
+        final channel = WebSocketChannel.connect(
+          socket,
+          protocols: const ['graphql-ws'],
+        );
+        await channel.ready;
+        return channel;
+      },
       autoReconnect: true,
       reconnectInterval: const Duration(seconds: 3),
       initialPayload: () async => {'Authorization': 'Bearer ${bearer()}'},

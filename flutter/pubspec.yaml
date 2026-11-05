@@ -27,6 +27,7 @@ dependencies:
   ferry_exec: ^0.7.0
   gql_http_link: ^1.2.0
   gql_websocket_link: ^2.1.0
+  web_socket_channel: ^3.0.3
   gql_exec: ^1.0.0
   gql_link: ^1.1.0
   gql: ^1.0.1

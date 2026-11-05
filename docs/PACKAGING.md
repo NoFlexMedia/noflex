@@ -127,6 +127,54 @@ made for it, then set `search.device` and `search.onnxruntime_library`
 
 The Indexing tab shows where the model actually loaded.
 
+## Client apps
+
+`.github/workflows/release.yml` builds the Flutter app for every client target, and
+`packaging/flutter/build.sh <target>` does the work, so any machine that can build a
+target runs the same thing. Pushing a `v*` tag attaches the builds to a draft release
+to review and publish; running the workflow by hand leaves them as artifacts. The tag
+sets the version, and the run number the build number.
+
+| Target    | Output                         | Built on     | State |
+| --------- | ------------------------------ | ------------ | ----- |
+| `android` | one APK per ABI, plus an AAB when signed | Nix shell | Built, with the release key and without |
+| `linux`   | `tar.gz` of the bundle         | Ubuntu 24.04 | Built on clean Ubuntu 24.04; starts there and on Fedora 43 |
+| `windows` | `zip` of the bundle            | Windows      | Not yet run |
+| `macos`   | `zip` of the app, ad-hoc signed | macOS       | Not yet run |
+| `ios`     | unsigned `ipa`, for sideloading | macOS       | Not yet run |
+
+Only Android builds in the Nix shell, the `flutter-android` one, since its output
+doesn't link against the host. The others use the same Flutter version installed
+directly, for the reason under [Linking the server](#linking-the-server), and the
+workflow fails if that version drifts from the flake's.
+
+**Linux** needs these from the host, which a desktop install usually has apart from
+libmpv: GTK 3, `libmpv.so.2`, `libsecret`, `libepoxy`, EGL and GLES (Mesa or a GPU driver),
+`xdg-user-dirs`, and a Secret Service such as GNOME Keyring to stay signed in. It's built on
+Ubuntu 24.04 because the video plugin links whichever libmpv it finds, and older releases
+only have `libmpv.so.1`, which current distributions don't ship. That sets a glibc floor of
+2.38, so Debian 12 is too old.
+
+**Android** signs with the debug key unless the repository has these secrets, and those
+builds can't update an install from another build. Create the key once and keep a copy,
+since Android refuses updates signed by any other:
+
+```sh
+keytool -genkeypair -keystore release.jks -alias noflex -keyalg RSA -keysize 4096 -validity 10000
+base64 -w0 release.jks | gh secret set ANDROID_KEYSTORE_BASE64
+gh secret set ANDROID_KEYSTORE_PASSWORD
+gh secret set ANDROID_KEY_ALIAS
+gh secret set ANDROID_KEY_PASSWORD
+```
+
+Locally, `flutter/android/key.properties` with `storeFile`, `storePassword`, `keyAlias`
+and `keyPassword` does the same, and git ignores it.
+
+**Windows, macOS and iOS** builds aren't signed. Windows shows a SmartScreen warning,
+macOS quarantines the app until it's notarized, and iOS only installs through a
+sideloading tool. Signing needs a certificate for Windows and an Apple Developer account
+for the others.
+
 ## Still open
 
 - **macOS signing.** Bundles are ad-hoc signed by the linker. A downloaded one is

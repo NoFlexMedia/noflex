@@ -1,0 +1,129 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Builds the Flutter app for every client target. Pushing a `v*` tag attaches the
+# builds to a draft release for a person to look over and publish; running it by
+# hand just leaves them as this run's artifacts. Any target can fail without
+# stopping the others. See docs/PACKAGING.md, which also says what each needs.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The Nix shell can't build what runs outside Nix, so most targets install
+  # Flutter directly. `check` fails if this drifts from the flake's.
+  FLUTTER_VERSION: 3.47.4
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v24
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compare Flutter with the flake's
+        run: |
+          flake=$(nix develop .#flutter-check --command flutter --version --machine | sed -n 's/.*"frameworkVersion": "\(.*\)".*/\1/p')
+          echo "flake has $flake, this workflow $FLUTTER_VERSION"
+          test "$flake" = "$FLUTTER_VERSION"
+      - run: nix develop .#flutter-check --command sh -c 'cd flutter && flutter pub get && dart run build_runner build && flutter analyze --no-pub && flutter test --no-pub'
+
+  android:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/free-disk
+      - uses: cachix/install-nix-action@v24
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install the release key
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        working-directory: flutter/android
+        run: |
+          base64 -d <<<"$ANDROID_KEYSTORE_BASE64" > release.jks
+          {
+            echo "storeFile=release.jks"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > key.properties
+      - name: Warn about the debug key
+        if: env.ANDROID_KEYSTORE_BASE64 == ''
+        run: echo "::warning::No release key in the repository's secrets, so these APKs are debug-signed and can't update one another."
+      - run: nix develop .#flutter-android --command packaging/flutter/build.sh android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/noflex-*
+          retention-days: 14
+          if-no-files-found: error
+
+  native:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Older than this and the app links libmpv.so.1, which current
+          # distributions no longer ship.
+          - { target: linux, os: ubuntu-24.04 }
+          - { target: windows, os: windows-latest }
+          - { target: macos, os: macos-15 }
+          - { target: ios, os: macos-15 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Install the Linux build's libraries
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libmpv-dev libsecret-1-dev libepoxy-dev
+      - run: packaging/flutter/build.sh ${{ matrix.target }}
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/noflex-*
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    needs: [check, android, native]
+    if: ${{ !cancelled() && needs.check.result == 'success' && github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Attach to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --draft --verify-tag --title "NoFlex ${TAG#v}" --generate-notes
+          gh release upload "$TAG" dist/* --clobber

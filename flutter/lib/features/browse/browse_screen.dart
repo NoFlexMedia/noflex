@@ -53,7 +53,10 @@ class BrowseScreen extends SignalWidget {
                     label: category.label,
                     detail: '${category.workCount}',
                     icon: category.icon,
-                    onTap: () => nav.push(CategoryScreen(category: category)),
+                    onTap: () => nav.push(
+                      CategoryScreen(category: category),
+                      place: NavPlace.category(category.value.name),
+                    ),
                   ),
               ],
             ),
@@ -73,17 +76,24 @@ class BrowseScreen extends SignalWidget {
                 _Tile(
                   label: 'Collections',
                   icon: PhosphorIconsRegular.cardsThree,
-                  onTap: () => nav.push(const CollectionsScreen()),
+                  onTap: () => nav.push(
+                    const CollectionsScreen(),
+                    place: NavPlace.collections,
+                  ),
                 ),
                 _Tile(
                   label: 'Live TV',
                   icon: PhosphorIconsRegular.television,
-                  onTap: () => nav.push(const LiveTvScreen()),
+                  onTap: () =>
+                      nav.push(const LiveTvScreen(), place: NavPlace.liveTv),
                 ),
                 _Tile(
-                  label: 'Watch rooms',
+                  label: 'Watch together',
                   icon: PhosphorIconsRegular.broadcast,
-                  onTap: () => nav.push(const WatchRoomsScreen()),
+                  onTap: () => nav.push(
+                    const WatchRoomsScreen(),
+                    place: NavPlace.watchRooms,
+                  ),
                 ),
               ],
             ),
@@ -112,6 +122,7 @@ class BrowseScreen extends SignalWidget {
                           libraryId: library.id,
                           title: library.name,
                         ),
+                        place: NavPlace.library(library.id),
                       ),
                     ),
                 ],

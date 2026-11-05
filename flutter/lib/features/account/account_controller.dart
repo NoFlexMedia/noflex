@@ -371,6 +371,19 @@ class AccountController {
     return true;
   }
 
+  Future<void> setShowLibraries(bool show) async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(
+        GSetPreferenceReq(
+          (b) => b.vars
+            ..key = showLibrariesKey
+            ..value = JsonObject(show),
+        ),
+      ),
+    );
+    if (data != null) _session.showLibraries.value = show;
+  }
+
   /// Measure again, and tell the server, which prepares versions by what this
   /// device reports it can play.
   Future<void> remeasureDecoders() async {

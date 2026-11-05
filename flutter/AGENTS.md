@@ -52,9 +52,11 @@ Signals are the only way this app does reactivity. `test/conventions_test.dart` 
 
 No router, no named routes. `_AppFrame` in `app.dart` switches on `SessionService.phase`; flipping the phase is all sign-in and sign-out do. `AppShell` keeps tab roots alive in an `IndexedStack`. Pages push onto the content navigator with `NavService.push`, beside the navigation rather than over it. The player (`pushFullWindow`), sheets and dialogs (`openSheet`) go on the root navigator.
 
+Destinations beyond the tabs are places (`NavPlace`): the sidebar goes to one with `NavService.open`, which replaces whichever you're in and fades, and a Browse tile pushes one with `push(place:)`. An observer on the content navigator keeps `NavService.place` current through every way of leaving, and everything opened from a place stays in it, so Movies stays lit under a film.
+
 ## Adaptive layout
 
-Decide from available width through `layout/window.dart`, never from device checks. Navigation goes bottom bar, then rail (`>= 600`), then sidebar (`>= 1100`). Use `AdaptivePanes` for two-pane content: it splits on a vertical fold when one runs through the middle, so neither pane straddles the hinge. The shell moves display features into its content's coordinates (`FoldsFromContent`), because a pane has no position of its own until after its first layout, and a route's transition moves it after that. In tabletop posture the player gives the picture the top half and the controls the bottom. Rails and grids size from width, so more room shows more cards rather than bigger ones.
+Decide from available width through `layout/window.dart`, never from device checks. Navigation goes bottom bar, then rail (`>= 600`), then sidebar (`>= 1100`). The sidebar is the web's: the same destinations and foot, collapsing to icons with its button or `[`, remembered per device. Use `AdaptivePanes` for two-pane content: it splits on a vertical fold when one runs through the middle, so neither pane straddles the hinge. A list beside what it opens passes `splitOnFlatFold: false`, as half a screen for a few words cramps the content and a flat fold is no obstacle to it; a bent one still divides them. The shell moves display features into its content's coordinates (`FoldsFromContent`), because a pane has no position of its own until after its first layout, and a route's transition moves it after that. In tabletop posture the player gives the picture the top half and the controls the bottom. Rails and grids size from width, so more room shows more cards rather than bigger ones.
 
 ## Administration
 
@@ -94,7 +96,7 @@ libmpv tries the platform's hardware decoder first and falls back to software by
 
 `background_downloader` owns transfers natively: URLSession background tasks on iOS and macOS, WorkManager or UIDT on Android, isolates on Windows and Linux. `DownloadsService` keeps a JSON manifest (`OfflineStore`) and mirrors updates into signals. `smart_planner.dart` decides what to fetch and evict; the server ranks and enforces the budget (`smartDownloads`), and the client enforces Wi-Fi, as the schema says.
 
-Only what the server put here (`OfflineOrigin.smart`) can be evicted. What the viewer chose stays until they remove it. A manual download asks `deviceDownload`; when that's null, the server has nothing ready for this device and an export job can stand in. Exports are stream copies, so they keep the original's codecs, and they're saved from You → Server exports.
+Only what the server put here (`OfflineOrigin.smart`) can be evicted. What the viewer chose stays until they remove it. A manual download asks `deviceDownload`; when that's null, the server has nothing ready for this device and an export job can stand in. Exports are stream copies, so they keep the original's codecs, and they're saved from You → Offline copies.
 
 **iOS** gives no guarantees about when an app runs, so nothing depends on Dart running:
 

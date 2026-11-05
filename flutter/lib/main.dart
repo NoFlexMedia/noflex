@@ -13,6 +13,7 @@ import 'features/downloads/background_sync.dart';
 import 'features/downloads/downloads_service.dart';
 import 'features/player/decoder_probe.dart';
 import 'services/device_identity.dart';
+import 'services/nav_service.dart';
 import 'services/session.dart';
 import 'services/tokens.dart';
 
@@ -26,6 +27,7 @@ Future<void> main() async {
   configureDependencies();
   await getIt<TokenStore>().load();
   await getIt<DeviceIdentity>().load();
+  await getIt<NavService>().load();
   try {
     await getIt<DownloadsService>().load();
   } catch (error) {

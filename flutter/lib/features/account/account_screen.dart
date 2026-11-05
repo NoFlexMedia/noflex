@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // Sections beside the navigation with room for two panes, one above the other
-// without. API keys and integrations stay on the web.
+// without. Integrations stay on the web.
 
 import 'dart:async';
 
@@ -72,6 +72,7 @@ class _AccountScreenState extends State<AccountScreen> {
               return AdaptivePanes(
                 primaryFraction: (_sideNavWidth / width).clamp(0.2, 0.42),
                 minWidth: _twoPaneWidth,
+                splitOnFlatFold: false,
                 primary: _SideNav(controller: _controller),
                 secondary: _SectionPane(controller: _controller),
               );
@@ -110,21 +111,27 @@ class _Stacked extends StatelessWidget {
   }
 }
 
-/// The way in for those it's for. A sidebar has its own link, but neither a
-/// phone's bottom bar nor a rail has room for one.
+/// The way in for those it's for, as neither a phone's bottom bar nor a rail has
+/// room for one. A sidebar has its own.
 class _AdminEntry extends SignalWidget {
   const _AdminEntry();
 
   @override
   Widget build(BuildContext context) {
-    if (getIt<SessionService>().viewer.value?.isAdmin != true) {
+    if (getIt<SessionService>().viewer.value?.isAdmin != true ||
+        MediaQuery.sizeOf(context).width >= sidebarMinWidth) {
       return const SizedBox.shrink();
     }
     return NfButton(
       label: 'Administration',
       icon: const Icon(PhosphorIconsRegular.shieldCheck),
       expand: true,
-      onPressed: () => unawaited(getIt<NavService>().push(const AdminScreen())),
+      onPressed: () => unawaited(
+        getIt<NavService>().push(
+          const AdminScreen(),
+          place: NavPlace.administration,
+        ),
+      ),
     );
   }
 }
@@ -144,7 +151,7 @@ class _SideNav extends StatelessWidget {
         const _Header(stacked: true),
         const SizedBox(height: 14),
         const _AdminEntry(),
-        const SizedBox(height: 14),
+        const SizedBox(height: 10),
         SignalBuilder(
           builder: (context) => Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

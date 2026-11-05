@@ -16,10 +16,14 @@ class LibraryScreen extends StatelessWidget {
     super.key,
     required this.libraryId,
     required this.title,
+    this.server,
   });
 
   final String libraryId;
   final String title;
+
+  /// A linked server's library, when it's not the home server's.
+  final ServerRef? server;
 
   Future<(List<WorkSummary>, String?)> _page(
     String? after,
@@ -37,10 +41,14 @@ class LibraryScreen extends StatelessWidget {
               .rebuild((f) => f.recursive = false)
               .toBuilder(),
       ),
+      server: server,
     );
     final info = data.works.pageInfo;
     return (
-      [for (final work in data.works.nodes) WorkSummary.fromCard(work)],
+      [
+        for (final work in data.works.nodes)
+          WorkSummary.fromCard(work, server: server),
+      ],
       info.hasNextPage ? info.endCursor : null,
     );
   }

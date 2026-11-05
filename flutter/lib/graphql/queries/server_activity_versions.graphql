@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query ServerActivityVersions {
+  optimizedVersions { id status progress }
+}

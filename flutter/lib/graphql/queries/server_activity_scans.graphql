@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query ServerActivityScans {
+  scannerStatus { library { id name } scan { state } activeScan { added updated removed } }
+}

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query ServerActivity {
+  systemStatus { activeScans plugins { circuitOpen } server { database { healthy } } }
+  activeStreams { id user { id name } work { id title } transcode { status } }
+}

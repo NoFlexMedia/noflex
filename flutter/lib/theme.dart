@@ -10,6 +10,7 @@ abstract final class NfColors {
   static const bg = Color(0xFF07080B);
   static const bgRaised = Color(0xFF0C0E12);
   static const bgOverlay = Color(0xC7090A0E);
+  static const sidebar = Color(0xFF08090C);
   static const surface = Color(0x09FFFFFF);
   static const surface2 = Color(0x0FFFFFFF);
   static const surface3 = Color(0x1AFFFFFF);

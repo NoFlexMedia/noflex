@@ -27,10 +27,29 @@ class ProfileSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) => AccountColumn(
     children: [
+      _BrowsingPanel(controller: controller),
       _PlaybackPanel(controller: controller),
       _ThisDevicePanel(controller: controller),
       _PasswordPanel(controller: controller),
     ],
+  );
+}
+
+class _BrowsingPanel extends SignalWidget {
+  const _BrowsingPanel({required this.controller});
+  final AccountController controller;
+
+  @override
+  Widget build(BuildContext context) => AccountPanel(
+    icon: PhosphorIconsRegular.books,
+    title: 'Browsing',
+    detail: 'NoFlex browses by movies, shows and other content types across your libraries',
+    child: AccountToggle(
+      title: 'Show libraries in the sidebar',
+      detail: 'List each library too, for browsing by where files live.',
+      value: getIt<SessionService>().showLibraries.value,
+      onChanged: (show) => unawaited(controller.setShowLibraries(show)),
+    ),
   );
 }
 

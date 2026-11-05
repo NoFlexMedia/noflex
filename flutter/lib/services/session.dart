@@ -63,6 +63,8 @@ class SessionService {
 
   final phase = signal(AppPhase.boot);
   final serverName = signal<String?>(null);
+  final serverVersion = signal<String?>(null);
+  final serverBackend = signal<String?>(null);
   final viewer = signal<GUserFields?>(null);
   final libraries = signal<List<GLibraryFields>>(const []);
   final categories = signal<Map<GContentCategory, int>>(const {});
@@ -135,6 +137,8 @@ class SessionService {
       batch(() {
         viewer.value = data.viewer;
         serverName.value = data.serverInfo.name;
+        serverVersion.value = data.serverInfo.version;
+        serverBackend.value = data.serverInfo.backend;
         libraries.value = data.libraries.toList();
         categories.value = {
           for (final row in data.contentCategories) row.category: row.workCount,

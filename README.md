@@ -45,6 +45,7 @@ cd backend && cargo run -p noflex-server   # then open http://127.0.0.1:8096
 - [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) — build, run, and test from source.
 - [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) — every server setting, in TOML and environment variables.
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — NixOS, remote access, backups, hardware transcoding.
+- [`docs/PACKAGING.md`](docs/PACKAGING.md) — release bundles, and why we build our own ffmpeg.
 - [`docs/PLUGINS.md`](docs/PLUGINS.md) — the plugin model, and how to write your own.
 - [`docs/PLUGIN_LICENSING.md`](docs/PLUGIN_LICENSING.md) — how AGPL applies (and doesn't) to plugins.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how changes land.

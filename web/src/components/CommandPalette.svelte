@@ -16,6 +16,7 @@
   import { graphql } from "$houdini";
   import { fetchQuery } from "$lib/graphql.js";
   import { subtitleFor } from "$lib/playback.svelte.js";
+  import { connectedServers, servers } from "$lib/servers.svelte.js";
   import { app } from "$lib/session.svelte.js";
   import { titleCase } from "$lib/format.js";
   import Artwork from "$components/Artwork.svelte";
@@ -44,6 +45,7 @@
     { label: "Account", href: "/account", icon: User },
     ...(app.viewer?.isAdmin ? [{ label: "Administration", href: "/admin", icon: ShieldCheck }] : []),
     ...app.libraries.map((library) => ({ label: library.name, href: `/libraries/${library.id}`, icon: Books, hint: titleCase(library.kind) })),
+    ...connectedServers().flatMap((server) => (servers.libraries[server.id]?.items ?? []).map((library) => ({ label: library.name, href: `/libraries/${library.id}?server=${server.id}`, icon: Books, hint: `${titleCase(library.kind)} · ${server.name}` }))),
   ]);
   let commands = $derived(text.trim() ? pages.filter((page) => page.label.toLowerCase().includes(text.trim().toLowerCase())).slice(0, 4) : pages.slice(0, 6));
   let entries = $derived([

@@ -74,8 +74,10 @@
     let timer = setTimeout(function tick() { clock = new Date(); timer = setTimeout(tick, 1000 - (Date.now() % 1000)); }, 1000 - (Date.now() % 1000));
     return () => clearTimeout(timer);
   });
-  let hm = $derived(new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(clock));
-  let seconds = $derived(String(clock.getSeconds()).padStart(2, "0"));
+  const clockFormat = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  // Parts, not a string: the locale decides where seconds fall relative to AM/PM.
+  let clockParts = $derived(clockFormat.formatToParts(clock));
+  let secondsAt = $derived(clockParts.findIndex((part) => part.type === "second"));
 
   let starting = $state("");
   const startChannel = new StartLiveChannelStore();
@@ -122,7 +124,7 @@
       {/if}
       <div class="clock" role="timer" aria-label="Current time">
         <span class="dot live"></span><span class="label">Live</span>
-        <time class="tabular">{hm}<span class="sec">:{seconds}</span></time>
+        <time class="tabular">{#each clockParts as part, index}{#if index === secondsAt || index === secondsAt - 1}<span class="sec">{part.value}</span>{:else}{part.value}{/if}{/each}</time>
       </div>
     </div>
   </header>

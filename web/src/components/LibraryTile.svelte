@@ -10,10 +10,12 @@
   import { graphql } from "$houdini";
   import { titleCase } from "$lib/format.js";
   import { fetchQuery } from "$lib/graphql.js";
+  import { serverRequest, tagged } from "$lib/servers.svelte.js";
   import Artwork from "$components/Artwork.svelte";
 
   const ICON = { MOVIES: FilmStrip, SHOWS: Television, MUSIC: MusicNotes, AUDIOBOOKS: BookOpen, PHOTOS: ImageIcon, MIXED: Stack };
-  let { library } = $props();
+  /** `server`: the linked server the library is on; omit for this one. */
+  let { library, server = null } = $props();
   let Glyph = $derived(ICON[library.kind] ?? Books);
   const peek = graphql(`
     query LibraryPeek($library: ID!) {
@@ -21,11 +23,20 @@
     }
   `);
   let libraryId = $derived(library.id);
-  $effect(() => { fetchQuery(peek, { library: libraryId }); });
-  let posters = $derived($peek.data?.works.nodes ?? []);
+  let linkedPosters = $state([]);
+  $effect(() => {
+    if (!server) { fetchQuery(peek, { library: libraryId }); return; }
+    let stale = false;
+    serverRequest(server, peek.artifact.raw, { library: libraryId }).then(
+      (data) => { if (!stale) linkedPosters = tagged(data.works.nodes, server); },
+      () => {},
+    );
+    return () => { stale = true; };
+  });
+  let posters = $derived(server ? linkedPosters : $peek.data?.works.nodes ?? []);
 </script>
 
-<a class="tile" href="/libraries/{library.id}">
+<a class="tile" href={server ? `/libraries/${library.id}?server=${server.id}` : `/libraries/${library.id}`} data-sveltekit-preload-data={server ? "off" : undefined}>
   <div class="text">
     <span class="glyph"><Glyph size={20} /></span>
     <h2>{library.name}</h2>

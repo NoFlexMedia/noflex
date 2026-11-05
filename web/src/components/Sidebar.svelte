@@ -14,7 +14,9 @@
   import Television from "phosphor-svelte/lib/Television";
   import { page } from "$app/state";
   import { availableCategories } from "$lib/categories.js";
+  import { connectedServers, loadServerLibraries, servers } from "$lib/servers.svelte.js";
   import { app } from "$lib/session.svelte.js";
+  import { poll } from "$lib/ui.svelte.js";
   import BrandMark from "$components/BrandMark.svelte";
   import ServerStatus from "$components/ServerStatus.svelte";
   import Tip from "$components/ui/Tip.svelte";
@@ -30,13 +32,38 @@
     { href: "/watch-rooms", label: "Watch together", icon: Broadcast },
   ];
   let categories = $derived(availableCategories(app.categories).map((category) => ({ href: `/browse/${category.slug}`, label: category.label, icon: category.icon })));
-  const isActive = (href) => (href === "/" ? page.url.pathname === "/" : page.url.pathname.startsWith(href));
+
+  const LINKED_LIBRARIES_MS = 5 * 60_000;
+  // Not only for the list below: the palette and the libraries page read these too.
+  $effect(() => {
+    const connected = connectedServers();
+    if (!connected.length) return;
+    loadServerLibraries(connected);
+    return poll(() => loadServerLibraries(connected), LINKED_LIBRARIES_MS);
+  });
+  const libraryEntry = (library, server) => ({
+    href: server ? `/libraries/${library.id}?server=${server.id}` : `/libraries/${library.id}`,
+    label: library.name,
+    tip: server ? `${library.name} · ${server.name}` : library.name,
+    icon: LIBRARY_ICON[library.kind] ?? Books,
+    // Loading a library switches to its server, which hovering mustn't do.
+    noPreload: !!server || !!servers.active,
+  });
+  let libraryGroups = $derived.by(() => {
+    const linked = connectedServers().flatMap((server) => {
+      const answer = servers.libraries[server.id];
+      return answer ? [{ key: server.id, heading: server.name, failed: answer.failed, entries: answer.items.map((library) => libraryEntry(library, server)) }] : [];
+    });
+    const own = app.libraries.length ? [{ key: "own", heading: linked.length ? app.server?.name ?? "This server" : "Libraries", failed: false, entries: app.libraries.map((library) => libraryEntry(library, null)) }] : [];
+    return [...own, ...linked];
+  });
+  const isActive = (href) => (href === "/" ? page.url.pathname === "/" : page.url.pathname.startsWith(href.split("?")[0]));
 </script>
 
 {#snippet item(entry)}
-  <Tip text={entry.label} side="right" contentClass="rail-tip">
+  <Tip text={entry.tip ?? entry.label} side="right" contentClass="rail-tip">
     {#snippet children(props)}
-      <a {...props} href={entry.href} class="item" aria-current={isActive(entry.href) ? "page" : undefined}>
+      <a {...props} href={entry.href} class="item" data-sveltekit-preload-data={entry.noPreload ? "off" : undefined} aria-current={isActive(entry.href) ? "page" : undefined}>
         <span class="glyph"><entry.icon size={19} /></span>
         <span class="label">{entry.label}</span>
       </a>
@@ -51,10 +78,11 @@
   </a>
   <nav>
     {#each [...primary, ...categories, ...secondary] as entry (entry.href)}{@render item(entry)}{/each}
-    {#if app.showLibraries && app.libraries.length}
-      <p class="heading"><span class="label">Libraries</span></p>
-      {#each app.libraries as library (library.id)}
-        {@render item({ href: `/libraries/${library.id}`, label: library.name, icon: LIBRARY_ICON[library.kind] ?? Books })}
+    {#if app.showLibraries}
+      {#each libraryGroups as group (group.key)}
+        <p class="heading"><span class="label" title={group.heading}>{group.heading}</span></p>
+        {#if group.failed}<p class="away"><span class="label">Can’t reach this server</span></p>{/if}
+        {#each group.entries as entry (entry.href)}{@render item(entry)}{/each}
       {/each}
     {/if}
   </nav>
@@ -76,6 +104,7 @@
   nav { flex: 1; display: grid; align-content: start; gap: 2px; overflow-y: auto; margin: 0 -4px; padding: 0 4px; scrollbar-width: none; }
   .heading { position: relative; padding: 18px 12px 6px; font-size: 0.7rem; font-weight: 650; letter-spacing: 0.13em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; }
   .heading::after { content: ""; position: absolute; left: 10px; right: 10px; top: calc(50% + 6px); height: 1px; background: var(--line); opacity: 0; transition: opacity 160ms var(--ease-out); }
+  .away { padding: 2px 12px 6px; font-size: 0.78rem; color: var(--text-3); }
   .item { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; height: 40px; padding: 0 12px 0 var(--inset); border-radius: 11px; color: var(--text-2); font-weight: 550; font-size: 0.92rem; transition: background var(--t) var(--ease-out), color var(--t); }
   .item:hover { background: var(--surface-2); color: var(--text); }
   .item[aria-current="page"] { background: var(--surface-3); color: var(--text); }

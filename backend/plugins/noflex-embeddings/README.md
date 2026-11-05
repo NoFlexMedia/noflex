@@ -23,8 +23,12 @@ a community export, chosen by measurement on BEIR SciFact (AVX2 Threadripper, 4 
 | OpenVINO, onnx-community fp32         | 1084 MB | 5.9 / —          | 33 / — ms       | 0.686               |
 
 On an RTX 4090 through CUDA this export does 434 documents a second and answers a
-query in 6.4 ms, about 32 times the 16-thread CPU. nDCG@10 is 0.841 at 768
-dimensions, the same as fp32, then 0.842 at the 512 stored here and 0.828 at 256.
+query in 6.4 ms, about 32 times the 16-thread CPU. llama.cpp's GGUF on the same GPU
+does 302 through CUDA and 70 through Vulkan. nDCG@10 is 0.841 at 768 dimensions, the
+same as fp32, then 0.842 at the 512 stored here and 0.828 at 256.
+
+`packaging/bench/embeddings.py` repeats this for ONNX Runtime; run it before changing
+`packaging/model.toml`.
 
 llama.cpp uses about half the memory, but offers no NPU path and needs a C++ build.
 OpenVINO reaches only Intel accelerators. ONNX Runtime keeps one graph and one Rust

@@ -24,12 +24,13 @@
 
   let { children } = $props();
 
-  // Leaving a linked server's title returns to home, unless it's still playing.
+  // Leaving a linked server's title or library returns to home, unless it's still playing.
   // A title's loader activates its server mid-navigation, while `page` still
   // says where we came from, so go by where we're headed.
   $effect(() => {
-    const path = (navigating.to?.url ?? page.url).pathname;
-    if (servers.active && !player.current && !path.startsWith("/works/")) deactivateServer();
+    const url = navigating.to?.url ?? page.url;
+    const onServer = url.pathname.startsWith("/works/") || (url.pathname.startsWith("/libraries/") && url.searchParams.has("server"));
+    if (servers.active && !player.current && !onServer) deactivateServer();
   });
 
   start();

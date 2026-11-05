@@ -22,13 +22,24 @@ export interface LinkedServer {
 /** How long a merged view waits on one server: a slow one must never hold up the page. */
 const DEADLINE_MS = 5000;
 
-export const servers = $state({ linked: [] as LinkedServer[], active: null as LinkedServer | null, loaded: false });
+export interface ServerLibrary { id: string; name: string; kind: string }
+
+/** A connected server's libraries as last asked. `failed` means it didn't answer the last time. */
+export interface ServerLibraries { items: ServerLibrary[]; failed: boolean }
+
+export const servers = $state({
+  linked: [] as LinkedServer[],
+  active: null as LinkedServer | null,
+  loaded: false,
+  libraries: {} as Record<string, ServerLibraries>,
+});
 
 export const connectedServers = (): LinkedServer[] => servers.linked.filter((server) => server.apiKey);
 
 export function setLinkedServers(list: readonly LinkedServer[]): void {
   servers.linked = [...list];
   servers.loaded = true;
+  servers.libraries = Object.fromEntries(Object.entries(servers.libraries).filter(([id]) => list.some((server) => server.id === id)));
 }
 
 /** Send requests and resolve media URLs against `id`'s server. False when there's no such connected server. */
@@ -48,7 +59,7 @@ export function deactivateServer(): void {
 /** For a page opened directly by URL, which can run before the session has loaded the list. */
 export async function ensureLinkedServers(): Promise<void> {
   if (servers.loaded) return;
-  const data = await request(new LinkedServersStore());
+  const data = await request(new LinkedServersStore(), {}, { metadata: { ownServer: true } });
   if (!servers.loaded) setLinkedServers(data.linkedServers);
 }
 
@@ -66,8 +77,20 @@ export async function serverRequest<Data = any>(server: { origin: string; apiKey
   return payload.data as Data;
 }
 
+/** Refresh each connected server's library list. A server that fails keeps what it last said, marked `failed`. */
+export async function loadServerLibraries(asked: LinkedServer[] = connectedServers()): Promise<void> {
+  await Promise.all(asked.map(async (server) => {
+    try {
+      const data = await serverRequest<{ libraries: ServerLibrary[] }>(server, "query { libraries { id name kind } }");
+      servers.libraries[server.id] = { items: data.libraries, failed: false };
+    } catch {
+      servers.libraries[server.id] = { items: servers.libraries[server.id]?.items ?? [], failed: true };
+    }
+  }));
+}
+
 /** `works` as this client shows them: tagged with their server, and with image URLs that resolve from here. */
-function tagged(works: any[], server: LinkedServer): any[] {
+export function tagged(works: any[], server: LinkedServer): any[] {
   return works.map((work) => ({
     ...work,
     server: { id: server.id, name: server.name },

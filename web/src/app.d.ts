@@ -10,6 +10,8 @@ declare global {
     interface Metadata {
       /** Don't refresh the access token on an auth error: sign-in and other unauthenticated calls. */
       noRefresh?: boolean;
+      /** Send to this page's own server even while a linked one is active. */
+      ownServer?: boolean;
     }
   }
   interface Window {

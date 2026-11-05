@@ -144,6 +144,9 @@
             cargo-deny
             cargo-public-api
             cargo-component
+            # Release bundles link against an old glibc; see docs/PACKAGING.md.
+            cargo-zigbuild
+            zig
             rust-analyzer
             sccache
             sqlite-interactive

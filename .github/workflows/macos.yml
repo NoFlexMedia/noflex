@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Builds and exercises the Apple Silicon bundle. macOS can't be built or tested
+# anywhere else: VideoToolbox and Apple's linker need a Mac. The steps live in
+# packaging/macos/build-and-test.sh, so a Mac at hand runs exactly the same thing.
+
+name: macos
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: Cargo profile for the server
+        default: dev
+  push:
+    branches: ["macos-*"]
+
+jobs:
+  bundle:
+    runs-on: macos-15
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Restore ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: dist/ffmpeg-macos
+          key: ffmpeg-aarch64-apple-darwin-${{ hashFiles('packaging/ffmpeg/ffmpeg.toml', 'packaging/ffmpeg/build-macos.sh', 'packaging/ffmpeg/pipeline/scripts.d/**') }}
+      - run: packaging/macos/build-and-test.sh ${{ inputs.profile || 'dev' }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: noflex-aarch64-apple-darwin
+          path: dist/noflex-aarch64-apple-darwin.tar.zst
+          retention-days: 7
+          if-no-files-found: warn

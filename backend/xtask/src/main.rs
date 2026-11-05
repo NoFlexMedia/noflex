@@ -11,6 +11,13 @@
 //   - `plugin-dev <name>` — same as plugin-build, then symlinks the
 //     output into `$XDG_CONFIG_HOME/noflex/plugins/` so the running
 //     server picks it up via hot-reload.
+//   - `ffmpeg-build <target> <out>` — compile the pinned ffmpeg for a target.
+//   - `ffmpeg-verify <target> <dir>` — check an ffmpeg has what we require.
+//   - `model-fetch <assets_dir>` — download the pinned embedding model.
+//   - `bundle <target>` — assemble a release bundle under `dist/`.
+
+mod bundle;
+mod ffmpeg;
 
 use std::{
     env,
@@ -29,6 +36,12 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("plugin-build") => plugin_build(&args[1..]),
         Some("plugin-dev") => plugin_dev(&args[1..]),
+        Some("ffmpeg-build") => ffmpeg_command(&args[1..], ffmpeg::build),
+        Some("ffmpeg-verify") => ffmpeg_command(&args[1..], |_, pin, target, dir| {
+            ffmpeg::verify(pin, target, dir)
+        }),
+        Some("model-fetch") => model_fetch(&args[1..]),
+        Some("bundle") => bundle_command(&args[1..]),
         Some(other) => {
             eprintln!("xtask: unknown command `{other}`");
             print_help();
@@ -60,10 +73,74 @@ COMMANDS:
                                arguments builds everything under plugins/.
     plugin-dev <name>          Build a plugin and symlink it into the
                                user plugin dir for hot-reload pickup.
+    ffmpeg-build <target> <out>
+                               Compile the ffmpeg pinned in
+                               packaging/ffmpeg/ffmpeg.toml. Needs Docker or
+                               Podman.
+    ffmpeg-verify <target> <dir>
+                               Check the ffmpeg in <dir> has every encoder,
+                               filter and muxer that target requires.
+    model-fetch <assets_dir>   Download the embedding model pinned in
+                               packaging/model.toml, checking its hashes.
+    bundle <target> [--ffmpeg <dir>] [--profile <profile>]
+                               Assemble dist/noflex-<target>/ and its archive:
+                               the server, plugins, ffmpeg, ONNX Runtime and the
+                               model. --ffmpeg reuses a finished ffmpeg-build.
 
 Requires the `wasm32-wasip2` rustc target and `wasm-tools` on PATH (both
 provided by `nix develop`)."#
     );
+}
+
+/// Runs an ffmpeg subcommand taking `<target> <dir>`.
+fn ffmpeg_command(
+    args: &[String],
+    run: impl FnOnce(&Path, &ffmpeg::Pin, &str, &Path) -> Result<()>,
+) -> Result<()> {
+    let [target, dir] = args else {
+        bail!("expected <target> <dir>");
+    };
+    let root = checkout_root()?;
+    run(&root, &ffmpeg::Pin::load(&root)?, target, Path::new(dir))
+}
+
+fn model_fetch(args: &[String]) -> Result<()> {
+    let [assets] = args else {
+        bail!("expected <assets_dir>");
+    };
+    bundle::model_fetch(&checkout_root()?, Path::new(assets))
+}
+
+fn bundle_command(args: &[String]) -> Result<()> {
+    let Some((target, rest)) = args.split_first() else {
+        bail!("expected <target>");
+    };
+    let mut options = bundle::BundleOptions {
+        target: target.clone(),
+        ffmpeg_dir: None,
+        profile: "release".to_string(),
+    };
+    let mut rest = rest.iter();
+    while let Some(flag) = rest.next() {
+        let value = rest
+            .next()
+            .with_context(|| format!("{flag} needs a value"))?;
+        match flag.as_str() {
+            "--ffmpeg" => options.ffmpeg_dir = Some(PathBuf::from(value)),
+            "--profile" => options.profile = value.clone(),
+            other => bail!("unknown option `{other}`"),
+        }
+    }
+    bundle::bundle(&checkout_root()?, &options)
+}
+
+/// The directory holding `packaging/`, one level above the Cargo workspace that
+/// [`repo_root`] finds.
+fn checkout_root() -> Result<PathBuf> {
+    Ok(repo_root()?
+        .parent()
+        .context("the Cargo workspace has no parent")?
+        .to_path_buf())
 }
 
 fn plugin_build(names: &[String]) -> Result<()> {
@@ -211,7 +288,7 @@ fn default_version() -> String {
     "0.0.0".into()
 }
 fn default_api_version() -> String {
-    "0.9".into()
+    "0.10".into()
 }
 fn default_manifest_version() -> u32 {
     1

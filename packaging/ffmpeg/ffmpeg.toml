@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The ffmpeg every release bundle ships, built by `cargo xtask ffmpeg-build`.
+#
+# The NVENC headers, in pipeline/scripts.d/50-ffnvcodec.sh, alone set the oldest
+# Nvidia driver we work with. FFmpeg's own version doesn't: it compiles against any
+# SDK from 11.1 up, and only compares the compiled-in SDK with what the driver
+# reports. SDK 12.0 is the oldest with AV1:
+#
+#   master     driver 610+
+#   sdk/13.0   driver 570+
+#   sdk/12.0   driver 520.56+ (Windows 522.25+)   <- here
+#   sdk/11.1   driver 470.57+, but no av1_nvenc
+#
+# Raising it costs users their drivers, so it needs a feature we actually pass to
+# ffmpeg. What 12.0 lacks (UHQ tuning, temporal filter, 4:2:2, MV-HEVC) we don't.
+
+nvenc_sdk = "12.0"
+
+# release/9.0, which the dependency pins in pipeline/scripts.d were taken alongside
+# (n9.0.2-39-g7adfbe40dc). Their APIs can outrun a tag, so bump them together.
+ffmpeg_commit = "7adfbe40dcde598f93a6963d2f7b22cd75202ccc"
+
+# `pipeline` names the target in packaging/ffmpeg/pipeline, which builds every
+# dependency for that target's oldest supported libc (glibc 2.28 on Linux). `gpl`
+# because libx264 and libx265 are GPL-only; `shared` so ffmpeg and ffprobe share one
+# set of libraries, where static repeats them in each binary.
+[target.x86_64-unknown-linux-gnu]
+pipeline = "linux64"
+encoders = ["h264_nvenc", "hevc_nvenc", "av1_nvenc", "h264_vaapi", "hevc_vaapi", "av1_vaapi", "h264_qsv", "hevc_qsv", "av1_qsv"]
+filters = ["scale_vaapi", "scale_qsv", "libplacebo"]
+
+[target.aarch64-unknown-linux-gnu]
+pipeline = "linuxarm64"
+encoders = ["h264_vaapi", "hevc_vaapi", "av1_vaapi"]
+filters = ["scale_vaapi", "libplacebo"]
+
+[target.x86_64-pc-windows-msvc]
+pipeline = "win64"
+encoders = ["h264_mf", "hevc_mf", "h264_nvenc", "hevc_nvenc", "av1_nvenc", "h264_qsv", "hevc_qsv", "av1_qsv"]
+filters = ["scale_qsv", "libplacebo"]
+
+# No pipeline: VideoToolbox can't be cross-compiled, so packaging/ffmpeg/build-macos.sh
+# compiles the same dependency commits natively. Tone-mapping stays on the CPU there, since
+# libplacebo would need MoltenVK. Apple Silicon only, as ONNX Runtime is.
+[target.aarch64-apple-darwin]
+encoders = ["h264_videotoolbox", "hevc_videotoolbox"]
+
+# What the transcoder, trickplay and thumbnails ask for on every target.
+[required]
+encoders = ["libx264", "libx265", "libsvtav1", "aac", "flac", "libopus", "libmp3lame", "mov_text", "webvtt", "ass", "srt"]
+filters = ["format", "fps", "hwupload", "hwdownload", "scale", "setpts", "subtitles", "tile", "tonemap", "zscale"]
+muxers = ["hls", "mp4", "matroska", "mpegts", "webvtt", "image2", "null"]

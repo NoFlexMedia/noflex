@@ -1,15 +1,12 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
-  import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
   import Books from "phosphor-svelte/lib/Books";
-  import Devices from "phosphor-svelte/lib/Devices";
   import DotsThree from "phosphor-svelte/lib/DotsThree";
   import Plus from "phosphor-svelte/lib/Plus";
   import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
   import SignOut from "phosphor-svelte/lib/SignOut";
   import Trash from "phosphor-svelte/lib/Trash";
   import Users from "phosphor-svelte/lib/Users";
-  import X from "phosphor-svelte/lib/X";
   import { untrack } from "svelte";
   import { cache, graphql } from "$houdini";
   import { date, titleCase } from "$lib/format.js";
@@ -20,8 +17,8 @@
   import Menu from "$components/ui/Menu.svelte";
   import MenuItem from "$components/ui/MenuItem.svelte";
   import Select from "$components/ui/Select.svelte";
-  import { ago } from "$components/account/relative.js";
   import RestrictionsSheet from "./RestrictionsSheet.svelte";
+  import SessionsPanel from "./SessionsPanel.svelte";
 
   /** `admin` is the page's Admin store. */
   let { admin, creating = $bindable(false) } = $props();
@@ -154,7 +151,7 @@
             <span class="avatar" aria-hidden="true">{user.name.slice(0, 2).toUpperCase()}</span>
             <span class="what">
               <strong>{user.name}{#if user.id === app.viewer.id}<span class="chip outline">You</span>{/if}</strong>
-              <small>{grants(user)} · joined {date(user.createdAt)}{#if sessionCount.get(user.id)} · {sessionCount.get(user.id)} active{/if}</small>
+              <small>{grants(user)} · joined {date(user.createdAt)}{#if sessionCount.get(user.id)}{" · "}{sessionCount.get(user.id)} signed in{/if}</small>
             </span>
             <span class="chip" class:accent={user.role === "ADMIN"}>{titleCase(user.role)}</span>
             <Menu width={240}>
@@ -170,31 +167,7 @@
       </ul>
     </section>
 
-    <section class="panel" style:--i={1}>
-      <header class="panel-head">
-        <span class="panel-icon"><Devices size={19} /></span>
-        <div><h2>Active sessions</h2><p>Every signed-in device on this server</p></div>
-        <span class="spacer"></span>
-        <button class="icon-btn sm" aria-label="Refresh sessions" onclick={() => refetch(admin)}><ArrowsClockwise size={16} /></button>
-      </header>
-      {#if sessions.length}
-        <ul class="list">
-          {#each sessions as session (session.id)}
-            <li>
-              <span class="dot" class:on={Date.now() - Date.parse(session.lastSeenAt) < 600_000}></span>
-              <span class="what">
-                <strong>{names.get(session.userId) ?? "Deleted user"}</strong>
-                <small>{session.device || "Unknown device"}{session.client ? ` · ${session.client}` : ""} · {ago(session.lastSeenAt)}</small>
-              </span>
-              <code class="ip">{session.remoteAddr || "local"}</code>
-              <button class="icon-btn sm" aria-label="Revoke {names.get(session.userId) ?? 'user'}’s session on {session.device || 'unknown device'}" onclick={() => revokeSession(session)}><X size={16} /></button>
-            </li>
-          {/each}
-        </ul>
-      {:else}
-        <p class="empty-note">Nobody is signed in right now.</p>
-      {/if}
-    </section>
+    <div style:--i={1}><SessionsPanel {sessions} {names} onrefresh={() => refetch(admin)} onrevoke={revokeSession} onrevokeall={revokeAll} /></div>
   </div>
 {/if}
 
@@ -276,12 +249,10 @@
   .what strong { display: flex; align-items: center; gap: 8px; }
   .what .chip { height: 20px; font-size: 0.68rem; }
   .what small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ip { color: var(--text-3); font-size: 0.78rem; }
   .libs { display: grid; gap: 12px; margin: 6px 0 0; padding: 0; border: 0; }
   .libs legend { padding: 0; margin-bottom: 10px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-3); }
   .libs .check { display: flex; }
   .libs .check small { margin-left: auto; }
   .hint { color: var(--text-3); font-size: 0.85rem; }
   @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
-  @media (max-width: 480px) { .ip { display: none; } }
 </style>

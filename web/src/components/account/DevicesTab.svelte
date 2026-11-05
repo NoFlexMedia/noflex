@@ -1,6 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
-  import HardDrives from "phosphor-svelte/lib/HardDrives";
   import Check from "phosphor-svelte/lib/Check";
   import CheckCircle from "phosphor-svelte/lib/CheckCircle";
   import Copy from "phosphor-svelte/lib/Copy";
@@ -17,6 +16,7 @@
   import { attempt, confirmAction, poll, toast } from "$lib/ui.svelte.js";
   import Dialog from "$components/ui/Dialog.svelte";
   import Select from "$components/ui/Select.svelte";
+  import { deviceIcon } from "./deviceIcon.js";
   import { ago } from "./relative.js";
 
   let { account } = $props();
@@ -72,8 +72,6 @@
   let others = $derived(sessions.filter((session) => session.id !== currentId));
   let keys = $derived((data?.apiKeys ?? []).filter((key) => !key.revokedAt));
   let revokedCount = $derived((data?.apiKeys ?? []).length - keys.length);
-
-  const deviceIcon = (session) => (/tv|roku|fire|android tv|apple tv/i.test(`${session.device} ${session.client}`) ? Television : /iphone|ipad|android|ios/i.test(session.device ?? "") ? Devices : HardDrives);
 
   async function revoke(session) {
     if (!(await confirmAction({ title: `Sign out “${session.device || "this device"}”?`, message: "It will need to sign in again to keep using NoFlex.", confirmLabel: "Sign out device", danger: true }))) return;

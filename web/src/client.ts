@@ -9,7 +9,7 @@ import { fetch as fetchPlugin, HoudiniClient, subscription } from "$houdini";
 import type { RequestHandler } from "$houdini/runtime/plugins/fetch";
 import type { GraphQLError } from "houdini/runtime";
 import { live } from "$lib/live.js";
-import { activeGraphqlUrl, activeHeaders, ApiError, currentAccessToken, hasSession, refreshAccessToken, usingLinkedServer } from "$lib/tokens.js";
+import { activeGraphqlUrl, activeHeaders, ApiError, authHeaders, currentAccessToken, GRAPHQL_URL, hasSession, refreshAccessToken, usingLinkedServer } from "$lib/tokens.js";
 
 const AUTH_ERROR = /authentication required|invalid token|token expired|unauthenticated/i;
 
@@ -32,17 +32,17 @@ const failed = (error: unknown): Payload => {
   return { data: null, errors: [{ message: cause.message, extensions: { error: cause } }] };
 };
 
-async function post(fetch: typeof globalThis.fetch, body: string, refreshAllowed: boolean): Promise<Payload> {
+async function post(fetch: typeof globalThis.fetch, body: string, refreshAllowed: boolean, ownServer: boolean): Promise<Payload> {
   // A linked server's key doesn't refresh, and this page's session has no say there.
-  const mayRefresh = refreshAllowed && !usingLinkedServer();
+  const mayRefresh = refreshAllowed && (ownServer || !usingLinkedServer());
   const sentAccess = currentAccessToken();
   const retry = async () => {
     try { await refreshAccessToken(sentAccess); } catch (error) { return failed(error); }
-    return post(fetch, body, false);
+    return post(fetch, body, false, ownServer);
   };
   let response: Response;
   try {
-    response = await fetch(activeGraphqlUrl(), { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", ...activeHeaders() }, body });
+    response = await fetch(ownServer ? GRAPHQL_URL : activeGraphqlUrl(), { method: "POST", headers: { Accept: "application/json", "Content-Type": "application/json", ...(ownServer ? authHeaders() : activeHeaders()) }, body });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     return failed(new Error("NoFlex could not reach the server. Check your connection and try again."));
@@ -64,7 +64,7 @@ async function post(fetch: typeof globalThis.fetch, body: string, refreshAllowed
 }
 
 const send: RequestHandler = ({ fetch, name, text, variables, metadata }) =>
-  post(fetch, JSON.stringify({ operationName: name, query: text, variables }), !metadata?.noRefresh) as ReturnType<RequestHandler>;
+  post(fetch, JSON.stringify({ operationName: name, query: text, variables }), !metadata?.noRefresh, !!metadata?.ownServer) as ReturnType<RequestHandler>;
 
 export default new HoudiniClient({
   plugins: [subscription(() => live), fetchPlugin(send)],

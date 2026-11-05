@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The ONNX Runtime every release bundle ships: CPU only, because that runs
+# anywhere and the GPU and NPU builds carry over a gigabyte of vendor libraries an
+# operator can add with `search.onnxruntime_library`. Read by `cargo xtask bundle`.
+
+base_url = "https://github.com/microsoft/onnxruntime/releases/download/v1.31.1"
+
+[target.x86_64-unknown-linux-gnu]
+asset = "onnxruntime-linux-x64-1.31.1.tgz"
+sha256 = "c849e36a1ef3e22d4ff217b9d1ce4a3cf5b9467b975610913ae959ad5b16bdc9"
+
+# Microsoft publishes no Intel build for macOS, which is why bundles are Apple
+# Silicon only.
+[target.aarch64-apple-darwin]
+asset = "onnxruntime-osx-arm64-1.31.1.tgz"
+sha256 = "2e1344a1926ee50eb25b38153cb6992c3567515aef0e677a1a520a1798896d6f"

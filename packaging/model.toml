@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The embedding model, read by `cargo xtask model-fetch`. See
+# `backend/plugins/noflex-embeddings/README.md` for why this export. Apache-2.0,
+# as google/embeddinggemma-2 is. Pinned to a revision because it's a community
+# upload: a new revision gets measured before it gets here.
+
+base_url = "https://huggingface.co/arankays/embeddinggemma-2-text-int8-cw-onnx/resolve/88aed926c26344fa2ffed5f44d016fb36e2fcce3"
+dir = "embeddinggemma-2"
+
+[[file]]
+source = "onnx/model_text.onnx"
+sha256 = "cab66c5d0bf25beaadca4095c7c4cb2e06b05cb360059f5854d9e4b110b70af3"
+
+[[file]]
+source = "onnx/model.onnx_data"
+sha256 = "5fa7999279f92b8e97dd74dee5478b58b58c2c28bfdcfd343c7e4e4cb4103dd7"
+
+[[file]]
+source = "tokenizer.json"
+sha256 = "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4"

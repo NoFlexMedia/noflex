@@ -26,6 +26,6 @@ export async function registerThisDevice(): Promise<void> {
   if (!id) return;
   try {
     const capabilities = await clientCapabilities();
-    await request(new RegisterDeviceStore(), { id, name: deviceName(), capabilities });
+    await request(new RegisterDeviceStore(), { id, name: deviceName(), capabilities }, { metadata: { ownServer: true } });
   } catch { /* retried on the next sign-in */ }
 }

@@ -72,9 +72,11 @@ onLiveRefused(() => {
   signedOut("Your session expired. Sign in again to continue.");
 });
 
+// A page opened directly on a linked server's title or library has already
+// activated it by now, so everything about the session says which server it means.
 export async function bootstrap(): Promise<void> {
   try {
-    const data = await request(new BootstrapStore());
+    const data = await request(new BootstrapStore(), {}, { metadata: { ownServer: true } });
     app.viewer = data.viewer;
     app.server = data.serverInfo;
     app.categories = [...data.contentCategories];
@@ -111,12 +113,12 @@ export async function start(): Promise<void> {
   app.phase = "boot";
   app.error = "";
   try {
-    app.server = (await request(new ServerInfoStore(), {}, { metadata: { noRefresh: true } })).serverInfo;
+    app.server = (await request(new ServerInfoStore(), {}, { metadata: { noRefresh: true, ownServer: true } })).serverInfo;
     if (!app.server.isConfigured) { app.phase = "setup"; return; }
     const callback = takeExternalCallback();
     if (callback?.kind === "login") {
       try {
-        const data = await request(new CompleteExternalLoginStore(), { code: callback.code, nonce: callback.nonce, device: deviceName() }, { metadata: { noRefresh: true } });
+        const data = await request(new CompleteExternalLoginStore(), { code: callback.code, nonce: callback.nonce, device: deviceName() }, { metadata: { noRefresh: true, ownServer: true } });
         await signIn(data.completeExternalLogin);
       } catch (cause) {
         app.authError = cause instanceof Error ? cause.message : String(cause);
@@ -128,7 +130,7 @@ export async function start(): Promise<void> {
     await bootstrap();
     if (callback?.kind === "link" && (app.phase as Phase) === "app") {
       try {
-        const linked = (await request(new CompleteIdentityLinkStore(), { code: callback.code, nonce: callback.nonce })).completeExternalIdentityLink;
+        const linked = (await request(new CompleteIdentityLinkStore(), { code: callback.code, nonce: callback.nonce }, { metadata: { ownServer: true } })).completeExternalIdentityLink;
         toast(`${linked.displayName || linked.pluginId} is now linked to your account.`, "success");
       } catch (cause) {
         toast(cause instanceof Error ? cause.message : String(cause), "error");
@@ -141,7 +143,7 @@ export async function start(): Promise<void> {
 }
 
 export async function logout(): Promise<void> {
-  try { await request(new LogoutStore(), {}, { metadata: { noRefresh: true } }); } catch { /* signing out locally regardless */ }
+  try { await request(new LogoutStore(), {}, { metadata: { noRefresh: true, ownServer: true } }); } catch { /* signing out locally regardless */ }
   clearSession();
   signedOut("");
 }

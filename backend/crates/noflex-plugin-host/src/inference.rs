@@ -262,6 +262,13 @@ fn candidates(device: InferenceDevice) -> Vec<Candidate> {
                 provider: ep::QNN::default().build(),
                 static_tokens: Some(STATIC_TOKENS),
             },
+            Candidate {
+                name: "coreml-neural-engine",
+                provider: ep::CoreML::default()
+                    .with_compute_units(ep::coreml::ComputeUnits::CPUAndNeuralEngine)
+                    .build(),
+                static_tokens: None,
+            },
         ]
     };
     let gpu = || {
@@ -277,8 +284,10 @@ fn candidates(device: InferenceDevice) -> Vec<Candidate> {
                 static_tokens: None,
             },
             Candidate {
-                name: "coreml",
-                provider: ep::CoreML::default().build(),
+                name: "coreml-gpu",
+                provider: ep::CoreML::default()
+                    .with_compute_units(ep::coreml::ComputeUnits::CPUAndGPU)
+                    .build(),
                 static_tokens: None,
             },
         ]

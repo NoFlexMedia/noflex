@@ -37,6 +37,9 @@ npm run dev      # http://localhost:5173, proxying the API to :8096
 
 See [`web/README.md`](../web/README.md) for how builds are embedded.
 
+Semantic search also needs the embedding model; `cargo xtask model-fetch <dir>`
+downloads it, then point `plugin.assets_dir` at `<dir>`.
+
 ## Install plugins
 
 Metadata providers, login providers, scrobblers, and embeddings are all WASM plugins. Build one and hot-reload it into your running server:

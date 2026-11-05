@@ -32,6 +32,7 @@ import '../../graphql/queries/__generated__/watch_room_events.req.gql.dart';
 import '../../models/work.dart';
 import '../../services/graphql.dart';
 import '../../services/nav_service.dart';
+import '../../services/pip_service.dart';
 import '../../services/toast_service.dart';
 import '../../services/watch_state.dart';
 import '../downloads/downloads_service.dart';
@@ -306,6 +307,11 @@ class PlayerController {
   void _onPlaying(bool isPlaying) {
     if (restarting.value != null && isPlaying) restarting.value = null;
     playing.value = isPlaying;
+    getIt<PipService>().setPlaying(
+      isPlaying,
+      width: _player.state.width,
+      height: _player.state.height,
+    );
     _heartbeatTimer?.cancel();
     if (isPlaying) {
       unawaited(_report(GPlaybackState.PLAYING));
@@ -898,6 +904,7 @@ class PlayerController {
 
   void dispose() {
     _disposed = true;
+    getIt<PipService>().setPlaying(false);
     _stopWatchingCurrent();
     for (final timer in [
       _idle,

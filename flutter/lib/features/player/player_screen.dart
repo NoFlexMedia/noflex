@@ -16,6 +16,7 @@ import 'package:signals_flutter/signals_flutter.dart';
 
 import '../../di.dart';
 import '../../layout/window.dart';
+import '../../services/pip_service.dart';
 import '../../services/tokens.dart';
 import '../../theme.dart';
 import '../../utils/format.dart';
@@ -240,6 +241,7 @@ class _Chrome extends SignalWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (getIt<PipService>().active.value) return const SizedBox.shrink();
     final visible = docked || player.chromeVisible.value;
     final current = getIt<PlaybackService>().current.value;
     if (current == null) return const SizedBox.shrink();
@@ -715,6 +717,12 @@ class _BottomBar extends SignalWidget {
                 : PhosphorIconsRegular.speakerHigh,
             label: player.muted.value ? 'Unmute' : 'Mute',
             onPressed: player.toggleMute,
+          ),
+        if (getIt<PipService>().supported)
+          NfIconButton(
+            icon: PhosphorIconsRegular.pictureInpicture,
+            label: 'Picture in picture',
+            onPressed: getIt<PipService>().enter,
           ),
         NfIconButton(
           icon: player.fullscreen.value

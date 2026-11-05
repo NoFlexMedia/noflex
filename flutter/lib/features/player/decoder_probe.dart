@@ -73,6 +73,7 @@ class DecoderProbeService {
   Future<DecoderProfile> remeasure() async {
     final measured = await _measure();
     profile.value = measured;
+    _measuring = Future.value(measured);
     await _store(measured);
     return measured;
   }

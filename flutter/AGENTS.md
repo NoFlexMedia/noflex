@@ -77,6 +77,7 @@ libmpv tries the platform's hardware decoder first and falls back to software by
 - **`rankVersions` and `pickEdition`** (`features/player/decoders.dart`) prefer hardware, then the most picture the display can show, then SDR over HDR that has to be tone-mapped, then the cheaper file. An edition is a different cut, so ties between editions keep the server's order. Once the viewer picks an edition or version, their pick stands.
 - **`buildCapabilities`** reports the better of hardware and the software ceiling for each codec, and only audio this libmpv build can decode (`decoder-list`; Windows has no TrueHD). Dolby Vision without a compatible base layer is left out.
 - In-file audio and subtitle tracks switch in libmpv. Only a transcode needs the server: `audioStream`, or `burnSubtitle` for a track it can't deliver as text. libass draws subtitles into the picture.
+- Picture-in-picture is Android only (`PipService`, `MainActivity.kt`): libmpv draws into a Flutter texture, and iOS's API wants an AVPlayer layer. Leaving the app while something plays enters it.
 - HDR on Android forces `mediacodec-copy`, because SurfaceTexture's conversion doesn't know PQ or HLG. This hasn't been run on a real HDR device.
 
 ## Downloads

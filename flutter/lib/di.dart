@@ -10,6 +10,7 @@ import 'services/device_identity.dart';
 import 'services/graphql.dart';
 import 'services/nav_service.dart';
 import 'services/network_service.dart';
+import 'services/pip_service.dart';
 import 'services/session.dart';
 import 'services/toast_service.dart';
 import 'services/tokens.dart';
@@ -25,6 +26,7 @@ void configureDependencies() {
     ..registerSingleton(ToastService())
     ..registerSingleton(NetworkService())
     ..registerSingleton(WatchStateService())
+    ..registerSingleton(PipService())
     ..registerSingleton(DecoderProbeService())
     ..registerSingleton(GraphqlService(getIt<TokenStore>()))
     ..registerSingleton(

@@ -30,6 +30,9 @@ abstract final class NfColors {
   static const successSoft = Color(0x1F6EE7A8);
   static const focus = Color(0xFFA5DCFF);
   static const heart = Color(0xFFFF6B8B);
+
+  /// A page's tint until its artwork gives it one.
+  static const ambient = Color(0xFF5A688C);
 }
 
 abstract final class NfRadii {

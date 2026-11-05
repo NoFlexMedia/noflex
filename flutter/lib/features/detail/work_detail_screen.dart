@@ -28,6 +28,7 @@ import '../../services/watch_state.dart';
 import '../../theme.dart';
 import '../../utils/format.dart';
 import '../../utils/images.dart';
+import '../../widgets/ambient_glow.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_overlays.dart';
@@ -84,28 +85,43 @@ class _WorkDetailScreenState extends State<WorkDetailScreen> {
       foregroundColor: NfColors.text,
       actions: [_MoreMenu(controller: _controller)],
     ),
-    body: SignalBuilder(
-      builder: (context) {
-        final work = _controller.work.value;
-        final failure = _controller.query.error.value;
-        if (work == null) {
-          if (_controller.query.waiting.value) {
-            return const _DetailSkeleton();
-          }
-          return failure != null
-              ? NfState.error(
-                  title: 'Couldn’t open this title',
-                  message: failure.toString(),
-                  retry: _controller.query.refetch,
-                )
-              : const NfState(
-                  icon: PhosphorIconsRegular.magnifyingGlass,
-                  title: 'This title isn’t here',
-                  message: 'It may have been removed, or you don’t have access to its library.',
-                );
-        }
-        return _Layout(controller: _controller, work: work);
-      },
+    body: Stack(
+      fit: StackFit.expand,
+      children: [
+        SignalBuilder(
+          builder: (_) {
+            final work = _controller.work.value;
+            return AmbientGlow(
+              url: work == null
+                  ? null
+                  : pickImage(work.images, ArtKind.backdrop),
+            );
+          },
+        ),
+        SignalBuilder(
+          builder: (context) {
+            final work = _controller.work.value;
+            final failure = _controller.query.error.value;
+            if (work == null) {
+              if (_controller.query.waiting.value) {
+                return const _DetailSkeleton();
+              }
+              return failure != null
+                  ? NfState.error(
+                      title: 'Couldn’t open this title',
+                      message: failure.toString(),
+                      retry: _controller.query.refetch,
+                    )
+                  : const NfState(
+                      icon: PhosphorIconsRegular.magnifyingGlass,
+                      title: 'This title isn’t here',
+                      message: 'It may have been removed, or you don’t have access to its library.',
+                    );
+            }
+            return _Layout(controller: _controller, work: work);
+          },
+        ),
+      ],
     ),
   );
 }

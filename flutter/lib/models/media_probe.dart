@@ -88,7 +88,12 @@ class AudioProbe {
 }
 
 class MediaProbe {
-  const MediaProbe({this.video, this.audio = const [], this.bitRate});
+  const MediaProbe({
+    this.video,
+    this.audio = const [],
+    this.bitRate,
+    this.durationMs,
+  });
 
   factory MediaProbe.fromJson(Object? json) {
     if (json is! Map) return const MediaProbe();
@@ -109,12 +114,14 @@ class MediaProbe {
             ]
           : const [],
       bitRate: (map['format_bit_rate'] as num?)?.toInt(),
+      durationMs: (map['duration_ms'] as num?)?.toInt(),
     );
   }
 
   final VideoProbe? video;
   final List<AudioProbe> audio;
   final int? bitRate;
+  final int? durationMs;
 
   /// "4K · HEVC · HDR10"; null without video.
   String? get versionLabel {

@@ -802,7 +802,9 @@ class _InfoPanel extends SignalWidget {
     final stats = player.stats.value;
     final video = current?.version?.probe.video;
     final profile = getIt<DecoderProbeService>().profile.value;
-    final tier = video == null || profile == null
+    // A transcode's source says nothing about how its stream decodes.
+    final tier =
+        video == null || profile == null || (current?.transcoding ?? false)
         ? null
         : profile.tierOf(video);
     final rows = <(String, String)>[

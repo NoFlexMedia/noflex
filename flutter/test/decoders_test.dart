@@ -182,6 +182,30 @@ void main() {
       expect(ranges, isNot(contains(GVideoRange.DOVI)));
     });
 
+    test(
+      'never asks for a transcode this device can only decode in software',
+      () {
+        final hls = buildCapabilities(phone).hls.firstWhere(
+          (profile) => profile.segmentContainer == GHlsSegmentContainer.FMP4,
+        );
+        expect(
+          hls.videoCodecs,
+          containsAll([GVideoCodec.H265, GVideoCodec.H264]),
+        );
+        expect(hls.videoCodecs, isNot(contains(GVideoCodec.AV1)));
+      },
+    );
+
+    test(
+      'falls back to H.264 for a transcode when nothing measured in hardware',
+      () {
+        const bare = DecoderProfile(
+          softwareCeiling: DecodeCeiling(pixels1080p, 10),
+        );
+        expect(transcodeCodecs(bare), [GVideoCodec.H264]);
+      },
+    );
+
     test('only claims audio this build of libmpv can decode', () {
       const windows = DecoderProfile(
         softwareCeiling: DecodeCeiling(pixels1080p, 10),

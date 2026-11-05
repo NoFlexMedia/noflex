@@ -109,7 +109,7 @@ String offlineFileName(WorkSummary work, int partIndex) {
         : work.title,
   );
   final part = partIndex > 0 ? ' part ${partIndex + 1}' : '';
-  return '$title$part [${work.id.substring(0, 8)}].mkv';
+  return '$title$part [${work.id.substring(work.id.length - 8)}].mkv';
 }
 
 /// Enqueues the transfer behind an item. Also used headlessly.
@@ -192,6 +192,9 @@ OfflineItem itemFor(
   addedAt: DateTime.now(),
   directory: directory,
   optimized: file.optimized,
+  // What's been watched so far, so an offline resume starts in the right place.
+  positionMs: file.work.userData?.positionMs ?? 0,
+  played: file.work.userData?.played ?? false,
   posterFile: file.work.images.isEmpty ? null : '${file.key}-poster.jpg',
   subtitles: [
     for (final subtitle in file.subtitles)
@@ -485,7 +488,7 @@ class DownloadsService {
     final answer = data.deviceDownload;
     if (answer == null) return false;
     final file = wantedFromDownload(answer);
-    await _ensurePermission();
+    unawaited(_ensurePermission());
     await _enqueue(file, OfflineOrigin.manual);
     return true;
   }
@@ -606,7 +609,6 @@ class DownloadsService {
     for (final item in plan.evict) {
       await remove(item);
     }
-    if (plan.fetch.isNotEmpty) await _ensurePermission();
     for (final file in plan.fetch) {
       await _enqueue(file, OfflineOrigin.smart);
     }
@@ -697,6 +699,8 @@ class DownloadsService {
     bool clearBitrate = false,
   }) async {
     final identity = getIt<DeviceIdentity>();
+    // Asked now, with the viewer here, as a reconcile may run with nobody looking.
+    if (smartDownloads == true) unawaited(_ensurePermission());
     final result = await getIt<ToastService>().attempt(
       () => _graphql.run(
         GUpdateDeviceReq(

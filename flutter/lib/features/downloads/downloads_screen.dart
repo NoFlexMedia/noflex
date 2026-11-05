@@ -66,8 +66,11 @@ class DownloadsScreen extends SignalWidget {
             padding: EdgeInsets.symmetric(horizontal: gutter),
             sliver: SliverToBoxAdapter(
               child: Text(
-                '${bytes(downloads.usedBytes.value)} on this device'
-                '${smartOn ? ' · Smart Downloads on' : ''}',
+                [
+                  if (downloads.usedBytes.value > 0)
+                    '${bytes(downloads.usedBytes.value)} on this device',
+                  if (smartOn) 'Smart Downloads on',
+                ].join(' · '),
                 style: NfType.small,
               ),
             ),

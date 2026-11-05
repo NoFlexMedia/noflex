@@ -274,7 +274,12 @@ class PlayerController {
       duration.value = own;
       return;
     }
-    final known = current.edition?.runtimeMs ?? current.work?.runtimeMs ?? 0;
+    // This file's own length first: versions of an edition can differ.
+    final known =
+        current.version?.probe.durationMs ??
+        current.edition?.runtimeMs ??
+        current.work?.runtimeMs ??
+        0;
     duration.value = known > 0 ? known : current.offsetMs + own;
   }
 

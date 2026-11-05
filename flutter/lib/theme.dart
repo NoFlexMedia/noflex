@@ -136,6 +136,7 @@ ThemeData buildNoFlexTheme() {
     hoverColor: NfColors.surface2,
     focusColor: NfColors.focus.withValues(alpha: 0.3),
     dividerColor: NfColors.line,
+    dividerTheme: const DividerThemeData(color: NfColors.line, thickness: 1),
     textTheme: TextTheme(
       bodyMedium: NfType.body,
       bodySmall: NfType.small,

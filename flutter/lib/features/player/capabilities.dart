@@ -42,6 +42,18 @@ final _ranges = BuiltList<GVideoRange>([
   GVideoRange.DOVI_WITH_HLG,
 ]);
 
+/// What a transcode may be encoded to. Direct play takes whatever keeps up,
+/// but a transcode's output is ours to choose, so never one this device would
+/// have to decode in software. H.264 is the fallback every device has, and is
+/// light enough in software where nothing was measured.
+List<GVideoCodec> transcodeCodecs(DecoderProfile profile) => [
+  for (final entry in _videoCodecs.entries)
+    if (entry.key != 'h264' &&
+        (profile.hardware[entry.key]?.isNotEmpty ?? false))
+      entry.value,
+  GVideoCodec.H264,
+];
+
 GClientCapabilities buildCapabilities(
   DecoderProfile profile, {
   int? maxBitrateBps,
@@ -90,7 +102,7 @@ GClientCapabilities buildCapabilities(
         GHlsProfile(
           (h) => h
             ..segmentContainer = GHlsSegmentContainer.FMP4
-            ..videoCodecs.replace(_videoCodecs.values)
+            ..videoCodecs.replace(transcodeCodecs(profile))
             ..audioCodecs.replace([
               for (final codec in audio)
                 if (codec != GAudioCodec.TRUEHD &&

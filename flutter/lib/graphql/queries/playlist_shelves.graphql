@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Nested pages multiply against the request budget, so a shelf holds a taste and
+# a screenful of shelves comes at a time. Opening one pages through it properly.
+#import 'fragments/work_card.graphql'
+
+query PlaylistShelves($after: String) {
+  playlists(first: 6, after: $after) {
+    nodes { id title overview items(first: 8) { nodes { kind work { ...WorkCard } } pageInfo { hasNextPage } } }
+    pageInfo { hasNextPage endCursor }
+  }
+}

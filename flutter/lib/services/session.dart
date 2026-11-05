@@ -31,6 +31,7 @@ import '../models/work.dart';
 import '../utils/tracks.dart';
 import 'device_identity.dart';
 import 'graphql.dart';
+import 'nav_service.dart';
 import 'tokens.dart';
 import 'watch_state.dart';
 
@@ -291,6 +292,7 @@ class SessionService {
       device.value = null;
       authError.value = message;
       phase.value = AppPhase.auth;
+      getIt<NavService>().tab.value = ShellTab.home;
     });
   }
 }

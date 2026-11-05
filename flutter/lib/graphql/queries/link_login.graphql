@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Sent to the server being linked, not the home server.
+mutation LinkLogin($username: String!, $password: String!, $device: String!) {
+  login(username: $username, password: $password, client: "NoFlex link", device: $device) { token user { isAdmin } }
+}

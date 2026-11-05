@@ -54,7 +54,7 @@ No router, no named routes. `_AppFrame` in `app.dart` switches on `SessionServic
 
 ## Adaptive layout
 
-Decide from available width through `layout/window.dart`, never from device checks. Navigation goes bottom bar, then rail (`>= 600`), then sidebar (`>= 1100`). Use `AdaptivePanes` for two-pane content: it splits on a vertical fold when one runs through the middle, so neither pane straddles the hinge. In tabletop posture the player gives the picture the top half and the controls the bottom. Rails and grids size from width, so more room shows more cards rather than bigger ones.
+Decide from available width through `layout/window.dart`, never from device checks. Navigation goes bottom bar, then rail (`>= 600`), then sidebar (`>= 1100`). Use `AdaptivePanes` for two-pane content: it splits on a vertical fold when one runs through the middle, so neither pane straddles the hinge. The shell moves display features into its content's coordinates (`FoldsFromContent`), because a pane has no position of its own until after its first layout, and a route's transition moves it after that. In tabletop posture the player gives the picture the top half and the controls the bottom. Rails and grids size from width, so more room shows more cards rather than bigger ones.
 
 ## GraphQL
 
@@ -76,6 +76,8 @@ libmpv tries the platform's hardware decoder first and falls back to software by
 - **Measure, don't assume.** `DecoderProbeService` plays black-frame clips (`assets/decoder-probes/`) through a hidden libmpv with `vo=null` and `hwdec=auto-copy`, and reads `hwdec-current`. One code path on every platform, with no native code. Results are cached per app version and OS version. If real playback lands in software where the measurement said hardware, `PlayerController` corrects the profile.
 - **`rankVersions` and `pickEdition`** (`features/player/decoders.dart`) prefer hardware, then the most picture the display can show, then SDR over HDR that has to be tone-mapped, then the cheaper file. An edition is a different cut, so ties between editions keep the server's order. Once the viewer picks an edition or version, their pick stands.
 - **`buildCapabilities`** reports the better of hardware and the software ceiling for each codec, and only audio this libmpv build can decode (`decoder-list`; Windows has no TrueHD). Dolby Vision without a compatible base layer is left out.
+- Server-encoded streams wait for their playlist before `open` (`_awaitPlaylist`). libmpv gives up on the first failed fetch, media_kit's network timeout is 5 seconds, and the server holds a playlist request for up to 10 before answering 404, so a live channel, or a slow encoder, would otherwise never start. Web clients get this from hls.js retrying.
+- Live sets `force-seekable=no`. libmpv seeks to attach its video output once playing, and a live stream that claims it can seek never recovers from that.
 - In-file audio and subtitle tracks switch in libmpv. Only a transcode needs the server: `audioStream`, or `burnSubtitle` for a track it can't deliver as text. libass draws subtitles into the picture.
 - Picture-in-picture is Android only (`PipService`, `MainActivity.kt`): libmpv draws into a Flutter texture, and iOS's API wants an AVPlayer layer. Leaving the app while something plays enters it.
 - HDR on Android forces `mediacodec-copy`, because SurfaceTexture's conversion doesn't know PQ or HLG. This hasn't been run on a real HDR device.
@@ -84,7 +86,7 @@ libmpv tries the platform's hardware decoder first and falls back to software by
 
 `background_downloader` owns transfers natively: URLSession background tasks on iOS and macOS, WorkManager or UIDT on Android, isolates on Windows and Linux. `DownloadsService` keeps a JSON manifest (`OfflineStore`) and mirrors updates into signals. `smart_planner.dart` decides what to fetch and evict; the server ranks and enforces the budget (`smartDownloads`), and the client enforces Wi-Fi, as the schema says.
 
-Only what the server put here (`OfflineOrigin.smart`) can be evicted. What the viewer chose stays until they remove it. A manual download asks `deviceDownload`; when that's null, the server has nothing this device can play yet and an export job stands in.
+Only what the server put here (`OfflineOrigin.smart`) can be evicted. What the viewer chose stays until they remove it. A manual download asks `deviceDownload`; when that's null, the server has nothing ready for this device and an export job can stand in. Exports are stream copies, so they keep the original's codecs, and they're saved from You → Server exports.
 
 **iOS** gives no guarantees about when an app runs, so nothing depends on Dart running:
 
@@ -107,7 +109,7 @@ emulator -avd noflex_fold -no-window -gpu host -no-boot-anim   # drop -no-window
 adb exec-out screencap -d <display id> -p > shot.png           # foldables have two displays; ids from `adb shell dumpsys SurfaceFlinger --display-id`
 ```
 
-**Build for the emulator with `--dart-define=NOFLEX_ANDROID_VO=mediacodec_embed`.** libmpv's `gpu` video output can't create an EGL context under the emulator's GL translation (`EGL_BAD_ATTRIBUTE`, in every `-gpu` mode), so nothing displays otherwise. `mediacodec_embed` skips libmpv's GL but can only show hardware-decoded frames, and there's no libass overlay. So H.264, HEVC and VP9 display on the emulator; AV1 and subtitles need a real device or the Linux desktop. The server is at `10.0.2.2` from inside the emulator.
+**Build for the emulator with `--dart-define=NOFLEX_ANDROID_VO=mediacodec_embed`.** libmpv's `gpu` video output can't create an EGL context under the emulator's GL translation (`EGL_BAD_ATTRIBUTE`, in every `-gpu` mode), so nothing displays otherwise. `mediacodec_embed` skips libmpv's GL but can only show hardware-decoded frames, and there's no libass overlay. So H.264, HEVC and VP9 display on the emulator; AV1 and subtitles need a real device or the Linux desktop. Live channels also play without a picture there, though they show one on Linux. The server is at `10.0.2.2` from inside the emulator.
 
 A stale debug-only file (`Unhandled Exception: FormatException` from `NativeReferenceHolder`) after killing the emulator mid-write goes away with `adb shell pm clear live.noflex.noflex`.
 

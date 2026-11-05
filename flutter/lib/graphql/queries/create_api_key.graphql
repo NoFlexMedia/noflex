@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Sent to the server being linked, whose key is what the link keeps.
+mutation CreateApiKey($name: String!) {
+  createApiKey(name: $name) { key }
+}

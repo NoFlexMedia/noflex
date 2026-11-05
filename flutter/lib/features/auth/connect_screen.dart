@@ -21,6 +21,7 @@ import '../../theme.dart';
 import '../../widgets/brand_mark.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_field.dart';
+import '../downloads/leave_account.dart';
 
 /// What someone typed, as an origin: `192.168.1.5:8096` → `http://192.168.1.5:8096`.
 /// Null when it can't be one. A bare host is tried as http: home servers
@@ -401,7 +402,7 @@ class _SignInScreenState extends State<SignInScreen> {
                   ),
                 ),
                 TextButton(
-                  onPressed: _session.forgetServer,
+                  onPressed: () => unawaited(changeServer()),
                   child: Text(
                     'Change server',
                     style: nfText(13, weight: 600, color: NfColors.text2),

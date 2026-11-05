@@ -1,8 +1,0 @@
-# SPDX-License-Identifier: AGPL-3.0-only
-#import 'fragments/work_card.graphql'
-
-query Playlists {
-  playlists(first: 100) {
-    nodes { id title overview items(first: 8) { nodes { kind work { ...WorkCard } } pageInfo { hasNextPage } } }
-  }
-}

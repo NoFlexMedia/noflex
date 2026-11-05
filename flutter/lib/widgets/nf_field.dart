@@ -12,6 +12,7 @@ class NfField extends StatelessWidget {
     this.hint,
     this.obscure = false,
     this.keyboardType,
+    this.textCapitalization = TextCapitalization.none,
     this.textInputAction,
     this.onSubmitted,
     this.onChanged,
@@ -28,6 +29,7 @@ class NfField extends StatelessWidget {
   final String? hint;
   final bool obscure;
   final TextInputType? keyboardType;
+  final TextCapitalization textCapitalization;
   final TextInputAction? textInputAction;
   final ValueChanged<String>? onSubmitted;
   final ValueChanged<String>? onChanged;
@@ -56,6 +58,7 @@ class NfField extends StatelessWidget {
           controller: controller,
           obscureText: obscure,
           keyboardType: keyboardType,
+          textCapitalization: textCapitalization,
           textInputAction: textInputAction,
           onSubmitted: onSubmitted,
           onChanged: onChanged,

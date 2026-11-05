@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/linked_server_fields.graphql'
+
+query LinkedServers {
+  linkedServers { ...LinkedServerFields }
+}

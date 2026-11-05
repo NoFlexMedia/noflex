@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Regenerate with `dart run flutter_launcher_icons`; output is committed.
+flutter_launcher_icons:
+  image_path: "icons/icon.png"
+  remove_alpha_ios: true
+  android: true
+  min_sdk_android: 24
+  adaptive_icon_background: "#d4ff5a"
+  adaptive_icon_foreground: "icons/foreground.png"
+  ios: true
+  macos:
+    generate: true
+    image_path: "icons/icon.png"
+  windows:
+    generate: true
+    image_path: "icons/icon.png"
+    icon_size: 256

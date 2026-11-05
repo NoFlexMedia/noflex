@@ -1,4 +1,4 @@
-package noflex:plugin@0.8.0;
+package noflex:plugin@0.1.0;
 
 /// Remote metadata provider — fetches metadata from external sources
 /// (TMDb, TVDB, MusicBrainz, AniDB, ...). Multiple providers compete via the

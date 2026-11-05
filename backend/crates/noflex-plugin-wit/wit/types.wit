@@ -1,4 +1,4 @@
-package noflex:plugin@0.8.0;
+package noflex:plugin@0.1.0;
 
 /// Shared types used by every hook interface and several host imports.
 ///

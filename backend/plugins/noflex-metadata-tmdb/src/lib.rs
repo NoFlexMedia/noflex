@@ -27,7 +27,7 @@ mod guest {
             package noflex:tmdb;
 
             world tmdb {
-                include noflex:plugin/metadata-image-plugin@0.8.0;
+                include noflex:plugin/metadata-image-plugin@0.1.0;
                 import wasi:clocks/monotonic-clock@0.3.0;
             }
         "#,

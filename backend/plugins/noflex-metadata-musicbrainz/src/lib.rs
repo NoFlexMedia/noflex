@@ -13,7 +13,7 @@ mod guest {
             package noflex:musicbrainz;
 
             world musicbrainz {
-                include noflex:plugin/metadata-plugin@0.8.0;
+                include noflex:plugin/metadata-plugin@0.1.0;
                 import wasi:clocks/monotonic-clock@0.3.0;
             }
         "#,

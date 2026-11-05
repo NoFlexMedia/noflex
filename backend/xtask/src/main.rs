@@ -288,7 +288,7 @@ fn default_version() -> String {
     "0.0.0".into()
 }
 fn default_api_version() -> String {
-    "0.10".into()
+    "0.1".into()
 }
 fn default_manifest_version() -> u32 {
     1

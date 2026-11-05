@@ -46,7 +46,7 @@
 
         web = pkgs.buildNpmPackage {
           pname = "noflex-web";
-          version = "0.1.0";
+          version = "0.0.1";
           # Houdini validates every document against the server's committed
           # SDL snapshot, so it travels with the web sources at the same
           # relative path. Local installs and build output stay out.

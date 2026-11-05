@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Integration tests for the embedder hook (WIT 0.6.0). The fixture guest
+// Integration tests for the embedder hook. The fixture guest
 // (`tests/fixtures/embedder/`) produces deterministic, text-sensitive
 // dim-8 vectors and reads `fixture-model.txt` through `host-assets`
 // when given the sentinel text "asset-check". The suite proves: claim

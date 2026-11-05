@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Integration tests for host-scheduled background tasks (WIT 0.3.0). The
+// Integration tests for host-scheduled background tasks. The
 // fixture guest (`tests/fixtures/tasks/`) runs a "sweep" task that never
 // finishes — every invocation returns `more(cursor+1)` — so the host-side
 // cursor advances promptly without waiting on the manifest interval. The

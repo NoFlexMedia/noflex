@@ -1,8 +1,8 @@
 manifest_version = 1
 plugin_id = "trakt"
 display_name = "Trakt Scrobbler"
-version = "0.1.0"
-noflex_api_version = "0.10"
+version = "0.0.1"
+noflex_api_version = "0.1"
 hooks = ["scrobbler", "user-link", "background"]
 capabilities = ["http.egress", "secrets.read", "user-secrets.read", "user-secrets.write", "background"]
 # Trakt is a single fixed API host — no operator-configured destination,

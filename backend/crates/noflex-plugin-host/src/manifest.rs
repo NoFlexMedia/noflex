@@ -34,7 +34,7 @@ pub struct PluginManifest {
     pub plugin_id: String,
     pub display_name: String,
     pub version: String,
-    /// `MAJOR.MINOR`, e.g. `"0.10"`. Pre-1.0 the host requires an exact
+    /// `MAJOR.MINOR`, e.g. `"0.1"`. Pre-1.0 the host requires an exact
     /// match with its own API version; see [`Self::check_api_compat`].
     pub noflex_api_version: String,
     #[serde(default)]
@@ -653,7 +653,7 @@ mod tests {
             plugin_id = "intro"
             display_name = "Intro Detector"
             version = "0.1.0"
-            noflex_api_version = "0.10"
+            noflex_api_version = "0.1"
             hooks = ["background"]
             capabilities = ["background"]
 
@@ -683,7 +683,7 @@ mod tests {
                 plugin_id = "p"
                 display_name = "P"
                 version = "0.1.0"
-                noflex_api_version = "0.10"
+                noflex_api_version = "0.1"
                 secrets_read = ["token"]
             "#,
         )
@@ -696,7 +696,7 @@ mod tests {
                 plugin_id = "p"
                 display_name = "P"
                 version = "0.1.0"
-                noflex_api_version = "0.10"
+                noflex_api_version = "0.1"
                 capabilities = ["user-secrets.write"]
                 user_secrets_write = ["token"]
             "#,
@@ -712,7 +712,7 @@ mod tests {
             plugin_id = "intro"
             display_name = "Intro Detector"
             version = "0.1.0"
-            noflex_api_version = "0.10"
+            noflex_api_version = "0.1"
 
             [[tasks]]
             name = "sweep"
@@ -729,7 +729,7 @@ mod tests {
             plugin_id = "potion"
             display_name = "Potion"
             version = "0.1.0"
-            noflex_api_version = "0.10"
+            noflex_api_version = "0.1"
             hooks = ["embedder"]
             capabilities = ["assets.read"]
 
@@ -747,7 +747,7 @@ mod tests {
         let base = |extra: &str| {
             format!(
                 "manifest_version = 1\nplugin_id = \"p\"\ndisplay_name = \"P\"\n\
-                 version = \"0.1.0\"\nnoflex_api_version = \"0.6\"\n{extra}"
+                 version = \"0.1.0\"\nnoflex_api_version = \"0.1\"\n{extra}"
             )
         };
         let no_table =
@@ -778,7 +778,7 @@ mod tests {
             plugin_id = "gotify"
             display_name = "Gotify"
             version = "0.1.0"
-            noflex_api_version = "0.10"
+            noflex_api_version = "0.1"
             hooks = ["notifier"]
         "#;
         let m = PluginManifest::from_bytes(toml.as_bytes()).expect("parses");
@@ -795,7 +795,7 @@ mod tests {
             plugin_id = "gotify"
             display_name = "Gotify"
             version = "0.1.0"
-            noflex_api_version = "0.10"
+            noflex_api_version = "0.1"
             hooks = ["notifier"]
             events = ["scan-started", "scan-completed"]
         "#;
@@ -810,7 +810,7 @@ mod tests {
         let base = |extra: &str| {
             format!(
                 "manifest_version = 1\nplugin_id = \"p\"\ndisplay_name = \"P\"\n\
-                 version = \"0.1.0\"\nnoflex_api_version = \"0.6\"\n{extra}"
+                 version = \"0.1.0\"\nnoflex_api_version = \"0.1\"\n{extra}"
             )
         };
         let unknown = PluginManifest::from_bytes(
@@ -832,7 +832,7 @@ mod tests {
         let base = |body: &str| {
             format!(
                 "manifest_version = 1\nplugin_id = \"p\"\ndisplay_name = \"P\"\n\
-                 version = \"0.1.0\"\nnoflex_api_version = \"0.3\"\n\
+                 version = \"0.1.0\"\nnoflex_api_version = \"0.1\"\n\
                  capabilities = [\"background\"]\n{body}"
             )
         };

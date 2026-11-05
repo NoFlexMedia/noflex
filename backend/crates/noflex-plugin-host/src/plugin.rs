@@ -1169,7 +1169,7 @@ fn detect_exported_hooks(_component: &Component, manifest: &PluginManifest) -> V
 }
 
 /// The component's export names as strings (e.g.
-/// `noflex:plugin/metadata@0.6.0`). Gathered once at load time so
+/// `noflex:plugin/metadata@0.1.0`). Gathered once at load time so
 /// validation never instantiates.
 fn component_export_names(component: &Component) -> Vec<String> {
     component
@@ -2112,8 +2112,8 @@ mod tests {
     #[test]
     fn validation_accepts_versioned_interface_names() {
         let names = vec![
-            "noflex:plugin/metadata@0.6.0".to_string(),
-            "noflex:plugin/background@0.6.0".to_string(),
+            "noflex:plugin/metadata@0.1.0".to_string(),
+            "noflex:plugin/background@0.1.0".to_string(),
             "component:adapted/plugin".to_string(),
         ];
         let id = PluginId("p".into());
@@ -2128,7 +2128,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_a_claimed_but_missing_export() {
-        let names = vec!["noflex:plugin/metadata@0.6.0".to_string()];
+        let names = vec!["noflex:plugin/metadata@0.1.0".to_string()];
         let err = validate_declared_hooks(
             &names,
             &[HookKind::Metadata, HookKind::Image],
@@ -2145,7 +2145,7 @@ mod tests {
     #[test]
     fn validation_rejects_a_hookless_manifest() {
         let err = validate_declared_hooks(
-            &["noflex:plugin/metadata@0.6.0".to_string()],
+            &["noflex:plugin/metadata@0.1.0".to_string()],
             &[],
             Path::new("p.wasm"),
             &PluginId("p".into()),
@@ -2162,7 +2162,7 @@ mod tests {
             plugin_id = "p"
             display_name = "P"
             version = "0.1.0"
-            noflex_api_version = "0.10"
+            noflex_api_version = "0.1"
             hooks = ["metadata"]
             capabilities = ["background"]
 

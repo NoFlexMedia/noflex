@@ -997,9 +997,18 @@ pub struct Tag {
 /// namespace (genres, people, …). `work_count` counts only
 /// `target_kind = 'work'` assignments.
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
 pub struct TagSummary {
     pub tag: Tag,
     pub work_count: u32,
+}
+
+#[async_graphql::ComplexObject]
+impl TagSummary {
+    /// The tag's id, which a listing shows once, so it identifies the summary too.
+    async fn id(&self) -> TagId {
+        self.tag.id
+    }
 }
 
 /// One tag assignment row for a target: the tag plus the weight and
@@ -1337,15 +1346,13 @@ pub struct ActivityEntry {
 /// One row of a per-user play history page. `target_kind`
 /// and `target_id` together identify the Edition or Work the play
 /// attached to (split for GQL-friendliness); `data` is the full
-/// `UserData` snapshot at page-read time.
+/// `UserData` snapshot at page-read time. A viewer has one row per
+/// target, so the target's id, exposed as `id`, identifies the row too.
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
 #[graphql(name = "HistoryRow", complex)]
 pub struct HistoryRow {
     pub target_kind: PlayTargetKind,
-    #[graphql(
-        skip_output,
-        derived(owned, name = "target_id", into = "async_graphql::ID")
-    )]
+    #[graphql(skip_output, derived(owned, name = "id", into = "async_graphql::ID"))]
     pub target_id: Uuid,
     pub data: UserData,
     /// Backend-minted position just after this row; passing it to
@@ -1571,9 +1578,12 @@ pub struct Playlist {
 /// One resolved playlist entry. Exactly one of `work` / `edition` is
 /// set; `kind` says which, so clients don't have to probe both.
 /// Items live as bare play targets in storage; this is the hydrated
-/// GQL read shape.
+/// GQL read shape. A playlist holds a target once, so the target's id,
+/// exposed as `id`, identifies the entry too.
 #[derive(Debug, Clone, SimpleObject)]
 pub struct PlaylistItem {
+    #[graphql(skip_output, derived(owned, name = "id", into = "async_graphql::ID"))]
+    pub target_id: Uuid,
     pub kind: PlayTargetKind,
     pub work: Option<Work>,
     pub edition: Option<Edition>,
@@ -2026,6 +2036,7 @@ impl Playlist {
                     .get(&id)
                     .cloned()
                     .map(|work| PlaylistItem {
+                        target_id: id.into_uuid(),
                         kind: PlayTargetKind::Work,
                         work: Some(work),
                         edition: None,
@@ -2035,6 +2046,7 @@ impl Playlist {
                     .get(&id)
                     .cloned()
                     .map(|edition| PlaylistItem {
+                        target_id: id.into_uuid(),
                         kind: PlayTargetKind::Edition,
                         work: None,
                         edition: Some(edition),

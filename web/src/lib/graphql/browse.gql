@@ -65,7 +65,7 @@ query ChildPage($library: ID!, $parent: ID!, $after: String) {
 # A newer keystroke supersedes the search in flight.
 query Search($text: String!, $mode: SearchMode!, $kinds: [WorkKind!]) @dedupe(cancelFirst: true, match: Operation) {
   search(text: $text, mode: $mode, kinds: $kinds, first: 48) @paginate {
-    edges { node { score matchedFields workId work { ...WorkCard overview seriesTitle seriesExternalIds { kind value } } } }
+    edges { node { id score similarity matchedFields work { ...WorkCard overview seriesTitle seriesExternalIds { kind value } } } }
   }
 }
 

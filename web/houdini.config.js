@@ -18,10 +18,11 @@ export default {
     JSON: { type: "any" },
   },
   // Types without an `id`. Ones keyed here are normalised across queries;
-  // the rest (UserData, TagSummary, PlaylistItem, SearchHit, …) are
-  // embedded in their parent, which is the only place they're addressable.
+  // the rest (UserData, …) are embedded in their parent, which is the only
+  // place they're addressable. A connection's nodes need a field named
+  // `id` whatever their keys: Infinite paging drops every existing edge whose
+  // node's `id` matches a new one's, and missing ones match.
   types: {
-    HistoryRow: { keys: ["targetKind", "targetId"] },
     UserPreference: { keys: ["userId", "key"] },
     UserRestrictions: { keys: ["userId"] },
     ExternalIdentity: { keys: ["pluginId", "subject"] },

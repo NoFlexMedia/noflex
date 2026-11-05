@@ -71,15 +71,13 @@ const EMB_UPSERT: &str = "INSERT INTO embeddings (target_kind, target_id, namesp
         vector_blob = excluded.vector_blob, \
         updated_at = excluded.updated_at";
 
-const EMB_FETCH: &str = "SELECT target_kind, target_id, namespace, model_id, dimensions, vector_blob \
-    FROM embeddings WHERE namespace = ?1 AND target_kind = 'work'";
-
-// Kind-filtered variant: joins `works` so the filter applies before
-// scoring/truncation. Column order matches EMB_FETCH so the row
-// decoding below is shared.
-const EMB_FETCH_BY_KIND: &str = "SELECT e.target_kind, e.target_id, e.namespace, e.model_id, e.dimensions, e.vector_blob \
+// Joins `works` so filters apply before scoring and truncation. A season or
+// episode with no synopsis embeds as little more than "Episode 3", which says
+// nothing about it yet sits near every query, so it can only match by name.
+const EMB_FETCH: &str = "SELECT e.target_kind, e.target_id, e.namespace, e.model_id, e.dimensions, e.vector_blob \
     FROM embeddings e JOIN works w ON e.target_kind = 'work' AND e.target_id = w.id \
-    WHERE e.namespace = ?1";
+    WHERE e.namespace = ?1 \
+    AND (w.kind NOT IN ('season', 'episode') OR COALESCE(w.overview, '') <> '')";
 
 // Anti-join on `embeddings` for the backfill sweep. Ordering by `w.id`
 // keeps the keyset cursor stable: a work's id is fixed at upsert, so
@@ -133,6 +131,7 @@ pub(crate) async fn search_lexical(
             work: WorkId::from_uuid(blob_to_uuid(col_blob(&id)?)?),
             access_checked: access_user_id.is_some(),
             score: 0.0,
+            similarity: None,
             matched_fields: vec![matched.to_string()],
         });
     }
@@ -301,16 +300,11 @@ pub(crate) async fn search_vector(
     limit: u32,
 ) -> StorageResult<Vec<VectorHit>> {
     let mut params = vec![Value::Text(namespace.to_string())];
-    let sql = if kinds.is_empty() && access_user_id.is_none() {
-        EMB_FETCH.to_string()
-    } else {
-        let mut sql = String::from(EMB_FETCH_BY_KIND);
-        push_kind_filter(&mut sql, &mut params, kinds, "w.kind");
-        if let Some(user) = access_user_id {
-            push_access_filter(&mut sql, &mut params, user, "w");
-        }
-        sql
-    };
+    let mut sql = String::from(EMB_FETCH);
+    push_kind_filter(&mut sql, &mut params, kinds, "w.kind");
+    if let Some(user) = access_user_id {
+        push_access_filter(&mut sql, &mut params, user, "w");
+    }
     let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
     let mut scored: Vec<(Uuid, f32)> = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_turso)? {

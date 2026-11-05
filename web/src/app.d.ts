@@ -13,6 +13,10 @@ declare global {
       /** Send to this page's own server even while a linked one is active. */
       ownServer?: boolean;
     }
+    interface PageState {
+      /** Marks the history entry owned by the open player. */
+      player?: number;
+    }
   }
   interface Window {
     showSaveFilePicker?: (options?: { suggestedName?: string }) => Promise<{

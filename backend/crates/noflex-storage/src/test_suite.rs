@@ -104,6 +104,7 @@ where
     search_lexical_miss(store).await;
     search_lexical_finds_credited_people(store).await;
     search_vector_similarity(store).await;
+    search_vector_skips_seasons_and_episodes_without_a_synopsis(store).await;
     embedding_model_changes_keep_vectors_until_pruned(store).await;
     embedding_endpoint_round_trips(store).await;
     search_hybrid_fuses(store).await;
@@ -5218,9 +5219,90 @@ async fn search_hybrid_fuses<S: Storage + ?Sized>(store: &S) {
     let hits = store.search_hybrid(&q).await.expect("hybrid");
     assert!(!hits.is_empty());
     assert_eq!(hits[0].work, s_id, "both-channel hit ranks first");
+    use crate::search::{MATCHED_MEANING, MATCHED_TITLE};
+    assert_eq!(hits[0].matched_fields, [MATCHED_TITLE, MATCHED_MEANING]);
+    assert_eq!(hits[1].matched_fields, [MATCHED_MEANING]);
+    // Scores don't compare across servers, so a client merging them needs this.
+    assert!(hits[0].similarity > hits[1].similarity, "{hits:?}");
+    assert!(hits[1].similarity.is_some(), "{hits:?}");
 
     store.delete_work(s_id).await.ok();
     store.delete_work(w_id).await.ok();
+    store.delete_library(lib.id).await.ok();
+}
+
+/// "Episode 3" with no synopsis embeds to nothing in particular and sits near every
+/// query, so seasons and episodes only match by meaning once they have one to compare.
+async fn search_vector_skips_seasons_and_episodes_without_a_synopsis<S: Storage + ?Sized>(
+    store: &S,
+) {
+    let lib = test_library("Bare Episodes Lib");
+    store.upsert_library(&lib).await.expect("library");
+    let now = OffsetDateTime::now_utc();
+    let work = |kind, title: &str, overview: Option<&str>| {
+        let mut work = make_work_of_kind(library_id(&lib), kind, title, now);
+        work.overview = overview.map(str::to_string);
+        work
+    };
+    let bare_episode = work(WorkKind::Episode, "Episode 3", None);
+    let blank_episode = work(WorkKind::Episode, "Episode 4", Some(""));
+    let bare_season = work(WorkKind::Season, "Season 1", None);
+    let described = work(WorkKind::Episode, "Low Water", Some("The tide goes out."));
+    let bare_track = work(WorkKind::Track, "Blue in Green", None);
+    let bare_movie = work(WorkKind::Movie, "Night Ferry", None);
+    let works = [
+        &bare_episode,
+        &blank_episode,
+        &bare_season,
+        &described,
+        &bare_track,
+        &bare_movie,
+    ];
+    for work in works {
+        store.upsert_work(work).await.expect("work");
+        store
+            .upsert_embedding(
+                noflex_core::EmbeddingTarget::Work(work.id),
+                "bare",
+                "model",
+                &[1.0, 0.0],
+            )
+            .await
+            .expect("embed");
+    }
+
+    let found = store
+        .search_vector("bare", &[1.0, 0.0], &[], None, 10)
+        .await
+        .expect("search")
+        .into_iter()
+        .map(|hit| hit.work)
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        found,
+        [described.id, bare_track.id, bare_movie.id]
+            .into_iter()
+            .collect(),
+    );
+
+    // Asking for episodes by kind doesn't change what can be compared.
+    let episodes = store
+        .search_vector("bare", &[1.0, 0.0], &[WorkKind::Episode], None, 10)
+        .await
+        .expect("episodes");
+    assert_eq!(episodes.len(), 1);
+    assert_eq!(episodes[0].work, described.id);
+
+    // Their names still find them.
+    let by_name = store
+        .search_lexical("episode 3", &[], None, 10)
+        .await
+        .expect("lexical");
+    assert_eq!(by_name[0].work, bare_episode.id);
+
+    for work in works {
+        store.delete_work(work.id).await.ok();
+    }
     store.delete_library(lib.id).await.ok();
 }
 

@@ -85,7 +85,7 @@ impl Loader<WorkLoadKey> for WorkLoader {
 #[graphql(complex)]
 pub struct SearchHit {
     /// Raw id used internally to index into the hydrated `work`
-    /// field below — the wire surface exposes it as `workId` (ID)
+    /// field below — the wire surface exposes it as `id` (ID)
     /// via the ComplexObject impl so the id stays usable without
     /// forcing every client to follow it up with a second query.
     #[graphql(skip)]
@@ -96,15 +96,21 @@ pub struct SearchHit {
     #[serde(skip)]
     pub access_checked: bool,
     pub score: f32,
+    /// How close the work is to the query by meaning, from 0 to 1; null when it
+    /// wasn't compared. Unlike `score`, this means the same thing on any server
+    /// running the same embedding model.
+    pub similarity: Option<f32>,
+    /// Why the work matched, strongest reason first: `title`, `credits` or
+    /// `overview` for the query's own words, `meaning` for an embedding match.
     pub matched_fields: Vec<String>,
 }
 
 #[ComplexObject]
 impl SearchHit {
-    /// Id of the matching work. Returned alongside the hydrated
-    /// `work` so clients can correlate hits to cached/known ids
-    /// without a follow-up lookup.
-    async fn work_id(&self) -> WorkId {
+    /// Id of the matching work, which a search lists only once, so it identifies
+    /// the hit too. Normalizing caches need it to append pages rather than treat
+    /// every hit as the same record.
+    async fn id(&self) -> WorkId {
         self.work
     }
 
@@ -154,6 +160,9 @@ pub const MATCHED_TITLE: &str = "title";
 /// on the work.
 pub const MATCHED_CREDITS: &str = "credits";
 
+/// [`SearchHit::matched_fields`] entry for a match on embedding similarity.
+pub const MATCHED_MEANING: &str = "meaning";
+
 /// Order for fused hits: anything matching by name first, so someone typing a
 /// title or a person gets it, where fused scores alone would put an unrelated
 /// nearest neighbour above the fifth film of an actor's filmography.
@@ -170,13 +179,50 @@ pub fn hybrid_order(a: &SearchHit, b: &SearchHit) -> std::cmp::Ordering {
     })
 }
 
-/// Default hybrid-search impl: fuses lexical + vector results with
-/// reciprocal rank fusion (RRF). Backends with a native hybrid query plan
-/// override `Storage::search_hybrid` and skip this.
+/// Fuses lexical and vector results with reciprocal rank fusion (RRF).
 ///
 /// The constant `k = 60` is the standard from the original RRF paper
 /// (Cormack et al. 2009). It smooths the contribution of lower-ranked
 /// hits without parameter tuning per-corpus.
+pub fn fuse_hybrid(
+    lexical: Vec<SearchHit>,
+    vector: Vec<VectorHit>,
+    access_checked: bool,
+    limit: u32,
+) -> Vec<SearchHit> {
+    let rrf = |rank: usize| 1.0 / (RRF_K + rank as f32 + 1.0);
+    let mut fused = lexical
+        .into_iter()
+        .enumerate()
+        .map(|(rank, hit)| {
+            let hit = SearchHit {
+                access_checked,
+                score: rrf(rank),
+                ..hit
+            };
+            (hit.work, hit)
+        })
+        .collect::<HashMap<_, _>>();
+    for (rank, hit) in vector.into_iter().enumerate() {
+        let entry = fused.entry(hit.work).or_insert_with(|| SearchHit {
+            work: hit.work,
+            access_checked,
+            score: 0.0,
+            similarity: None,
+            matched_fields: Vec::new(),
+        });
+        entry.score += rrf(rank);
+        entry.similarity = Some(hit.similarity);
+        entry.matched_fields.push(MATCHED_MEANING.to_string());
+    }
+    let mut out = fused.into_values().collect::<Vec<_>>();
+    out.sort_by(hybrid_order);
+    out.truncate(limit as usize);
+    out
+}
+
+/// Default hybrid-search impl. Backends with a native hybrid query plan
+/// override `Storage::search_hybrid` and skip this.
 pub async fn default_hybrid<S>(
     store: &S,
     query: &crate::query::HybridQuery,
@@ -184,8 +230,6 @@ pub async fn default_hybrid<S>(
 where
     S: crate::store::Storage + ?Sized,
 {
-    use std::collections::HashMap;
-
     use crate::query::SearchMode;
 
     let want_lex = matches!(query.mode, SearchMode::Lexical | SearchMode::Hybrid);
@@ -220,28 +264,10 @@ where
         Vec::new()
     };
 
-    let mut fused: HashMap<noflex_core::WorkId, (f32, Vec<String>)> = HashMap::new();
-    for (rank, hit) in lex_hits.iter().enumerate() {
-        let entry = fused.entry(hit.work).or_default();
-        entry.0 += 1.0 / (RRF_K + rank as f32 + 1.0);
-        entry.1.extend(hit.matched_fields.iter().cloned());
-    }
-    for (rank, hit) in vec_hits.iter().enumerate() {
-        let entry = fused.entry(hit.work).or_default();
-        entry.0 += 1.0 / (RRF_K + rank as f32 + 1.0);
-        entry.1.push("vector".to_string());
-    }
-
-    let mut out: Vec<SearchHit> = fused
-        .into_iter()
-        .map(|(work, (score, matched_fields))| SearchHit {
-            work,
-            access_checked: query.access_user_id.is_some(),
-            score,
-            matched_fields,
-        })
-        .collect();
-    out.sort_by(hybrid_order);
-    out.truncate(query.limit as usize);
-    Ok(out)
+    Ok(fuse_hybrid(
+        lex_hits,
+        vec_hits,
+        query.access_user_id.is_some(),
+        query.limit,
+    ))
 }

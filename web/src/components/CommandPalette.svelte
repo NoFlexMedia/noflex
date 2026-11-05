@@ -29,7 +29,7 @@
   // A newer keystroke supersedes the search in flight.
   const quickSearch = graphql(`
     query QuickSearch($text: String!) @dedupe(cancelFirst: true, match: Operation) {
-      search(text: $text, mode: HYBRID, first: 8) { nodes { workId work { ...WorkCard } } }
+      search(text: $text, mode: HYBRID, first: 8) { nodes { id work { ...WorkCard } } }
     }
   `);
   let query = $derived(text.trim());

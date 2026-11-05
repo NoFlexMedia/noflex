@@ -743,11 +743,12 @@ type ExternalIdentity {
 One row of a per-user play history page. `target_kind`
 and `target_id` together identify the Edition or Work the play
 attached to (split for GQL-friendliness); `data` is the full
-`UserData` snapshot at page-read time.
+`UserData` snapshot at page-read time. A viewer has one row per
+target, so the target's id, exposed as `id`, identifies the row too.
 """
 type HistoryRow {
 	targetKind: PlayTargetKind!
-	targetId: ID!
+	id: ID!
 	data: UserData!
 	"""
 	The work this row refers to — for an edition target, that
@@ -2084,9 +2085,11 @@ type PlaylistEdge {
 One resolved playlist entry. Exactly one of `work` / `edition` is
 set; `kind` says which, so clients don't have to probe both.
 Items live as bare play targets in storage; this is the hydrated
-GQL read shape.
+GQL read shape. A playlist holds a target once, so the target's id,
+exposed as `id`, identifies the entry too.
 """
 type PlaylistItem {
+	id: ID!
 	kind: PlayTargetKind!
 	work: Work
 	edition: Edition
@@ -2812,13 +2815,23 @@ type ScanSummary {
 
 type SearchHit {
 	score: Float!
+	"""
+	How close the work is to the query by meaning, from 0 to 1; null when it
+	wasn't compared. Unlike `score`, this means the same thing on any server
+	running the same embedding model.
+	"""
+	similarity: Float
+	"""
+	Why the work matched, strongest reason first: `title`, `credits` or
+	`overview` for the query's own words, `meaning` for an embedding match.
+	"""
 	matchedFields: [String!]!
 	"""
-	Id of the matching work. Returned alongside the hydrated
-	`work` so clients can correlate hits to cached/known ids
-	without a follow-up lookup.
+	Id of the matching work, which a search lists only once, so it identifies
+	the hit too. Normalizing caches need it to append pages rather than treat
+	every hit as the same record.
 	"""
-	workId: ID!
+	id: ID!
 	"""
 	Hydrated work for this hit. `None` when the work was
 	deleted between the search and the hydration read — a real
@@ -3248,6 +3261,10 @@ namespace (genres, people, …). `work_count` counts only
 type TagSummary {
 	tag: Tag!
 	workCount: Int!
+	"""
+	The tag's id, which a listing shows once, so it identifies the summary too.
+	"""
+	id: ID!
 }
 
 type TagSummaryConnection {

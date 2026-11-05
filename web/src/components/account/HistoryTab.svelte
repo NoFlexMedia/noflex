@@ -15,8 +15,8 @@
       playHistory(first: 30) @paginate {
         edges {
           node {
+            id
             targetKind
-            targetId
             data { ...UserDataFields }
             work { id title kind year parentIndex indexNumber images { kind url } }
           }
@@ -84,7 +84,7 @@
       <section>
         <h2 class="eyebrow">{group.label}</h2>
         <ol class="stagger">
-          {#each group.rows as row, index (`${row.targetKind}:${row.targetId}`)}
+          {#each group.rows as row, index (row.id)}
             <li style:--i={index}>
               {#if row.work}
                 <a class="item" href="/works/{row.work.id}">

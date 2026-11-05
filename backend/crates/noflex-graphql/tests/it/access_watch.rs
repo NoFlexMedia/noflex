@@ -498,7 +498,7 @@ async fn assert_catalog_absent(fixture: &fixture::Catalog, principal: Principal)
         fixture
             .schema
             .execute(fixture::request(
-                r#"{ search(text: "Catalog Movie", mode: LEXICAL) { nodes { workId } } }"#,
+                r#"{ search(text: "Catalog Movie", mode: LEXICAL) { nodes { id } } }"#,
                 principal,
             ))
             .await,
@@ -608,14 +608,14 @@ async fn assert_catalog_present(fixture: &fixture::Catalog, principal: Principal
         fixture
             .schema
             .execute(fixture::request(
-                r#"{ search(text: "Catalog Movie", mode: LEXICAL) { nodes { workId } } }"#,
+                r#"{ search(text: "Catalog Movie", mode: LEXICAL) { nodes { id } } }"#,
                 principal,
             ))
             .await,
         "search present",
     );
     assert_eq!(
-        data["search"]["nodes"][0]["workId"],
+        data["search"]["nodes"][0]["id"],
         fixture.work.id.to_string()
     );
 }
@@ -641,7 +641,7 @@ async fn e6_catalog_requires_auth_and_honors_grants_for_every_target() {
             r#"{{ images(targetKind: WORK, targetId: "{}") {{ kind }} }}"#,
             fixture.work.id
         ),
-        r#"{ search(text: "Catalog Movie", mode: LEXICAL) { nodes { workId } } }"#.to_string(),
+        r#"{ search(text: "Catalog Movie", mode: LEXICAL) { nodes { id } } }"#.to_string(),
         "{ recentlyAdded { nodes { id } } }".to_string(),
         "{ tags(namespaces: []) { nodes { tag { id } } } }".to_string(),
     ];
@@ -752,7 +752,7 @@ async fn e6_parental_policy_and_playback_authorization_are_uniform() {
         fixture
             .schema
             .execute(fixture::request(
-                r#"{ search(text: "Catalog", mode: LEXICAL) { nodes { workId } } }"#,
+                r#"{ search(text: "Catalog", mode: LEXICAL) { nodes { id } } }"#,
                 fixture.user,
             ))
             .await,
@@ -762,7 +762,7 @@ async fn e6_parental_policy_and_playback_authorization_are_uniform() {
         .as_array()
         .expect("restricted search")
         .iter()
-        .map(|hit| hit["workId"].as_str().expect("search id").to_string())
+        .map(|hit| hit["id"].as_str().expect("search id").to_string())
         .collect();
     assert_eq!(search_ids, expected_allowed);
 

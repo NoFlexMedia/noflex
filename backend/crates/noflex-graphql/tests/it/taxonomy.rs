@@ -140,7 +140,7 @@ async fn tags_lists_summaries_with_counts_per_namespace() {
     let resp = s
         .schema
         .execute(s.request(
-            r#"{ tags(namespaces: ["genre"]) { nodes { tag { slug namespace } workCount } pageInfo { hasNextPage endCursor } } }"#,
+            r#"{ tags(namespaces: ["genre"]) { nodes { id tag { id slug namespace } workCount } pageInfo { hasNextPage endCursor } } }"#,
         ))
         .await;
     assert!(resp.errors.is_empty(), "tags: {:?}", resp.errors);
@@ -148,6 +148,7 @@ async fn tags_lists_summaries_with_counts_per_namespace() {
     let items = data["tags"]["nodes"].as_array().expect("items");
     assert_eq!(items.len(), 1, "other namespaces filtered out");
     assert_eq!(items[0]["tag"]["slug"], s.scifi.slug);
+    assert_eq!(items[0]["id"], items[0]["tag"]["id"]);
     assert_eq!(items[0]["workCount"], 2);
     assert_eq!(data["tags"]["pageInfo"]["hasNextPage"], false);
 

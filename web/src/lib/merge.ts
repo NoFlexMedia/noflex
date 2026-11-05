@@ -48,6 +48,50 @@ export function mergeRanked<Work extends { id: string }>(
   return entries.sort((a, b) => b.score - a.score || a.order - b.order).map((entry) => entry.work);
 }
 
+// Strongest first. A name the viewer typed outranks a word in a synopsis, which
+// outranks a neighbour by meaning, however well that neighbour does on its own server.
+const MATCH_STRENGTH = ["title", "credits", "overview", "meaning"];
+
+const strongestFirst = (fields: readonly string[]): string[] =>
+  [...new Set(fields)].sort((a, b) => MATCH_STRENGTH.indexOf(a) - MATCH_STRENGTH.indexOf(b));
+
+interface SearchHit { work: { id: string }; matchedFields: string[]; similarity?: number | null }
+
+/**
+ * Search hits from several servers, best first. A title on two servers is no more
+ * relevant for it, so unlike {@link mergeRanked} nothing pools: it keeps its best
+ * showing. Names and synopsis matches go by each server's own rank; pure meaning
+ * matches by similarity, which compares across servers on the same embedding model
+ * and at worst shuffles the weakest results when they differ.
+ */
+export function mergeSearchHits<Hit extends SearchHit>(lists: readonly (readonly Hit[])[]): Hit[] {
+  const entries: { hit: Hit; rank: number; order: number }[] = [];
+  const byKey = new Map<string, (typeof entries)[number]>();
+  lists.forEach((list) => {
+    list.forEach((hit, rank) => {
+      // The ID too: paging re-runs a search, so a shifted rank can repeat a hit.
+      const keys = [hit.work.id, ...providerKeys(hit.work)];
+      const known = keys.map((key) => byKey.get(key)).find(Boolean);
+      const entry = known ?? { hit, rank, order: entries.length };
+      if (!known) entries.push(entry);
+      entry.rank = Math.min(entry.rank, rank);
+      entry.hit = {
+        ...entry.hit,
+        matchedFields: strongestFirst([...entry.hit.matchedFields, ...hit.matchedFields]),
+        similarity: Math.max(entry.hit.similarity ?? 0, hit.similarity ?? 0) || null,
+      };
+      for (const key of keys) byKey.set(key, entry);
+    });
+  });
+  const strength = ({ hit }: (typeof entries)[number]) => MATCH_STRENGTH.indexOf(hit.matchedFields[0]!);
+  return entries
+    .sort((a, b) => strength(a) - strength(b)
+      || (strength(a) === MATCH_STRENGTH.length - 1 ? (b.hit.similarity ?? 0) - (a.hit.similarity ?? 0) : 0)
+      || a.rank - b.rank
+      || a.order - b.order)
+    .map((entry) => entry.hit);
+}
+
 const progress = (work: any): number[] => [work.parentIndex ?? 0, work.indexNumber ?? 0, work.userData?.positionMs ?? 0];
 
 function furtherAlong(candidate: unknown, current: unknown): boolean {

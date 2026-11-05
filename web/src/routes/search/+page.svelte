@@ -9,8 +9,8 @@
   import { ToggleGroup } from "bits-ui";
   import { SearchStore } from "$houdini";
   import { inview } from "$lib/actions/index.js";
-  import { mergeRanked } from "$lib/merge.js";
-  import { askServers, connectedServers } from "$lib/servers.svelte.js";
+  import { mergeSearchHits } from "$lib/merge.js";
+  import { connectedServers, serverRequest, tagged } from "$lib/servers.svelte.js";
   import { titleCase } from "$lib/format.js";
   import { failure, fetchQuery, nextPage } from "$lib/graphql.js";
   import { attempt } from "$lib/ui.svelte.js";
@@ -32,35 +32,61 @@
   let current = $derived($search.variables?.text === query && $search.variables?.mode === mode && JSON.stringify($search.variables?.kinds ?? null) === JSON.stringify(wanted.kinds));
   let ownResults = $derived(query.length >= 2 ? ($search.data?.search.edges ?? []).map((edge) => edge.node).filter((hit) => hit.work) : []);
 
-  // Other servers' hits join as they answer. Merged by rank, since scores from
-  // different servers mean different things.
-  let elsewhere = $state([]);
+  // Other servers' hits join as they answer, and page by their own cursors.
+  let elsewhere = $state.raw([]);
+  let asking = 0;
+  // Well past the usual deadline: an idle server takes seconds to reload its
+  // embedding model, and waiting costs nothing with this server's hits on screen.
+  const SERVER_DEADLINE_MS = 20000;
+
+  /** One page of a linked server's hits, and the cursor of the next, if any. */
+  async function serverPage(server, variables) {
+    const { search: { edges, pageInfo } } = await serverRequest(server, search.artifact.raw, variables, SERVER_DEADLINE_MS);
+    return {
+      hits: edges.filter((edge) => edge.node.work).map(({ node }) => ({ ...node, work: tagged([node.work], server)[0] })),
+      after: pageInfo.hasNextPage ? pageInfo.endCursor : null,
+    };
+  }
+
   $effect(() => {
     const variables = wanted;
+    const asked = connectedServers();
+    const mine = ++asking;
     elsewhere = [];
-    if (query.length < 2 || !connectedServers().length) return;
-    let stale = false;
+    if (query.length < 2 || !asked.length) return;
     const timer = setTimeout(() => {
-      askServers(new SearchStore(), variables, (data) => data.search.edges.map((edge) => edge.node.work).filter(Boolean)).then((asked) => {
-        if (!stale) elsewhere = asked.answers.map((answer) => answer.works);
+      asked.forEach((server, order) => {
+        serverPage(server, variables).then((page) => {
+          if (mine === asking) elsewhere = [...elsewhere, { server, order, ...page }].sort((a, b) => a.order - b.order);
+        }, () => {});
       });
     }, 220);
-    return () => { stale = true; clearTimeout(timer); };
+    return () => clearTimeout(timer);
   });
-  let results = $derived.by(() => {
-    if (!elsewhere.length) return ownResults;
-    const hits = new Map(ownResults.map((hit) => [hit.work.id, hit]));
-    return mergeRanked([ownResults.map((hit) => hit.work), ...elsewhere]).map((work) => hits.get(work.id) ?? { work, workId: work.id, matchedFields: [] });
-  });
+  let results = $derived(mergeSearchHits([ownResults, ...elsewhere.map((answer) => answer.hits)]));
   let searched = $derived(query.length >= 2 && $search.data ? $search.variables?.text ?? "" : "");
   let loading = $derived(query.length >= 2 && ($search.fetching || !current));
   let error = $derived(query.length >= 2 && current ? failure($search) : "");
   let more = $state(false);
+  let hasMore = $derived(current && ($search.pageInfo.hasNextPage || elsewhere.some((answer) => answer.after)));
+  // What re-arms the sentinel while it stays in view. Cursors rather than a result
+  // count: a page of duplicates adds no results, but there may be more behind it.
+  let position = $derived([$search.pageInfo.endCursor, ...elsewhere.map((answer) => answer.after)].join());
+
+  /** A server that fails partway is left with what it already gave. */
+  async function moreFrom(answer, variables, mine) {
+    const page = await serverPage(answer.server, { ...variables, after: answer.after }).catch(() => ({ hits: [], after: null }));
+    if (mine !== asking) return;
+    elsewhere = elsewhere.map((other) => (other.server.id === answer.server.id ? { ...other, hits: [...other.hits, ...page.hits], after: page.after } : other));
+  }
 
   async function loadMore() {
-    if (more || loading || !$search.pageInfo.hasNextPage) return;
+    if (more || loading || !hasMore) return;
     more = true;
-    await attempt(() => nextPage(search));
+    await Promise.all([
+      ...elsewhere.filter((answer) => answer.after).map((answer) => moreFrom(answer, wanted, asking)),
+      $search.pageInfo.hasNextPage && attempt(() => nextPage(search)),
+    ]);
     more = false;
   }
 
@@ -119,15 +145,15 @@
   {:else if results.length}
     <div class="summary"><h2>{results.length} {results.length === 1 ? "result" : "results"}</h2><span class="faint">for “{searched}”</span></div>
     <div class="poster-grid stagger" class:stale={loading}>
-      {#each results as hit, index (hit.workId)}
+      {#each results as hit, index (hit.id)}
         <div class="hit" style:--i={index % 48}>
-          <WorkCard work={hit.work} key="search:{hit.workId}" />
-          {#if hit.matchedFields.length}<span class="why" title="Matched on {hit.matchedFields.join(', ')}">{hit.matchedFields.slice(0, 2).map(titleCase).join(" · ")}</span>{/if}
+          <WorkCard work={hit.work} key="search:{hit.id}" />
+          <span class="why" title="Matched on {hit.matchedFields.join(', ')}">{titleCase(hit.matchedFields[0])}</span>
         </div>
       {/each}
     </div>
-    {#if $search.pageInfo.hasNextPage && current}
-      {#key results.length}<div class="sentinel" use:inview={{ callback: loadMore }}>{#if more}<span class="spinner"></span>{/if}</div>{/key}
+    {#if hasMore}
+      {#key position}<div class="sentinel" use:inview={{ callback: loadMore }}>{#if more}<span class="spinner"></span>{/if}</div>{/key}
     {/if}
   {/if}
 </div>

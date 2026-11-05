@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
+  import { pushState } from "$app/navigation";
+  import { page } from "$app/state";
   import Check from "phosphor-svelte/lib/Check";
   import Info from "phosphor-svelte/lib/Info";
   import SpeakerHigh from "phosphor-svelte/lib/SpeakerHigh";
@@ -217,6 +219,16 @@
     await finish();
     await playWork(target, { fromStart: true });
   }
+
+  // The player owns a history entry so browser back closes it instead of moving
+  // the page underneath. The id tells this entry from one an earlier player left
+  // behind, which forward can land on and a new entry can sit on top of.
+  const entry = Date.now();
+  onMount(() => {
+    pushState("", { player: entry });
+    return () => { if (page.state.player === entry) history.back(); };
+  });
+  $effect(() => { if (page.state.player !== entry) untrack(close); });
 
   function pageExit(event) {
     if (event.persisted || finalized) return;

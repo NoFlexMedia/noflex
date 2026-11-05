@@ -319,7 +319,7 @@ async fn history_row_work_respects_access_and_pages_without_gaps() {
             .map(|c| format!(r#", after: "{c}""#))
             .unwrap_or_default();
         let query = format!(
-            r#"{{ playHistory(first: 2{after}) {{ nodes {{ targetId work {{ id }} }} pageInfo {{ hasNextPage endCursor }} }} }}"#
+            r#"{{ playHistory(first: 2{after}) {{ nodes {{ id work {{ id }} }} pageInfo {{ hasNextPage endCursor }} }} }}"#
         );
         let json = data(f.schema.execute(as_user(query, &f.viewer)).await);
         for row in json["playHistory"]["nodes"].as_array().expect("rows") {

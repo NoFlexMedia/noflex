@@ -102,7 +102,7 @@ fn hit_ids(data: &serde_json::Value) -> Vec<&str> {
         .as_array()
         .expect("search hits")
         .iter()
-        .map(|h| h["workId"].as_str().expect("work id"))
+        .map(|h| h["id"].as_str().expect("work id"))
         .collect()
 }
 
@@ -113,7 +113,7 @@ async fn lexical_search_matches_and_filters() {
     let resp = s
         .schema
         .execute(s.request(
-            r#"{ search(text: "dune", mode: LEXICAL) { nodes { workId score matchedFields } } }"#,
+            r#"{ search(text: "dune", mode: LEXICAL) { nodes { id score matchedFields } } }"#,
         ))
         .await;
     assert!(resp.errors.is_empty(), "lexical: {:?}", resp.errors);
@@ -128,12 +128,12 @@ async fn lexical_search_matches_and_filters() {
     }
 
     // kinds restricts to the requested work kinds.
-    let resp = s
-        .schema
-        .execute(s.request(
-            r#"{ search(text: "dune", mode: LEXICAL, kinds: [MOVIE]) { nodes { workId } } }"#,
-        ))
-        .await;
+    let resp =
+        s.schema
+            .execute(s.request(
+                r#"{ search(text: "dune", mode: LEXICAL, kinds: [MOVIE]) { nodes { id } } }"#,
+            ))
+            .await;
     assert!(resp.errors.is_empty(), "kinds: {:?}", resp.errors);
     let data = resp.data.into_json().unwrap();
     assert_eq!(hit_ids(&data), [s.dune.id.to_string().as_str()]);
@@ -141,9 +141,7 @@ async fn lexical_search_matches_and_filters() {
     // `first` is clamped to 1..=100, so `first: 0` still returns one hit.
     let resp = s
         .schema
-        .execute(
-            s.request(r#"{ search(text: "dune", mode: LEXICAL, first: 0) { nodes { workId } } }"#),
-        )
+        .execute(s.request(r#"{ search(text: "dune", mode: LEXICAL, first: 0) { nodes { id } } }"#))
         .await;
     assert!(resp.errors.is_empty(), "first: {:?}", resp.errors);
     let data = resp.data.into_json().unwrap();
@@ -159,7 +157,7 @@ async fn hybrid_without_embedder_degrades_to_lexical() {
     // lexical search returns.
     let resp = s
         .schema
-        .execute(s.request(r#"{ search(text: "dune") { nodes { workId } } }"#))
+        .execute(s.request(r#"{ search(text: "dune") { nodes { id } } }"#))
         .await;
     assert!(resp.errors.is_empty(), "hybrid: {:?}", resp.errors);
     let data = resp.data.into_json().unwrap();
@@ -177,7 +175,7 @@ async fn vector_mode_without_embedder_errors() {
 
     let resp = s
         .schema
-        .execute(s.request(r#"{ search(text: "dune", mode: VECTOR) { nodes { workId } } }"#))
+        .execute(s.request(r#"{ search(text: "dune", mode: VECTOR) { nodes { id } } }"#))
         .await;
     assert_eq!(resp.errors.len(), 1, "vector without embedder errors");
     assert!(
@@ -230,7 +228,7 @@ async fn forbidden_search_hydration_stays_hidden() {
     let response = build_schema(SchemaContext::new(store))
         .execute(
             async_graphql::Request::new(
-                r#"{ search(text: "shared", mode: LEXICAL) { nodes { workId work { id title } } } }"#,
+                r#"{ search(text: "shared", mode: LEXICAL) { nodes { id work { id title } } } }"#,
             )
             .data(RequestUser {
                 user_id: user.id,
@@ -242,7 +240,7 @@ async fn forbidden_search_hydration_stays_hidden() {
     let data = response.data.into_json().expect("json");
     let hits = data["search"]["nodes"].as_array().expect("hits");
     assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0]["workId"], visible.id.to_string());
+    assert_eq!(hits[0]["id"], visible.id.to_string());
     assert_eq!(hits[0]["work"]["id"], visible.id.to_string());
 }
 
@@ -251,13 +249,13 @@ async fn lexical_hit_hydrates_work_and_round_trips_id() {
     let s = seeded().await;
 
     // Hydrated `work { title }` matches the inserted row, and
-    // `workId` round-trips back to the same id — so clients can
+    // `id` round-trips back to the same id — so clients can
     // consume hits without a follow-up `getWork` roundtrip.
     let resp = s
         .schema
         .execute(s.request(
             r#"{ search(text: "dune", mode: LEXICAL, kinds: [MOVIE]) { nodes {
-                workId
+                id
                 work { id title kind }
             } } }"#,
         ))
@@ -268,9 +266,9 @@ async fn lexical_hit_hydrates_work_and_round_trips_id() {
     assert_eq!(hits.len(), 1, "kinds narrows to the movie");
     let hit = &hits[0];
     assert_eq!(
-        hit["workId"].as_str().expect("workId"),
+        hit["id"].as_str().expect("id"),
         s.dune.id.to_string(),
-        "workId round-trips"
+        "id round-trips"
     );
     assert_eq!(
         hit["work"]["title"].as_str().expect("hydrated title"),
@@ -280,6 +278,6 @@ async fn lexical_hit_hydrates_work_and_round_trips_id() {
     assert_eq!(
         hit["work"]["id"].as_str().expect("hydrated id"),
         s.dune.id.to_string(),
-        "hydrated id matches workId"
+        "hydrated id matches id"
     );
 }

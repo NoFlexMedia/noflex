@@ -12,7 +12,7 @@ use std::sync::Arc;
 use async_graphql::{Context, Object, connection::Connection};
 use noflex_core::WorkKind;
 use noflex_plugin_host::{EmbedInput, PluginRegistry, embed_inputs};
-use noflex_storage::{HybridQuery, SearchHit, SearchMode, Storage};
+use noflex_storage::{HybridQuery, SearchHit, SearchMode, Storage, search::MATCHED_MEANING};
 
 #[derive(Default)]
 pub struct SearchQuery;
@@ -71,7 +71,8 @@ impl SearchQuery {
                         work: hit.work,
                         access_checked: true,
                         score: hit.similarity,
-                        matched_fields: vec!["embedding".to_string()],
+                        similarity: Some(hit.similarity),
+                        matched_fields: vec![MATCHED_MEANING.to_string()],
                     })
                     .collect())
             }

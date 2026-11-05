@@ -1355,10 +1355,6 @@ impl Storage for TursoStore {
     }
 
     async fn search_hybrid(&self, query: &HybridQuery) -> StorageResult<Vec<SearchHit>> {
-        use std::collections::HashMap;
-
-        const RRF_K: f32 = 60.0;
-
         let (_schema, conn) = self.reader().await?;
         let lexical = if matches!(query.mode, SearchMode::Lexical | SearchMode::Hybrid) {
             repo::search::search_lexical(
@@ -1390,29 +1386,12 @@ impl Storage for TursoStore {
             Vec::new()
         };
 
-        let mut fused: HashMap<WorkId, (f32, Vec<String>)> = HashMap::new();
-        for (rank, hit) in lexical.into_iter().enumerate() {
-            let entry = fused.entry(hit.work).or_default();
-            entry.0 += 1.0 / (RRF_K + rank as f32 + 1.0);
-            entry.1.extend(hit.matched_fields);
-        }
-        for (rank, hit) in vector.into_iter().enumerate() {
-            let entry = fused.entry(hit.work).or_default();
-            entry.0 += 1.0 / (RRF_K + rank as f32 + 1.0);
-            entry.1.push("vector".to_string());
-        }
-        let mut hits = fused
-            .into_iter()
-            .map(|(work, (score, matched_fields))| SearchHit {
-                work,
-                access_checked: query.access_user_id.is_some(),
-                score,
-                matched_fields,
-            })
-            .collect::<Vec<_>>();
-        hits.sort_by(noflex_storage::search::hybrid_order);
-        hits.truncate(query.limit as usize);
-        Ok(hits)
+        Ok(noflex_storage::search::fuse_hybrid(
+            lexical,
+            vector,
+            query.access_user_id.is_some(),
+            query.limit,
+        ))
     }
 
     // ---- Export jobs ---------------------------------------------------

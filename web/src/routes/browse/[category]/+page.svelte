@@ -65,7 +65,7 @@
         {#if merged("newlyReleased").length}<Rail title="Newly released" items={merged("newlyReleased")} href="{allHref}?sort=DATE_RELEASED_DESC" />{/if}
         {#if merged("recentlyAdded").length}<Rail title="Recently added" items={merged("recentlyAdded")} href={allHref} />{/if}
       </div>
-      <p class="all"><a class="btn outline" href={allHref}>Browse all {route.category.label.toLowerCase()}</a></p>
+      <p class="all"><a class="btn outline" href={allHref}>Browse all</a></p>
     {/if}
   </div>
 {/if}

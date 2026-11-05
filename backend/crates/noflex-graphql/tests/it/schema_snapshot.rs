@@ -82,3 +82,45 @@ async fn schema_sdl_matches_snapshot() {
         );
     }
 }
+
+/// Houdini's Infinite paging drops every existing edge whose node has the same
+/// `id` as a new one. It reads that field by name, whatever keys the type is
+/// configured with, and a missing one matches, so a client paging nodes without
+/// it keeps only the newest page.
+#[tokio::test]
+async fn connection_nodes_have_an_id() {
+    let sdl = full_schema().await.sdl();
+    let types = sdl
+        .split("\ntype ")
+        .skip(1)
+        .filter_map(|block| {
+            let (name, body) = block.split_once(' ')?;
+            Some((name, body.split_once("\n}")?.0))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+
+    let mut nodes = 0;
+    let mut missing = Vec::new();
+    for (name, body) in &types {
+        if !name.ends_with("Edge") {
+            continue;
+        }
+        let node = body
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("node: "))
+            .unwrap_or_else(|| panic!("{name} has no node"))
+            .trim_end_matches('!');
+        nodes += 1;
+        let has_id = types[node]
+            .lines()
+            .any(|line| line.trim().starts_with("id: "));
+        if !has_id {
+            missing.push(node);
+        }
+    }
+    assert!(nodes > 0, "found no connections to check");
+    assert!(
+        missing.is_empty(),
+        "connection nodes without an id: {missing:?}"
+    );
+}

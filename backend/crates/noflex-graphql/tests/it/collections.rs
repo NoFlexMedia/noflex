@@ -615,16 +615,18 @@ async fn playlist_mixed_items_round_trip() {
     assert!(resp.errors.is_empty(), "set: {:?}", resp.errors);
 
     let items = format!(
-        r#"{{ playlist(id: "{playlist_id}") {{ items {{ nodes {{ kind work {{ title }} edition {{ name }} }} pageInfo {{ hasNextPage endCursor }} }} }} }}"#
+        r#"{{ playlist(id: "{playlist_id}") {{ items {{ nodes {{ id kind work {{ title }} edition {{ name }} }} pageInfo {{ hasNextPage endCursor }} }} }} }}"#
     );
     let resp = schema.execute(authed_request(items.as_str(), admin)).await;
     assert!(resp.errors.is_empty(), "items: {:?}", resp.errors);
     let data = resp.data.into_json().unwrap();
     let entries = data["playlist"]["items"]["nodes"].as_array().unwrap();
     assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0]["id"], alien.id.to_string());
     assert_eq!(entries[0]["kind"], "WORK");
     assert_eq!(entries[0]["work"]["title"], "Alien");
     assert!(entries[0]["edition"].is_null());
+    assert_eq!(entries[1]["id"], directors_cut.id.to_string());
     assert_eq!(entries[1]["kind"], "EDITION");
     assert_eq!(entries[1]["edition"]["name"], "Director's Cut");
     assert!(entries[1]["work"].is_null());

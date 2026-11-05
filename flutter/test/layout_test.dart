@@ -78,6 +78,45 @@ void main() {
     },
   );
 
+  testWidgets('a list sized to itself ignores a flat fold, not a bent one', (
+    tester,
+  ) async {
+    Future<double> listWidth({required bool halfOpen}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(
+              size: const Size(765, 800),
+              displayFeatures: [
+                DisplayFeature(
+                  bounds: const Rect.fromLTWH(344, 0, 0, 800),
+                  type: DisplayFeatureType.fold,
+                  state: halfOpen
+                      ? DisplayFeatureState.postureHalfOpened
+                      : DisplayFeatureState.postureFlat,
+                ),
+              ],
+            ),
+            child: const AdaptivePanes(
+              primaryFits: true,
+              splitOnFlatFold: false,
+              minWidth: 700,
+              primary: SizedBox(key: ValueKey('list'), width: 190),
+              secondary: SizedBox.expand(),
+            ),
+          ),
+        ),
+      );
+      return tester.getSize(find.byKey(const ValueKey('list'))).width;
+    }
+
+    tester.view.physicalSize = const Size(765, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    expect(await listWidth(halfOpen: false), 190);
+    expect(await listWidth(halfOpen: true), 344);
+  });
+
   testWidgets('AdaptivePanes splits on the fold from its first frame', (
     tester,
   ) async {

@@ -312,7 +312,7 @@ class _ResourcesSectionState extends State<ResourcesSection> {
                           ),
                     (location.totalBytes ?? 0) > 0
                         ? SizedBox(
-                            width: 130,
+                            width: 110,
                             child: Row(
                               children: [
                                 Expanded(

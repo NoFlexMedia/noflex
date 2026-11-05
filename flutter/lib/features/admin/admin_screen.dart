@@ -30,10 +30,12 @@ import 'admin_transcoding.dart';
 import 'admin_users.dart';
 
 const _twoPaneWidth = 760.0;
-const _sideNavWidth = 260.0;
 
 class AdminScreen extends StatefulWidget {
-  const AdminScreen({super.key});
+  const AdminScreen({super.key, this.initial});
+
+  /// Which section to open on: the sidebar's status names one.
+  final AdminSection? initial;
 
   @override
   State<AdminScreen> createState() => _AdminScreenState();
@@ -70,7 +72,8 @@ class _AdminScreenState extends State<AdminScreen> {
           ),
         );
       }
-      final controller = _controller ??= AdminController();
+      final controller = _controller ??= AdminController()
+        ..section.value = widget.initial;
       return LayoutBuilder(
         builder: (context, constraints) {
           final width = constraints.maxWidth;
@@ -78,8 +81,9 @@ class _AdminScreenState extends State<AdminScreen> {
             return Scaffold(
               appBar: const NfPageBar(title: 'Administration'),
               body: AdaptivePanes(
-                primaryFraction: (_sideNavWidth / width).clamp(0.2, 0.42),
                 minWidth: _twoPaneWidth,
+                primaryFits: true,
+                splitOnFlatFold: false,
                 primary: _SectionList(controller: controller, panes: true),
                 secondary: SignalBuilder(
                   builder: (context) => _SectionPane(
@@ -154,32 +158,44 @@ class _SectionList extends SignalWidget {
             ? const Border(right: BorderSide(color: NfColors.line))
             : null,
       ),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 12, 24),
-        children: [
-          if (info != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 0, 10, 14),
-              child: Text(
-                '${info.name} · v${info.version} · ${info.backend} storage',
-                style: NfType.caption,
-              ),
+      child: ConstrainedBox(
+        constraints: panes
+            ? const BoxConstraints(minWidth: 170, maxWidth: 280)
+            : const BoxConstraints(),
+        // Beside a section it takes what its labels need and leaves the rest.
+        // A ListView couldn't measure them.
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 12, 24),
+          child: IntrinsicWidth(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (info != null && !panes)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 0, 10, 14),
+                    child: Text(
+                      '${info.name} · v${info.version} · ${info.backend} storage',
+                      style: NfType.caption,
+                    ),
+                  ),
+                if (data == null && controller.admin.error.value != null)
+                  NfState.error(
+                    title: 'Couldn’t read the server’s state',
+                    message: controller.admin.error.value.toString(),
+                    retry: controller.admin.refetch,
+                  ),
+                for (final section in AdminSection.values)
+                  _SectionItem(
+                    section: section,
+                    selected: section == selected,
+                    count: countOf(section),
+                    chevron: !panes,
+                    onTap: () => controller.open(section),
+                  ),
+              ],
             ),
-          if (data == null && controller.admin.error.value != null)
-            NfState.error(
-              title: 'Couldn’t read the server’s state',
-              message: controller.admin.error.value.toString(),
-              retry: controller.admin.refetch,
-            ),
-          for (final section in AdminSection.values)
-            _SectionItem(
-              section: section,
-              selected: section == selected,
-              count: countOf(section),
-              chevron: !panes,
-              onTap: () => controller.open(section),
-            ),
-        ],
+          ),
+        ),
       ),
     );
   }

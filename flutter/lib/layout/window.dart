@@ -28,6 +28,9 @@ enum WindowClass {
   bool get atLeastExpanded => index >= expanded.index;
 }
 
+/// The shell's sidebar needs width the content can spare; below this, a rail.
+const sidebarMinWidth = 1100.0;
+
 /// A fold or hinge that separates part of the window.
 class Fold {
   const Fold(this.bounds, {required this.halfOpen});
@@ -103,6 +106,8 @@ class AdaptivePanes extends StatelessWidget {
     this.primaryFraction = 0.42,
     this.minWidth = 760,
     this.gap = 0,
+    this.primaryFits = false,
+    this.splitOnFlatFold = true,
   });
 
   final Widget primary;
@@ -111,9 +116,22 @@ class AdaptivePanes extends StatelessWidget {
   final double minWidth;
   final double gap;
 
+  /// The primary pane is as wide as it asks to be, rather than [primaryFraction],
+  /// so it has to size itself to something finite.
+  final bool primaryFits;
+
+  /// Whether a fold lying flat still divides the panes. Worth it for two things
+  /// of equal standing. A list beside what it opens would get half the screen for
+  /// a few words, and a flat fold is no obstacle to what crosses it.
+  final bool splitOnFlatFold;
+
   @override
   Widget build(BuildContext context) {
-    final fold = context.fold;
+    final contextFold = context.fold;
+    final fold =
+        contextFold != null && !contextFold.halfOpen && !splitOnFlatFold
+        ? null
+        : contextFold;
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth < minWidth) {
@@ -121,6 +139,17 @@ class AdaptivePanes extends StatelessWidget {
             slivers: [
               SliverToBoxAdapter(child: primary),
               SliverToBoxAdapter(child: secondary),
+            ],
+          );
+        }
+        if (primaryFits &&
+            !foldSplits(totalWidth: constraints.maxWidth, fold: fold)) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              primary,
+              SizedBox(width: gap),
+              Expanded(child: secondary),
             ],
           );
         }
@@ -143,6 +172,14 @@ class AdaptivePanes extends StatelessWidget {
   }
 }
 
+/// A vertical fold in the middle of the content, rather than near an edge (the
+/// shell's navigation, say).
+bool foldSplits({required double totalWidth, required Fold? fold}) {
+  if (fold == null || !fold.isVertical) return false;
+  final left = fold.bounds.left;
+  return left > totalWidth * 0.25 && left < totalWidth * 0.75;
+}
+
 /// How wide each pane is. Keeps a pane from straddling a vertical fold that
 /// falls inside the middle of the content; a fold near an edge (the shell's
 /// navigation, say) is ignored so the panes aren't squeezed.
@@ -152,12 +189,8 @@ class AdaptivePanes extends StatelessWidget {
   required double primaryFraction,
   required double gap,
 }) {
-  if (fold != null && fold.isVertical) {
-    final left = fold.bounds.left;
-    final inMiddle = left > totalWidth * 0.25 && left < totalWidth * 0.75;
-    if (inMiddle) {
-      return (primary: left, gap: math.max(fold.bounds.width, gap));
-    }
+  if (foldSplits(totalWidth: totalWidth, fold: fold)) {
+    return (primary: fold!.bounds.left, gap: math.max(fold.bounds.width, gap));
   }
   return (primary: totalWidth * primaryFraction, gap: gap);
 }

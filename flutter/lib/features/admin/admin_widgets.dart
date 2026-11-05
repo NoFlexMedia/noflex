@@ -466,6 +466,8 @@ class AdminCol {
   final bool flex;
 }
 
+const _cardCellWidth = 110.0;
+
 /// Columns when they fit, and otherwise one small card per row, with the first
 /// cell as its title and the rest labelled.
 class AdminTable extends StatelessWidget {
@@ -486,8 +488,9 @@ class AdminTable extends StatelessWidget {
   Widget build(BuildContext context) {
     if (rows.isEmpty) return Text(empty ?? '', style: NfType.caption);
     return LayoutBuilder(
-      builder: (context, constraints) =>
-          constraints.maxWidth >= minWidth ? _table() : _cards(),
+      builder: (context, constraints) => constraints.maxWidth >= minWidth
+          ? _table()
+          : _cards(constraints.maxWidth),
     );
   }
 
@@ -535,54 +538,64 @@ class AdminTable extends StatelessWidget {
     ],
   );
 
-  Widget _cards() => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      for (final (rowIndex, row) in rows.indexed)
-        Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            border: rowIndex == 0
-                ? null
-                : const Border(top: BorderSide(color: NfColors.line)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              row.first,
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 16,
-                runSpacing: 8,
-                children: [
-                  for (final (index, cell) in row.indexed.skip(1))
-                    if (columns[index].label.isEmpty)
-                      cell
-                    else
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            columns[index].label.toUpperCase(),
-                            style: nfText(
-                              10,
-                              weight: 600,
-                              color: NfColors.text3,
-                              letterSpacing: 1.2,
-                            ),
+  /// Each row's cells on one grid, so a column sits at the same place in every
+  /// card and they read down as well as across. A flexible column, being long,
+  /// takes a line of its own, and unlabelled ones (actions) close the card.
+  Widget _cards(double width) {
+    const gap = 16.0;
+    final count = math.max(1, ((width + gap) / (_cardCellWidth + gap)).floor());
+    final cell = (width - gap * (count - 1)) / count;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (rowIndex, row) in rows.indexed)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              border: rowIndex == 0
+                  ? null
+                  : const Border(top: BorderSide(color: NfColors.line)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                row.first,
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: gap,
+                  runSpacing: 10,
+                  children: [
+                    for (final (index, value) in row.indexed.skip(1))
+                      if (columns[index].label.isNotEmpty)
+                        SizedBox(
+                          width: columns[index].flex ? width : cell,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                columns[index].label.toUpperCase(),
+                                style: nfText(
+                                  10,
+                                  weight: 600,
+                                  color: NfColors.text3,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              value,
+                            ],
                           ),
-                          const SizedBox(height: 2),
-                          cell,
-                        ],
-                      ),
-                ],
-              ),
-            ],
+                        ),
+                    for (final (index, value) in row.indexed.skip(1))
+                      if (columns[index].label.isEmpty) value,
+                  ],
+                ),
+              ],
+            ),
           ),
-        ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 /// Cell text for a table.

@@ -130,7 +130,7 @@ A stale debug-only file (`Unhandled Exception: FormatException` from `NativeRefe
 ## House rules
 
 - Build UI from `widgets/` and the tokens in `theme.dart`; don't hard-code colors or radii.
-- Icons are Phosphor (`package:phosphor_icons`, a maintained fork of `phosphor_flutter`, which doesn't compile on current Flutter), never Material `Icons.*`. Fonts are bundled, as there's no fetching them from a CDN in a self-hosted app.
+- Icons are Phosphor (`package:phosphor_icons`, a maintained fork of `phosphor_flutter`, which doesn't compile on current Flutter), never Material `Icons.*`. `actionIconTheme` covers the back and close arrows the framework draws itself. Fonts are bundled, as there's no fetching them from a CDN in a self-hosted app.
 - Inter is a variable font: set weight through `nfText`, since `fontWeight` alone leaves the glyphs at the file's default.
 - Wrap user-triggered mutations in `ToastService.attempt`.
 - Every source file starts with an SPDX header, generated platform boilerplate included.

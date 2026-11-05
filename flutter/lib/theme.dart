@@ -5,6 +5,7 @@
 
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
+import 'package:phosphor_icons/phosphor_icons.dart';
 
 abstract final class NfColors {
   static const bg = Color(0xFF07080B);
@@ -133,6 +134,13 @@ ThemeData buildNoFlexTheme() {
     canvasColor: NfColors.bg,
     fontFamily: 'Inter',
     splashFactory: InkSparkle.splashFactory,
+    // Material draws these from its own font unless told otherwise.
+    actionIconTheme: ActionIconThemeData(
+      backButtonIconBuilder: (_) => const Icon(PhosphorIconsRegular.arrowLeft),
+      closeButtonIconBuilder: (_) => const Icon(PhosphorIconsRegular.x),
+      drawerButtonIconBuilder: (_) => const Icon(PhosphorIconsRegular.list),
+      endDrawerButtonIconBuilder: (_) => const Icon(PhosphorIconsRegular.list),
+    ),
     highlightColor: Colors.transparent,
     hoverColor: NfColors.surface2,
     focusColor: NfColors.focus.withValues(alpha: 0.3),

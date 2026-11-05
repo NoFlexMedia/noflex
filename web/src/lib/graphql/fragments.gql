@@ -106,6 +106,7 @@ fragment WatchRoomFields on WatchRoom {
   createdAt
   updatedAt
   work { ...WorkCard }
+  members { userId name joinedAt }
 }
 
 fragment ExportJobFields on ExportJob {
@@ -120,6 +121,7 @@ fragment ExportJobFields on ExportJob {
   createdAt
   startedAt
   finishedAt
+  work { title }
 }
 
 fragment LiveTvSourceFields on LiveTvSource {

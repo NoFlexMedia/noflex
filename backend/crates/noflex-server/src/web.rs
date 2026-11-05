@@ -126,6 +126,9 @@ fn is_client_route(path: &str) -> bool {
             | "/admin"
             | "/invite"
     ) || has_single_parameter(path, "/browse/")
+        || path
+            .strip_suffix("/all")
+            .is_some_and(|category| has_single_parameter(category, "/browse/"))
         || has_single_parameter(path, "/libraries/")
         || has_single_parameter(path, "/works/")
 }

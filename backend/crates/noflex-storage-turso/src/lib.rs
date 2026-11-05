@@ -218,6 +218,13 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.reader().await?;
         repo::list_works::list(&conn, q).await
     }
+    async fn work_facets(
+        &self,
+        q: &noflex_storage::WorkFacetsQuery,
+    ) -> StorageResult<Vec<noflex_storage::WorkFacetValues>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::work_filters::facets(&conn, q).await
+    }
     async fn upsert_work(&self, work: &Work) -> StorageResult<()> {
         let (_schema, conn) = self.writer().await?;
         repo::works::upsert(&conn, work).await
@@ -911,6 +918,14 @@ impl Storage for TursoStore {
     ) -> StorageResult<Vec<noflex_storage::domain::WorkFeatures>> {
         let (_schema, conn) = self.reader().await?;
         repo::list_works::work_features(&conn, kinds, tag_namespaces, access_user_id).await
+    }
+    async fn category_work_ids(
+        &self,
+        category: noflex_storage::domain::ContentCategory,
+        access_user_id: Option<UserId>,
+    ) -> StorageResult<Vec<WorkId>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::list_works::category_work_ids(&conn, category, access_user_id).await
     }
     async fn active_embedding_model(
         &self,

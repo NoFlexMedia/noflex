@@ -4,7 +4,7 @@
   import { audioFormat, bytes, codecName, dynamicRange, levelName, profileName, timecode } from "$lib/format.js";
   import Tabs from "$components/ui/Tabs.svelte";
 
-  /** `file` is the chosen version and `audio` the chosen track; `edition` only knows its first file, so it's the fallback. */
+  /** `file` is the chosen version and `audio` the chosen track. */
   let { edition, file = null, audio = null, onchapter } = $props();
 
   let cues = $derived(edition.trickplay?.chapterCues ?? []);
@@ -18,15 +18,13 @@
 
   const THUMB_W = 224;
   let probed = $derived(file?.probe?.video);
-  let stream = $derived(probed
-    ? { codec: probed.codec, profile: probed.profile, level: probed.level, width: probed.width, height: probed.height, frameRate: probed.frame_rate, bitDepth: probed.bit_depth, pixelFormat: probed.pixel_format?.toUpperCase(), range: dynamicRange(probed) || (probed.transfer && probed.transfer !== "sdr" ? probed.transfer.toUpperCase() : "SDR") }
-    : { codec: edition.videoCodec ?? edition.codecVideo, profile: edition.videoProfile, level: edition.videoLevel, width: edition.width, height: edition.height, frameRate: edition.frameRate, bitDepth: edition.bitDepth, pixelFormat: edition.pixelFormat, range: edition.hdrFormat ?? (edition.transferCharacteristics && edition.transferCharacteristics !== "SDR" ? edition.transferCharacteristics : "SDR") });
+  let stream = $derived(probed ? { codec: probed.codec, profile: probed.profile, level: probed.level, width: probed.width, height: probed.height, frameRate: probed.frame_rate, bitDepth: probed.bit_depth, pixelFormat: probed.pixel_format?.toUpperCase(), range: dynamicRange(probed) || (probed.transfer && probed.transfer !== "sdr" ? probed.transfer.toUpperCase() : "SDR") } : {});
   let video = $derived([
     ["Video", [codecName(stream.codec), profileName(stream.profile), levelName(stream.codec, stream.level)].filter(Boolean).join(" · ")],
     ["Resolution", stream.width && stream.height ? `${stream.width} × ${stream.height}${stream.frameRate ? ` @ ${stream.frameRate.toFixed(3).replace(/\.?0+$/, "")} fps` : ""}` : null],
     ["Dynamic range", stream.range],
     ["Bit depth", stream.bitDepth ? `${stream.bitDepth}-bit${stream.pixelFormat ? ` · ${stream.pixelFormat}` : ""}` : null],
-    ["Audio", audio ? audioFormat(audio) : edition.codecAudio ? audioFormat({ codec: edition.codecAudio }) : null],
+    ["Audio", audio ? audioFormat(audio) : null],
     ["Container", file?.container?.toUpperCase()],
     ["File size", file ? bytes(file.sizeBytes) : null],
     ["Path", file?.path],

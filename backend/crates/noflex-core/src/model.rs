@@ -227,14 +227,12 @@ pub enum EmbeddingTarget {
 // ---------------------------------------------------------------------------
 // v2 codec / HDR / channel-layout matrix
 //
-// Typed replacements for the loose `Option<String>` fields the legacy
-// `Edition`/`AudioTrack`/`SubtitleTrack` schemas used. Each variant
-// is the canonical codec/profile/etc. string the probe pipeline emits,
+// Each variant is the canonical codec/profile/etc. string the probe pipeline emits,
 // serialised to the same snake_case spelling via `serde(rename_all)`
 // so the on-disk column stays a plain TEXT.
 // ---------------------------------------------------------------------------
 
-/// Video codec carried by a `MediaFile`/`Edition`. Closed set; the
+/// Video codec carried by a `MediaFile`. Closed set; the
 /// transcoder's `decide()` function in `noflex-transcoder` reads these
 /// directly to pick a direct-play vs. transcode route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Enum)]

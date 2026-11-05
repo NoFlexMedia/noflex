@@ -370,11 +370,14 @@ impl CoreQuery {
     /// Movies and series the caller hasn't started, most likely to enjoy
     /// first, judged by similarity to what they recently watched and how
     /// they responded to it. Callers with no history get the highest-rated
-    /// titles. Ranked; `first` defaults to 20, max 100, at most 200 deep.
+    /// titles. `category` narrows the list to one category, while everything
+    /// they've watched still counts towards it. Ranked; `first` defaults to 20,
+    /// max 100, at most 200 deep.
     #[graphql(complexity = "paging::cost(first, 20, 100, child_complexity)")]
     async fn recommendations(
         &self,
         ctx: &Context<'_>,
+        category: Option<noflex_storage::domain::ContentCategory>,
         first: Option<i32>,
         after: Option<String>,
     ) -> async_graphql::Result<Connection<String, Work>> {
@@ -392,6 +395,7 @@ impl CoreQuery {
             storage.as_ref(),
             namespace.as_deref(),
             user,
+            category,
             overfetch(window),
             OffsetDateTime::now_utc(),
         ))

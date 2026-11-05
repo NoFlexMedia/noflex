@@ -23,6 +23,11 @@ import { toast } from "$lib/ui.svelte.js";
 /** Preference key: list libraries in the navigation alongside content types. */
 export const SHOW_LIBRARIES_KEY = "browse.showLibraries";
 
+/** Preference key: the viewer's named browse filters. */
+export const SAVED_FILTERS_KEY = "browse.savedFilters";
+
+export interface SavedFilter { name: string; rules: string }
+
 export type Phase = "boot" | "error" | "setup" | "auth" | "app";
 
 export const app = $state({
@@ -34,6 +39,7 @@ export const app = $state({
   /** `contentCategories` rows: what the viewer has anything to browse in. */
   categories: [] as { category: string; workCount: number }[],
   showLibraries: false,
+  savedFilters: [] as SavedFilter[],
   error: "",
   authError: "",
 });
@@ -55,6 +61,7 @@ function signedOut(authError: string): void {
   app.libraries = [];
   app.categories = [];
   app.showLibraries = false;
+  app.savedFilters = [];
   deactivateServer();
   setLinkedServers([]);
   app.authError = authError;
@@ -82,6 +89,8 @@ export async function bootstrap(): Promise<void> {
     app.categories = [...data.contentCategories];
     setLinkedServers(data.linkedServers as LinkedServer[]);
     app.showLibraries = data.preferences.some((item: { key: string; value: unknown }) => item.key === SHOW_LIBRARIES_KEY && item.value === true);
+    const saved = data.preferences.find((item: { key: string; value: unknown }) => item.key === SAVED_FILTERS_KEY)?.value;
+    app.savedFilters = Array.isArray(saved) ? saved : [];
     app.playbackPrefs = readPlaybackPrefs(data.preferences.find((item: { key: string; value: unknown }) => item.key === "playback")?.value);
     await watchLibraries();
     app.authError = "";

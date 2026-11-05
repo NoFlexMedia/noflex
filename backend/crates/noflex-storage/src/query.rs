@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use async_graphql::Enum;
+use async_graphql::{Enum, SimpleObject};
 use noflex_core::{LibraryId, TagId, UserId, WorkId, WorkKind};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -136,6 +136,123 @@ pub struct WatchedFilter {
     pub watched: bool,
 }
 
+/// Something a work can be filtered by. Values are portable between servers
+/// (slugs, titles, codec names), never server-local ids.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Enum,
+)]
+pub enum WorkFacet {
+    /// Words the title contains, ignoring case.
+    Title,
+    /// A `genre` tag's slug.
+    Genre,
+    /// A `mood` tag's slug.
+    Mood,
+    /// A `studio` tag's slug.
+    Studio,
+    /// A `parental` tag's slug.
+    ContentRating,
+    /// A `person` tag's slug, credited as director.
+    Director,
+    /// A `person` tag's slug, credited as actor.
+    Actor,
+    /// A `person` tag's slug, credited as writer.
+    Writer,
+    /// A `person` tag's slug, credited as producer.
+    Producer,
+    /// A collection's title, ignoring case.
+    Collection,
+    /// An edition's name, like "Director's Cut".
+    Edition,
+    /// `YYYY`, `YYYY-YYYY`, `YYYY-` or `-YYYY`, inclusive.
+    Years,
+    /// A community rating floor; unrated works never match.
+    MinRating,
+    /// Added to the library within this many days.
+    AddedWithinDays,
+    /// `unwatched`, `in_progress` or `watched`, for the query's viewer. A series
+    /// is watched once every episode is, and in progress once any has been started.
+    WatchState,
+    /// Favorited by the query's viewer. The value is ignored.
+    Favorite,
+    /// `unmatched` for works no provider has confirmed, or `matched`.
+    MatchStatus,
+    /// `8k`, `4k`, `1440p`, `1080p`, `720p` or `sd`.
+    Resolution,
+    /// `dolby_vision`, `hdr10`, `hlg` or `sdr`. HDR10+ isn't probed, so it reads as `hdr10`.
+    DynamicRange,
+    /// A codec name as probed, like `h265`.
+    VideoCodec,
+    /// A codec name as probed, like `eac3`.
+    AudioCodec,
+    /// `atmos`, `7.1`, `5.1`, `stereo` or `mono`, or a channel count for anything else.
+    AudioLayout,
+    /// Any spelling of a language code.
+    AudioLanguage,
+    /// A codec name as probed, or as the sidecar's extension gave it.
+    SubtitleCodec,
+    /// Any spelling of a language code. Sidecar files count.
+    SubtitleLanguage,
+}
+
+/// How several things combine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Enum)]
+pub enum MatchMode {
+    #[default]
+    All,
+    Any,
+    None,
+}
+
+/// One facet's condition: a work matches when `mode` of `values` apply to it.
+/// Media facets apply when any file of the work or its descendants has the value.
+/// `values` being empty means the rule says nothing, and it's skipped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkRule {
+    pub facet: WorkFacet,
+    pub values: Vec<String>,
+    pub mode: MatchMode,
+}
+
+/// Boolean logic over [`WorkRule`]s: a work matches when `mode` of `rules` and
+/// `groups` do. A group with nothing in it says nothing, and it's skipped.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkRules {
+    pub mode: MatchMode,
+    pub rules: Vec<WorkRule>,
+    pub groups: Vec<WorkRules>,
+}
+
+/// Which works' values [`crate::Storage::work_facets`] reports.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkFacetsQuery {
+    /// Apply library grants and parental restrictions for this user.
+    /// Administrators leave this unset.
+    pub access_user_id: Option<UserId>,
+    pub library: Option<LibraryId>,
+    pub category: Option<crate::domain::ContentCategory>,
+}
+
+/// A value a facet can take among some works.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
+pub struct WorkFacetValue {
+    /// What to send back in a [`WorkRule`].
+    pub value: String,
+    /// The display name where the server knows one, otherwise `value`.
+    pub label: String,
+    /// Top-level works with this value.
+    pub work_count: u32,
+}
+
+/// The values one facet takes among some works, most common first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
+pub struct WorkFacetValues {
+    pub facet: WorkFacet,
+    pub values: Vec<WorkFacetValue>,
+    /// More values exist than the most common ones listed here.
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ListWorksQuery {
     /// Apply library grants and parental restrictions for this user.
@@ -159,6 +276,11 @@ pub struct ListWorksQuery {
     /// Inclusive bounds on `Work.added_at`.
     pub added_after: Option<OffsetDateTime>,
     pub added_before: Option<OffsetDateTime>,
+    /// Boolean conditions, combined with everything above by AND.
+    pub rules: Option<WorkRules>,
+    /// Whose watch state and favorites `rules` mean. A rule that needs one
+    /// without it is an [`InvalidInput`](crate::StorageError::InvalidInput).
+    pub viewer: Option<UserId>,
     pub recursive: bool,
     pub sort: SortOrder,
     pub limit: u32,

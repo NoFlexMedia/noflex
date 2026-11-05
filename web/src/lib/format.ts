@@ -57,17 +57,13 @@ export function audioFormat(track: any): string {
   return [AUDIO_NAMES[codec] ?? codec.toUpperCase(), CHANNEL_NAMES[track?.channels] ?? (track?.channels ? `${track.channels} ch` : "")].filter(Boolean).join(" ");
 }
 
-/**
- * What a file's picture and chosen sound are, in a few badges: resolution,
- * codec, HDR, audio. `edition` stands in where the file's probe is missing.
- */
-export function techBadges(probe: any, edition: any, audio: any): string[] {
+/** What a file's picture and chosen sound are, in a few badges: resolution, codec, HDR, audio. */
+export function techBadges(probe: any, audio: any): string[] {
   const video = probe?.video;
-  const height = video?.height ?? edition?.height;
+  const height = video?.height;
   const tier = !height ? "" : height >= 2000 ? "4K" : height >= 1400 ? "1440p" : height >= 1000 ? "1080p" : height >= 700 ? "720p" : `${height}p`;
-  const name = String(video?.codec ?? edition?.videoCodec ?? edition?.codecVideo ?? "").toLowerCase();
-  const range = video ? dynamicRange(video) : edition?.hdrFormat ? (/dolby|dovi/i.test(edition.hdrFormat) ? "Dolby Vision" : edition.hdrFormat.toUpperCase().includes("HLG") ? "HLG" : "HDR") : "";
-  return [tier, CODEC_NAMES[name] ?? name.toUpperCase(), range, audio ? audioFormat(audio) : ""].filter(Boolean);
+  const name = String(video?.codec ?? "").toLowerCase();
+  return [tier, CODEC_NAMES[name] ?? name.toUpperCase(), video ? dynamicRange(video) : "", audio ? audioFormat(audio) : ""].filter(Boolean);
 }
 
 /**

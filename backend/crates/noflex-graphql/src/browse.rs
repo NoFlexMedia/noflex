@@ -9,7 +9,8 @@ use std::sync::Arc;
 use async_graphql::{Context, Enum, ID, InputObject, Object, connection::Connection};
 use noflex_core::{EditionId, LibraryId, TagId, UserId, WorkId, WorkKind};
 use noflex_storage::{
-    ListTagsQuery, ListWorksQuery, SortOrder, Storage, TagSummary, WatchedFilter,
+    ListTagsQuery, ListWorksQuery, MatchMode, SortOrder, Storage, TagSummary, WatchedFilter,
+    WorkFacet, WorkFacetValues, WorkFacetsQuery, WorkRule, WorkRules,
     domain::{
         ContentCategory, ContentCategoryCount, Edition, Image, ImageTarget, MediaFile, Tag, Work,
     },
@@ -38,9 +39,57 @@ pub struct WorkFilterInput {
     /// Inclusive bounds on when the work was added to the library.
     pub added_after: Option<OffsetDateTime>,
     pub added_before: Option<OffsetDateTime>,
+    /// Conditions on what a work is and how the caller has watched it. Unlike
+    /// the fields above, their values mean the same on every server.
+    pub rules: Option<WorkRuleGroupInput>,
     /// Include descendant works (episodes under seasons, …); defaults
     /// to true.
     pub recursive: Option<bool>,
+}
+
+/// A condition on one facet: `match` of `values` must apply to the work.
+/// `workFacets` lists the values worth offering.
+#[derive(InputObject)]
+pub struct WorkRuleInput {
+    pub facet: WorkFacet,
+    pub values: Vec<String>,
+    /// Defaults to `ANY`.
+    #[graphql(name = "match")]
+    pub mode: Option<MatchMode>,
+}
+
+/// Conditions combined by `match`, which may themselves be groups.
+#[derive(InputObject)]
+pub struct WorkRuleGroupInput {
+    /// Defaults to `ALL`.
+    #[graphql(name = "match")]
+    pub mode: Option<MatchMode>,
+    pub rules: Option<Vec<WorkRuleInput>>,
+    pub groups: Option<Vec<WorkRuleGroupInput>>,
+}
+
+impl From<WorkRuleGroupInput> for WorkRules {
+    fn from(group: WorkRuleGroupInput) -> Self {
+        Self {
+            mode: group.mode.unwrap_or_default(),
+            rules: group
+                .rules
+                .unwrap_or_default()
+                .into_iter()
+                .map(|rule| WorkRule {
+                    facet: rule.facet,
+                    values: rule.values,
+                    mode: rule.mode.unwrap_or(MatchMode::Any),
+                })
+                .collect(),
+            groups: group
+                .groups
+                .unwrap_or_default()
+                .into_iter()
+                .map(Self::from)
+                .collect(),
+        }
+    }
 }
 
 /// Watched-state filter for one user. `watched` defaults to true;
@@ -137,6 +186,8 @@ impl BrowseQuery {
                 rating_max: filter.rating_max,
                 added_after: filter.added_after,
                 added_before: filter.added_before,
+                rules: filter.rules.map(WorkRules::from),
+                viewer: Some(request_user.user_id),
                 recursive: filter.recursive.unwrap_or(true),
                 sort: sort.unwrap_or_default(),
                 limit: window.first,
@@ -145,6 +196,30 @@ impl BrowseQuery {
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
         Ok(paging::from_item_page(page, resumed))
+    }
+
+    /// The values worth offering as `WorkRuleInput`s among the top-level works
+    /// the caller can access, optionally in one library or category. Facets with
+    /// nothing to offer are left out. Walks every file in scope, so ask for it
+    /// when someone opens the filters rather than with each page.
+    async fn work_facets(
+        &self,
+        ctx: &Context<'_>,
+        library_id: Option<LibraryId>,
+        category: Option<ContentCategory>,
+    ) -> async_graphql::Result<Vec<WorkFacetValues>> {
+        let storage = ctx
+            .data::<Arc<dyn Storage>>()
+            .map_err(|_| async_graphql::Error::new("storage not configured"))?;
+        let request_user = access::request_user(ctx)?;
+        storage
+            .work_facets(&WorkFacetsQuery {
+                access_user_id: request_user.access_user_id(),
+                library: library_id,
+                category,
+            })
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))
     }
 
     /// A single work by id; null when it doesn't exist.

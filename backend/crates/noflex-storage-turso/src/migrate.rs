@@ -62,6 +62,18 @@ pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
         "0013_embedding_index.sql",
         include_str!("../migrations/0013_embedding_index.sql"),
     ),
+    (
+        "0014_media_streams.sql",
+        include_str!("../migrations/0014_media_streams.sql"),
+    ),
+    (
+        "0015_work_roots.sql",
+        include_str!("../migrations/0015_work_roots.sql"),
+    ),
+    (
+        "0016_editions_without_file_facts.sql",
+        include_str!("../migrations/0016_editions_without_file_facts.sql"),
+    ),
 ];
 
 const META_KEY_PREFIX: &str = "migration:";

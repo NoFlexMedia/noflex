@@ -20,4 +20,4 @@
   <State icon={Books} title="Library not found" message="It may have been removed, or you no longer have access."><a class="btn sm" href="/libraries">All libraries</a></State>
 {/snippet}
 
-<WorkBrowser works={route.works} title={library?.name ?? "Library"} eyebrow={library ? [serverName, titleCase(library.kind)].filter(Boolean).join(" · ") : "Library"} kinds={KINDS} emptyTitle="This library is empty" emptyMessage={app.viewer.isAdmin && !route.serverId ? "Run a scan from Administration once media is in place." : "Check back after the next scan."} missing={library ? undefined : notFound} />
+<WorkBrowser scope={{ library: route.id }} works={route.works} title={library?.name ?? "Library"} eyebrow={library ? [serverName, titleCase(library.kind)].filter(Boolean).join(" · ") : "Library"} kinds={KINDS} emptyTitle="This library is empty" emptyMessage={app.viewer.isAdmin && !route.serverId ? "Run a scan from Administration once media is in place." : "Check back after the next scan."} missing={library ? undefined : notFound} />

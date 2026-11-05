@@ -153,47 +153,6 @@ input AudioCodecSupport {
 	maxChannels: Int
 }
 
-type AudioTrack {
-	language: String
-	codec: String!
-	channels: Int!
-	default: Boolean!
-	"""
-	Sample bit depth (16 for AAC/Opus/AC-3, 24 for FLAC/TrueHD/MLP).
-	"""
-	bitDepth: Int
-	"""
-	Sample rate in Hz; affects DTS-HD MA downmix decisions.
-	"""
-	sampleRate: Int
-	"""
-	Speaker / channel layout. `ObjectBased` for JOC/Atmos.
-	"""
-	channelLayout: ChannelLayout
-	"""
-	Codec profile (e.g. `"LC-AAC"`, `"HE-AAC"`, `"xHE-AAC"`,
-	`"DTS-HD MA"`, `"DTS-HD HRA"`, `"DTS:X"`).
-	"""
-	codecProfile: String
-	"""
-	JOC/Atmos metadata: `"joc"` for Atmos, `"none"` otherwise.
-	"""
-	audioObjectType: String
-	"""
-	`true` for sidecar files, `false` for muxed-in.
-	"""
-	external: Boolean!
-	"""
-	Independent of `default` — a track can be default-non-forced
-	OR default-forced (foreign-language subs for non-default audio).
-	"""
-	forced: Boolean!
-	"""
-	Human-readable label, e.g. `"Director's Commentary"`.
-	"""
-	title: String
-}
-
 type BinaryInfo {
 	"""
 	What NoFlex invokes: the configured override or the bare name.
@@ -216,22 +175,6 @@ type BinaryInfo {
 	"""
 	buildFlags: [String!]!
 	error: String
-}
-
-"""
-Speaker / channel layout of an audio track. `ObjectBased` is the
-JOC / Atmos case (bed+objects rather than a fixed channel count).
-"""
-enum ChannelLayout {
-	MONO
-	STEREO
-	THREE
-	FOUR
-	FIVE
-	SIX
-	SEVEN_ONE
-	EIGHT
-	OBJECT_BASED
 }
 
 type Chapter {
@@ -336,24 +279,6 @@ type CollectionEdge {
 	A cursor for use in pagination
 	"""
 	cursor: String!
-}
-
-"""
-Color primaries (a.k.a. color space). Defines the gamut; the
-HDR10 / Dolby Vision static-metadata path uses `Bt2020`.
-"""
-enum ColorPrimaries {
-	BT_709
-	BT_2020
-	BT_601_NTSC
-	BT_601_PAL
-	SMPTE_C
-	DCI_P3
-	DISPLAY_P3
-	BT_470M
-	BT_470_BG
-	XYZ
-	FILM
 }
 
 type ConfigEntry {
@@ -556,20 +481,10 @@ input DirectPlayProfile {
 }
 
 """
-Dolby Vision profile tag. Stored as the integer profile number
-(5, 7, 8, 9) in the `editions.dovi_profile` INTEGER column.
-"""
-enum DolbyVisionProfile {
-	PROFILE_5
-	PROFILE_7
-	PROFILE_8
-	PROFILE_9
-}
-
-"""
-An edition is a specific cut/version of a work. Most works have one
-("Default"); collector-grade libraries have multiple ("Theatrical",
-"Director's Cut", "Extended").
+An edition is a specific cut of a work. Most works have one ("Default");
+collector-grade libraries have multiple ("Theatrical", "Director's Cut",
+"Extended"). Encodes of one cut, like 4K HDR and 1080p SDR, are that edition's
+[`MediaFile`]s, and what's true of a picture or a track is recorded on them.
 """
 type Edition {
 	id: ID!
@@ -580,90 +495,6 @@ type Edition {
 	introEndMs: Int
 	creditsStartMs: Int
 	chapters: [Chapter!]!
-	"""
-	Codec and dimension metadata are promoted off
-	`media_files.probe_json` so the direct-play decision can read
-	them without a join. Populated by the post_scan ffprobe task; `None` for editions whose
-	media files have never been probed.
-	"""
-	codecVideo: String
-	codecAudio: String
-	width: Int
-	height: Int
-	bitDepth: Int
-	"""
-	Loose free-form HDR description (e.g. "HDR10", "HLG"). Kept
-	for back-compat with legacy rows; the typed
-	`transfer_characteristics` + `dovi_profile` fields below carry
-	the v2 truth. `#[serde(default, skip_serializing_if =
-	"Option::is_none")]` so a missing field is invisible on the
-	wire — only the typed fields appear once we promote them.
-	"""
-	hdrFormat: String
-	"""
-	Per-track audio metadata (language, channels, codec, default).
-	`Option<>` here so the legacy case of "no probe yet" round-trips
-	without an empty-array column write.
-	"""
-	audioTracks: [AudioTrack!]
-	subtitleTracks: [SubtitleTrack!]
-	"""
-	Typed video codec (replaces the loose `codec_video` string in
-	the new probe pipeline; the string field stays for back-compat).
-	"""
-	videoCodec: VideoCodec
-	"""
-	H.264/H.265/AV1/VP9 profile tier.
-	"""
-	videoProfile: VideoProfile
-	"""
-	Codec level × 10 (H.264) or × 30 (HEVC). `f32` so we can carry
-	the half-step bumps ffmpeg occasionally reports.
-	"""
-	videoLevel: Float
-	"""
-	Pixel format / chroma subsampling.
-	"""
-	pixelFormat: PixelFormat
-	"""
-	Color primaries (gamut).
-	"""
-	colorPrimaries: ColorPrimaries
-	"""
-	Transfer characteristics. The v2 truth; `hdr_format` is the
-	legacy free-form string for older rows.
-	"""
-	transferCharacteristics: HdrTransfer
-	"""
-	YCbCr ↔ RGB matrix coefficients.
-	"""
-	matrixCoefficients: MatrixCoefficients
-	"""
-	Dolby Vision profile tag (5/7/8/9). Stored as INTEGER in SQL.
-	"""
-	doviProfile: DolbyVisionProfile
-	"""
-	Max Content Light Level (cd/m²). HDR10 / DV static metadata.
-	"""
-	maxCll: Int
-	"""
-	Max Frame-Average Light Level (cd/m²).
-	"""
-	maxFall: Int
-	"""
-	Minimum mastering-display luminance, 0.0001 cd/m² resolution
-	(stored × 10000 = 0..max). `0.0001` is the SMPTE ST 2086 floor.
-	"""
-	masteringDisplayMinLuminance: Int
-	"""
-	Maximum mastering-display luminance, 1 cd/m² resolution.
-	"""
-	masteringDisplayMaxLuminance: Int
-	"""
-	Source frame rate (fps). Drives bitrate-vs-resolution math in
-	the transcoder's ladder.
-	"""
-	frameRate: Float
 	trickplay: TrickplayAsset
 }
 
@@ -906,22 +737,6 @@ type ExternalIdentity {
 	displayName: String
 	email: String
 	linkedAt: DateTime!
-}
-
-"""
-Transfer characteristics (a.k.a. transfer function, "gamma curve").
-`Sdr` is the Rec.709 / sRGB default; the rest are the HDR and
-log-curve variants the probe pipeline distinguishes.
-"""
-enum HdrTransfer {
-	SDR
-	PQ
-	HLG
-	SLOG3
-	SLOG2
-	LOG_C
-	BT_2100
-	BT_1886
 }
 
 """
@@ -1441,22 +1256,12 @@ type LoginResult {
 }
 
 """
-Matrix coefficients. Defines YCbCr ↔ RGB conversion. `Bt2020Ncl`
-is the non-constant-luminance variant the HDR path uses.
+How several things combine.
 """
-enum MatrixCoefficients {
-	BT_709
-	BT_470_BG
-	BT_601_NTSC
-	BT_601_PAL
-	SMPTE_240M
-	Y_CG_CO
-	BT_2020_NCL
-	BT_2020_CL
-	SMPTE_2085
-	CHROMA_DERIVED_NC
-	CHROMA_DERIVED_CL
-	ICTCP
+enum MatchMode {
+	ALL
+	ANY
+	NONE
 }
 
 """
@@ -2000,24 +1805,6 @@ type PageInfo {
 	When paginating forwards, the cursor to continue.
 	"""
 	endCursor: String
-}
-
-"""
-Pixel format / chroma subsampling carried by a video stream.
-Matched to the FFmpeg pix_fmt names so the probe pipeline can
-hand back a value directly via `as_str()`.
-"""
-enum PixelFormat {
-	YUV420P
-	YUV420P10LE
-	YUV422P
-	YUV422P10LE
-	YUV444P
-	YUV444P10LE
-	GRAY
-	YUV420P12LE
-	YUV422P12LE
-	YUV444P12LE
 }
 
 type PlayHistoryChart {
@@ -2589,9 +2376,11 @@ type Query {
 	Movies and series the caller hasn't started, most likely to enjoy
 	first, judged by similarity to what they recently watched and how
 	they responded to it. Callers with no history get the highest-rated
-	titles. Ranked; `first` defaults to 20, max 100, at most 200 deep.
+	titles. `category` narrows the list to one category, while everything
+	they've watched still counts towards it. Ranked; `first` defaults to 20,
+	max 100, at most 200 deep.
 	"""
-	recommendations(first: Int, after: String): WorkConnection!
+	recommendations(category: ContentCategory, first: Int, after: String): WorkConnection!
 	"""
 	"Recently Played": the caller's played works, newest
 	`lastPlayed` first. Ranked; `first` defaults to 20, max 100, at
@@ -2675,6 +2464,13 @@ type Query {
 	defaults to 50, max 200. A `RANDOM` sort is a single page.
 	"""
 	works(libraryId: ID, category: ContentCategory, filter: WorkFilterInput, sort: SortOrder, first: Int, after: String): WorkConnection!
+	"""
+	The values worth offering as `WorkRuleInput`s among the top-level works
+	the caller can access, optionally in one library or category. Facets with
+	nothing to offer are left out. Walks every file in scope, so ask for it
+	when someone opens the filters rather than with each page.
+	"""
+	workFacets(libraryId: ID, category: ContentCategory): [WorkFacetValues!]!
 	"""
 	A single work by id; null when it doesn't exist.
 	"""
@@ -3758,7 +3554,7 @@ enum UserRole {
 }
 
 """
-Video codec carried by a `MediaFile`/`Edition`. Closed set; the
+Video codec carried by a `MediaFile`. Closed set; the
 transcoder's `decide()` function in `noflex-transcoder` reads these
 directly to pick a direct-play vs. transcode route.
 """
@@ -4055,6 +3851,144 @@ type WorkEdge {
 }
 
 """
+Something a work can be filtered by. Values are portable between servers
+(slugs, titles, codec names), never server-local ids.
+"""
+enum WorkFacet {
+	"""
+	Words the title contains, ignoring case.
+	"""
+	TITLE
+	"""
+	A `genre` tag's slug.
+	"""
+	GENRE
+	"""
+	A `mood` tag's slug.
+	"""
+	MOOD
+	"""
+	A `studio` tag's slug.
+	"""
+	STUDIO
+	"""
+	A `parental` tag's slug.
+	"""
+	CONTENT_RATING
+	"""
+	A `person` tag's slug, credited as director.
+	"""
+	DIRECTOR
+	"""
+	A `person` tag's slug, credited as actor.
+	"""
+	ACTOR
+	"""
+	A `person` tag's slug, credited as writer.
+	"""
+	WRITER
+	"""
+	A `person` tag's slug, credited as producer.
+	"""
+	PRODUCER
+	"""
+	A collection's title, ignoring case.
+	"""
+	COLLECTION
+	"""
+	An edition's name, like "Director's Cut".
+	"""
+	EDITION
+	"""
+	`YYYY`, `YYYY-YYYY`, `YYYY-` or `-YYYY`, inclusive.
+	"""
+	YEARS
+	"""
+	A community rating floor; unrated works never match.
+	"""
+	MIN_RATING
+	"""
+	Added to the library within this many days.
+	"""
+	ADDED_WITHIN_DAYS
+	"""
+	`unwatched`, `in_progress` or `watched`, for the query's viewer. A series
+	is watched once every episode is, and in progress once any has been started.
+	"""
+	WATCH_STATE
+	"""
+	Favorited by the query's viewer. The value is ignored.
+	"""
+	FAVORITE
+	"""
+	`unmatched` for works no provider has confirmed, or `matched`.
+	"""
+	MATCH_STATUS
+	"""
+	`8k`, `4k`, `1440p`, `1080p`, `720p` or `sd`.
+	"""
+	RESOLUTION
+	"""
+	`dolby_vision`, `hdr10`, `hlg` or `sdr`. HDR10+ isn't probed, so it reads as `hdr10`.
+	"""
+	DYNAMIC_RANGE
+	"""
+	A codec name as probed, like `h265`.
+	"""
+	VIDEO_CODEC
+	"""
+	A codec name as probed, like `eac3`.
+	"""
+	AUDIO_CODEC
+	"""
+	`atmos`, `7.1`, `5.1`, `stereo` or `mono`, or a channel count for anything else.
+	"""
+	AUDIO_LAYOUT
+	"""
+	Any spelling of a language code.
+	"""
+	AUDIO_LANGUAGE
+	"""
+	A codec name as probed, or as the sidecar's extension gave it.
+	"""
+	SUBTITLE_CODEC
+	"""
+	Any spelling of a language code. Sidecar files count.
+	"""
+	SUBTITLE_LANGUAGE
+}
+
+"""
+A value a facet can take among some works.
+"""
+type WorkFacetValue {
+	"""
+	What to send back in a [`WorkRule`].
+	"""
+	value: String!
+	"""
+	The display name where the server knows one, otherwise `value`.
+	"""
+	label: String!
+	"""
+	Top-level works with this value.
+	"""
+	workCount: Int!
+}
+
+"""
+The values one facet takes among some works, most common first.
+"""
+type WorkFacetValues {
+	facet: WorkFacet!
+	values: [WorkFacetValue!]!
+	"""
+	More values exist than the most common ones listed here.
+	"""
+	truncated: Boolean!
+}
+
+"""
 The per-work metadata fields a user can lock against provider
 refreshes: once locked, a refresh must not overwrite that field.
 [`ExternalId`] is deliberately absent — external IDs are always
@@ -4127,6 +4061,11 @@ input WorkFilterInput {
 	addedAfter: DateTime
 	addedBefore: DateTime
 	"""
+	Conditions on what a work is and how the caller has watched it. Unlike
+	the fields above, their values mean the same on every server.
+	"""
+	rules: WorkRuleGroupInput
+	"""
 	Include descendant works (episodes under seasons, …); defaults
 	to true.
 	"""
@@ -4158,6 +4097,31 @@ enum WorkKindFilter {
 	ARTIST
 	AUDIO_BOOK
 	PHOTO
+}
+
+"""
+Conditions combined by `match`, which may themselves be groups.
+"""
+input WorkRuleGroupInput {
+	"""
+	Defaults to `ALL`.
+	"""
+	match: MatchMode
+	rules: [WorkRuleInput!]
+	groups: [WorkRuleGroupInput!]
+}
+
+"""
+A condition on one facet: `match` of `values` must apply to the work.
+`workFacets` lists the values worth offering.
+"""
+input WorkRuleInput {
+	facet: WorkFacet!
+	values: [String!]!
+	"""
+	Defaults to `ANY`.
+	"""
+	match: MatchMode
 }
 
 """

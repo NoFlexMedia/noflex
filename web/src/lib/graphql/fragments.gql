@@ -56,20 +56,6 @@ fragment EditionFull on Edition {
   introEndMs
   creditsStartMs
   chapters { positionMs title }
-  codecVideo
-  codecAudio
-  width
-  height
-  bitDepth
-  hdrFormat
-  videoCodec
-  videoProfile
-  videoLevel
-  pixelFormat
-  transferCharacteristics
-  frameRate
-  audioTracks { language codec channels default title external forced }
-  subtitleTracks { language codec default forced external title srtCompatible }
   trickplay {
     intervalMs
     thumbWidth

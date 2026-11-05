@@ -16,14 +16,13 @@ use std::{
 };
 
 use noflex_core::{
-    DomainEvent, DomainEventBus, EditionId, ExternalId, ExternalIdKind, HdrTransfer, ImageKind,
-    LibraryId, MetadataStatus, SubtitleCodec, WorkId, WorkKind,
+    DomainEvent, DomainEventBus, EditionId, ExternalId, ExternalIdKind, ImageKind, LibraryId,
+    MetadataStatus, WorkId, WorkKind,
 };
 use noflex_storage::{
     Storage,
     domain::{
-        AudioTrack, Edition, Image, ImageSource, ImageTarget, Library, LibraryKind, MediaFile,
-        ScanEvent, SubtitleTrack, Work,
+        Edition, Image, ImageSource, ImageTarget, Library, LibraryKind, MediaFile, ScanEvent, Work,
     },
     query::{ListWorksQuery, SortOrder},
     store::atomic,
@@ -964,31 +963,6 @@ impl<'a> ScanRun<'a> {
             intro_end_ms: None,
             credits_start_ms: None,
             chapters: vec![],
-            codec_video: None,
-            codec_audio: None,
-            width: None,
-            height: None,
-            bit_depth: None,
-            hdr_format: None,
-            audio_tracks: None,
-            subtitle_tracks: None,
-            video_codec: None,
-            video_profile: None,
-            video_level: None,
-            pixel_format: None,
-            color_primaries: None,
-            transfer_characteristics: None,
-            matrix_coefficients: None,
-            dovi_profile: None,
-            max_cll: None,
-            max_fall: None,
-            mastering_display_primary_r: None,
-            mastering_display_primary_g: None,
-            mastering_display_primary_b: None,
-            mastering_display_white_point: None,
-            mastering_display_min_luminance: None,
-            mastering_display_max_luminance: None,
-            frame_rate: None,
         };
         let id = edition.id;
         self.edition_cache.insert(cache_key, id);
@@ -1044,101 +1018,13 @@ enum WriteOp {
     MediaFile(MediaFile),
 }
 
-/// Overlay the v2 typed fields the [`ProbeReport`] carries onto
-/// a freshly-created [`Edition`]. The legacy loose-string
-/// `codec_video` / `codec_audio` / `hdr_format` fields are also
-/// stamped so legacy importers keep working.
+/// What a probed file says about its whole edition: only how long it runs, for an
+/// edition no metadata has given a runtime. The rest is true of that file alone, and
+/// stays on it.
 fn populate_edition_from_probe(mut edition: Edition, probe: &ProbeReport) -> Edition {
     if edition.runtime_ms.is_none() {
         edition.runtime_ms = probe.duration_ms.and_then(|ms| i64::try_from(ms).ok());
     }
-    if let Some(v) = &probe.video {
-        edition.video_codec = Some(v.codec);
-        edition.video_profile = v.profile;
-        edition.video_level = v.level;
-        edition.pixel_format = v.pixel_format;
-        edition.width = Some(v.width);
-        edition.height = Some(v.height);
-        edition.bit_depth = v.bit_depth.map(u32::from);
-        edition.codec_video = Some(v.codec.as_str().to_string());
-        edition.color_primaries = v.color_space;
-        edition.transfer_characteristics = v.transfer;
-        edition.matrix_coefficients = v.matrix;
-        edition.dovi_profile = v.dovi_profile;
-        edition.max_cll = v.side_data.max_cll;
-        edition.max_fall = v.side_data.max_fall;
-        edition.mastering_display_primary_r = v.side_data.mastering.as_ref().map(|m| m.primary_r);
-        edition.mastering_display_primary_g = v.side_data.mastering.as_ref().map(|m| m.primary_g);
-        edition.mastering_display_primary_b = v.side_data.mastering.as_ref().map(|m| m.primary_b);
-        edition.mastering_display_white_point =
-            v.side_data.mastering.as_ref().map(|m| m.white_point);
-        edition.mastering_display_min_luminance =
-            v.side_data.mastering.as_ref().map(|m| m.min_luminance);
-        edition.mastering_display_max_luminance =
-            v.side_data.mastering.as_ref().map(|m| m.max_luminance);
-        edition.frame_rate = v.frame_rate;
-        edition.hdr_format = v.transfer.map(|t| match t {
-            HdrTransfer::Sdr => "SDR".to_string(),
-            HdrTransfer::Pq => "HDR10".to_string(),
-            HdrTransfer::Hlg => "HLG".to_string(),
-            other => other.as_str().to_uppercase(),
-        });
-    }
-
-    if !probe.audio.is_empty() {
-        edition.audio_tracks = Some(
-            probe
-                .audio
-                .iter()
-                .map(|a| AudioTrack {
-                    language: a.language.clone(),
-                    codec: a.codec.clone(),
-                    channels: a.channels,
-                    default: a.default,
-                    bit_depth: a.bit_depth,
-                    sample_rate: a.sample_rate,
-                    channel_layout: a.channel_layout,
-                    codec_profile: a.profile.clone(),
-                    audio_object_type: a.audio_object_type.clone(),
-                    external: false,
-                    forced: a.forced,
-                    title: a.title.clone(),
-                })
-                .collect(),
-        );
-        if let Some(first) = probe.audio.first() {
-            edition.codec_audio = Some(first.codec.clone());
-        }
-    }
-
-    if !probe.subtitle.is_empty() {
-        edition.subtitle_tracks = Some(
-            probe
-                .subtitle
-                .iter()
-                .map(|s| SubtitleTrack {
-                    language: s.language.clone(),
-                    codec: s.codec.as_str().to_string(),
-                    default: s.default,
-                    forced: s.forced,
-                    external: s.external,
-                    codec_profile: None,
-                    srt_compatible: matches!(
-                        s.codec,
-                        SubtitleCodec::WebVtt
-                            | SubtitleCodec::SubRip
-                            | SubtitleCodec::Ttml
-                            | SubtitleCodec::MovText
-                    ),
-                    image_count: None,
-                    title: None,
-                    path: None,
-                    stream_index: None,
-                })
-                .collect(),
-        );
-    }
-
     edition
 }
 

@@ -34,14 +34,8 @@ const UPSERT: &str = "INSERT INTO trickplay_assets (edition_id, vtt_path, thumb_
 // The printf mirrors `noflex_storage::canonical::trickplay_source_fingerprint`;
 // `m.mtime` is already stored as `canonical_timestamp` text.
 const MISSING: &str = "SELECT e.id, e.work_id, e.name, e.runtime_ms, e.intro_start_ms, \
-    e.intro_end_ms, e.credits_start_ms, e.chapters_json, e.codec_video, e.codec_audio, \
-    e.width, e.height, e.bit_depth, e.hdr_format, e.audio_tracks_json, e.subtitle_tracks_json, \
-    e.video_codec, e.video_profile, e.video_level, e.pixel_format, e.color_primaries, \
-    e.transfer_characteristics, e.matrix_coefficients, e.dovi_profile, e.max_cll, e.max_fall, \
-    e.mastering_primary_r_x, e.mastering_primary_r_y, e.mastering_primary_g_x, \
-    e.mastering_primary_g_y, e.mastering_primary_b_x, e.mastering_primary_b_y, \
-    e.mastering_white_x, e.mastering_white_y, e.mastering_min_lum, e.mastering_max_lum, \
-    e.frame_rate FROM editions e JOIN media_files m ON m.id = (SELECT pm.id FROM media_files pm \
+    e.intro_end_ms, e.credits_start_ms, e.chapters_json \
+    FROM editions e JOIN media_files m ON m.id = (SELECT pm.id FROM media_files pm \
     WHERE pm.edition_id = e.id ORDER BY pm.part_index ASC, pm.id ASC LIMIT 1) \
     LEFT JOIN trickplay_assets t ON t.edition_id = e.id \
     WHERE (t.edition_id IS NULL OR t.source_media_mtime <> m.mtime \

@@ -14,6 +14,12 @@ query CategoryWorks($category: ContentCategory!, $filter: WorkFilterInput, $sort
   }
 }
 
+query CategoryShelves($category: ContentCategory!) {
+  recommendations(category: $category, first: 24) { nodes { ...WorkCard } }
+  newlyReleased: works(category: $category, sort: DATE_RELEASED_DESC, first: 24) { nodes { ...WorkCard releaseDate } }
+  recentlyAdded: works(category: $category, sort: DATE_ADDED_DESC, first: 24) { nodes { ...WorkCard } }
+}
+
 query LibraryWorks($library: ID!, $filter: WorkFilterInput, $sort: SortOrder) {
   works(libraryId: $library, filter: $filter, sort: $sort, first: 48) @paginate {
     edges { node { ...WorkCard } }

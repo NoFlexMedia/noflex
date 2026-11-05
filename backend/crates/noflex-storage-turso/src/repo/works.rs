@@ -18,11 +18,12 @@ use crate::{
 const UPSERT_WORK: &str = "INSERT INTO works (\
     id, kind, parent_id, library_id, title, sort_title, year, release_date, overview, \
     external_ids_json, index_number, index_end, parent_index, metadata_status, added_at, updated_at, \
-    tagline, original_title, community_rating, locked_fields_json\
-) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20) \
+    tagline, original_title, community_rating, locked_fields_json, root_id\
+) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21) \
 ON CONFLICT(id) DO UPDATE SET \
     kind = excluded.kind, \
     parent_id = excluded.parent_id, \
+    root_id = excluded.root_id, \
     library_id = excluded.library_id, \
     title = excluded.title, \
     sort_title = excluded.sort_title, \
@@ -59,8 +60,35 @@ const BY_EXT_ID: &str = "SELECT w.id, w.kind, w.parent_id, w.library_id, w.title
     FROM works w JOIN work_external_ids x ON x.work_id = w.id \
     WHERE x.kind = ?1 AND x.value = ?2";
 
+/// `work`'s stored root, if it has been written.
+async fn stored_root(conn: &Connection, work: &[u8]) -> StorageResult<Option<Vec<u8>>> {
+    let mut rows = conn
+        .query(
+            "SELECT root_id FROM works WHERE id = ?1",
+            vec![Value::Blob(work.to_vec())],
+        )
+        .await
+        .map_err(map_turso)?;
+    let Some(row) = rows.next().await.map_err(map_turso)? else {
+        return Ok(None);
+    };
+    match row.get_value(0).map_err(map_turso)? {
+        Value::Blob(root) => Ok(Some(root)),
+        _ => Ok(None),
+    }
+}
+
 pub(crate) async fn upsert(conn: &Connection, work: &Work) -> StorageResult<()> {
     let id_blob = uuid_to_blob(work.id.into_uuid());
+    // A parent not written yet counts as a root until it arrives and corrects this.
+    let root = match work.parent_id {
+        Some(parent) => {
+            let parent = uuid_to_blob(parent.into_uuid());
+            stored_root(conn, &parent).await?.unwrap_or(parent)
+        }
+        None => id_blob.clone(),
+    };
+    let previous_root = stored_root(conn, &id_blob).await?;
     let params: Vec<Value> = vec![
         Value::Blob(id_blob.clone()),
         Value::Text(work_kind_to_text(work.kind).to_string()),
@@ -104,8 +132,24 @@ pub(crate) async fn upsert(conn: &Connection, work: &Work) -> StorageResult<()> 
             .map(|r| Value::Real(r as f64))
             .unwrap_or(Value::Null),
         Value::Text(to_json(&work.locked_fields)?),
+        Value::Blob(root.clone()),
     ];
     conn.execute(UPSERT_WORK, params).await.map_err(map_turso)?;
+
+    // Whatever sits beneath it moved too. Parents nest two levels at most.
+    if previous_root.as_ref() != Some(&root) {
+        for sql in [
+            "UPDATE works SET root_id = ?1 WHERE parent_id = ?2",
+            "UPDATE works SET root_id = ?1 WHERE parent_id IN (SELECT id FROM works WHERE parent_id = ?2)",
+        ] {
+            conn.execute(
+                sql,
+                vec![Value::Blob(root.clone()), Value::Blob(id_blob.clone())],
+            )
+            .await
+            .map_err(map_turso)?;
+        }
+    }
 
     // Rebuild the work_external_ids rows from scratch — simplest correct path
     // since the canonical truth is the json column on `works`.

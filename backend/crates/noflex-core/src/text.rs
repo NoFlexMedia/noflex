@@ -24,6 +24,62 @@ pub fn slugify(input: &str) -> String {
     out
 }
 
+/// Languages as files spell them: ISO 639-2 terminology, then bibliographic where
+/// it differs, then ISO 639-1. Muxers use all three for the same language.
+const LANGUAGE_SPELLINGS: &[&[&str]] = &[
+    &["eng", "en"],
+    &["fra", "fre", "fr"],
+    &["deu", "ger", "de"],
+    &["spa", "es"],
+    &["ita", "it"],
+    &["por", "pt"],
+    &["nld", "dut", "nl"],
+    &["swe", "sv"],
+    &["nor", "no"],
+    &["nob", "nb"],
+    &["nno", "nn"],
+    &["dan", "da"],
+    &["fin", "fi"],
+    &["isl", "ice", "is"],
+    &["pol", "pl"],
+    &["ces", "cze", "cs"],
+    &["slk", "slo", "sk"],
+    &["hun", "hu"],
+    &["ron", "rum", "ro"],
+    &["bul", "bg"],
+    &["hrv", "hr"],
+    &["srp", "sr"],
+    &["slv", "sl"],
+    &["ell", "gre", "el"],
+    &["tur", "tr"],
+    &["rus", "ru"],
+    &["ukr", "uk"],
+    &["ara", "ar"],
+    &["heb", "he"],
+    &["fas", "per", "fa"],
+    &["hin", "hi"],
+    &["ben", "bn"],
+    &["tam", "ta"],
+    &["tel", "te"],
+    &["tha", "th"],
+    &["vie", "vi"],
+    &["ind", "id"],
+    &["msa", "may", "ms"],
+    &["zho", "chi", "zh"],
+    &["jpn", "ja"],
+    &["kor", "ko"],
+];
+
+/// `code`'s language in the one spelling used to compare them. An unknown code
+/// keeps its own, lowercased.
+pub fn canonical_language(code: &str) -> String {
+    let code = code.trim().to_ascii_lowercase();
+    LANGUAGE_SPELLINGS
+        .iter()
+        .find(|spellings| spellings.contains(&code.as_str()))
+        .map_or(code, |spellings| spellings[0].to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

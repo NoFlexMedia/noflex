@@ -81,6 +81,7 @@ pub async fn likely_watched(
             storage,
             embedder_namespace,
             user,
+            None,
             options.recommendations,
             now,
         )

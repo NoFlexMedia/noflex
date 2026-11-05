@@ -1,53 +1,78 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
-  import { goto } from "$app/navigation";
-  import { page } from "$app/state";
-  import { CategoryWorksStore } from "$houdini";
-  import { worksVariables } from "$lib/workFilters.js";
-  import { askServers, connectedServers } from "$lib/servers.svelte.js";
+  import Sparkle from "phosphor-svelte/lib/Sparkle";
+  import { CategoryShelvesStore } from "$houdini";
+  import { failure, refetch } from "$lib/graphql.js";
+  import { mergeRanked } from "$lib/merge.js";
+  import { askServersForLists, connectedServers } from "$lib/servers.svelte.js";
+  import CategoryGrid from "$components/CategoryGrid.svelte";
+  import CategoryTabs from "$components/CategoryTabs.svelte";
   import Rail from "$components/Rail.svelte";
-  import Segmented from "$components/ui/Segmented.svelte";
-  import WorkBrowser from "$components/WorkBrowser.svelte";
+  import State from "$components/State.svelte";
 
   let { data: route } = $props();
 
-  const ANIME_KINDS = [{ value: "", label: "All" }, { value: "SERIES", label: "Series" }, { value: "MOVIE", label: "Movies" }];
-  const TYPE_FILTERS = { MUSIC: ["ARTIST", "ALBUM", "TRACK"] };
+  const released = (work) => work.releaseDate && Date.parse(work.releaseDate) <= Date.now();
+  const SHELVES = {
+    recommendations: (data) => data.recommendations.nodes,
+    newlyReleased: (data) => data.newlyReleased.nodes.filter(released),
+    recentlyAdded: (data) => data.recentlyAdded.nodes,
+  };
+  const listsOf = (data) => Object.fromEntries(Object.entries(SHELVES).map(([shelf, pick]) => [shelf, pick(data)]));
 
-  // A grid can't page through several servers at once, so each gets its own rail.
+  let shelves = $derived(route.shelves);
+  let own = $derived(shelves && $shelves.data ? listsOf($shelves.data) : null);
+
+  // Other servers fill in as they answer; this server's rails never wait on them.
   let elsewhere = $state([]);
+  let unreachable = $state([]);
   $effect(() => {
-    const variables = { category: route.category.value, ...worksVariables(page.url.searchParams) };
+    const category = route.category;
     elsewhere = [];
-    if (!connectedServers().length) return;
+    unreachable = [];
+    if (!category.shelves || !connectedServers().length) return;
     let stale = false;
-    askServers(new CategoryWorksStore(), variables, (data) => data.works.edges.map((edge) => edge.node)).then((asked) => {
-      if (!stale) elsewhere = asked.answers.filter((answer) => answer.works.length);
+    askServersForLists(new CategoryShelvesStore(), { category: category.value }, listsOf).then((asked) => {
+      if (stale) return;
+      elsewhere = asked.answers;
+      unreachable = asked.missing;
     });
     return () => { stale = true; };
   });
-
-  function showKind(kind) {
-    const next = new URLSearchParams(page.url.searchParams);
-    if (kind) next.set("kind", kind); else next.delete("kind");
-    goto(`?${next}`, { replaceState: true, noScroll: true, keepFocus: true });
-  }
+  const merged = (shelf) => (elsewhere.length ? mergeRanked([own[shelf], ...elsewhere.map((answer) => answer.lists[shelf])]) : own[shelf]);
+  let empty = $derived(own && !merged("recommendations").length && !merged("recentlyAdded").length);
+  let allHref = $derived(`/browse/${route.category.slug}/all`);
 </script>
 
 <svelte:head><title>{route.category.label} · NoFlex</title></svelte:head>
 
-<WorkBrowser works={route.works} title={route.category.label} eyebrow="Browse" kinds={TYPE_FILTERS[route.category.value] ?? []} allowRecursive={false} emptyTitle="Nothing here yet" emptyMessage="Check back after the next scan.">
-  {#snippet toolbar()}
-    {#if route.category.value === "ANIME"}<Segmented value={page.url.searchParams.get("kind") ?? ""} items={ANIME_KINDS} label="Anime type" onchange={showKind} />{/if}
-  {/snippet}
-</WorkBrowser>
-
-{#if elsewhere.length}
-  <div class="page elsewhere">
-    {#each elsewhere as answer (answer.server.id)}<Rail title="On {answer.server.name}" items={answer.works} />{/each}
+{#if !route.category.shelves}
+  <CategoryGrid category={route.category} works={route.works} />
+{:else}
+  <div class="page">
+    <CategoryTabs category={route.category} current="recommended" />
+    <header class="page-head"><div><p class="eyebrow">Browse</p><h1>{route.category.label}</h1></div></header>
+    {#if failure($shelves) && !own}
+      <State kind="error" title="Couldn’t open this page" message={failure($shelves)} action={() => refetch(shelves)} />
+    {:else if !own}
+      <div class="rails" aria-busy="true">{#each [0, 1, 2] as _}<div class="skeleton shelf-skel"></div>{/each}</div>
+    {:else if empty}
+      <State icon={Sparkle} title="Nothing here yet" message="Check back after the next scan." />
+    {:else}
+      <div class="rails">
+        {#if unreachable.length}<p class="away" role="status">{unreachable.join(", ")} can’t be reached right now.</p>{/if}
+        {#if merged("recommendations").length}<Rail title="Recommended for you" eyebrow="Because of what you watch" items={merged("recommendations")} />{/if}
+        {#if merged("newlyReleased").length}<Rail title="Newly released" items={merged("newlyReleased")} href="{allHref}?sort=DATE_RELEASED_DESC" />{/if}
+        {#if merged("recentlyAdded").length}<Rail title="Recently added" items={merged("recentlyAdded")} href={allHref} />{/if}
+      </div>
+      <p class="all"><a class="btn outline" href={allHref}>Browse all {route.category.label.toLowerCase()}</a></p>
+    {/if}
   </div>
 {/if}
 
 <style>
-  .elsewhere { display: grid; gap: 28px; padding-top: 0; }
+  .rails { display: grid; gap: 28px; min-width: 0; }
+  .shelf-skel { height: 300px; border-radius: var(--r-l); }
+  .away { font-size: 0.86rem; color: var(--text-3); }
+  .all { margin-top: 28px; }
 </style>

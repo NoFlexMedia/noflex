@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use noflex_core::{TagId, WorkId, WorkKind};
 use noflex_storage::{
     RequestUser, Storage,
-    domain::{WatchedWork, Work, WorkFeatures},
+    domain::{ContentCategory, WatchedWork, Work, WorkFeatures},
     error::StorageResult,
     search::RRF_K,
 };
@@ -55,11 +55,15 @@ const MAX_SIMILAR_TITLES: usize = 3;
 /// set and a liked seed has a vector, embedding similarity. Without positive
 /// history, falls back to the highest-rated titles.
 ///
+/// `category` narrows what's recommended, not what describes the user's taste:
+/// the shows they watch still say which movies they'd like.
+///
 /// Respects library grants and parental restrictions through `user`.
 pub(crate) async fn recommendations(
     storage: &dyn Storage,
     embedder_namespace: Option<&str>,
     user: RequestUser,
+    category: Option<ContentCategory>,
     limit: u32,
     now: OffsetDateTime,
 ) -> StorageResult<Vec<Work>> {
@@ -83,9 +87,23 @@ pub(crate) async fn recommendations(
                 .push(by_taste_vector(storage, namespace, user, &seeds, &started, limit).await?);
         }
     }
-    let fused = fuse(&rankings);
+    let wanted = match category {
+        Some(category) => Some(
+            storage
+                .category_work_ids(category, user.access_user_id())
+                .await?
+                .into_iter()
+                .collect::<HashSet<_>>(),
+        ),
+        None => None,
+    };
+    let in_category = |work: &WorkId| wanted.as_ref().is_none_or(|set| set.contains(work));
+    let mut fused = fuse(&rankings);
+    fused.retain(in_category);
     let ranked = if fused.is_empty() {
-        by_rating(&catalog, &started)
+        let mut highest_rated = by_rating(&catalog, &started);
+        highest_rated.retain(in_category);
+        highest_rated
     } else {
         similarity.with_variety(fused, limit as usize)
     };
@@ -715,12 +733,55 @@ mod tests {
             .expect("ranking");
         assert!(ranked.is_empty(), "dislikes don't steer the vector");
 
-        let out = recommendations(&store, Some("taste"), user, 10, OffsetDateTime::now_utc())
-            .await
-            .expect("recommendations");
+        let out = recommendations(
+            &store,
+            Some("taste"),
+            user,
+            None,
+            10,
+            OffsetDateTime::now_utc(),
+        )
+        .await
+        .expect("recommendations");
         let mut listed = titles(&out);
         listed.sort_unstable();
         assert_eq!(listed, ["Far", "Near"], "started titles stay out");
+    }
+
+    #[tokio::test]
+    async fn a_category_narrows_recommendations_but_not_taste() {
+        let (store, user, library) = store_with_user().await;
+        let watched_show = work(&store, library, "Watched show").await;
+        let mut series = store
+            .get_work(watched_show)
+            .await
+            .expect("get")
+            .expect("work");
+        series.kind = WorkKind::Series;
+        store.upsert_work(&series).await.expect("series");
+        let other_show = work(&store, library, "Other show").await;
+        let mut other = store
+            .get_work(other_show)
+            .await
+            .expect("get")
+            .expect("work");
+        other.kind = WorkKind::Series;
+        store.upsert_work(&other).await.expect("series");
+        work(&store, library, "A movie").await;
+        store
+            .mark_played(user.user_id, PlayTarget::Work(watched_show), true)
+            .await
+            .expect("played");
+
+        let now = OffsetDateTime::now_utc();
+        let everything = recommendations(&store, None, user, None, 10, now)
+            .await
+            .expect("recommendations");
+        assert_eq!(titles(&everything), ["Other show"]);
+        let movies = recommendations(&store, None, user, Some(ContentCategory::Movies), 10, now)
+            .await
+            .expect("recommendations");
+        assert_eq!(titles(&movies), ["A movie"]);
     }
 
     #[tokio::test]
@@ -728,7 +789,7 @@ mod tests {
         let (store, user, library) = store_with_user().await;
         work(&store, library, "Only title").await;
 
-        let out = recommendations(&store, None, user, 10, OffsetDateTime::now_utc())
+        let out = recommendations(&store, None, user, None, 10, OffsetDateTime::now_utc())
             .await
             .expect("recommendations");
 

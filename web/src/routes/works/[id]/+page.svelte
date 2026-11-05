@@ -265,7 +265,7 @@
         </div>
         {#if genres.length}<p class="genres">{genres.join(" · ")}</p>{/if}
         {#if !isContainer && edition}
-          <div class="tech" aria-label="Video and audio format">{#each techBadges(mediaFile?.probe, edition, chosenAudio) as badge}<span class="badge">{badge}</span>{/each}</div>
+          <div class="tech" aria-label="Video and audio format">{#each techBadges(mediaFile?.probe, chosenAudio) as badge}<span class="badge">{badge}</span>{/each}</div>
         {/if}
 
         {#if work.tagline}<p class="tagline">{work.tagline}</p>{/if}

@@ -28,7 +28,7 @@ use crate::{
     error::StorageResult,
     query::{
         HybridQuery, ItemPage, ListTagsQuery, ListWorksQuery, Page, PageCursor, PlaySessionQuery,
-        TagQuery,
+        TagQuery, WorkFacetValues, WorkFacetsQuery,
     },
     search::{HealthReport, SearchHit, VectorHit},
 };
@@ -76,6 +76,12 @@ pub trait Storage: Send + Sync + 'static {
     /// Keyset page of works matching `q`. A `Random` sort ignores
     /// `q.cursor` and never reports `has_next`.
     async fn list_works(&self, q: &ListWorksQuery) -> StorageResult<ItemPage<Work>>;
+
+    /// The values each [`WorkFacet`](crate::query::WorkFacet) takes among the
+    /// top-level works `q` selects, for offering as filters. A facet with none is
+    /// left out, as are those with no list to offer: years are offered by decade,
+    /// and ratings, watch state, favorites and match status not at all.
+    async fn work_facets(&self, q: &WorkFacetsQuery) -> StorageResult<Vec<WorkFacetValues>>;
     async fn upsert_work(&self, work: &Work) -> StorageResult<()>;
     async fn delete_work(&self, id: WorkId) -> StorageResult<()>;
     async fn works_by_external_id(
@@ -539,6 +545,14 @@ pub trait Storage: Send + Sync + 'static {
         tag_namespaces: &[&str],
         access_user_id: Option<UserId>,
     ) -> StorageResult<Vec<WorkFeatures>>;
+
+    /// The top-level works in `category` that `access_user_id` can reach, for
+    /// narrowing a list made across categories; administrators leave it unset.
+    async fn category_work_ids(
+        &self,
+        category: crate::domain::ContentCategory,
+        access_user_id: Option<UserId>,
+    ) -> StorageResult<Vec<WorkId>>;
 
     /// Remove `work`'s vectors in every namespace, so the next backfill sweep
     /// recomputes them. A work with none is not an error.

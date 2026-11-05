@@ -6,12 +6,11 @@
 
 use async_graphql::{Enum, SimpleObject, connection::Connection};
 use noflex_core::{
-    ApiKeyId, ChannelId, ChannelLayout, CollectionId, ColorPrimaries, DeviceId, DevicePinId,
-    DolbyVisionProfile, EditionId, EpgProgramId, ExportJobId, ExternalId, ExternalIdKind,
-    HdrTransfer, ImageKind, InviteId, LibraryId, LinkedServerId, LiveTvSourceId,
-    MatrixCoefficients, MediaFileId, MetadataStatus, OptimizedVersionId, PixelFormat,
-    PlaySessionId, PlayTargetKind, PlaylistId, RecordingId, RecordingScheduleId, SessionId, TagId,
-    TagTarget, UserId, VideoCodec, VideoProfile, WatchRoomId, WorkField, WorkId, WorkKind,
+    ApiKeyId, ChannelId, CollectionId, DeviceId, DevicePinId, EditionId, EpgProgramId, ExportJobId,
+    ExternalId, ExternalIdKind, ImageKind, InviteId, LibraryId, LinkedServerId, LiveTvSourceId,
+    MediaFileId, MetadataStatus, OptimizedVersionId, PlaySessionId, PlayTargetKind, PlaylistId,
+    RecordingId, RecordingScheduleId, SessionId, TagId, TagTarget, UserId, VideoCodec, WatchRoomId,
+    WorkField, WorkId, WorkKind,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -58,9 +57,10 @@ pub struct Work {
     pub updated_at: OffsetDateTime,
 }
 
-/// An edition is a specific cut/version of a work. Most works have one
-/// ("Default"); collector-grade libraries have multiple ("Theatrical",
-/// "Director's Cut", "Extended").
+/// An edition is a specific cut of a work. Most works have one ("Default");
+/// collector-grade libraries have multiple ("Theatrical", "Director's Cut",
+/// "Extended"). Encodes of one cut, like 4K HDR and 1080p SDR, are that edition's
+/// [`MediaFile`]s, and what's true of a picture or a track is recorded on them.
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
 #[graphql(complex)]
 pub struct Edition {
@@ -72,96 +72,6 @@ pub struct Edition {
     pub intro_end_ms: Option<i64>,
     pub credits_start_ms: Option<i64>,
     pub chapters: Vec<Chapter>,
-    /// Codec and dimension metadata are promoted off
-    /// `media_files.probe_json` so the direct-play decision can read
-    /// them without a join. Populated by the post_scan ffprobe task; `None` for editions whose
-    /// media files have never been probed.
-    #[serde(default)]
-    pub codec_video: Option<String>,
-    #[serde(default)]
-    pub codec_audio: Option<String>,
-    #[serde(default)]
-    pub width: Option<u32>,
-    #[serde(default)]
-    pub height: Option<u32>,
-    #[serde(default)]
-    pub bit_depth: Option<u32>,
-    /// Loose free-form HDR description (e.g. "HDR10", "HLG"). Kept
-    /// for back-compat with legacy rows; the typed
-    /// `transfer_characteristics` + `dovi_profile` fields below carry
-    /// the v2 truth. `#[serde(default, skip_serializing_if =
-    /// "Option::is_none")]` so a missing field is invisible on the
-    /// wire — only the typed fields appear once we promote them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hdr_format: Option<String>,
-    /// Per-track audio metadata (language, channels, codec, default).
-    /// `Option<>` here so the legacy case of "no probe yet" round-trips
-    /// without an empty-array column write.
-    #[serde(default)]
-    pub audio_tracks: Option<Vec<AudioTrack>>,
-    #[serde(default)]
-    pub subtitle_tracks: Option<Vec<SubtitleTrack>>,
-    // ---- v2 codec / HDR / chroma matrix ---------------------------------
-    /// Typed video codec (replaces the loose `codec_video` string in
-    /// the new probe pipeline; the string field stays for back-compat).
-    #[serde(default)]
-    pub video_codec: Option<VideoCodec>,
-    /// H.264/H.265/AV1/VP9 profile tier.
-    #[serde(default)]
-    pub video_profile: Option<VideoProfile>,
-    /// Codec level × 10 (H.264) or × 30 (HEVC). `f32` so we can carry
-    /// the half-step bumps ffmpeg occasionally reports.
-    #[serde(default)]
-    pub video_level: Option<f32>,
-    /// Pixel format / chroma subsampling.
-    #[serde(default)]
-    pub pixel_format: Option<PixelFormat>,
-    /// Color primaries (gamut).
-    #[serde(default)]
-    pub color_primaries: Option<ColorPrimaries>,
-    /// Transfer characteristics. The v2 truth; `hdr_format` is the
-    /// legacy free-form string for older rows.
-    #[serde(default)]
-    pub transfer_characteristics: Option<HdrTransfer>,
-    /// YCbCr ↔ RGB matrix coefficients.
-    #[serde(default)]
-    pub matrix_coefficients: Option<MatrixCoefficients>,
-    /// Dolby Vision profile tag (5/7/8/9). Stored as INTEGER in SQL.
-    #[serde(default)]
-    pub dovi_profile: Option<DolbyVisionProfile>,
-    /// Max Content Light Level (cd/m²). HDR10 / DV static metadata.
-    #[serde(default)]
-    pub max_cll: Option<u32>,
-    /// Max Frame-Average Light Level (cd/m²).
-    #[serde(default)]
-    pub max_fall: Option<u32>,
-    /// SMPTE ST 2086 mastering-display primary CIE 1931 (x, y), each
-    /// in 0.00002-unit resolution × 50000 = 0..50000.
-    // Skipped on the GQL surface: async-graphql has no tuple type, and
-    // the transcoder (the only consumer) reads the Rust struct.
-    #[graphql(skip)]
-    #[serde(default)]
-    pub mastering_display_primary_r: Option<(u16, u16)>,
-    #[graphql(skip)]
-    #[serde(default)]
-    pub mastering_display_primary_g: Option<(u16, u16)>,
-    #[graphql(skip)]
-    #[serde(default)]
-    pub mastering_display_primary_b: Option<(u16, u16)>,
-    #[graphql(skip)]
-    #[serde(default)]
-    pub mastering_display_white_point: Option<(u16, u16)>,
-    /// Minimum mastering-display luminance, 0.0001 cd/m² resolution
-    /// (stored × 10000 = 0..max). `0.0001` is the SMPTE ST 2086 floor.
-    #[serde(default)]
-    pub mastering_display_min_luminance: Option<u32>,
-    /// Maximum mastering-display luminance, 1 cd/m² resolution.
-    #[serde(default)]
-    pub mastering_display_max_luminance: Option<u32>,
-    /// Source frame rate (fps). Drives bitrate-vs-resolution math in
-    /// the transcoder's ladder.
-    #[serde(default)]
-    pub frame_rate: Option<f32>,
 }
 
 #[async_graphql::ComplexObject]
@@ -339,40 +249,6 @@ pub struct IntroMarkers {
     pub intro_start_ms: Option<i64>,
     pub intro_end_ms: Option<i64>,
     pub credits_start_ms: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SimpleObject)]
-pub struct AudioTrack {
-    pub language: Option<String>,
-    pub codec: String,
-    pub channels: u8,
-    pub default: bool,
-    /// Sample bit depth (16 for AAC/Opus/AC-3, 24 for FLAC/TrueHD/MLP).
-    #[serde(default)]
-    pub bit_depth: Option<u8>,
-    /// Sample rate in Hz; affects DTS-HD MA downmix decisions.
-    #[serde(default)]
-    pub sample_rate: Option<u32>,
-    /// Speaker / channel layout. `ObjectBased` for JOC/Atmos.
-    #[serde(default)]
-    pub channel_layout: Option<ChannelLayout>,
-    /// Codec profile (e.g. `"LC-AAC"`, `"HE-AAC"`, `"xHE-AAC"`,
-    /// `"DTS-HD MA"`, `"DTS-HD HRA"`, `"DTS:X"`).
-    #[serde(default)]
-    pub codec_profile: Option<String>,
-    /// JOC/Atmos metadata: `"joc"` for Atmos, `"none"` otherwise.
-    #[serde(default)]
-    pub audio_object_type: Option<String>,
-    /// `true` for sidecar files, `false` for muxed-in.
-    #[serde(default)]
-    pub external: bool,
-    /// Independent of `default` — a track can be default-non-forced
-    /// OR default-forced (foreign-language subs for non-default audio).
-    #[serde(default)]
-    pub forced: bool,
-    /// Human-readable label, e.g. `"Director's Commentary"`.
-    #[serde(default)]
-    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SimpleObject)]

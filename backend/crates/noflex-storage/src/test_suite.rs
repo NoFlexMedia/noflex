@@ -135,6 +135,9 @@ where
     user_delete_cascades_device_pins(store).await;
     list_works_basic_filter(store).await;
     list_works_watched_filter(store).await;
+    list_works_rules(store).await;
+    cuts_and_encodes_stay_on_their_own_levels(store).await;
+    work_facets_list_what_filters_can_match(store).await;
     list_works_rating_and_added_filters(store).await;
     list_works_title_sort_pagination(store).await;
     list_works_year_sort_pagination_with_nulls(store).await;
@@ -538,44 +541,6 @@ async fn round_trip_work_edition_media<S: Storage + ?Sized>(store: &S) {
         intro_end_ms: None,
         credits_start_ms: None,
         chapters: vec![],
-        codec_video: Some("h264".to_string()),
-        codec_audio: Some("aac".to_string()),
-        width: Some(1920),
-        height: Some(1080),
-        bit_depth: Some(8),
-        hdr_format: None,
-        audio_tracks: Some(vec![crate::domain::AudioTrack {
-            language: Some("en".to_string()),
-            codec: "aac".to_string(),
-            channels: 6,
-            default: true,
-            bit_depth: None,
-            sample_rate: None,
-            channel_layout: None,
-            codec_profile: None,
-            audio_object_type: None,
-            external: false,
-            forced: false,
-            title: None,
-        }]),
-        subtitle_tracks: None,
-        video_codec: None,
-        video_profile: None,
-        video_level: None,
-        pixel_format: None,
-        color_primaries: None,
-        transfer_characteristics: None,
-        matrix_coefficients: None,
-        dovi_profile: None,
-        max_cll: None,
-        max_fall: None,
-        mastering_display_primary_r: None,
-        mastering_display_primary_g: None,
-        mastering_display_primary_b: None,
-        mastering_display_white_point: None,
-        mastering_display_min_luminance: None,
-        mastering_display_max_luminance: None,
-        frame_rate: None,
     };
     store
         .upsert_edition(&edition)
@@ -588,20 +553,6 @@ async fn round_trip_work_edition_media<S: Storage + ?Sized>(store: &S) {
         .expect("editions_for_work");
     assert_eq!(editions.len(), 1);
     assert_eq!(editions[0].name, "Final Cut");
-    assert_eq!(editions[0].codec_video.as_deref(), Some("h264"));
-    assert_eq!(editions[0].codec_audio.as_deref(), Some("aac"));
-    assert_eq!(editions[0].width, Some(1920));
-    assert_eq!(editions[0].height, Some(1080));
-    assert_eq!(editions[0].bit_depth, Some(8));
-    assert_eq!(editions[0].audio_tracks.as_ref().map(|v| v.len()), Some(1));
-    assert_eq!(
-        editions[0]
-            .audio_tracks
-            .as_ref()
-            .and_then(|v| v.first())
-            .map(|t| t.language.clone()),
-        Some(Some("en".to_string()))
-    );
 
     let mf1 = MediaFile {
         id: noflex_core::MediaFileId::new(),
@@ -1245,31 +1196,6 @@ fn make_edition(work_id: WorkId, name: &str) -> Edition {
         intro_end_ms: None,
         credits_start_ms: None,
         chapters: vec![],
-        codec_video: None,
-        codec_audio: None,
-        width: None,
-        height: None,
-        bit_depth: None,
-        hdr_format: None,
-        audio_tracks: None,
-        subtitle_tracks: None,
-        video_codec: None,
-        video_profile: None,
-        video_level: None,
-        pixel_format: None,
-        color_primaries: None,
-        transfer_characteristics: None,
-        matrix_coefficients: None,
-        dovi_profile: None,
-        max_cll: None,
-        max_fall: None,
-        mastering_display_primary_r: None,
-        mastering_display_primary_g: None,
-        mastering_display_primary_b: None,
-        mastering_display_white_point: None,
-        mastering_display_min_luminance: None,
-        mastering_display_max_luminance: None,
-        frame_rate: None,
     }
 }
 
@@ -5789,6 +5715,861 @@ async fn session_prune_idle<S: Storage + ?Sized>(store: &S) {
     );
 
     store.delete_user(user.id).await.ok();
+}
+
+/// A library covering what rules look at: movies with varied files and credits,
+/// a series whose files sit two levels down, and a viewer part way through it.
+struct RulesFixture {
+    library: LibraryId,
+    viewer: UserId,
+    /// 1995, rated 8. Drama and Crime, directed by Ada. 4K HDR10 with an Atmos
+    /// English track and a French one spelled `fre`. A Director's Cut.
+    alpha: WorkId,
+    /// 2004, rated 6. Drama, Ada acts. 1080p SDR, 5.1, Spanish sidecar subtitles.
+    beta: WorkId,
+    /// 2015, unrated, added long ago, no files. Comedy, in the "Favourites" collection.
+    gamma: WorkId,
+    /// A two-episode series in Dolby Vision and Japanese: one episode played.
+    started_show: WorkId,
+    /// A one-episode series with its episode played.
+    finished_show: WorkId,
+}
+
+async fn rules_fixture<S: Storage + ?Sized>(store: &S, name: &str) -> RulesFixture {
+    let lib = test_library(name);
+    store.upsert_library(&lib).await.expect("library");
+    let viewer = make_user(&format!("{name}-viewer"), false);
+    store.upsert_user(&viewer).await.expect("viewer");
+    let now = OffsetDateTime::now_utc();
+
+    let mut alpha = make_work(lib.id, "Alpha 100% Cut", now);
+    alpha.year = Some(1995);
+    alpha.community_rating = Some(8.0);
+    alpha.metadata_status = MetadataStatus::Confirmed;
+    let mut beta = make_work(lib.id, "Beta", now);
+    beta.year = Some(2004);
+    beta.community_rating = Some(6.0);
+    beta.metadata_status = MetadataStatus::Confirmed;
+    let mut gamma = make_work(lib.id, "Gamma", now - time::Duration::days(400));
+    gamma.year = Some(2015);
+    let started_show = make_work_of_kind(lib.id, WorkKind::Series, "Started", now);
+    let mut started_season = make_work_of_kind(lib.id, WorkKind::Season, "S1", now);
+    started_season.parent_id = Some(started_show.id);
+    let mut played_episode = make_work_of_kind(lib.id, WorkKind::Episode, "E1", now);
+    played_episode.parent_id = Some(started_season.id);
+    let mut unplayed_episode = make_work_of_kind(lib.id, WorkKind::Episode, "E2", now);
+    unplayed_episode.parent_id = Some(started_season.id);
+    let finished_show = make_work_of_kind(lib.id, WorkKind::Series, "Finished", now);
+    let mut finished_season = make_work_of_kind(lib.id, WorkKind::Season, "S1", now);
+    finished_season.parent_id = Some(finished_show.id);
+    let mut finished_episode = make_work_of_kind(lib.id, WorkKind::Episode, "E1", now);
+    finished_episode.parent_id = Some(finished_season.id);
+    for work in [
+        &alpha,
+        &beta,
+        &gamma,
+        &started_show,
+        &started_season,
+        &played_episode,
+        &unplayed_episode,
+        &finished_show,
+        &finished_season,
+        &finished_episode,
+    ] {
+        store.upsert_work(work).await.expect("work");
+    }
+
+    let track = |language: &str, codec: &str, channels: u32, object: Option<&str>| serde_json::json!({ "language": language, "codec": codec, "channels": channels, "audio_object_type": object });
+    let video = |width: u32, height: u32, codec: &str, transfer: &str, dovi: Option<&str>| serde_json::json!({ "width": width, "height": height, "codec": codec, "transfer": transfer, "dovi_profile": dovi });
+    let files = [
+        (
+            alpha.id,
+            "Director's Cut",
+            serde_json::json!({
+                "video": video(3840, 1600, "h265", "pq", None),
+                "audio": [track("eng", "truehd", 8, Some("joc")), track("fre", "ac3", 6, None)],
+                "subtitle": [{ "language": "eng", "codec": "subrip" }],
+            }),
+            vec![],
+        ),
+        (
+            beta.id,
+            "Default",
+            serde_json::json!({
+                "video": video(1920, 1080, "h264", "bt709", None),
+                "audio": [track("eng", "eac3", 6, None)],
+                "subtitle": [],
+            }),
+            vec![serde_json::from_value(serde_json::json!({ "language": "es", "codec": "srt", "default": false, "forced": false, "external": true })).expect("sidecar")],
+        ),
+        (
+            played_episode.id,
+            "Default",
+            serde_json::json!({
+                "video": video(3840, 2160, "h265", "pq", Some("profile8")),
+                "audio": [track("jpn", "aac", 2, None)],
+                "subtitle": [],
+            }),
+            vec![],
+        ),
+        (
+            unplayed_episode.id,
+            "Default",
+            serde_json::json!({
+                "video": video(1280, 720, "h264", "bt709", None),
+                "audio": [track("jpn", "aac", 2, None)],
+                "subtitle": [],
+            }),
+            vec![],
+        ),
+        (
+            finished_episode.id,
+            "Default",
+            serde_json::json!({
+                "video": video(1920, 1080, "h264", "bt709", None),
+                "audio": [track("eng", "aac", 2, None)],
+                "subtitle": [],
+            }),
+            vec![],
+        ),
+    ];
+    for (work, edition_name, probe, sidecars) in files {
+        let edition = make_edition(work, edition_name);
+        let edition_id = store.upsert_edition(&edition).await.expect("edition");
+        let mut media = make_media(edition_id, &format!("/rules/{name}/{work:?}.mkv"), now);
+        media.probe = probe.into();
+        media.subtitle_tracks = sidecars;
+        store.upsert_media_file(&media).await.expect("media");
+    }
+
+    let assign = async |work: WorkId,
+                        namespace: &str,
+                        display: &str,
+                        metadata: serde_json::Value| {
+        let slug = noflex_core::text::slugify(display);
+        let tag = match store.tag_by_slug(namespace, &slug).await.expect("find tag") {
+            Some(tag) => tag.id,
+            None => store
+                .upsert_tag(&make_tag(namespace, &slug, display))
+                .await
+                .expect("tag"),
+        };
+        store
+            .assign_tag_with_metadata(tag, TagTarget::Work(work), 1.0, "provider:test", &metadata)
+            .await
+            .expect("assign");
+    };
+    let none = serde_json::json!({});
+    assign(alpha.id, "genre", "Drama", none.clone()).await;
+    assign(alpha.id, "genre", "Crime", none.clone()).await;
+    assign(beta.id, "genre", "Drama", none.clone()).await;
+    assign(gamma.id, "genre", "Comedy", none.clone()).await;
+    assign(
+        alpha.id,
+        "person",
+        "Ada Reyes",
+        serde_json::json!({ "credits": [{ "role": "Director" }] }),
+    )
+    .await;
+    assign(
+        beta.id,
+        "person",
+        "Ada Reyes",
+        serde_json::json!({ "credits": [{ "character": "Mara", "role": "Actor" }] }),
+    )
+    .await;
+
+    let collection = Collection {
+        id: CollectionId::new(),
+        library_id: lib.id,
+        title: "Favourites".to_string(),
+        sort_title: "favourites".to_string(),
+        overview: None,
+        created_at: now,
+        updated_at: now,
+    };
+    store
+        .create_collection(&collection)
+        .await
+        .expect("collection");
+    store
+        .set_collection_items(collection.id, &[gamma.id])
+        .await
+        .expect("items");
+
+    for played in [played_episode.id, finished_episode.id] {
+        store
+            .mark_played(viewer.id, noflex_core::PlayTarget::Work(played), true)
+            .await
+            .expect("played");
+    }
+    store
+        .set_favorite(viewer.id, noflex_core::PlayTarget::Work(beta.id), true)
+        .await
+        .expect("favorite");
+
+    RulesFixture {
+        library: lib.id,
+        viewer: viewer.id,
+        alpha: alpha.id,
+        beta: beta.id,
+        gamma: gamma.id,
+        started_show: started_show.id,
+        finished_show: finished_show.id,
+    }
+}
+
+fn rule(facet: crate::WorkFacet, mode: crate::MatchMode, values: &[&str]) -> crate::WorkRule {
+    crate::WorkRule {
+        facet,
+        mode,
+        values: values.iter().map(ToString::to_string).collect(),
+    }
+}
+
+async fn list_works_rules<S: Storage + ?Sized>(store: &S) {
+    use crate::{ListWorksQuery, MatchMode::*, WorkFacet::*, WorkRules};
+
+    let f = rules_fixture(store, "Rules").await;
+    let query = |rules: WorkRules| ListWorksQuery {
+        library: Some(f.library),
+        viewer: Some(f.viewer),
+        rules: Some(rules),
+        recursive: false,
+        limit: 100,
+        ..Default::default()
+    };
+    let matching = async |rules: WorkRules| -> Vec<WorkId> {
+        let mut ids: Vec<WorkId> = store
+            .list_works(&query(rules))
+            .await
+            .expect("list")
+            .items
+            .iter()
+            .map(|work| work.id)
+            .collect();
+        ids.sort_by_key(|id| id.into_uuid());
+        ids
+    };
+    let check = async |rules: Vec<crate::WorkRule>, mode, expected: &[WorkId], what: &str| {
+        let mut expected = expected.to_vec();
+        expected.sort_by_key(|id| id.into_uuid());
+        let got = matching(WorkRules {
+            mode,
+            rules,
+            groups: vec![],
+        })
+        .await;
+        assert_eq!(got, expected, "{what}");
+    };
+    let RulesFixture {
+        alpha,
+        beta,
+        gamma,
+        started_show: started,
+        finished_show: finished,
+        ..
+    } = f;
+
+    // A facet's own logic.
+    check(
+        vec![rule(Genre, Any, &["crime", "comedy"])],
+        All,
+        &[alpha, gamma],
+        "any genre",
+    )
+    .await;
+    check(
+        vec![rule(Genre, All, &["drama", "crime"])],
+        All,
+        &[alpha],
+        "all genres",
+    )
+    .await;
+    check(
+        vec![rule(Genre, None, &["drama"])],
+        All,
+        &[gamma, started, finished],
+        "no genre",
+    )
+    .await;
+    // A person's role is part of the match.
+    check(
+        vec![rule(Director, Any, &["ada-reyes"])],
+        All,
+        &[alpha],
+        "directed",
+    )
+    .await;
+    check(
+        vec![rule(Actor, Any, &["ada-reyes"])],
+        All,
+        &[beta],
+        "acted",
+    )
+    .await;
+
+    // Facets combined, with a group's mode.
+    check(
+        vec![
+            rule(Genre, Any, &["comedy"]),
+            rule(Resolution, Any, &["4k"]),
+        ],
+        Any,
+        &[alpha, gamma, started],
+        "or",
+    )
+    .await;
+    check(
+        vec![rule(Genre, Any, &["drama"]), rule(Resolution, Any, &["4k"])],
+        All,
+        &[alpha],
+        "and",
+    )
+    .await;
+    check(
+        vec![rule(Genre, Any, &["drama"]), rule(Resolution, Any, &["4k"])],
+        None,
+        &[gamma, finished],
+        "nor",
+    )
+    .await;
+
+    // Groups nest: (4K or comedy) and not crime.
+    let nested = WorkRules {
+        mode: All,
+        rules: vec![rule(Genre, None, &["crime"])],
+        groups: vec![WorkRules {
+            mode: Any,
+            rules: vec![
+                rule(Resolution, Any, &["4k"]),
+                rule(Genre, Any, &["comedy"]),
+            ],
+            groups: vec![],
+        }],
+    };
+    let mut expected = vec![gamma, started];
+    expected.sort_by_key(|id| id.into_uuid());
+    assert_eq!(matching(nested).await, expected, "nested groups");
+    // Empty conditions say nothing, at any level.
+    let empty = WorkRules {
+        mode: Any,
+        rules: vec![rule(Genre, Any, &[])],
+        groups: vec![WorkRules::default()],
+    };
+    assert_eq!(matching(empty).await.len(), 5, "empty rules filter nothing");
+
+    // Media: by either dimension, on a work or anything beneath it.
+    check(
+        vec![rule(Resolution, Any, &["4k"])],
+        All,
+        &[alpha, started],
+        "scope 4K counts",
+    )
+    .await;
+    check(
+        vec![rule(Resolution, Any, &["720p"])],
+        All,
+        &[started],
+        "any episode's file",
+    )
+    .await;
+    check(
+        vec![rule(Resolution, All, &["4k", "720p"])],
+        All,
+        &[started],
+        "files together",
+    )
+    .await;
+    check(
+        vec![rule(DynamicRange, Any, &["dolby_vision"])],
+        All,
+        &[started],
+        "vision",
+    )
+    .await;
+    check(
+        vec![rule(DynamicRange, Any, &["hdr10"])],
+        All,
+        &[alpha],
+        "vision isn't HDR10",
+    )
+    .await;
+    check(
+        vec![rule(VideoCodec, Any, &["h265"])],
+        All,
+        &[alpha, started],
+        "video codec",
+    )
+    .await;
+    check(
+        vec![rule(AudioCodec, Any, &["truehd"])],
+        All,
+        &[alpha],
+        "audio codec",
+    )
+    .await;
+    check(
+        vec![rule(AudioLayout, Any, &["atmos"])],
+        All,
+        &[alpha],
+        "atmos",
+    )
+    .await;
+    check(
+        vec![rule(AudioLayout, Any, &["5.1"])],
+        All,
+        &[alpha, beta],
+        "any track's layout",
+    )
+    .await;
+    check(
+        vec![rule(AudioLanguage, Any, &["fra"])],
+        All,
+        &[alpha],
+        "another spelling of a language",
+    )
+    .await;
+    check(
+        vec![rule(SubtitleLanguage, Any, &["spa"])],
+        All,
+        &[beta],
+        "sidecar subtitles",
+    )
+    .await;
+    check(
+        vec![rule(SubtitleCodec, Any, &["subrip"])],
+        All,
+        &[alpha],
+        "muxed subtitles",
+    )
+    .await;
+    check(
+        vec![rule(Edition, Any, &["Director's Cut"])],
+        All,
+        &[alpha],
+        "edition",
+    )
+    .await;
+
+    // The rest of what a work is.
+    check(
+        vec![rule(Title, Any, &["100%"])],
+        All,
+        &[alpha],
+        "title, with % as itself",
+    )
+    .await;
+    check(
+        vec![rule(Title, None, &["ALPHA", "beta"])],
+        All,
+        &[gamma, started, finished],
+        "not these titles",
+    )
+    .await;
+    check(
+        vec![rule(Years, Any, &["1990-1999", "2010-2019"])],
+        All,
+        &[alpha, gamma],
+        "decades",
+    )
+    .await;
+    check(
+        vec![rule(Years, Any, &["2004-"])],
+        All,
+        &[beta, gamma],
+        "open-ended years",
+    )
+    .await;
+    check(vec![rule(MinRating, Any, &["7"])], All, &[alpha], "rating").await;
+    check(
+        vec![rule(AddedWithinDays, None, &["30"])],
+        All,
+        &[gamma],
+        "added long ago",
+    )
+    .await;
+    check(
+        vec![rule(Collection, Any, &["favourites"])],
+        All,
+        &[gamma],
+        "collection ignores case",
+    )
+    .await;
+    check(
+        vec![rule(MatchStatus, Any, &["matched"])],
+        All,
+        &[alpha, beta],
+        "matched",
+    )
+    .await;
+
+    // The viewer's own state, rolled up through a series.
+    check(
+        vec![rule(Favorite, Any, &["yes"])],
+        All,
+        &[beta],
+        "favorite",
+    )
+    .await;
+    check(
+        vec![rule(WatchState, Any, &["in_progress"])],
+        All,
+        &[started],
+        "part way through",
+    )
+    .await;
+    check(
+        vec![rule(WatchState, Any, &["watched"])],
+        All,
+        &[finished],
+        "every episode played",
+    )
+    .await;
+    check(
+        vec![rule(WatchState, Any, &["unwatched"])],
+        All,
+        &[alpha, beta, gamma],
+        "nothing started",
+    )
+    .await;
+    check(
+        vec![rule(WatchState, None, &["unwatched"])],
+        All,
+        &[started, finished],
+        "anything started",
+    )
+    .await;
+
+    // Pages keep to the rules, and to their cursor.
+    let first = store
+        .list_works(&ListWorksQuery {
+            limit: 1,
+            ..query(WorkRules {
+                rules: vec![rule(Genre, Any, &["drama"])],
+                ..Default::default()
+            })
+        })
+        .await
+        .expect("first page");
+    assert_eq!(first.items.len(), 1);
+    assert!(first.has_next);
+    let second = store
+        .list_works(&ListWorksQuery {
+            limit: 1,
+            cursor: first.next_cursor(),
+            ..query(WorkRules {
+                rules: vec![rule(Genre, Any, &["drama"])],
+                ..Default::default()
+            })
+        })
+        .await
+        .expect("second page");
+    assert_eq!(second.items.len(), 1);
+    assert_ne!(first.items[0].id, second.items[0].id);
+    assert!(!second.has_next);
+
+    // Mistakes are the caller's to hear about, not an empty grid.
+    for rules in [
+        vec![rule(Years, Any, &["nineties"])],
+        vec![rule(WatchState, Any, &["paused"])],
+        vec![rule(Genre, All, &vec!["x"; 70])],
+    ] {
+        let result = store
+            .list_works(&query(WorkRules {
+                rules,
+                ..Default::default()
+            }))
+            .await;
+        assert!(matches!(result, Err(crate::StorageError::InvalidInput(_))));
+    }
+    let anonymous = ListWorksQuery {
+        viewer: Option::None,
+        ..query(WorkRules {
+            rules: vec![rule(Favorite, Any, &["yes"])],
+            ..Default::default()
+        })
+    };
+    assert!(matches!(
+        store.list_works(&anonymous).await,
+        Err(crate::StorageError::InvalidInput(_))
+    ));
+    let mut deep = WorkRules {
+        rules: vec![rule(Genre, Any, &["drama"])],
+        ..Default::default()
+    };
+    for _ in 0..12 {
+        deep = WorkRules {
+            groups: vec![deep],
+            ..Default::default()
+        };
+    }
+    assert!(matches!(
+        store.list_works(&query(deep)).await,
+        Err(crate::StorageError::InvalidInput(_))
+    ));
+
+    // Stored facts follow the file: rewritten with its probe, gone with its removal.
+    let edition = store
+        .editions_for_work(alpha)
+        .await
+        .expect("editions")
+        .remove(0);
+    let mut file = store
+        .media_files_for_edition(edition.id)
+        .await
+        .expect("files")
+        .remove(0);
+    file.probe =
+        serde_json::json!({ "video": { "width": 1280, "height": 720, "codec": "h264" } }).into();
+    store.upsert_media_file(&file).await.expect("rewrite");
+    check(
+        vec![rule(Resolution, Any, &["4k"])],
+        All,
+        &[started],
+        "the old value left",
+    )
+    .await;
+    check(
+        vec![rule(Resolution, Any, &["720p"])],
+        All,
+        &[alpha, started],
+        "the new value arrived",
+    )
+    .await;
+    check(
+        vec![rule(AudioLayout, Any, &["atmos"])],
+        All,
+        &[],
+        "its old tracks left",
+    )
+    .await;
+    store.delete_media_file(file.id).await.expect("delete");
+    check(
+        vec![rule(Resolution, Any, &["720p"])],
+        All,
+        &[started],
+        "gone with the file",
+    )
+    .await;
+
+    // Moving a season carries its episodes' files to the new series.
+    let now = OffsetDateTime::now_utc();
+    let adopter = make_work_of_kind(f.library, WorkKind::Series, "Adopter", now);
+    store.upsert_work(&adopter).await.expect("adopter");
+    let mut season = store
+        .list_works(&ListWorksQuery {
+            parent: Some(started),
+            limit: 1,
+            ..Default::default()
+        })
+        .await
+        .expect("seasons")
+        .items
+        .remove(0);
+    season.parent_id = Some(adopter.id);
+    store.upsert_work(&season).await.expect("move season");
+    check(
+        vec![rule(Resolution, Any, &["720p"])],
+        All,
+        &[adopter.id],
+        "the files followed their season",
+    )
+    .await;
+
+    store.delete_library(f.library).await.expect("clean up");
+    store.delete_user(f.viewer).await.expect("clean up");
+}
+
+/// Two cuts of one film, one of them in two encodes: a cut is an edition with its
+/// own runtime, and each encode is a file that answers for itself.
+async fn cuts_and_encodes_stay_on_their_own_levels<S: Storage + ?Sized>(store: &S) {
+    use crate::{ListWorksQuery, MatchMode::*, WorkFacet::*, WorkRules};
+
+    let library = test_library("Cuts And Encodes");
+    store.upsert_library(&library).await.expect("library");
+    let now = OffsetDateTime::now_utc();
+    let film = make_work(library.id, "Film", now);
+    store.upsert_work(&film).await.expect("film");
+
+    let mut theatrical = make_edition(film.id, "Theatrical");
+    theatrical.runtime_ms = Some(6_000_000);
+    let mut extended = make_edition(film.id, "Extended");
+    extended.runtime_ms = Some(9_000_000);
+    store.upsert_edition(&theatrical).await.expect("theatrical");
+    store.upsert_edition(&extended).await.expect("extended");
+
+    let probe = |width: u32, height: u32, transfer: &str| serde_json::json!({ "video": { "width": width, "height": height, "codec": "h265", "transfer": transfer } });
+    for (edition, path, picture) in [
+        (
+            theatrical.id,
+            "/cuts/theatrical-4k.mkv",
+            probe(3840, 2160, "pq"),
+        ),
+        (
+            theatrical.id,
+            "/cuts/theatrical-1080.mkv",
+            probe(1920, 1080, "bt709"),
+        ),
+        (
+            extended.id,
+            "/cuts/extended-720.mkv",
+            probe(1280, 720, "bt709"),
+        ),
+    ] {
+        let mut file = make_media(edition, path, now);
+        file.probe = picture.into();
+        store.upsert_media_file(&file).await.expect("file");
+    }
+
+    let cuts = store.editions_for_work(film.id).await.expect("cuts");
+    let runtime_of = |name: &str| {
+        cuts.iter()
+            .find(|cut| cut.name == name)
+            .and_then(|cut| cut.runtime_ms)
+    };
+    assert_eq!(cuts.len(), 2, "encodes don't make more cuts");
+    assert_eq!(runtime_of("Theatrical"), Some(6_000_000));
+    assert_eq!(runtime_of("Extended"), Some(9_000_000));
+
+    let encodes = store
+        .media_files_for_edition(theatrical.id)
+        .await
+        .expect("encodes");
+    assert_eq!(encodes.len(), 2, "each encode keeps its own file");
+    let heights: Vec<_> = encodes
+        .iter()
+        .map(|file| file.probe.0["video"]["height"].as_u64())
+        .collect();
+    assert!(heights.contains(&Some(2160)) && heights.contains(&Some(1080)));
+
+    let matches = async |facet, value: &str| {
+        let rules = WorkRules {
+            rules: vec![rule(facet, Any, &[value])],
+            ..Default::default()
+        };
+        let page = store
+            .list_works(&ListWorksQuery {
+                library: Some(library.id),
+                rules: Some(rules),
+                limit: 10,
+                ..Default::default()
+            })
+            .await
+            .expect("list");
+        page.items.iter().map(|work| work.id).collect::<Vec<_>>() == [film.id]
+    };
+    // Every encode of every cut answers for the film, including the one a column
+    // on the edition would have had no room for.
+    assert!(matches(Resolution, "4k").await);
+    assert!(matches(Resolution, "1080p").await);
+    assert!(matches(Resolution, "720p").await);
+    assert!(matches(DynamicRange, "hdr10").await);
+    assert!(matches(Edition, "Theatrical").await);
+    assert!(matches(Edition, "Extended").await);
+    assert!(!matches(Resolution, "8k").await);
+    assert!(!matches(Edition, "Default").await);
+
+    store.delete_library(library.id).await.expect("clean up");
+}
+
+async fn work_facets_list_what_filters_can_match<S: Storage + ?Sized>(store: &S) {
+    use crate::{WorkFacet, WorkFacetsQuery};
+
+    let f = rules_fixture(store, "Facets").await;
+    let facets = store
+        .work_facets(&WorkFacetsQuery {
+            library: Some(f.library),
+            ..Default::default()
+        })
+        .await
+        .expect("facets");
+    let values = |facet: WorkFacet| -> Vec<(String, u32)> {
+        let mut found: Vec<(String, u32)> = facets
+            .iter()
+            .find(|entry| entry.facet == facet)
+            .map(|entry| {
+                entry
+                    .values
+                    .iter()
+                    .map(|value| (value.value.clone(), value.work_count))
+                    .collect()
+            })
+            .unwrap_or_default();
+        found.sort();
+        found
+    };
+    let owned = |expected: &[(&str, u32)]| -> Vec<(String, u32)> {
+        expected
+            .iter()
+            .map(|(value, count)| (value.to_string(), *count))
+            .collect()
+    };
+
+    assert_eq!(
+        values(WorkFacet::Genre),
+        owned(&[("comedy", 1), ("crime", 1), ("drama", 2)])
+    );
+    assert_eq!(values(WorkFacet::Director), owned(&[("ada-reyes", 1)]));
+    assert_eq!(values(WorkFacet::Actor), owned(&[("ada-reyes", 1)]));
+    // Counted as titles: a two-episode series is one, however its files differ.
+    assert_eq!(
+        values(WorkFacet::Resolution),
+        owned(&[("1080p", 2), ("4k", 2), ("720p", 1)])
+    );
+    assert_eq!(
+        values(WorkFacet::DynamicRange),
+        owned(&[("dolby_vision", 1), ("hdr10", 1), ("sdr", 3)])
+    );
+    assert_eq!(
+        values(WorkFacet::AudioLanguage),
+        owned(&[("eng", 3), ("fra", 1), ("jpn", 1)])
+    );
+    assert_eq!(
+        values(WorkFacet::SubtitleLanguage),
+        owned(&[("eng", 1), ("spa", 1)])
+    );
+    assert_eq!(values(WorkFacet::Edition), owned(&[("Director's Cut", 1)]));
+    assert_eq!(values(WorkFacet::Collection), owned(&[("Favourites", 1)]));
+    assert_eq!(
+        values(WorkFacet::Years),
+        owned(&[("1990-1999", 1), ("2000-2009", 1), ("2010-2019", 1)])
+    );
+    assert!(
+        values(WorkFacet::Mood).is_empty(),
+        "a facet with no values is left out"
+    );
+    let years = facets
+        .iter()
+        .find(|entry| entry.facet == WorkFacet::Years)
+        .expect("years");
+    assert!(years.values.iter().any(|value| value.label == "1990s"));
+
+    // Scoped: another library's tags aren't this library's to offer.
+    let other = test_library("Facets Elsewhere");
+    store.upsert_library(&other).await.expect("library");
+    let empty = store
+        .work_facets(&WorkFacetsQuery {
+            library: Some(other.id),
+            ..Default::default()
+        })
+        .await
+        .expect("empty facets");
+    assert!(empty.is_empty());
+    // And access-checked: this viewer has no grant on the library at all.
+    let denied = store
+        .work_facets(&WorkFacetsQuery {
+            library: Some(f.library),
+            access_user_id: Some(f.viewer),
+            ..Default::default()
+        })
+        .await
+        .expect("denied facets");
+    assert!(denied.is_empty());
+
+    store.delete_library(other.id).await.expect("clean up");
+    store.delete_library(f.library).await.expect("clean up");
+    store.delete_user(f.viewer).await.expect("clean up");
 }
 
 async fn list_works_basic_filter<S: Storage + ?Sized>(store: &S) {

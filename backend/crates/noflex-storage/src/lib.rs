@@ -30,8 +30,9 @@ pub use domain::{
 };
 pub use error::{StorageError, StorageResult};
 pub use query::{
-    HybridQuery, ItemPage, ListTagsQuery, ListWorksQuery, Page, PageCursor, SearchMode, SortOrder,
-    TagQuery, WatchedFilter,
+    HybridQuery, ItemPage, ListTagsQuery, ListWorksQuery, MatchMode, Page, PageCursor, SearchMode,
+    SortOrder, TagQuery, WatchedFilter, WorkFacet, WorkFacetValue, WorkFacetValues,
+    WorkFacetsQuery, WorkRule, WorkRules,
 };
 pub use search::{HealthReport, SearchHit, VectorHit};
 pub use store::{Storage, Transaction};

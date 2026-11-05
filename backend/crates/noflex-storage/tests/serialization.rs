@@ -1,172 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// W3 round-trip serialization tests for the v2 Edition / AudioTrack /
-// SubtitleTrack field set. These cover the new typed-enum columns
-// independently of the Turso repo so a serde rename regression is
-// caught before the conformance suite ever sees a malformed JSON.
+// Round-trip tests for the typed media enums, so a serde rename regression is
+// caught before the conformance suite ever sees malformed JSON.
 
 use std::str::FromStr;
 
 use noflex_core::{
-    ChannelLayout, ColorPrimaries, DolbyVisionProfile, EditionId, HdrTransfer, MatrixCoefficients,
-    PixelFormat, VideoCodec, VideoProfile, WorkId,
+    ChannelLayout, ColorPrimaries, DolbyVisionProfile, HdrTransfer, MatrixCoefficients,
+    PixelFormat, VideoCodec, VideoProfile,
 };
-use noflex_storage::domain::{AudioTrack, Edition, SubtitleTrack};
-
-fn full_edition() -> Edition {
-    Edition {
-        id: EditionId::new(),
-        work_id: WorkId::new(),
-        name: "Final Cut".to_string(),
-        runtime_ms: Some(7_140_000),
-        intro_start_ms: Some(125_000),
-        intro_end_ms: Some(195_000),
-        credits_start_ms: Some(7_060_000),
-        chapters: vec![],
-        codec_video: Some("h264".to_string()),
-        codec_audio: Some("truehd".to_string()),
-        width: Some(3840),
-        height: Some(2160),
-        bit_depth: Some(10),
-        hdr_format: Some("hdr10".to_string()),
-        audio_tracks: Some(vec![AudioTrack {
-            language: Some("en".to_string()),
-            codec: "truehd".to_string(),
-            channels: 8,
-            default: true,
-            bit_depth: Some(24),
-            sample_rate: Some(48_000),
-            channel_layout: Some(ChannelLayout::Seven1),
-            codec_profile: Some("TrueHD".to_string()),
-            audio_object_type: Some("joc".to_string()),
-            external: false,
-            forced: false,
-            title: Some("Main".to_string()),
-        }]),
-        subtitle_tracks: Some(vec![SubtitleTrack {
-            language: Some("en".to_string()),
-            codec: "pgs_image".to_string(),
-            default: false,
-            forced: false,
-            external: true,
-            codec_profile: Some("hdmv-pgs".to_string()),
-            srt_compatible: false,
-            image_count: Some(1_287),
-            title: None,
-            path: None,
-            stream_index: None,
-        }]),
-        video_codec: Some(VideoCodec::H265),
-        video_profile: Some(VideoProfile::HevcMain10),
-        video_level: Some(51.0),
-        pixel_format: Some(PixelFormat::Yuv420p10le),
-        color_primaries: Some(ColorPrimaries::Bt2020),
-        transfer_characteristics: Some(HdrTransfer::Pq),
-        matrix_coefficients: Some(MatrixCoefficients::Bt2020Ncl),
-        dovi_profile: Some(DolbyVisionProfile::Profile7),
-        max_cll: Some(1_000),
-        max_fall: Some(400),
-        mastering_display_primary_r: Some((34_500, 16_000)),
-        mastering_display_primary_g: Some((13_500, 34_500)),
-        mastering_display_primary_b: Some((7_500, 3_000)),
-        mastering_display_white_point: Some((15_600, 16_400)),
-        mastering_display_min_luminance: Some(1),
-        mastering_display_max_luminance: Some(1_000),
-        frame_rate: Some(23.976),
-    }
-}
-
-#[test]
-fn edition_round_trips_through_json() {
-    let original = full_edition();
-    let json = serde_json::to_string(&original).expect("serialize");
-    let back: Edition = serde_json::from_str(&json).expect("deserialize");
-    assert_eq!(back.id, original.id);
-    assert_eq!(back.work_id, original.work_id);
-    assert_eq!(back.name, original.name);
-    assert_eq!(back.runtime_ms, original.runtime_ms);
-    assert_eq!(back.codec_video, original.codec_video);
-    assert_eq!(back.hdr_format, original.hdr_format);
-    assert_eq!(back.video_codec, original.video_codec);
-    assert_eq!(back.video_profile, original.video_profile);
-    assert_eq!(back.video_level, original.video_level);
-    assert_eq!(back.pixel_format, original.pixel_format);
-    assert_eq!(back.color_primaries, original.color_primaries);
-    assert_eq!(
-        back.transfer_characteristics,
-        original.transfer_characteristics
-    );
-    assert_eq!(back.matrix_coefficients, original.matrix_coefficients);
-    assert_eq!(back.dovi_profile, original.dovi_profile);
-    assert_eq!(back.max_cll, original.max_cll);
-    assert_eq!(back.max_fall, original.max_fall);
-    assert_eq!(
-        back.mastering_display_primary_r,
-        original.mastering_display_primary_r
-    );
-    assert_eq!(
-        back.mastering_display_primary_g,
-        original.mastering_display_primary_g
-    );
-    assert_eq!(
-        back.mastering_display_primary_b,
-        original.mastering_display_primary_b
-    );
-    assert_eq!(
-        back.mastering_display_white_point,
-        original.mastering_display_white_point
-    );
-    assert_eq!(
-        back.mastering_display_min_luminance,
-        original.mastering_display_min_luminance
-    );
-    assert_eq!(
-        back.mastering_display_max_luminance,
-        original.mastering_display_max_luminance
-    );
-    assert_eq!(back.frame_rate, original.frame_rate);
-    let orig_tracks = back.audio_tracks.as_ref().expect("audio tracks");
-    assert_eq!(orig_tracks.len(), 1);
-    assert_eq!(orig_tracks[0].codec_profile.as_deref(), Some("TrueHD"));
-    assert_eq!(orig_tracks[0].audio_object_type.as_deref(), Some("joc"));
-    assert_eq!(orig_tracks[0].channel_layout, Some(ChannelLayout::Seven1));
-    let orig_subs = back.subtitle_tracks.as_ref().expect("subtitle tracks");
-    assert_eq!(orig_subs.len(), 1);
-    assert!(orig_subs[0].external);
-    assert_eq!(orig_subs[0].image_count, Some(1_287));
-}
-
-#[test]
-fn edition_round_trips_when_new_fields_are_omitted() {
-    // Legacy JSON omits the new fields. `#[serde(default)]` on
-    // every one of them must make this deserialize cleanly into
-    // `None`.
-    let legacy = serde_json::json!({
-        "id": "00000000-0000-7000-8000-000000000000",
-        "work_id": "00000000-0000-7000-8000-000000000001",
-        "name": "Legacy Cut",
-        "runtime_ms": 7000000_i64,
-        "chapters": [],
-    });
-    let ed: Edition = serde_json::from_value(legacy).expect("legacy deserialize");
-    assert_eq!(ed.name, "Legacy Cut");
-    assert_eq!(ed.video_codec, None);
-    assert_eq!(ed.video_profile, None);
-    assert_eq!(ed.video_level, None);
-    assert_eq!(ed.pixel_format, None);
-    assert_eq!(ed.color_primaries, None);
-    assert_eq!(ed.transfer_characteristics, None);
-    assert_eq!(ed.matrix_coefficients, None);
-    assert_eq!(ed.dovi_profile, None);
-    assert_eq!(ed.max_cll, None);
-    assert_eq!(ed.max_fall, None);
-    assert_eq!(ed.mastering_display_primary_r, None);
-    assert_eq!(ed.mastering_display_white_point, None);
-    assert_eq!(ed.mastering_display_min_luminance, None);
-    assert_eq!(ed.mastering_display_max_luminance, None);
-    assert_eq!(ed.frame_rate, None);
-}
-
+use noflex_storage::domain::SubtitleTrack;
 #[test]
 fn enums_serialize_to_snake_case_and_parse_back() {
     for v in [
@@ -402,27 +245,6 @@ fn dolby_vision_profile_u8_round_trip() {
     assert!(DolbyVisionProfile::try_from(0_u8).is_err());
     assert!(DolbyVisionProfile::try_from(6_u8).is_err());
     assert!(DolbyVisionProfile::try_from(255_u8).is_err());
-}
-
-#[test]
-fn audio_track_with_atmos_round_trips() {
-    let t = AudioTrack {
-        language: Some("en".to_string()),
-        codec: "ac-3".to_string(),
-        channels: 6,
-        default: true,
-        bit_depth: Some(16),
-        sample_rate: Some(48_000),
-        channel_layout: Some(ChannelLayout::ObjectBased),
-        codec_profile: Some("E-AC-3 JOC".to_string()),
-        audio_object_type: Some("joc".to_string()),
-        external: false,
-        forced: false,
-        title: None,
-    };
-    let json = serde_json::to_string(&t).expect("audio serialize");
-    let back: AudioTrack = serde_json::from_str(&json).expect("audio deserialize");
-    assert_eq!(back, t);
 }
 
 #[test]

@@ -188,8 +188,8 @@ impl TrickplayWorker {
         };
         let stored_probe = stored_probe_info(&media);
         let needs_probe = edition.runtime_ms.is_none() && stored_probe.duration_ms.is_none()
-            || edition.width.is_none() && stored_probe.width.is_none()
-            || edition.height.is_none() && stored_probe.height.is_none();
+            || stored_probe.width.is_none()
+            || stored_probe.height.is_none();
         let probe = if needs_probe {
             self.probe(&media).await?
         } else {
@@ -202,14 +202,12 @@ impl TrickplayWorker {
             .or(probe.duration_ms)
             .filter(|duration| *duration > 0)
             .ok_or(TrickplayError::MissingDuration)?;
-        let source_width = edition
+        let source_width = stored_probe
             .width
-            .or(stored_probe.width)
             .or(probe.width)
             .filter(|width| *width > 0);
-        let source_height = edition
+        let source_height = stored_probe
             .height
-            .or(stored_probe.height)
             .or(probe.height)
             .filter(|height| *height > 0);
         let (source_width, source_height) = source_width

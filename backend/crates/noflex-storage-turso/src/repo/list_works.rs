@@ -16,7 +16,7 @@ use crate::{
         text_to_dt, text_to_work_kind, uuid_to_blob,
     },
     error::map_turso,
-    repo::works::row_to_work,
+    repo::{work_filters, works::row_to_work},
 };
 
 const SELECT_BASE: &str = "SELECT id, kind, parent_id, library_id, title, sort_title, \
@@ -51,6 +51,10 @@ pub(crate) async fn list(conn: &Connection, q: &ListWorksQuery) -> StorageResult
     let mut where_clauses: Vec<String> = Vec::new();
     let mut params: Vec<Value> = Vec::new();
 
+    let matcher = match &q.rules {
+        Some(rules) => work_filters::compile(conn, rules, q.viewer).await?,
+        None => None,
+    };
     if let Some(user) = q.access_user_id {
         push_access_filter(&mut where_clauses, &mut params, user);
     }
@@ -132,12 +136,24 @@ pub(crate) async fn list(conn: &Connection, q: &ListWorksQuery) -> StorageResult
     sql.push_str(order_by_clause(q.sort));
 
     let limit = q.limit.max(1) as i64;
-    sql.push_str(&format!(" LIMIT {}", limit + 1));
+    // With rules, the page is however far down the listing it takes to fill it.
+    if matcher.is_none() {
+        sql.push_str(&format!(" LIMIT {}", limit + 1));
+    }
 
     let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
     let mut items: Vec<Work> = Vec::new();
     let mut lowered_titles: Vec<String> = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_turso)? {
+        if let Some(matcher) = &matcher {
+            if items.len() as i64 > limit {
+                break;
+            }
+            let id = row.get_value(0).map_err(map_turso)?;
+            if !matcher.matches(col_blob(&id)?) {
+                continue;
+            }
+        }
         if title_sorted {
             let lowered = row.get_value(LOWERED_TITLE_COL).map_err(map_turso)?;
             lowered_titles.push(col_text(&lowered)?.to_string());
@@ -177,7 +193,11 @@ pub(crate) async fn list(conn: &Connection, q: &ListWorksQuery) -> StorageResult
     })
 }
 
-fn push_kind_filter(clauses: &mut Vec<String>, params: &mut Vec<Value>, kinds: &[WorkKind]) {
+pub(crate) fn push_kind_filter(
+    clauses: &mut Vec<String>,
+    params: &mut Vec<Value>,
+    kinds: &[WorkKind],
+) {
     if kinds.is_empty() {
         return;
     }
@@ -194,7 +214,7 @@ fn push_kind_filter(clauses: &mut Vec<String>, params: &mut Vec<Value>, kinds: &
     clauses.push(format!("kind IN ({})", placeholders.join(",")));
 }
 
-fn push_category_filter(
+pub(crate) fn push_category_filter(
     clauses: &mut Vec<String>,
     params: &mut Vec<Value>,
     category: ContentCategory,
@@ -234,6 +254,28 @@ pub(crate) async fn content_category_counts(
                 work_count: count as u64,
             });
         }
+    }
+    Ok(out)
+}
+
+pub(crate) async fn category_work_ids(
+    conn: &Connection,
+    category: ContentCategory,
+    access_user_id: Option<UserId>,
+) -> StorageResult<Vec<WorkId>> {
+    let mut clauses = Vec::new();
+    let mut params = Vec::new();
+    if let Some(user) = access_user_id {
+        push_access_filter(&mut clauses, &mut params, user);
+    }
+    push_category_filter(&mut clauses, &mut params, category);
+    let sql = format!("SELECT id FROM works WHERE {}", clauses.join(" AND "));
+    let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        out.push(WorkId::from_uuid(blob_to_uuid(col_blob(
+            &row.get_value(0).map_err(map_turso)?,
+        )?)?));
     }
     Ok(out)
 }
@@ -305,7 +347,7 @@ pub(crate) async fn work_features(
     Ok(out)
 }
 
-fn push_access_filter(
+pub(crate) fn push_access_filter(
     clauses: &mut Vec<String>,
     params: &mut Vec<Value>,
     user: noflex_core::UserId,

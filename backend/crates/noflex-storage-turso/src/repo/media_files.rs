@@ -13,6 +13,7 @@ use crate::{
         text_to_dt, to_json, uuid_to_blob,
     },
     error::map_turso,
+    repo::media_streams,
 };
 
 const UPSERT: &str = "INSERT INTO media_files (\
@@ -59,7 +60,13 @@ pub(crate) async fn upsert(conn: &Connection, mf: &MediaFile) -> StorageResult<(
         Value::Text(to_json(&mf.subtitle_tracks)?),
     ];
     conn.execute(UPSERT, params).await.map_err(map_turso)?;
-    Ok(())
+    media_streams::replace(
+        conn,
+        &uuid_to_blob(mf.id.into_uuid()),
+        &mf.probe.0,
+        &mf.subtitle_tracks,
+    )
+    .await
 }
 
 pub(crate) async fn delete(conn: &Connection, id: MediaFileId) -> StorageResult<()> {

@@ -190,7 +190,9 @@ class _Transport {
       (request) =>
           request.operation.getOperationType() == OperationType.subscription,
       _ws,
-      auth.concat(HttpLink('$origin/graphql', httpClient: httpClient)),
+      _RefusalLink().concat(
+        auth.concat(HttpLink('$origin/graphql', httpClient: httpClient)),
+      ),
     );
     client = Client(
       link: link,
@@ -237,6 +239,39 @@ Request _withBearer(Request request, String? token) => token == null
           headers: {...?headers?.headers, 'Authorization': 'Bearer $token'},
         ),
       );
+
+/// A server refusing an operation whose result can't be null leaves that field out
+/// of the data, with its errors beside it. Ferry fails to build the typed result
+/// from that and loses the errors, which would read as the server being
+/// unreachable, so they have to be picked up before it tries.
+ApiError? refusalOf(Response response) {
+  final errors = response.errors;
+  if (errors == null || errors.isEmpty) return null;
+  final data = response.data;
+  final fieldMissing = errors.any((error) {
+    final path = error.path;
+    return path != null &&
+        path.isNotEmpty &&
+        !(data?.containsKey(path.first) ?? false);
+  });
+  if (data != null && !fieldMissing) return null;
+  return ApiError(errors.map((e) => e.message).join('; '), [
+    for (final error in errors)
+      if (error.extensions?['code'] case final String code) code,
+  ]);
+}
+
+/// Outside the auth link, so an operation that needs its token refreshed still
+/// gets there.
+class _RefusalLink extends Link {
+  @override
+  Stream<Response> request(Request request, [NextLink? forward]) =>
+      forward!(request).map((response) {
+        final refusal = refusalOf(response);
+        if (refusal != null) throw refusal;
+        return response;
+      });
+}
 
 class _BearerLink extends Link {
   _BearerLink(this.token);

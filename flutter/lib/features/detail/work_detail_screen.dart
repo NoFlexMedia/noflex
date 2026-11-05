@@ -684,7 +684,7 @@ class _DownloadButton extends SignalWidget {
       if (edition == null) return;
       final confirmed = await confirmAction(
         title: 'Nothing’s ready for this device yet',
-        message: 'The server can package this version as one file to save here. It keeps the original’s format, so this device may not play it well. It’ll be under You → Server exports when it’s ready.',
+        message: 'The server can package this version as one file to save here. It keeps the original’s format, so this device may not play it well. It’ll be under You → Offline copies when it’s ready.',
         confirmLabel: 'Export',
       );
       if (confirmed) {

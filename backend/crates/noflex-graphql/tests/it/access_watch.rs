@@ -952,6 +952,23 @@ async fn e7_watch_room_access_control_sequence_and_terminal_lifecycle() {
     );
     assert_eq!(data["joinWatchRoom"]["id"], room_id);
 
+    let members = r#"{ watchRooms { hostUserId members { userId name } } }"#;
+    let data = json(
+        fixture
+            .schema
+            .execute(fixture::request(members, fixture.member))
+            .await,
+        "room members",
+    );
+    let room = &data["watchRooms"][0];
+    assert_eq!(room["members"].as_array().expect("members").len(), 2);
+    assert_eq!(room["members"][0]["userId"], room["hostUserId"]);
+    assert_eq!(
+        room["members"][1]["userId"],
+        fixture.member.user_id.to_string()
+    );
+    assert!(room["members"][1]["name"].is_string());
+
     // Target access alone does not make an outsider a room member.
     fixture
         .store

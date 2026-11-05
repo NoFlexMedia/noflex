@@ -3701,6 +3701,11 @@ type WatchRoom {
 	exists or the viewer can't access it.
 	"""
 	work: Work
+	"""
+	Who's in the room, host first and then in the order they joined. Only a
+	member is told.
+	"""
+	members: [WatchRoomMember!]!
 }
 
 enum WatchRoomAction {
@@ -3715,6 +3720,16 @@ type WatchRoomEvent {
 	action: WatchRoomAction!
 	sequence: Int!
 	serverTimestamp: DateTime!
+}
+
+type WatchRoomMember {
+	roomId: ID!
+	userId: ID!
+	joinedAt: DateTime!
+	"""
+	Null if the account is gone.
+	"""
+	name: String
 }
 
 enum WatchRoomState {

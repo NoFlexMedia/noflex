@@ -392,6 +392,7 @@ pub struct WatchRoom {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
 pub struct WatchRoomMember {
     pub room_id: WatchRoomId,
     pub user_id: UserId,
@@ -1859,6 +1860,41 @@ impl WatchRoom {
         crate::access::visible_work(storage.as_ref(), user, work)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))
+    }
+
+    /// Who's in the room, host first and then in the order they joined. Only a
+    /// member is told.
+    #[graphql(complexity = 2)]
+    async fn members(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Vec<WatchRoomMember>> {
+        let user = crate::access::request_user(ctx)?;
+        let mut members = complex_storage(ctx)?
+            .list_watch_room_members(self.id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        if !members.iter().any(|member| member.user_id == user.user_id) {
+            return Ok(Vec::new());
+        }
+        members.sort_by_key(|member| (member.user_id != self.host_user_id, member.joined_at));
+        Ok(members)
+    }
+}
+
+#[async_graphql::ComplexObject]
+impl WatchRoomMember {
+    /// Null if the account is gone.
+    async fn name(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Option<String>> {
+        crate::access::request_user(ctx)?;
+        Ok(complex_storage(ctx)?
+            .get_user(self.user_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .map(|user| user.name))
     }
 }
 

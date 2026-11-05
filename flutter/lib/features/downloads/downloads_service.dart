@@ -570,6 +570,14 @@ class DownloadsService {
     _saveNow();
   }
 
+  Future<void> removeAll() async {
+    for (final item in [..._store.items]) {
+      await remove(item);
+    }
+    _store.reports = const [];
+    _saveNow();
+  }
+
   Future<void> pause(OfflineItem item) async {
     final task = await FileDownloader().taskForId(item.taskId);
     if (task is DownloadTask) await FileDownloader().pause(task);

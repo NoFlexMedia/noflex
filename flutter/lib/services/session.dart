@@ -10,6 +10,9 @@ import 'package:built_value/json_object.dart';
 import 'package:ferry/ferry.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
+import '../di.dart';
+import '../features/downloads/downloads_service.dart';
+import '../features/home/home_service.dart';
 import '../features/player/capabilities.dart';
 import '../features/player/decoder_probe.dart';
 import '../graphql/__generated__/schema.schema.gql.dart';
@@ -196,7 +199,7 @@ class SessionService {
 
   Future<void> signIn({required String access, required String refresh}) async {
     await tokens.save(access: access, refresh: refresh);
-    graphql.reset();
+    _dropClientState();
     await bootstrap();
   }
 
@@ -248,27 +251,38 @@ class SessionService {
     );
   }
 
+  /// Sign out on purpose. Downloads go too: they're this account's, and the next
+  /// person signing in on this device shouldn't find them. An expired session
+  /// keeps them, as nobody chose to leave.
   Future<void> logout() async {
     try {
       await graphql.run(GLogoutReq());
     } on Exception {
       // Signing out locally regardless.
     }
+    await getIt<DownloadsService>().removeAll();
     await tokens.clear();
     _signedOut('');
   }
 
   /// Forget this server altogether, to choose another.
   Future<void> forgetServer() async {
+    await getIt<DownloadsService>().removeAll();
     await tokens.clear();
     await tokens.setOrigin(null);
     _signedOut('');
     phase.value = AppPhase.connect;
   }
 
-  void _signedOut(String message) {
+  /// The clients go, and with them anything still listening to one.
+  void _dropClientState() {
     graphql.reset();
     watchState.clear();
+    getIt.resetLazySingleton<HomeService>();
+  }
+
+  void _signedOut(String message) {
+    _dropClientState();
     batch(() {
       viewer.value = null;
       libraries.value = const [];

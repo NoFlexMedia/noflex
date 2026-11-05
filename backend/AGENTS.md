@@ -85,7 +85,7 @@ Don't break these without an architecture discussion in the PR description.
 ### GraphQL
 
 - Domain logic lives behind services and traits, never in HTTP handlers.
-- Schema changes regenerate `noflex-graphql/tests/snapshots/schema.graphql` (`NOFLEX_UPDATE_SNAPSHOTS=1 cargo test -p noflex-graphql --test it schema_snapshot`); the drift test fails otherwise, and the web client validates against it.
+- Schema changes regenerate `noflex-graphql/tests/snapshots/schema.graphql` (`NOFLEX_UPDATE_SNAPSHOTS=1 cargo test -p noflex-graphql --test it schema_snapshot`); the drift test fails otherwise, and the web and Flutter clients validate against it.
 
 ### Search
 

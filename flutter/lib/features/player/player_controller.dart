@@ -234,6 +234,10 @@ class PlayerController {
             : null,
       ),
     );
+    // A restarted transcode's time zero is its target, so source time is right
+    // again from here. libmpv may never have stopped playing, so waiting for
+    // that to change could leave the timeline frozen.
+    if (restarting.value != null) restarting.value = null;
     await WakelockPlus.enable();
     _updateDuration();
     if (next.work != null && !next.live) {

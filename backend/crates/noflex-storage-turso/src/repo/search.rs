@@ -2,7 +2,7 @@
 
 use noflex_core::{EmbeddingTarget, WorkId, WorkKind};
 use noflex_storage::{
-    domain::Work,
+    domain::{EmbeddingEndpoint, EmbeddingModel, Work},
     error::{StorageError, StorageResult},
     query::{Page, PageCursor},
     search::{MATCHED_CREDITS, MATCHED_TITLE, SearchHit, VectorHit},
@@ -11,7 +11,10 @@ use turso::{Connection, Value};
 use uuid::Uuid;
 
 use crate::{
-    convert::{blob_to_uuid, col_blob, col_int, col_text, dt_to_text, uuid_to_blob},
+    convert::{
+        blob_to_uuid, col_blob, col_int, col_int_opt, col_text, col_text_opt, dt_to_text,
+        uuid_to_blob,
+    },
     error::map_turso,
     repo::works::row_to_work,
 };
@@ -134,6 +137,134 @@ pub(crate) async fn search_lexical(
         });
     }
     Ok(out)
+}
+
+pub(crate) async fn active_embedding_model(
+    conn: &Connection,
+) -> StorageResult<Option<EmbeddingModel>> {
+    let mut rows = conn
+        .query(
+            "SELECT namespace, model_id, dimensions FROM embedding_index WHERE id = 1",
+            (),
+        )
+        .await
+        .map_err(map_turso)?;
+    let Some(row) = rows.next().await.map_err(map_turso)? else {
+        return Ok(None);
+    };
+    Ok(Some(EmbeddingModel {
+        namespace: col_text(&row.get_value(0).map_err(map_turso)?)?.to_string(),
+        model_id: col_text(&row.get_value(1).map_err(map_turso)?)?.to_string(),
+        dimensions: col_int(&row.get_value(2).map_err(map_turso)?)? as u32,
+    }))
+}
+
+pub(crate) async fn activate_embedding_model(
+    conn: &Connection,
+    model: &EmbeddingModel,
+) -> StorageResult<Option<EmbeddingModel>> {
+    let previous = active_embedding_model(conn).await?;
+    if previous.as_ref() == Some(model) {
+        return Ok(None);
+    }
+    conn.execute(
+        "DELETE FROM embeddings WHERE namespace = ?1 AND (model_id <> ?2 OR dimensions <> ?3)",
+        vec![
+            Value::Text(model.namespace.clone()),
+            Value::Text(model.model_id.clone()),
+            Value::Integer(i64::from(model.dimensions)),
+        ],
+    )
+    .await
+    .map_err(map_turso)?;
+    conn.execute(
+        "INSERT INTO embedding_index (id, namespace, model_id, dimensions, activated_at) \
+         VALUES (1, ?1, ?2, ?3, ?4) \
+         ON CONFLICT(id) DO UPDATE SET namespace = excluded.namespace, \
+             model_id = excluded.model_id, dimensions = excluded.dimensions, \
+             activated_at = excluded.activated_at",
+        vec![
+            Value::Text(model.namespace.clone()),
+            Value::Text(model.model_id.clone()),
+            Value::Integer(i64::from(model.dimensions)),
+            Value::Text(dt_to_text(time::OffsetDateTime::now_utc())?),
+        ],
+    )
+    .await
+    .map_err(map_turso)?;
+    Ok(previous)
+}
+
+pub(crate) async fn prune_embeddings(conn: &Connection, namespace: &str) -> StorageResult<u64> {
+    conn.execute(
+        "DELETE FROM embeddings WHERE namespace <> ?1",
+        vec![Value::Text(namespace.to_string())],
+    )
+    .await
+    .map_err(map_turso)
+}
+
+pub(crate) async fn embedding_endpoint(
+    conn: &Connection,
+) -> StorageResult<Option<EmbeddingEndpoint>> {
+    let mut rows = conn
+        .query(
+            "SELECT url, api_key, model, dimensions, request_dimensions, query_prefix, \
+             document_prefix FROM embedding_endpoint WHERE id = 1",
+            (),
+        )
+        .await
+        .map_err(map_turso)?;
+    let Some(row) = rows.next().await.map_err(map_turso)? else {
+        return Ok(None);
+    };
+    Ok(Some(EmbeddingEndpoint {
+        url: col_text(&row.get_value(0).map_err(map_turso)?)?.to_string(),
+        api_key: col_text_opt(&row.get_value(1).map_err(map_turso)?)?,
+        model: col_text(&row.get_value(2).map_err(map_turso)?)?.to_string(),
+        dimensions: col_int(&row.get_value(3).map_err(map_turso)?)? as u32,
+        request_dimensions: col_int_opt(&row.get_value(4).map_err(map_turso)?)?
+            .map(|dimensions| dimensions as u32),
+        query_prefix: col_text(&row.get_value(5).map_err(map_turso)?)?.to_string(),
+        document_prefix: col_text(&row.get_value(6).map_err(map_turso)?)?.to_string(),
+    }))
+}
+
+pub(crate) async fn set_embedding_endpoint(
+    conn: &Connection,
+    endpoint: Option<&EmbeddingEndpoint>,
+) -> StorageResult<()> {
+    let Some(endpoint) = endpoint else {
+        conn.execute("DELETE FROM embedding_endpoint", ())
+            .await
+            .map_err(map_turso)?;
+        return Ok(());
+    };
+    conn.execute(
+        "INSERT INTO embedding_endpoint (id, url, api_key, model, dimensions, \
+             request_dimensions, query_prefix, document_prefix) \
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+         ON CONFLICT(id) DO UPDATE SET url = excluded.url, api_key = excluded.api_key, \
+             model = excluded.model, dimensions = excluded.dimensions, \
+             request_dimensions = excluded.request_dimensions, \
+             query_prefix = excluded.query_prefix, document_prefix = excluded.document_prefix",
+        vec![
+            Value::Text(endpoint.url.clone()),
+            endpoint.api_key.clone().map_or(Value::Null, Value::Text),
+            Value::Text(endpoint.model.clone()),
+            Value::Integer(i64::from(endpoint.dimensions)),
+            endpoint
+                .request_dimensions
+                .map_or(Value::Null, |dimensions| {
+                    Value::Integer(i64::from(dimensions))
+                }),
+            Value::Text(endpoint.query_prefix.clone()),
+            Value::Text(endpoint.document_prefix.clone()),
+        ],
+    )
+    .await
+    .map_err(map_turso)?;
+    Ok(())
 }
 
 pub(crate) async fn upsert_embedding(

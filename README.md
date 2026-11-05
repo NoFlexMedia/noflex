@@ -27,7 +27,7 @@ NoFlex takes inspiration from Plex and Jellyfin, then makes a few choices of its
 - **Plex-style data model.** A _work_ has one or more _editions_ (Theatrical, Director's Cut), each with one or more _media files_ (4K HDR and 1080p versions, multi-disc parts). The scanner understands Plex naming conventions natively.
 - **One canonical API.** Every client — ours or yours — talks GraphQL. The Rust domain type _is_ the GraphQL type, so the API never drifts from the model.
 - **Everything external is a plugin.** Plugins are sandboxed, capability-gated, and audit-logged; they can't touch the database or the network except through narrow host imports. Because first-party providers use the same boundary, the plugin API is exercised on every startup.
-- **Self-hosted, end to end.** No accounts with us, no relay, no cloud inference. Search is hybrid — full-text plus vector search over embeddings computed locally — and media bytes never leave your network unless you send them.
+- **Self-hosted, end to end.** No accounts with us, no relay, no cloud inference unless you configure it. Search is hybrid — full-text plus vector search over embeddings computed locally while your server is idle — and media bytes never leave your network unless you send them.
 - **One icon language.** Every client draws its icons from [Phosphor](https://phosphoricons.com) (`phosphor-svelte` on the web), never hand-drawn SVGs, so the same glyph means the same thing everywhere.
 - **Pluggable storage.** Turso is the default; another engine is a crate that passes the shared conformance suite, not a fork.
 

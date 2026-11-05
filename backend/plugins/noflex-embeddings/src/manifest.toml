@@ -1,16 +1,20 @@
 manifest_version = 1
 plugin_id = "embeddings"
-display_name = "Local Embeddings (potion-base-8M)"
-version = "0.1.0"
-noflex_api_version = "0.9"
+display_name = "Local Embeddings (EmbeddingGemma 2)"
+version = "0.2.0"
+noflex_api_version = "0.10"
 hooks = ["embedder"]
-capabilities = ["assets.read"]
-# 30MB of f32 weights + tokenizer + tokenization working set blow past
-# the 64MB default.
-memory_limit_mb = 128
+capabilities = ["assets.read", "inference.run"]
+# The tokenizer's 262k-token vocabulary parses to several times its 32MB file.
+# The weights live in the host.
+memory_limit_mb = 512
 license = "AGPL-3.0-only"
 
+[deadlines_secs]
+# A batch on a slow, busy CPU, on top of loading the model for the first time.
+embedder = 180
+
 [embedding]
-namespace = "potion-base-8m-v2"
-model_id = "minishlab/potion-base-8M"
-dimensions = 256
+namespace = "embeddinggemma-2-512"
+model_id = "google/embeddinggemma-2"
+dimensions = 512

@@ -7,6 +7,10 @@
 //   - DataLoaders per relationship (added later)
 //   - JWT auth extracted via Axum extension (added later)
 
+// The merged Query and Mutation roots nest deeper than rustc's default query
+// depth, each merged object adding a level.
+#![recursion_limit = "256"]
+
 use std::sync::Arc;
 
 use async_graphql::{
@@ -37,6 +41,7 @@ mod collections;
 mod credentials;
 mod deletion;
 mod devices;
+mod embedding;
 mod external_auth;
 mod live_tv;
 mod paging;
@@ -94,6 +99,7 @@ pub struct Query(
     plugin_links::PluginLinksQuery,
     sessions::SessionsQuery,
     search::SearchQuery,
+    embedding::EmbeddingQuery,
     restrictions::RestrictionsQuery,
     watch::WatchQuery,
     live_tv::LiveTvQuery,
@@ -105,6 +111,7 @@ pub struct Mutation(
     CoreMutation,
     playback::PlaybackMutation,
     devices::DevicesMutation,
+    embedding::EmbeddingMutation,
     multi_server::MultiServerMutation,
     auth::AuthMutation,
     users::UsersMutation,

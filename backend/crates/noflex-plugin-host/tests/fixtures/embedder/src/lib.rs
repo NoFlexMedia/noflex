@@ -22,7 +22,10 @@ wit_bindgen::generate!({
 static NOFLEX_MANIFEST: [u8; include_bytes!("manifest.toml").len()] =
     *include_bytes!("manifest.toml");
 
-use exports::noflex::plugin::{background, embedder};
+use exports::noflex::plugin::{
+    background,
+    embedder::{self, EmbedDocument, EmbedInput},
+};
 use noflex::plugin::host_assets;
 
 const DIMENSIONS: usize = 8;
@@ -42,10 +45,15 @@ fn embed_text(text: &str) -> Vec<f32> {
 }
 
 impl embedder::Guest for Fixture {
-    async fn embed(texts: Vec<String>) -> Result<Vec<Vec<f32>>, embedder::PluginError> {
-        let mut out = Vec::with_capacity(texts.len());
-        for text in &texts {
-            let mut vector = embed_text(text);
+    async fn embed(inputs: Vec<EmbedInput>) -> Result<Vec<Vec<f32>>, embedder::PluginError> {
+        let mut out = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            let text = match input {
+                EmbedInput::Query(text) => text,
+                EmbedInput::Document(EmbedDocument { title, text }) if text.is_empty() => title,
+                EmbedInput::Document(EmbedDocument { title, text }) => format!("{title}. {text}"),
+            };
+            let mut vector = embed_text(&text);
             if text == ASSET_SENTINEL {
                 let bytes = host_assets::read_file("fixture-model.txt".to_string()).await?;
                 vector[0] = bytes.len() as f32;

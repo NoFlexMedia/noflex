@@ -274,6 +274,50 @@ block private address ranges. Redirects are disabled, response bodies are
 capped, and requests have finite connect and overall timeouts. Only configure
 sources you trust the server to contact.
 
+### `search.device`
+- **Type:** enum: `cpu | gpu | npu | auto`
+- **Default:** `cpu`
+- **Env:** `NOFLEX_SEARCH_DEVICE`
+
+Where the local embedding model runs. `gpu` tries CUDA, DirectML and CoreML; `npu`
+tries OpenVINO's NPU and Qualcomm's QNN; `auto` tries NPU, then GPU, then CPU. Each
+needs an ONNX Runtime built for it (see `search.onnxruntime_library`). Without one,
+or without the hardware, the model runs on the CPU, logs a warning, and the
+Indexing tab shows where it really is.
+
+### `search.onnxruntime_library`
+- **Type:** path (optional)
+- **Default:** unset
+- **Env:** `NOFLEX_SEARCH_ONNXRUNTIME_LIBRARY`
+
+The ONNX Runtime shared library to load, such as a CUDA or OpenVINO build. Unset
+uses `ORT_DYLIB_PATH`, then a release bundle's, then the system's.
+
+### `search.threads`
+- **Type:** integer
+- **Default:** `0`
+- **Env:** `NOFLEX_SEARCH_THREADS`
+
+CPU threads per inference run. `0` uses half the physical cores.
+
+### `search.batch_size`
+- **Type:** integer
+- **Default:** `8`
+- **Env:** `NOFLEX_SEARCH_BATCH_SIZE`
+
+Works embedded at a time, up to 64. A batch can't be interrupted, so this also
+bounds how long a search or transcode waits for the CPU back.
+
+### `search.busy_percent`
+- **Type:** number
+- **Default:** `30`
+- **Env:** `NOFLEX_SEARCH_BUSY_PERCENT`
+
+Indexing starts a batch only while everything else, ffmpeg included, uses less than
+this share of the host's CPU. A host that stays busy still gets one batch every ten
+minutes. An embeddings API (set from the Indexing tab) doesn't wait, since it isn't
+using this host's CPU.
+
 ### `live_tv.recording_concurrency`
 - **Type:** integer
 - **Default:** `2`

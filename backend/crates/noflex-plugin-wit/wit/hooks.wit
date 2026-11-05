@@ -201,20 +201,34 @@ interface background {
     ) -> result<task-outcome, plugin-error>;
 }
 
-/// Text embedding provider — local inference only (the self-hosted
-/// invariant rules out external inference APIs). The host embeds work
-/// texts at scan time and query text at search time and persists the
-/// vectors itself — plugins still never see storage, so no host import
-/// is needed. The vector namespace, model id, and dimensionality are
-/// claimed statically in the manifest's `[embedding]` table, not
-/// negotiated per call.
+/// Text embedding provider, which stands aside if an administrator configures
+/// an embeddings API. The host embeds work
+/// texts while the host is idle and query text at search time and persists
+/// the vectors itself — plugins still never see storage. The vector
+/// namespace, model id, and dimensionality are claimed statically in the
+/// manifest's `[embedding]` table, not negotiated per call.
 interface embedder {
     use types.{plugin-error};
 
-    /// One vector per input text, in input order; every vector must have
-    /// the manifest-claimed dimensionality (the host rejects the call
-    /// otherwise). Batch size is host-capped.
-    embed: async func(texts: list<string>) -> result<list<list<f32>>, plugin-error>;
+    /// A work's text, split the way retrieval models want it.
+    record embed-document {
+        title: string,
+        /// Empty when only the title is known.
+        text: string,
+    }
+
+    /// What's being embedded. Retrieval models embed the two sides of a
+    /// search differently, so a query and a document with the same words
+    /// need not get the same vector.
+    variant embed-input {
+        query(string),
+        document(embed-document),
+    }
+
+    /// One vector per input, in input order; every vector must have the
+    /// manifest-claimed dimensionality (the host rejects the call otherwise).
+    /// Batch size is host-capped.
+    embed: async func(inputs: list<embed-input>) -> result<list<list<f32>>, plugin-error>;
 }
 
 /// Recommendation provider. The host calls `recommend` with

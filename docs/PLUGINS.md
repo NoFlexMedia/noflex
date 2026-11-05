@@ -184,6 +184,7 @@ Plugins have no sockets, files, or database access of their own. They call back 
 - `host-library.lookup-work-by-id(id)` / `lookup-edition-by-id(id)` — read-only library lookups.
 - `host-tasks.enqueue(task, payload)` — queue a run of one of your `[[tasks]]`. Requires `background`.
 - `host-assets.read-file(name)` — a host-managed asset such as model weights. Requires `assets.read`.
+- `host-inference.embed-tokens(model, tokens)` — run an ONNX embedding model from the assets directory natively, on whichever device the operator chose. Requires `inference.run`.
 - `host-net.request(req)` — HTTP egress performed by the host. Requires `http.egress`, and the URL's host must match `http_egress_hosts`. Destinations are vetted after DNS, at connect time: loopback, private (RFC 1918 / ULA), link-local, CGNAT, and other special-purpose addresses — including IPv6 forms embedding them (NAT64, 6to4, IPv4-mapped) — are refused unless you also declare `http.private-network` (LAN webhooks, self-hosted IdPs). A name resolving to a mix of public and forbidden addresses is refused outright; proxy environment variables are ignored; redirects are never followed. Requests are audit-logged by origin and a digest of the path and query, never the full URL.
 - `host-metrics.histogram(name, value)` / `host-metrics.counter(name, delta)` — metrics.
 

@@ -106,6 +106,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 wasmtime = { version = "47", default-features = false, features = ["async", "component-model", "component-model-async", "cranelift", "runtime", "std", "addr2line", "demangle", "parallel-compilation"] }
 wasmtime-wasi = { version = "47", default-features = false, features = ["p2", "p3"] }
 sha2 = "0.10"
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-24", "cuda", "openvino", "qnn", "vitis", "coreml", "directml"] }
 directories = "5"
 
 # Crypto / auth

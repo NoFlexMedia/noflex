@@ -27,7 +27,7 @@ use wasmtime::{
 };
 
 use crate::{
-    EngineConfig, HookKind, HostError, PluginCtx, PluginLimits, PluginManifest,
+    EmbedInput, EngineConfig, HookKind, HostError, PluginCtx, PluginLimits, PluginManifest,
     bindings::{
         embedder::{
             EmbedderPlugin as EmbedderPluginBinding, noflex::plugin::types as embedder_types,
@@ -382,7 +382,7 @@ enum HookCall {
         respond: oneshot::Sender<ExternalAuthCompleteOutcome>,
     },
     Embed {
-        texts: Vec<String>,
+        inputs: Vec<EmbedInput>,
         respond: oneshot::Sender<EmbedOutcome>,
     },
     Scrobble {
@@ -809,16 +809,16 @@ impl LoadedPlugin {
     /// against the manifest's `[embedding]` claim (one vector per input
     /// text, each of the claimed dimensionality); a mismatch is a host
     /// error, not a plugin error — the guest broke its declared contract.
-    pub async fn call_embed(&self, texts: Vec<String>) -> EmbedOutcome {
+    pub async fn call_embed(&self, inputs: Vec<EmbedInput>) -> EmbedOutcome {
         let (respond, answer) = oneshot::channel();
-        let texts_len = texts.len();
+        let inputs_len = inputs.len();
         self.instance
-            .enqueue(&self.id, HookCall::Embed { texts, respond })?;
+            .enqueue(&self.id, HookCall::Embed { inputs, respond })?;
         let outcome = answer
             .await
             .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?;
         if let (Ok(Ok(vectors)), Some(claim)) = (&outcome, &self.manifest.embedding) {
-            validate_embed_result(claim, texts_len, vectors)?;
+            validate_embed_result(claim, inputs_len, vectors)?;
         }
         outcome
     }
@@ -944,6 +944,7 @@ impl LoadedPlugin {
             http_egress_hosts: manifest.http_egress_hosts.clone(),
             storage,
             assets_dir,
+            inference: runtime_config.inference.clone(),
             limits: PluginLimits::from_mb(
                 manifest
                     .memory_limit_mb
@@ -1842,14 +1843,14 @@ fn dispatch_call<'a>(
             ),
             None => missing_export(respond, "external-auth"),
         },
-        HookCall::Embed { texts, respond } => match &hooks.embedder {
+        HookCall::Embed { inputs, respond } => match &hooks.embedder {
             Some(embedder) => env.track(
                 inflight,
                 HookKind::Embedder,
                 respond,
                 move |deadline| async move {
                     let func = embedder.noflex_plugin_embedder().func_embed();
-                    invoke(accessor, calls, deadline, func, (texts,), None, "embed")
+                    invoke(accessor, calls, deadline, func, (inputs,), None, "embed")
                         .await
                         .map(|(r,)| r)
                 },
@@ -2161,7 +2162,7 @@ mod tests {
             plugin_id = "p"
             display_name = "P"
             version = "0.1.0"
-            noflex_api_version = "0.9"
+            noflex_api_version = "0.10"
             hooks = ["metadata"]
             capabilities = ["background"]
 

@@ -71,10 +71,9 @@ fn resolve_binary(override_path: Option<&str>) -> String {
     if let Some(p) = override_path {
         return p.to_string();
     }
-    if let Ok(p) = std::env::var(ENV_BINARY) {
-        return p;
-    }
-    "ffprobe".to_string()
+    noflex_core::bundle::ffmpeg_tool("ffprobe", ENV_BINARY)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn resolve_timeout() -> Duration {

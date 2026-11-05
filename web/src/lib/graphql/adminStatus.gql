@@ -70,7 +70,7 @@ query AdminIndexing @cache(policy: NetworkOnly) {
     recentFailures { at path stage error }
     failureCount
   }
-  searchIndexStatus { embedderPlugins namespace modelId dimensions pendingWorks pendingIsLowerBound }
+  searchIndexStatus { embedderPlugins remoteHost inferenceDevice namespace modelId dimensions pendingWorks pendingIsLowerBound }
 }
 
 fragment StreamSummaryFields on StreamSummary {

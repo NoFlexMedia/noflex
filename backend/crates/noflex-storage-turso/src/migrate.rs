@@ -58,6 +58,10 @@ pub(crate) const MIGRATIONS: &[(&str, &str)] = &[
         "0012_transcoding_settings.sql",
         include_str!("../migrations/0012_transcoding_settings.sql"),
     ),
+    (
+        "0013_embedding_index.sql",
+        include_str!("../migrations/0013_embedding_index.sql"),
+    ),
 ];
 
 const META_KEY_PREFIX: &str = "migration:";

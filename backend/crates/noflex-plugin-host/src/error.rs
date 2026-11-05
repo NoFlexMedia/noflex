@@ -13,6 +13,9 @@ pub enum HostError {
     #[error("wasmtime: {0}")]
     Wasm(String),
 
+    #[error(transparent)]
+    RemoteEmbedder(#[from] crate::RemoteEmbedError),
+
     #[error("manifest parse error at {path}: {reason}")]
     Manifest { path: PathBuf, reason: String },
 

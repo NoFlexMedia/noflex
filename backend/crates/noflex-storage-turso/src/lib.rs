@@ -912,6 +912,36 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.reader().await?;
         repo::list_works::work_features(&conn, kinds, tag_namespaces, access_user_id).await
     }
+    async fn active_embedding_model(
+        &self,
+    ) -> StorageResult<Option<noflex_storage::domain::EmbeddingModel>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::search::active_embedding_model(&conn).await
+    }
+    async fn activate_embedding_model(
+        &self,
+        model: &noflex_storage::domain::EmbeddingModel,
+    ) -> StorageResult<Option<noflex_storage::domain::EmbeddingModel>> {
+        let (_schema, conn) = self.writer().await?;
+        repo::search::activate_embedding_model(&conn, model).await
+    }
+    async fn prune_embeddings(&self, namespace: &str) -> StorageResult<u64> {
+        let (_schema, conn) = self.writer().await?;
+        repo::search::prune_embeddings(&conn, namespace).await
+    }
+    async fn embedding_endpoint(
+        &self,
+    ) -> StorageResult<Option<noflex_storage::domain::EmbeddingEndpoint>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::search::embedding_endpoint(&conn).await
+    }
+    async fn set_embedding_endpoint(
+        &self,
+        endpoint: Option<&noflex_storage::domain::EmbeddingEndpoint>,
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::search::set_embedding_endpoint(&conn, endpoint).await
+    }
     async fn delete_work_embeddings(&self, work: WorkId) -> StorageResult<()> {
         let (_schema, conn) = self.writer().await?;
         repo::search::delete_work_embeddings(&conn, work).await

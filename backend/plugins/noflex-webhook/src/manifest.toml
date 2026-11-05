@@ -2,7 +2,7 @@ manifest_version = 1
 plugin_id = "webhook"
 display_name = "Webhook Notifier"
 version = "0.1.0"
-noflex_api_version = "0.9"
+noflex_api_version = "0.10"
 hooks = ["notifier"]
 capabilities = ["http.egress", "http.private-network", "secrets.read"]
 # Unrestricted egress is deliberate here: the operator's configured URL

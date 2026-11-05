@@ -5,66 +5,81 @@
 // plugin and persisting them itself. The WIT task protocol has no
 // channel for a guest to hand vectors back (outcomes are
 // `done|more(cursor)`), so the sweep lives host-side: the worker calls
-// the plugin's `embed` hook via [`embed_texts`] and writes through
+// the plugin's `embed` hook via [`embed_inputs`] and writes through
 // `Storage::upsert_embedding`.
 //
-// Two work feeds, serialized on one task so the plugin's single
-// instance sees one `embed` call at a time from here:
-//
-// - `WorkAdded` events, debounced and drained in small batches (the
-//   accelerator: fresh works get vectors without waiting for a sweep);
-// - full backfill sweeps paging `works_missing_embedding` to
-//   completion (the authority: anything the event path missed or
-//   failed on stays "missing" and is retried here).
+// A transformer costs real CPU, and search works without vectors in the
+// meantime, so indexing yields to everything else on the host: it embeds one
+// small batch at a time, and only while the rest of the machine is quiet.
+// There is one feed, `works_missing_embedding`, so a failure or a dropped event
+// only leaves work for the next pass. Events and an hourly tick just start one.
 
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use noflex_core::{
-    EmbeddingTarget, TagTarget, WorkId,
+    EmbeddingTarget, TagTarget,
     events::{DomainEvent, DomainEventBus},
 };
 use noflex_storage::{
     Storage,
-    domain::{Tag, Work},
+    domain::{EmbeddingModel, TagAssignment, Work},
 };
+use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System};
 use tokio::{
-    sync::{broadcast::error::RecvError, mpsc},
+    sync::{Notify, broadcast::error::RecvError},
     task::JoinHandle,
-    time::{Instant, interval_at},
+    time::{Instant, interval_at, sleep},
 };
 
-use crate::{PluginRegistry, registry::embed_texts};
+use crate::{EmbedDocument, EmbedInput, PluginRegistry, registry::embed_inputs};
 
-/// Quiet period after the last `WorkAdded` before a batch embeds —
-/// scans add works in bursts, and one 32-text call beats thirty-two
-/// 1-text calls on a model-bound plugin.
-const DEBOUNCE: Duration = Duration::from_millis(200);
-
-/// Most works embedded per event-path batch.
-const BATCH_SIZE: usize = 32;
-
-/// Sweep page size; also under the 64-text `embed` dispatch cap.
-const SWEEP_PAGE: u32 = 64;
+/// Quiet period after the first event of a burst before a pass starts — scans
+/// add works in bursts, and the pass finds them all at once.
+const DEBOUNCE: Duration = Duration::from_millis(500);
 
 /// Idle tick that re-runs the sweep so a silently-dropped event or a
 /// hot-reloaded embedder eventually converges.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
-/// Cap on buffered `WorkAdded` ids. Overflow is dropped, not queued:
-/// the event path is only an accelerator, and the sweep finds every
-/// missing work regardless.
-const MAX_PENDING: usize = 512;
+/// How long a CPU reading averages over. Longer than a burst of page loads,
+/// short enough to back off soon after a transcode starts.
+const LOAD_WINDOW: Duration = Duration::from_secs(2);
+
+/// Works per call to a remote API; the `embed` dispatch cap.
+const REMOTE_BATCH: u32 = 64;
 
 /// Rough cap on the text sent to an embedder, in bytes (≈chars for the
 /// Latin-heavy titles/overviews this shapes). Long overviews add noise,
 /// not signal, past this point.
 const MAX_TEXT_BYTES: usize = 1000;
 
-/// Internal worker command: embed one work now-ish, or run a full
-/// backfill sweep.
-enum Cmd {
-    Added(WorkId),
-    Sweep,
+/// Top-billed people a work's text names; the rest of a long cast is noise, and
+/// lexical search finds them regardless.
+const MAX_PEOPLE: usize = 6;
+
+/// How the worker shares the host. See `search.*` in `docs/CONFIGURATION.md`.
+#[derive(Debug, Clone)]
+pub struct EmbeddingWorkerConfig {
+    /// Works embedded per `embed` call, at most the 64-input dispatch cap. A
+    /// batch can't be interrupted, so this bounds how long a search or a
+    /// transcode waits for the CPU back.
+    pub batch_size: u32,
+    /// Share of the host's CPU that other work may be using, in percent, for a
+    /// batch to start.
+    pub busy_percent: f32,
+    /// How long a host that never quiets can hold off a batch, so a machine busy
+    /// around the clock still gets indexed, slowly.
+    pub max_wait: Duration,
+}
+
+impl Default for EmbeddingWorkerConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 8,
+            busy_percent: 30.0,
+            max_wait: Duration::from_secs(10 * 60),
+        }
+    }
 }
 
 /// Spawn the embedding worker and its bus forwarder. The returned
@@ -75,33 +90,27 @@ pub fn spawn_embedding_worker(
     registry: Arc<PluginRegistry>,
     storage: Arc<dyn Storage>,
     events: &DomainEventBus,
+    config: EmbeddingWorkerConfig,
 ) -> JoinHandle<()> {
-    let (tx, rx) = mpsc::channel::<Cmd>(256);
-    tokio::spawn(forward_events(events.clone(), tx.clone()));
-    tokio::spawn(worker(registry, storage, rx, tx))
+    let wake = Arc::new(Notify::new());
+    tokio::spawn(forward_events(events.clone(), wake.clone()));
+    tokio::spawn(worker(registry, storage, wake, config))
 }
 
-/// Forwarder: subscribes to the domain bus and turns the two relevant
-/// events into worker commands. Lagging drops events — tolerable, since
-/// dropped `WorkAdded`s are picked up by the next sweep and a dropped
-/// `ScanCompleted` only delays one.
-async fn forward_events(bus: DomainEventBus, tx: mpsc::Sender<Cmd>) {
+/// Forwarder: subscribes to the domain bus and wakes the worker on the two
+/// relevant events. Lagging drops events — tolerable, since the next pass reads
+/// what's missing rather than what was announced, and lag itself means there's
+/// news.
+async fn forward_events(bus: DomainEventBus, wake: Arc<Notify>) {
     let mut rx = bus.subscribe();
     loop {
-        let cmd = match rx.recv().await {
-            Ok(DomainEvent::WorkAdded { work, .. }) => Cmd::Added(work),
-            Ok(DomainEvent::ScanCompleted { .. }) => Cmd::Sweep,
-            Ok(_) => continue,
-            Err(RecvError::Lagged(missed)) => {
-                tracing::warn!(missed, "embedding worker lagged; events dropped");
-                continue;
+        match rx.recv().await {
+            Ok(DomainEvent::WorkAdded { .. } | DomainEvent::ScanCompleted { .. }) => {
+                wake.notify_one();
             }
+            Ok(_) => {}
+            Err(RecvError::Lagged(_)) => wake.notify_one(),
             Err(RecvError::Closed) => break,
-        };
-        // A full channel means the worker is behind; the sweep is the
-        // backstop, so dropping beats blocking the bus for everyone.
-        if let Err(e) = tx.try_send(cmd) {
-            tracing::warn!(error = %e, "embedding worker command dropped");
         }
     }
 }
@@ -109,86 +118,153 @@ async fn forward_events(bus: DomainEventBus, tx: mpsc::Sender<Cmd>) {
 async fn worker(
     registry: Arc<PluginRegistry>,
     storage: Arc<dyn Storage>,
-    mut rx: mpsc::Receiver<Cmd>,
-    // Kept so `rx` never reports closed after the forwarder exits (bus
-    // dropped); the worker lives on its hourly tick.
-    _keepalive: mpsc::Sender<Cmd>,
+    wake: Arc<Notify>,
+    config: EmbeddingWorkerConfig,
 ) {
-    let mut pending: HashSet<WorkId> = HashSet::new();
-    let mut debounce: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
+    let mut gate = IdleGate::new(HostLoad::new(), config.busy_percent, config.max_wait);
     let mut tick = interval_at(Instant::now() + SWEEP_INTERVAL, SWEEP_INTERVAL);
+    let changed = registry.embedder_changed();
 
     // Startup sweep: backfill everything missing from before we booted.
-    run_sweep(&registry, &storage).await;
+    run_sweep(&registry, &storage, &mut gate, config.batch_size).await;
 
     loop {
         tokio::select! {
-            cmd = rx.recv() => match cmd {
-                Some(Cmd::Added(id)) => {
-                    if pending.len() < MAX_PENDING {
-                        pending.insert(id);
-                    }
-                    if debounce.is_none() {
-                        debounce = Some(Box::pin(tokio::time::sleep(DEBOUNCE)));
-                    }
-                }
-                Some(Cmd::Sweep) => run_sweep(&registry, &storage).await,
-                None => break,
-            },
-            () = async {
-                if let Some(d) = debounce.as_mut() {
-                    d.await;
-                }
-            }, if debounce.is_some() => {
-                debounce = None;
-                let batch: Vec<WorkId> = pending.iter().take(BATCH_SIZE).copied().collect();
-                for id in &batch {
-                    pending.remove(id);
-                }
-                embed_ids(&registry, &storage, batch).await;
-                if !pending.is_empty() {
-                    debounce = Some(Box::pin(tokio::time::sleep(DEBOUNCE)));
-                }
-            }
-            _ = tick.tick() => run_sweep(&registry, &storage).await,
+            () = wake.notified() => sleep(DEBOUNCE).await,
+            () = changed.notified() => {}
+            _ = tick.tick() => {}
+        }
+        run_sweep(&registry, &storage, &mut gate, config.batch_size).await;
+    }
+}
+
+/// CPU use by everything but this process's own, as a reading averaged since
+/// the last one. A trait so tests can script a host.
+trait Load: Send {
+    /// In percent of the whole host. Meaningful from the second call on.
+    fn others_percent(&mut self) -> f32;
+}
+
+/// [`Load`] read from the OS. Counts ffmpeg as other work, since it's a child
+/// process, and excludes the batch that just ran, which would otherwise keep the
+/// worker from ever starting another.
+struct HostLoad {
+    system: Option<System>,
+    pid: Option<Pid>,
+}
+
+impl HostLoad {
+    /// Never fails: a platform sysinfo can't read reports an idle host, which
+    /// degrades to embedding without yielding.
+    fn new() -> Self {
+        let system = System::new_with_specifics(
+            RefreshKind::nothing().with_cpu(CpuRefreshKind::nothing().with_usage()),
+        )
+        .ok();
+        Self {
+            system,
+            pid: sysinfo::get_current_pid().ok(),
         }
     }
 }
 
-/// Event-path batch: resolve ids to works (skipping any deleted since
-/// the event), embed, persist. A failure drops the batch — the works
-/// stay missing and the next sweep retries them.
-async fn embed_ids(registry: &PluginRegistry, storage: &Arc<dyn Storage>, ids: Vec<WorkId>) {
-    if registry.embedder_claim().is_none() {
-        return;
+impl Load for HostLoad {
+    fn others_percent(&mut self) -> f32 {
+        let Some(system) = self.system.as_mut() else {
+            return 0.0;
+        };
+        system.refresh_cpu_specifics(CpuRefreshKind::nothing().with_usage());
+        let mut own = 0.0;
+        if let Some(pid) = self.pid {
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&[pid]),
+                true,
+                ProcessRefreshKind::nothing().with_cpu(),
+            );
+            let cores = system.cpus().len().max(1) as f32;
+            own = system.process(pid).map_or(0.0, |p| p.cpu_usage() / cores);
+        }
+        (system.global_cpu_usage() - own).max(0.0)
     }
-    let mut works = Vec::with_capacity(ids.len());
-    for id in ids {
-        match storage.get_work(id).await {
-            Ok(Some(work)) => works.push(work),
-            Ok(None) => {}
-            Err(e) => {
-                tracing::warn!(work = %id, error = %e, "embedding: work fetch failed");
+}
+
+/// Holds batches back while the host is busy.
+struct IdleGate<L> {
+    load: L,
+    busy_percent: f32,
+    max_wait: Duration,
+}
+
+impl<L: Load> IdleGate<L> {
+    fn new(load: L, busy_percent: f32, max_wait: Duration) -> Self {
+        Self {
+            load,
+            busy_percent,
+            max_wait,
+        }
+    }
+
+    /// Returns once a full [`LOAD_WINDOW`] has passed with other work under the
+    /// threshold, or after [`Self::max_wait`] regardless.
+    async fn wait(&mut self) {
+        let started = Instant::now();
+        loop {
+            // Discards whatever the last batch or reading left in the average.
+            self.load.others_percent();
+            sleep(LOAD_WINDOW).await;
+            let others = self.load.others_percent();
+            if others < self.busy_percent {
                 return;
             }
+            if started.elapsed() >= self.max_wait {
+                tracing::debug!(others, "embedding: host never quieted; embedding anyway");
+                return;
+            }
+            tracing::trace!(others, "embedding: waiting for the host to quiet");
         }
     }
-    embed_and_persist(registry, storage, works).await;
 }
 
-/// One backfill pass over `works_missing_embedding`. Aborts the pass on
-/// the first embed or storage failure — failed works remain "missing",
-/// and the next trigger (event or hourly tick) retries, so a down
-/// embedder never tight-loops.
-async fn run_sweep(registry: &PluginRegistry, storage: &Arc<dyn Storage>) {
+/// One backfill pass over `works_missing_embedding`, a batch at a time as the
+/// host allows. Aborts the pass on the first embed or storage failure — failed
+/// works remain "missing", and the next trigger (event or hourly tick) retries,
+/// so a down embedder never tight-loops.
+async fn run_sweep<L: Load>(
+    registry: &PluginRegistry,
+    storage: &Arc<dyn Storage>,
+    gate: &mut IdleGate<L>,
+    batch_size: u32,
+) {
     let Some(claim) = registry.embedder_claim() else {
         tracing::debug!("embedding sweep skipped: no embedder plugin loaded");
         return;
     };
+    let model = EmbeddingModel {
+        namespace: claim.namespace.clone(),
+        model_id: claim.model_id.clone(),
+        dimensions: claim.dimensions,
+    };
+    match storage.activate_embedding_model(&model).await {
+        Ok(Some(previous)) => tracing::info!(
+            from = %previous.model_id,
+            to = %model.model_id,
+            namespace = %model.namespace,
+            "embedding model changed; reindexing"
+        ),
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "embedding sweep: recording the model failed");
+            return;
+        }
+    }
+    // An API charges by the text and spends none of this host's CPU, so it gets
+    // the largest batches and doesn't wait its turn.
+    let remote = registry.remote_embedder().is_some();
+    let batch_size = if remote { REMOTE_BATCH } else { batch_size };
     let mut cursor = None;
     loop {
         let page = match storage
-            .works_missing_embedding(&claim.namespace, SWEEP_PAGE, cursor)
+            .works_missing_embedding(&claim.namespace, batch_size, cursor)
             .await
         {
             Ok(page) => page,
@@ -197,17 +273,41 @@ async fn run_sweep(registry: &PluginRegistry, storage: &Arc<dyn Storage>) {
                 return;
             }
         };
-        if page.items.is_empty() {
-            return;
+        if !page.items.is_empty() {
+            if !remote {
+                gate.wait().await;
+            }
+            if !embed_and_persist(registry, storage, page.items).await {
+                return;
+            }
         }
-        let next = page.next_cursor;
-        if !embed_and_persist(registry, storage, page.items).await {
-            return;
-        }
-        match next {
+        match page.next_cursor {
             Some(c) => cursor = Some(c),
-            None => return,
+            None => break,
         }
+    }
+    prune_replaced_models(registry, storage, &model.namespace).await;
+}
+
+/// The index is complete, so older models' vectors have nothing left to cover
+/// for. Kept until now so that a plugin failing to load, or a change of mind,
+/// doesn't throw away a reindex that may have cost money. Not if the embedder
+/// changed during the pass: this one's vectors are then the ones to keep.
+async fn prune_replaced_models(
+    registry: &PluginRegistry,
+    storage: &Arc<dyn Storage>,
+    namespace: &str,
+) {
+    if registry
+        .embedder_claim()
+        .is_none_or(|claim| claim.namespace != namespace)
+    {
+        return;
+    }
+    match storage.prune_embeddings(namespace).await {
+        Ok(0) => {}
+        Ok(pruned) => tracing::info!(pruned, namespace, "embedding: pruned replaced vectors"),
+        Err(e) => tracing::warn!(error = %e, "embedding: pruning replaced vectors failed"),
     }
 }
 
@@ -223,18 +323,19 @@ async fn embed_and_persist(
     if works.is_empty() {
         return true;
     }
-    let mut texts = Vec::with_capacity(works.len());
+    let mut inputs = Vec::with_capacity(works.len());
     for work in &works {
-        let tags = match storage.tags_for_target(TagTarget::Work(work.id)).await {
+        let target = TagTarget::Work(work.id);
+        let tags = match storage.tag_assignments_for_target(target).await {
             Ok(tags) => tags,
             Err(e) => {
                 tracing::warn!(work = %work.id, error = %e, "embedding: tag lookup failed");
                 return false;
             }
         };
-        texts.push(work_text(work, &tags));
+        inputs.push(EmbedInput::Document(work_document(work, &tags)));
     }
-    let Some(outcome) = (match embed_texts(registry, texts).await {
+    let Some(outcome) = (match embed_inputs(registry, inputs).await {
         Ok(outcome) => outcome,
         Err(e) => {
             tracing::warn!(error = %e, "embedding: embed dispatch failed");
@@ -246,7 +347,7 @@ async fn embed_and_persist(
         tracing::debug!("embedding skipped: embedder plugin went away");
         return false;
     };
-    // embed_texts validates one-vector-per-text against the claim, so
+    // embed_inputs validates one-vector-per-input against the claim, so
     // the zip is total.
     for (work, vector) in works.iter().zip(&outcome.vectors) {
         if let Err(e) = storage
@@ -265,34 +366,43 @@ async fn embed_and_persist(
     true
 }
 
-/// The text an embedder sees for a work: `"{title}"`, plus `" ({year})"`
-/// when the year is known, then `". {genres}"`, `". {keywords}"` and
-/// `". {overview}"` when present, truncated to [`MAX_TEXT_BYTES`] on a char
+/// What an embedder sees for a work: `"{title}"`, plus `" ({year})"` when the
+/// year is known, as the title, and `"{genres}"`, `"{keywords}"`, `"{people}"` and
+/// `"{overview}"` when present as the text, cut at [`MAX_TEXT_BYTES`] on a char
 /// boundary. Overviews rarely name a genre or theme outright, and a long one
 /// comes last so truncation cuts its tail rather than the tags.
-fn work_text(work: &Work, tags: &[Tag]) -> String {
-    let mut text = work.title.clone();
+fn work_document(work: &Work, tags: &[TagAssignment]) -> EmbedDocument {
+    let mut title = work.title.clone();
     if let Some(year) = work.year {
         use std::fmt::Write as _;
-        let _ = write!(text, " ({year})");
+        let _ = write!(title, " ({year})");
     }
-    for namespace in ["genre", "keyword"] {
-        let names = tags
-            .iter()
-            .filter(|tag| tag.namespace == namespace)
-            .map(|tag| tag.display.as_str())
-            .collect::<Vec<_>>();
-        if !names.is_empty() {
-            text.push_str(". ");
-            text.push_str(&names.join(", "));
-        }
+    let names = |namespace: &str| {
+        tags.iter()
+            .filter(|assignment| assignment.tag.namespace == namespace)
+            .map(|assignment| assignment.tag.display.as_str())
+            .collect::<Vec<_>>()
+    };
+    let mut people = tags
+        .iter()
+        .filter(|assignment| assignment.tag.namespace == "person")
+        .collect::<Vec<_>>();
+    people.sort_by_key(|assignment| assignment.metadata.0["order"].as_u64().unwrap_or(u64::MAX));
+    people.truncate(MAX_PEOPLE);
+    let people = people
+        .iter()
+        .map(|assignment| assignment.tag.display.as_str())
+        .collect::<Vec<_>>();
+
+    let mut parts = [names("genre"), names("keyword"), people]
+        .iter()
+        .filter(|list| !list.is_empty())
+        .map(|list| list.join(", "))
+        .collect::<Vec<_>>();
+    if let Some(overview) = work.overview.as_ref().filter(|text| !text.is_empty()) {
+        parts.push(overview.clone());
     }
-    if let Some(overview) = &work.overview {
-        if !overview.is_empty() {
-            text.push_str(". ");
-            text.push_str(overview);
-        }
-    }
+    let mut text = parts.join(". ");
     if text.len() > MAX_TEXT_BYTES {
         let mut end = MAX_TEXT_BYTES;
         while !text.is_char_boundary(end) {
@@ -300,11 +410,13 @@ fn work_text(work: &Work, tags: &[Tag]) -> String {
         }
         text.truncate(end);
     }
-    text
+    EmbedDocument { title, text }
 }
 
 #[cfg(test)]
 mod tests {
+    use noflex_storage::domain::Tag;
+
     use super::*;
 
     fn work(title: &str, year: Option<i32>, overview: Option<&str>) -> Work {
@@ -333,57 +445,124 @@ mod tests {
         }
     }
 
-    #[test]
-    fn text_shaping() {
-        assert_eq!(work_text(&work("Alien", None, None), &[]), "Alien");
-        assert_eq!(
-            work_text(&work("Alien", Some(1979), None), &[]),
-            "Alien (1979)"
-        );
-        assert_eq!(
-            work_text(
-                &work(
-                    "Alien",
-                    Some(1979),
-                    Some("In space no one can hear you scream.")
-                ),
-                &[]
-            ),
-            "Alien (1979). In space no one can hear you scream."
-        );
-        // Empty overviews shape like absent ones.
-        assert_eq!(work_text(&work("Alien", None, Some("")), &[]), "Alien");
+    fn tag(namespace: &str, display: &str, metadata: serde_json::Value) -> TagAssignment {
+        TagAssignment {
+            tag: Tag {
+                id: noflex_core::TagId::new(),
+                namespace: namespace.to_string(),
+                parent_id: None,
+                slug: display.to_lowercase(),
+                display: display.to_string(),
+                metadata: async_graphql::Json(serde_json::json!({})),
+            },
+            weight: 1.0,
+            source: "test".to_string(),
+            metadata: async_graphql::Json(metadata),
+        }
     }
 
     #[test]
-    fn text_keeps_genres_and_keywords_ahead_of_a_long_overview() {
-        let tag = |namespace: &str, display: &str| Tag {
-            id: noflex_core::TagId::new(),
-            namespace: namespace.to_string(),
-            parent_id: None,
-            slug: display.to_lowercase(),
-            display: display.to_string(),
-            metadata: async_graphql::Json(serde_json::json!({})),
-        };
+    fn document_shaping() {
+        let plain = work_document(&work("Alien", None, None), &[]);
+        assert_eq!((plain.title.as_str(), plain.text.as_str()), ("Alien", ""));
+
+        let full = work_document(
+            &work(
+                "Alien",
+                Some(1979),
+                Some("In space no one can hear you scream."),
+            ),
+            &[],
+        );
+        assert_eq!(full.title, "Alien (1979)");
+        assert_eq!(full.text, "In space no one can hear you scream.");
+
+        // Empty overviews shape like absent ones.
+        assert_eq!(work_document(&work("Alien", None, Some("")), &[]).text, "");
+    }
+
+    #[test]
+    fn document_keeps_tags_ahead_of_a_long_overview() {
         let tags = [
-            tag("studio", "Ignored"),
-            tag("keyword", "xenomorph"),
-            tag("genre", "Horror"),
-            tag("genre", "Science Fiction"),
+            tag("studio", "Ignored", serde_json::json!({})),
+            tag("keyword", "xenomorph", serde_json::json!({})),
+            tag("genre", "Horror", serde_json::json!({})),
+            tag("genre", "Science Fiction", serde_json::json!({})),
+            tag(
+                "person",
+                "Sigourney Weaver",
+                serde_json::json!({ "order": 0 }),
+            ),
         ];
         let long = "x".repeat(MAX_TEXT_BYTES);
-        let text = work_text(&work("Alien", None, Some(&long)), &tags);
-        assert!(text.starts_with("Alien. Horror, Science Fiction. xenomorph. xxx"));
+        let text = work_document(&work("Alien", None, Some(&long)), &tags).text;
+        assert!(
+            text.starts_with("Horror, Science Fiction. xenomorph. Sigourney Weaver. xxx"),
+            "{text}"
+        );
         assert!(text.len() <= MAX_TEXT_BYTES);
     }
 
     #[test]
-    fn text_truncates_on_a_char_boundary() {
-        // "t. " (3 bytes) + multi-byte chars: the raw cap lands
-        // mid-char, and truncation backs off to the boundary.
+    fn document_names_only_the_top_billed() {
+        let tags = (0..MAX_PEOPLE + 2)
+            .rev()
+            .map(|order| {
+                tag(
+                    "person",
+                    &format!("P{order}"),
+                    serde_json::json!({ "order": order }),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            work_document(&work("Alien", None, None), &tags).text,
+            "P0, P1, P2, P3, P4, P5"
+        );
+    }
+
+    #[test]
+    fn document_truncates_on_a_char_boundary() {
         let long = "é".repeat(MAX_TEXT_BYTES);
-        let text = work_text(&work("t", None, Some(&long)), &[]);
+        let text = work_document(&work("t", None, Some(&long)), &[]).text;
         assert!(text.len() <= MAX_TEXT_BYTES);
-        assert_eq!(text.chars().count(), 3 + (MAX_TEXT_BYTES - 3) / 2);
+        assert_eq!(text.chars().count(), MAX_TEXT_BYTES / 2);
+    }
+
+    /// Reports each scripted reading in turn; every other call, the one
+    /// [`IdleGate::wait`] discards, reads as noise that must not count.
+    struct Scripted(std::vec::IntoIter<f32>, bool);
+
+    impl Load for Scripted {
+        fn others_percent(&mut self) -> f32 {
+            self.1 = !self.1;
+            if self.1 {
+                return 0.0;
+            }
+            self.0.next().unwrap_or(100.0)
+        }
+    }
+
+    fn gate(readings: Vec<f32>) -> IdleGate<Scripted> {
+        IdleGate::new(
+            Scripted(readings.into_iter(), false),
+            30.0,
+            Duration::from_secs(60),
+        )
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn gate_waits_out_a_busy_host() {
+        let started = Instant::now();
+        gate(vec![95.0, 80.0, 10.0]).wait().await;
+        assert_eq!(started.elapsed(), LOAD_WINDOW * 3);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn gate_passes_a_batch_on_a_host_that_never_quiets() {
+        let started = Instant::now();
+        gate(vec![]).wait().await;
+        assert!(started.elapsed() >= Duration::from_secs(60));
+        assert!(started.elapsed() < Duration::from_secs(60) + LOAD_WINDOW * 2);
     }
 }

@@ -13,6 +13,7 @@ pub mod embeddings;
 mod engine;
 pub mod error;
 pub mod events;
+pub mod inference;
 pub mod intro;
 mod manifest;
 pub mod metadata_service;
@@ -21,6 +22,7 @@ mod net;
 mod plugin;
 pub mod priority;
 mod registry;
+pub mod remote_embedder;
 pub mod resource_limits;
 mod scheduler;
 pub mod scrobbler;
@@ -28,7 +30,9 @@ pub mod secrets;
 pub mod watcher;
 
 pub use bindings::{
-    embedder, external_auth, metadata_and_image, metadata_only,
+    embedder,
+    embedder::exports::noflex::plugin::embedder::{EmbedDocument, EmbedInput},
+    external_auth, metadata_and_image, metadata_only,
     metadata_only::{
         MetadataPlugin, exports::noflex::plugin::metadata as plugin_metadata,
         noflex::plugin::types as plugin_types,
@@ -43,6 +47,7 @@ pub use embeddings::spawn_embedding_worker;
 pub use engine::{EngineConfig, build_engine, spawn_epoch_ticker};
 pub use error::HostError;
 pub use events::{DiscoveredEvent, LifecycleBus, PluginLifecycleEvent, UnloadReason};
+pub use inference::{Inference, InferenceConfig, InferenceDevice};
 pub use intro::spawn_intro_detector_worker;
 pub use manifest::{
     EmbeddingClaim, HookKind, ManifestParseError, PluginManifest, PriorityKey, TaskRegistration,
@@ -53,9 +58,10 @@ pub use metadata_worker::{MetadataWorker, SweepReport, spawn_metadata_worker};
 pub use plugin::{LoadedPlugin, PluginHealth, PluginId, TaskHealth, TaskOutcome};
 pub use priority::{Overrides, PluginOverride, PluginOverrideEntry, PriorityTable};
 pub use registry::{
-    EmbedOutcome, Plugin, PluginRegistry, PluginTaskHealth, embed_texts, metadata_fanout,
+    EmbedOutcome, Plugin, PluginRegistry, PluginTaskHealth, embed_inputs, metadata_fanout,
     metadata_fetch, metadata_payload_from_wit, to_wit_kind_id,
 };
+pub use remote_embedder::{RemoteEmbedError, RemoteEmbedder};
 pub use resource_limits::{PluginLimitState, PluginLimits};
 pub use scrobbler::spawn_scrobble_dispatcher;
 pub use secrets::SecretStore;

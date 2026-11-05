@@ -16,14 +16,14 @@ use tokio::io::AsyncWrite;
 use crate::{
     domain::{
         ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount, Device, DevicePin,
-        Edition, EpgProgram, ExportJob, ExportJobStatus, ExternalIdentity, HistoryPage, Image,
-        ImageSource, ImageTarget, IntroMarkers, Invite, Library, LinkedServer, LiveTvChannel,
-        LiveTvSource, MediaFile, OptimizedVersion, PlaySession, Playlist, PluginOverrideRow,
-        PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule, RecordingStatus,
-        RefreshTokenLookup, ScanEvent, Session, SmartTranscodingSettings, Tag, TagAssignment,
-        TagSummary, TrickplayAsset, User, UserData, UserPluginSecret, UserPreference,
-        UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork, Work,
-        WorkFeatures,
+        Edition, EmbeddingEndpoint, EmbeddingModel, EpgProgram, ExportJob, ExportJobStatus,
+        ExternalIdentity, HistoryPage, Image, ImageSource, ImageTarget, IntroMarkers, Invite,
+        Library, LinkedServer, LiveTvChannel, LiveTvSource, MediaFile, OptimizedVersion,
+        PlaySession, Playlist, PluginOverrideRow, PluginTaskPayload, PluginTaskState, Recording,
+        RecordingSchedule, RecordingStatus, RefreshTokenLookup, ScanEvent, Session,
+        SmartTranscodingSettings, Tag, TagAssignment, TagSummary, TrickplayAsset, User, UserData,
+        UserPluginSecret, UserPreference, UserRestrictions, WatchRoom, WatchRoomMember,
+        WatchRoomState, WatchedWork, Work, WorkFeatures,
     },
     error::StorageResult,
     query::{
@@ -827,6 +827,31 @@ pub trait Storage: Send + Sync + 'static {
     ) -> StorageResult<Page<Work>>;
 
     // ---- Search: lexical + vector + hybrid -----------------------------
+    /// The model the vector index was last told it belongs to.
+    async fn active_embedding_model(&self) -> StorageResult<Option<EmbeddingModel>>;
+
+    /// Records `model` as the one the index belongs to and returns the model it
+    /// replaces, or `None` when it was already active. Vectors already stored
+    /// under `model`'s namespace by anything else are deleted, since they can't be
+    /// compared with its; other namespaces are kept for
+    /// [`Storage::prune_embeddings`], so a brief change of model costs nothing.
+    async fn activate_embedding_model(
+        &self,
+        model: &EmbeddingModel,
+    ) -> StorageResult<Option<EmbeddingModel>>;
+
+    /// Deletes every vector outside `namespace`, returning how many.
+    async fn prune_embeddings(&self, namespace: &str) -> StorageResult<u64>;
+
+    /// The remote embeddings API in use, if one is configured.
+    async fn embedding_endpoint(&self) -> StorageResult<Option<EmbeddingEndpoint>>;
+
+    /// Sets or, with `None`, clears the remote embeddings API.
+    async fn set_embedding_endpoint(
+        &self,
+        endpoint: Option<&EmbeddingEndpoint>,
+    ) -> StorageResult<()>;
+
     async fn search_lexical(
         &self,
         query: &str,

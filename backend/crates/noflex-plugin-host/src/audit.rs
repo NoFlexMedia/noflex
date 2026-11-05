@@ -157,6 +157,18 @@ pub fn asset_read(plugin_id: &str, name: &str, bytes: Option<u64>) {
     );
 }
 
+/// Helper: log a `host-inference` run over `sequences` token sequences.
+pub fn inference_run(plugin_id: &str, model: &str, sequences: u64, ok: bool) {
+    tracing::info!(
+        target: TARGET,
+        plugin = plugin_id,
+        event = "inference_run",
+        model,
+        sequences,
+        ok,
+    );
+}
+
 /// Helper: log a background-task invocation boundary. Fires on start and
 /// end only — not per fire — so a 50ms-interval task doesn't drown the
 /// audit appender.

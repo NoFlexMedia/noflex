@@ -145,7 +145,16 @@ async fn run() -> anyhow::Result<()> {
     // Bring up the plugin runtime. Loads any `.wasm` plugins from the
     // tiered search path; missing directories are tolerated. The epoch
     // ticker enforces per-call deadlines during dispatch.
-    let plugin_engine_cfg = EngineConfig::default();
+    let plugin_engine_cfg = EngineConfig {
+        inference: Arc::new(noflex_plugin_host::Inference::new(
+            noflex_plugin_host::InferenceConfig {
+                device: cfg.search.device,
+                threads: cfg.search.threads,
+                library: cfg.search.onnxruntime_library.clone(),
+            },
+        )),
+        ..EngineConfig::default()
+    };
     let engine =
         build_engine(&plugin_engine_cfg).map_err(|e| anyhow::anyhow!("build wasm engine: {e}"))?;
     let _epoch_handle =
@@ -195,14 +204,27 @@ async fn run() -> anyhow::Result<()> {
     )
     .context("start plugin watcher")?;
 
-    // Host-driven embedding worker: backfills the vector index on boot,
-    // on scan completion, and hourly; embeds fresh works off the event
-    // bus. It re-checks for an embedder plugin on every trigger, so a
-    // hot-reload install later picks up work without a restart.
+    // An administrator's embeddings API wins over any plugin, from the first sweep.
+    match storage.embedding_endpoint().await {
+        Ok(Some(endpoint)) => match noflex_plugin_host::RemoteEmbedder::new(endpoint) {
+            Ok(remote) => plugin_registry.set_remote_embedder(Some(Arc::new(remote))),
+            Err(e) => tracing::warn!(error = %e, "embeddings API unusable; using embedder plugins"),
+        },
+        Ok(None) => {}
+        Err(e) => tracing::warn!(error = %e, "reading the embeddings API setting failed"),
+    }
+
+    // Host-driven embedding worker: backfills the vector index on boot, on scan
+    // completion, when the embedder changes, and hourly, while the host is idle.
     let _embedding_worker = noflex_plugin_host::spawn_embedding_worker(
         plugin_registry.clone(),
         storage.clone(),
         &event_bus,
+        noflex_plugin_host::embeddings::EmbeddingWorkerConfig {
+            batch_size: cfg.search.batch_size,
+            busy_percent: cfg.search.busy_percent,
+            ..Default::default()
+        },
     );
     match plugin_registry.embedder_claim() {
         Some(claim) => info!(
@@ -305,9 +327,7 @@ async fn run() -> anyhow::Result<()> {
     }
     let metadata = Arc::new(MetadataSearch::new(plugin_registry.clone()));
     let export_events = Arc::new(ExportEventBroadcaster::default());
-    let ffmpeg_path = std::path::PathBuf::from(
-        std::env::var("FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".to_string()),
-    );
+    let ffmpeg_path = noflex_core::bundle::ffmpeg_tool("ffmpeg", "FFMPEG_BIN");
     // Transcode jobs write into the resolved transcode cache
     // dir (same resolution as the cache-dir bootstrap above).
     let transcode_dir = if cfg.cache.transcode_dir.is_empty() {
@@ -811,8 +831,8 @@ async fn healthz_deep(State(state): State<AppState>) -> impl IntoResponse {
     // ffmpeg availability. ffmpeg is loaded for transcode + ffprobe;
     // its presence is a strong "the runtime can do media work"
     // signal.
-    let ffmpeg_ok = which("ffmpeg").is_some();
-    let ffprobe_ok = which("ffprobe").is_some();
+    let ffmpeg_ok = runnable(&noflex_core::bundle::ffmpeg_tool("ffmpeg", "FFMPEG_BIN"));
+    let ffprobe_ok = runnable(&noflex_core::bundle::ffmpeg_tool("ffprobe", "FFPROBE_BIN"));
     if !ffmpeg_ok || !ffprobe_ok {
         all_ok = false;
     }
@@ -837,15 +857,13 @@ async fn healthz_deep(State(state): State<AppState>) -> impl IntoResponse {
     (status, axum::Json(body)).into_response()
 }
 
-fn which(cmd: &str) -> Option<std::path::PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(cmd);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
+/// Whether `tool` names a file, directly or by a search of `PATH`.
+fn runnable(tool: &std::path::Path) -> bool {
+    if tool.components().count() > 1 {
+        return tool.is_file();
     }
-    None
+    std::env::var_os("PATH")
+        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(tool).is_file()))
 }
 
 async fn run_backup_scheduler(

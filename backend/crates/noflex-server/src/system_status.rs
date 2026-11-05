@@ -374,8 +374,7 @@ impl SystemStatusService {
     async fn probe_transcoder(&self) -> TranscoderInfo {
         let cfg = &self.deps.config;
         let det = &self.deps.hw_detect;
-        let ffprobe_cmd =
-            PathBuf::from(std::env::var("FFPROBE_BIN").unwrap_or_else(|_| "ffprobe".to_owned()));
+        let ffprobe_cmd = noflex_core::bundle::ffmpeg_tool("ffprobe", "FFPROBE_BIN");
         let (ffmpeg, ffprobe) = tokio::join!(
             ffmpeg::probe_binary(&self.deps.ffmpeg_path, "FFMPEG_BIN"),
             ffmpeg::probe_binary(&ffprobe_cmd, "FFPROBE_BIN"),
@@ -528,6 +527,12 @@ impl AdminStatusService for SystemStatusService {
         };
         Ok(SearchIndexStatus {
             embedder_plugins: plugins,
+            remote_host: self
+                .deps
+                .plugins
+                .remote_embedder()
+                .and_then(|remote| remote.host()),
+            inference_device: self.deps.plugins.inference().device_in_use(),
             namespace: Some(claim.namespace),
             model_id: Some(claim.model_id),
             dimensions: Some(claim.dimensions),

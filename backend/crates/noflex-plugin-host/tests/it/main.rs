@@ -18,5 +18,6 @@ mod metadata_service;
 mod net;
 mod post_scan;
 mod real_plugin;
+mod remote_embedder;
 mod scrobbler;
 mod user_link;

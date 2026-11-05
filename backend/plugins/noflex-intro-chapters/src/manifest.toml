@@ -2,7 +2,7 @@ manifest_version = 1
 plugin_id = "intro-chapters"
 display_name = "Chapter Intro Detector"
 version = "0.1.0"
-noflex_api_version = "0.9"
+noflex_api_version = "0.10"
 hooks = ["intro-detector", "background"]
 # No capabilities: detection inputs arrive through host-library, which
 # needs no grant, and the background export is a stub (no [[tasks]]).

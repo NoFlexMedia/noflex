@@ -450,6 +450,11 @@ pub struct LibraryIndexStatus {
 pub struct SearchIndexStatus {
     /// Plugins exporting the embedder hook; the first is active.
     pub embedder_plugins: Vec<String>,
+    /// Host of the embeddings API in use; plugins are idle while there is one.
+    pub remote_host: Option<String>,
+    /// What the local model actually loaded on, once it has: `cpu`, `cuda`,
+    /// `openvino-npu`, ... An accelerator that's asked for but unusable isn't here.
+    pub inference_device: Option<String>,
     pub namespace: Option<String>,
     pub model_id: Option<String>,
     pub dimensions: Option<u32>,

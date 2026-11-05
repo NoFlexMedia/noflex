@@ -90,14 +90,16 @@ Don't break these without an architecture discussion in the PR description.
 ### Search
 
 - Modes are lexical, vector, and hybrid (default). Hybrid fuses both with reciprocal rank fusion.
-- Embeddings are computed locally, never by an external inference API. Every backend implements `upsert_embedding` and `search_vector`.
+- Embeddings are computed locally unless an administrator configures an OpenAI-compatible endpoint, which is never a default. Every backend implements `upsert_embedding` and `search_vector`.
+- A vector index belongs to one model. Anything that changes a model's output changes its namespace, and the sweep reindexes; old vectors are pruned only once the new index is complete.
 
 ### Plugins
 
 - **Plugins are WASM components.** First-party providers (TMDb, TVDB, MusicBrainz) ship as `.wasm` too; the server has no native `MetadataProvider`, so first-party code exercises the plugin ABI on every startup.
 - **One instance per plugin** (WASI 0.3 native async). Plugins own their concurrency, batching, and rate limiting.
 - **Plugins never see `Storage`.** Data access goes through narrow, named host imports (`host-library.lookup-work-by-id`). Add an import per query type; never a general query interface.
-- **Plugins own egress.** The host never fetches provider URLs itself; network access goes through `host-net`, allowlisted and audit-logged.
+- **Plugins own egress.** The host never fetches provider URLs itself; network access goes through `host-net`, allowlisted and audit-logged. The one exception is the embeddings endpoint an administrator configures, whose URL comes from them and not from a plugin.
+- **Models run in the host.** Plugins bring the tokenizer and prompts and call `host-inference`; the operator chooses the device. WASM can't reach an accelerator, and a plugin holding the GPU couldn't coordinate with transcodes.
 - **Provider-exclusive fetch.** `fetch()` runs on exactly one candidate per work; fields never mix across providers. Fall back to the next candidate only on `fetch()` failure.
 - **Trust by default** for now: plugins in the search path load immediately, every capability use audit-logged.
 - Args and returns are owned, serializable, and `Send` — they cross the WIT boundary. No `&dyn Trait`, no host-pinned lifetimes.

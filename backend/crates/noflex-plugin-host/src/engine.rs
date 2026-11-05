@@ -21,6 +21,8 @@ pub struct EngineConfig {
     /// Enable `wasmtime` debug info embedding so traps include source maps
     /// when plugins were built with `debug = "line-tables-only"` or better.
     pub debug_info: bool,
+    /// Runs the models behind `host-inference`, shared across plugins.
+    pub inference: Arc<crate::Inference>,
 }
 
 impl Default for EngineConfig {
@@ -30,6 +32,7 @@ impl Default for EngineConfig {
             default_memory_limit_mb: 64,
             epoch_ticker_period_ms: 100,
             debug_info: false,
+            inference: Arc::default(),
         }
     }
 }

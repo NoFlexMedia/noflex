@@ -774,6 +774,44 @@ pub struct SmartTranscodingSettings {
     pub max_version_gb: Option<u64>,
 }
 
+/// The model a vector index is built with. Vectors from different models can't be
+/// compared, so anything that changes a model's output must change this.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmbeddingModel {
+    /// Vectors are stored and searched under this.
+    pub namespace: String,
+    pub model_id: String,
+    pub dimensions: u32,
+}
+
+/// An OpenAI-compatible embeddings API an administrator chose over the local
+/// embedder. Titles, overviews, credits and search text are sent to it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
+pub struct EmbeddingEndpoint {
+    /// The API's base, such as `https://api.openai.com/v1`.
+    pub url: String,
+    /// Sent as a bearer token. Write-only: clients see only `has_api_key`.
+    #[graphql(skip)]
+    pub api_key: Option<String>,
+    pub model: String,
+    /// What the model returns, measured when the endpoint was saved.
+    pub dimensions: u32,
+    /// Asked of models that can shorten their output; most can't.
+    pub request_dimensions: Option<u32>,
+    /// Put before each query; many models were trained expecting one.
+    pub query_prefix: String,
+    /// Put before each document.
+    pub document_prefix: String,
+}
+
+#[async_graphql::ComplexObject]
+impl EmbeddingEndpoint {
+    async fn has_api_key(&self) -> bool {
+        self.api_key.is_some()
+    }
+}
+
 /// A prepared copy of a media file, derived from it and never a media file
 /// itself. `plan`, `index` and `probe` are the transcoder's types, opaque here.
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]

@@ -12,7 +12,9 @@
 // artifacts are missing; the tests self-skip if the toolchain can't
 // produce them (e.g. a host without the target installed).
 
-use noflex_plugin_host::{EngineConfig, PluginRegistry, build_engine, embed_texts};
+use noflex_plugin_host::{
+    EmbedInput, EngineConfig, HostError, PluginRegistry, build_engine, embed_inputs,
+};
 
 fn registry() -> PluginRegistry {
     let engine = build_engine(&EngineConfig::default()).expect("engine builds");
@@ -105,8 +107,8 @@ async fn embed_texts_rejects_oversized_batch() {
     let texts = (0..65).map(|i| format!("text-{i}")).collect();
     let err = embed_texts(&registry, texts)
         .await
-        .expect_err("65 texts exceeds the 64-text cap");
-    assert!(err.to_string().contains("64-text cap"), "msg: {err}");
+        .expect_err("65 inputs exceeds the 64-input cap");
+    assert!(err.to_string().contains("64-input cap"), "msg: {err}");
 }
 
 #[tokio::test]
@@ -186,4 +188,11 @@ async fn concurrent_embed_calls_complete_on_one_instance() {
     for w in seen.windows(2) {
         assert_ne!(w[0], w[1], "each caller got its own text's vector");
     }
+}
+
+async fn embed_texts(
+    registry: &PluginRegistry,
+    texts: Vec<String>,
+) -> Result<Option<noflex_plugin_host::EmbedOutcome>, HostError> {
+    embed_inputs(registry, texts.into_iter().map(EmbedInput::Query).collect()).await
 }

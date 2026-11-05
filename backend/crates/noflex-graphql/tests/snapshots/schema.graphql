@@ -668,6 +668,53 @@ type Edition {
 }
 
 """
+An OpenAI-compatible embeddings API an administrator chose over the local
+embedder. Titles, overviews, credits and search text are sent to it.
+"""
+type EmbeddingEndpoint {
+	"""
+	The API's base, such as `https://api.openai.com/v1`.
+	"""
+	url: String!
+	model: String!
+	"""
+	What the model returns, measured when the endpoint was saved.
+	"""
+	dimensions: Int!
+	"""
+	Asked of models that can shorten their output; most can't.
+	"""
+	requestDimensions: Int
+	"""
+	Put before each query; many models were trained expecting one.
+	"""
+	queryPrefix: String!
+	"""
+	Put before each document.
+	"""
+	documentPrefix: String!
+	hasApiKey: Boolean!
+}
+
+input EmbeddingEndpointInput {
+	"""
+	The API's base, such as `https://api.openai.com/v1`.
+	"""
+	url: String!
+	"""
+	Null keeps the saved key while `url` is unchanged. Empty removes it.
+	"""
+	apiKey: String
+	model: String!
+	"""
+	Ask the model to shorten its vectors. Most models can't.
+	"""
+	requestDimensions: Int
+	queryPrefix: String! = ""
+	documentPrefix: String! = ""
+}
+
+"""
 One bounded electronic programme guide entry.
 """
 type EpgProgram {
@@ -1587,6 +1634,18 @@ type Mutation {
 	Forget one of the caller's devices. Returns whether there was one.
 	"""
 	removeDevice(id: ID!): Boolean!
+	"""
+	Use an embeddings API. Sends it a test first and saves nothing if that
+	fails. From then on every title, overview, credit and search text goes to
+	it, and changing anything but the key reindexes the library. Administrator
+	only.
+	"""
+	setEmbeddingEndpoint(input: EmbeddingEndpointInput!): EmbeddingEndpoint!
+	"""
+	Go back to embedding on this server, which reindexes the library unless
+	vectors from before the endpoint are still around. Administrator only.
+	"""
+	clearEmbeddingEndpoint: Boolean!
 	"""
 	Create an invite that lets someone make an ordinary account with access
 	to `libraryIds`. Administrator only.
@@ -2753,6 +2812,11 @@ type Query {
 	work kinds.
 	"""
 	search(text: String!, mode: SearchMode! = HYBRID, kinds: [WorkKind!], first: Int, after: String): SearchHitConnection!
+	"""
+	The embeddings API in use, or null when embedding happens on this server.
+	Administrator only.
+	"""
+	embeddingEndpoint: EmbeddingEndpoint
 	myRestrictions: UserRestrictions!
 	userRestrictions(userId: ID!): UserRestrictions!
 	watchRooms: [WatchRoom!]!
@@ -3002,6 +3066,15 @@ type SearchIndexStatus {
 	Plugins exporting the embedder hook; the first is active.
 	"""
 	embedderPlugins: [String!]!
+	"""
+	Host of the embeddings API in use; plugins are idle while there is one.
+	"""
+	remoteHost: String
+	"""
+	What the local model actually loaded on, once it has: `cpu`, `cuda`,
+	`openvino-npu`, ... An accelerator that's asked for but unusable isn't here.
+	"""
+	inferenceDevice: String
 	namespace: String
 	modelId: String
 	dimensions: Int

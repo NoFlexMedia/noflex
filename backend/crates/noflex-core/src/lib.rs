@@ -5,6 +5,7 @@
 // auth backend, scrobbler, etc. plugs into. Trait signatures here are
 // semver-stable (see CONTRIBUTING.md).
 
+pub mod bundle;
 pub mod error;
 pub mod events;
 pub mod ids;

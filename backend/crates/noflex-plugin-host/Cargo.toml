@@ -33,10 +33,12 @@ wasmtime-wasi = { workspace = true }
 sha2 = { workspace = true }
 directories = { workspace = true }
 notify = { workspace = true }
+sysinfo = { workspace = true }
+ort = { workspace = true }
 time = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }
 noflex-storage-turso = { workspace = true }

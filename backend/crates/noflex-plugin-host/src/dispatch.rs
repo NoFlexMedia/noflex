@@ -20,7 +20,7 @@ use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiVie
 use crate::{
     PluginId, PluginLimitState, PluginLimits,
     bindings::{
-        embedder::noflex::plugin::{host_assets, types as embedder_types},
+        embedder::noflex::plugin::{host_assets, host_inference, types as embedder_types},
         metadata_only::{
             MetadataPlugin,
             noflex::plugin::{
@@ -205,6 +205,8 @@ pub struct PluginCtx {
     /// Root directory `host-assets.read-file` resolves names under.
     /// `None` disables the import with an `unavailable` plugin error.
     pub assets_dir: Option<PathBuf>,
+    /// Runs the models behind `host-inference`, shared across plugins.
+    pub inference: Arc<crate::Inference>,
     pub limits: PluginLimitState,
     /// In-flight export calls: who each acts for and when it is due.
     pub(crate) calls: CallTable,
@@ -229,6 +231,7 @@ pub struct PluginCtxParts {
     pub http_egress_hosts: Vec<String>,
     pub storage: Option<Arc<dyn Storage>>,
     pub assets_dir: Option<PathBuf>,
+    pub inference: Arc<crate::Inference>,
     pub limits: PluginLimits,
 }
 
@@ -245,6 +248,7 @@ impl PluginCtxParts {
         )
         .with_declared_tasks(self.declared_tasks.clone())
         .with_assets_dir(self.assets_dir.clone())
+        .with_inference(self.inference.clone())
         .with_egress_hosts(self.http_egress_hosts.clone())
         .with_limits(self.limits.clone())
     }
@@ -301,6 +305,7 @@ impl PluginCtx {
             http_egress_hosts: Vec::new(),
             storage,
             assets_dir: None,
+            inference: Arc::default(),
             limits,
             calls: CallTable::default(),
             wasi,
@@ -315,6 +320,11 @@ impl PluginCtx {
 
     pub fn with_assets_dir(mut self, assets_dir: Option<PathBuf>) -> Self {
         self.assets_dir = assets_dir;
+        self
+    }
+
+    pub fn with_inference(mut self, inference: Arc<crate::Inference>) -> Self {
+        self.inference = inference;
         self
     }
 
@@ -887,6 +897,70 @@ impl host_assets::HostWithStore<PluginCtx> for HasSelf<PluginCtx> {
     }
 }
 
+// ----------------------------------------------------------------------
+// `host-inference`: native model runs over a model in the assets directory. Gated
+// on the `inference.run` capability; every attempt is audit-logged.
+// ----------------------------------------------------------------------
+
+impl host_inference::Host for PluginCtx {}
+
+impl host_inference::HostWithStore<PluginCtx> for HasSelf<PluginCtx> {
+    async fn embed_tokens(
+        accessor: &Accessor<PluginCtx, Self>,
+        model: String,
+        tokens: Vec<Vec<u32>>,
+    ) -> wasmtime::Result<Result<Vec<Vec<f32>>, embedder_types::PluginError>> {
+        use embedder_types::PluginError;
+
+        let (plugin_id, capabilities, assets_dir, inference) = accessor.with(|mut access| {
+            let ctx = access.get();
+            (
+                ctx.plugin_id.clone(),
+                ctx.declared_capabilities.clone(),
+                ctx.assets_dir.clone(),
+                ctx.inference.clone(),
+            )
+        });
+        let sequences = tokens.len() as u64;
+        let finish = |result: Result<Vec<Vec<f32>>, PluginError>| {
+            crate::audit::inference_run(&plugin_id.0, &model, sequences, result.is_ok());
+            Ok(result)
+        };
+        if !has_capability(&capabilities, "inference.run") {
+            return finish(Err(PluginError::CapabilityDenied(
+                "host-inference requires the `inference.run` capability".into(),
+            )));
+        }
+        let Some(root) = assets_dir else {
+            return finish(Err(PluginError::Unavailable(
+                "asset store not configured on this host".into(),
+            )));
+        };
+        let path = match resolve_asset_path(&root, &model).await {
+            Ok(path) => path,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return finish(Err(PluginError::NotFound));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                return finish(Err(PluginError::CapabilityDenied(format!(
+                    "model `{model}` escapes the configured asset directory"
+                ))));
+            }
+            Err(e) => {
+                return finish(Err(PluginError::BadInput(format!(
+                    "invalid model `{model}`: {e}"
+                ))));
+            }
+        };
+        finish(
+            inference
+                .embed_tokens(&path, tokens)
+                .await
+                .map_err(|e| PluginError::Unavailable(e.to_string())),
+        )
+    }
+}
+
 async fn resolve_asset_path(root: &Path, name: &str) -> std::io::Result<PathBuf> {
     if name.is_empty() || name.contains('\\') {
         return Err(std::io::Error::from(std::io::ErrorKind::InvalidInput));
@@ -970,6 +1044,10 @@ pub fn build_linker(
     host_assets::add_to_linker::<_, wasmtime::component::HasSelf<PluginCtx>>(&mut linker, |ctx| {
         ctx
     })?;
+    host_inference::add_to_linker::<_, wasmtime::component::HasSelf<PluginCtx>>(
+        &mut linker,
+        |ctx| ctx,
+    )?;
     Ok(linker)
 }
 

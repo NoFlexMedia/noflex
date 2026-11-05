@@ -10,7 +10,7 @@
   import Stack from "phosphor-svelte/lib/Stack";
   import Television from "phosphor-svelte/lib/Television";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
-  import { AdminIndexingStore, cache, TriggerLibraryScanStore } from "$houdini";
+  import { AdminIndexingStore, cache, graphql, TriggerLibraryScanStore } from "$houdini";
   import { timecode, titleCase } from "$lib/format.js";
   import { failure, refetch } from "$lib/graphql.js";
   import { attempt, poll } from "$lib/ui.svelte.js";
@@ -39,6 +39,48 @@
     const tick = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(tick);
   });
+
+  const endpoint = graphql(`
+    query EmbeddingEndpointSettings @cache(policy: NetworkOnly) {
+      embeddingEndpoint { url model dimensions requestDimensions queryPrefix documentPrefix hasApiKey }
+    }
+  `);
+  const saveEndpoint = graphql(`
+    mutation SaveEmbeddingEndpoint($input: EmbeddingEndpointInput!) {
+      setEmbeddingEndpoint(input: $input) { url dimensions }
+    }
+  `);
+  const clearEndpoint = graphql(`
+    mutation ClearEmbeddingEndpoint { clearEmbeddingEndpoint }
+  `);
+  const blank = { url: "", apiKey: "", model: "", requestDimensions: "", queryPrefix: "", documentPrefix: "" };
+  let draft = $state({ ...blank });
+  let editing = $state(false);
+  let saving = $state(false);
+  let current = $derived($endpoint.data?.embeddingEndpoint);
+
+  $effect(() => { refetch(endpoint); });
+
+  function edit() {
+    draft = current
+      ? { ...blank, url: current.url, model: current.model, requestDimensions: current.requestDimensions ?? "", queryPrefix: current.queryPrefix, documentPrefix: current.documentPrefix }
+      : { ...blank };
+    editing = true;
+  }
+
+  async function save(event) {
+    event.preventDefault();
+    saving = true;
+    // An untouched key field keeps the saved key; see the input's note.
+    const input = { url: draft.url, model: draft.model, apiKey: draft.apiKey || null, requestDimensions: draft.requestDimensions ? Number(draft.requestDimensions) : null, queryPrefix: draft.queryPrefix, documentPrefix: draft.documentPrefix };
+    const saved = await attempt(() => saveEndpoint.mutate({ input }), "Embeddings API saved; reindexing");
+    saving = false;
+    if (saved) { editing = false; refetch(endpoint); refetch(indexing); }
+  }
+
+  async function useLocal() {
+    if (await attempt(() => clearEndpoint.mutate(null), "Embedding on this server again")) { editing = false; refetch(endpoint); refetch(indexing); }
+  }
 
   const KIND_ICON = { MOVIES: FilmStrip, SHOWS: Television, MUSIC: MusicNotes, AUDIOBOOKS: BookOpen, PHOTOS: ImageIcon, MIXED: Stack };
   const EVERY = { HOURLY: 3_600_000, DAILY: 86_400_000, WEEKLY: 604_800_000 };
@@ -182,7 +224,7 @@
       <section class="panel dense">
         <header class="panel-head">
           <span class="panel-icon"><MagnifyingGlass size={18} /></span>
-          <div><h2>Search index</h2><p>Vector embeddings for hybrid search, computed locally by the embedder plugin.</p></div>
+          <div><h2>Search index</h2><p>{#if search.remoteHost}Vector embeddings for hybrid search, computed by the API at {search.remoteHost}.{:else}Vector embeddings for hybrid search, computed on this server while it's idle.{/if}</p></div>
           <span class="spacer"></span>
           {#if !search.namespace}<span class="state warn">No embedder</span>
           {:else if search.pendingWorks}<span class="state accent">Backfilling</span>
@@ -190,14 +232,39 @@
         </header>
         {#if search.namespace}
           <dl class="kv">
-            <div><dt>Plugin</dt><dd class="mono">{search.embedderPlugins[0] ?? "—"}</dd></div>
+            {#if search.remoteHost}
+              <div><dt>Endpoint</dt><dd class="mono">{search.remoteHost}</dd></div>
+            {:else}
+              <div><dt>Plugin</dt><dd class="mono">{search.embedderPlugins[0] ?? "—"}</dd></div>
+              <div><dt>Running on</dt><dd class="mono">{search.inferenceDevice ?? "Not loaded yet"}</dd></div>
+            {/if}
             <div><dt>Model</dt><dd class="mono">{search.modelId ?? "—"}</dd></div>
             <div><dt>Namespace</dt><dd class="mono">{search.namespace}</dd></div>
             <div><dt>Dimensions</dt><dd>{search.dimensions ?? "—"}</dd></div>
             <div><dt>Waiting for vectors</dt><dd class:warn-text={search.pendingWorks}>{search.pendingWorks}{search.pendingIsLowerBound ? "+" : ""} titles</dd></div>
           </dl>
         {:else}
-          <p class="empty-note">Search falls back to lexical matching. Install an embedder plugin to enable vector and hybrid search.</p>
+          <p class="empty-note">Search falls back to lexical matching. Install an embedder plugin or use an embeddings API to enable vector and hybrid search.</p>
+        {/if}
+        {#if editing}
+          <form class="endpoint" onsubmit={save}>
+            <p class="privacy"><WarningCircle size={18} /><span>An embeddings API receives every title, overview and credit in your libraries, and everything searched for. Saving sends a test, and reindexes the library if the model changes.</span></p>
+            <label class="field wide">Base URL<input class="mono" bind:value={draft.url} placeholder="https://api.openai.com/v1" spellcheck="false" autocomplete="off" required /></label>
+            <label class="field">Model<input class="mono" bind:value={draft.model} placeholder="text-embedding-3-small" spellcheck="false" autocomplete="off" required /></label>
+            <label class="field">API key<input class="mono" type="password" bind:value={draft.apiKey} placeholder={current?.hasApiKey ? "Saved; leave blank to keep" : "None"} autocomplete="off" /><small>A saved key is dropped if the URL changes, so it can't reach another host.</small></label>
+            <label class="field">Dimensions<input type="number" min="1" step="1" inputmode="numeric" bind:value={draft.requestDimensions} placeholder="Model's default" /><small>Only for models that can shorten their vectors.</small></label>
+            <label class="field">Query prefix<input class="mono" bind:value={draft.queryPrefix} placeholder="None" spellcheck="false" autocomplete="off" /><small>Some models expect one, such as <code>search_query: </code>.</small></label>
+            <label class="field">Document prefix<input class="mono" bind:value={draft.documentPrefix} placeholder="None" spellcheck="false" autocomplete="off" /></label>
+            <div class="endpoint-actions">
+              <button class="btn sm primary" disabled={saving}>{#if saving}<span class="spinner sm"></span>{/if}Test and save</button>
+              <button type="button" class="btn sm ghost" onclick={() => (editing = false)}>Cancel</button>
+            </div>
+          </form>
+        {:else}
+          <div class="endpoint-actions">
+            <button class="btn sm" onclick={edit}>{current ? "Edit embeddings API" : "Use an embeddings API"}</button>
+            {#if current}<button class="btn sm ghost" onclick={useLocal}>Embed on this server instead</button>{/if}
+          </div>
         {/if}
       </section>
     {/if}
@@ -206,6 +273,11 @@
 
 <style>
   .tall { height: 260px; }
+  .endpoint { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); margin-top: 16px; }
+  .endpoint .wide, .endpoint .privacy { grid-column: 1 / -1; }
+  .privacy { display: flex; gap: 10px; padding: 10px 12px; border-radius: var(--r-s); background: rgb(255 255 255 / 0.03); color: var(--warning); font-size: 0.86rem; }
+  .privacy :global(svg) { flex: none; margin-top: 2px; }
+  .endpoint-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
   .lib { position: relative; overflow: hidden; display: grid; gap: 4px; }
   .lib.running { border-color: rgb(212 255 90 / 0.25); }
   .scanbar { position: absolute; inset: 0 0 auto; height: 2px; overflow: hidden; }

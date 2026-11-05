@@ -41,6 +41,7 @@ pub struct Config {
     pub transcoder: TranscoderConfig,
     pub plugin: PluginConfig,
     pub scanner: ScannerConfig,
+    pub search: SearchConfig,
     pub live_tv: LiveTvConfig,
     pub backup: BackupConfig,
     pub cache: CacheConfig,
@@ -181,7 +182,8 @@ pub struct PluginConfig {
     pub search_path: Vec<PathBuf>,
     /// Root directory the `host-assets.read-file` import serves
     /// (embedding model weights, tokenizers, ...). Unset disables the
-    /// import: guests get an `unavailable` plugin error.
+    /// import: guests get an `unavailable` plugin error. Defaults to the
+    /// release bundle's `assets/`, when there is one.
     #[serde(default)]
     pub assets_dir: Option<PathBuf>,
     pub overrides: std::collections::HashMap<String, PluginOverride>,
@@ -199,6 +201,33 @@ pub struct PluginOverride {
 pub struct ScannerConfig {
     pub debounce_ms: u64,
     pub concurrency: u32,
+}
+
+/// How indexing and semantic search share the host. See
+/// `docs/CONFIGURATION.md`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchConfig {
+    pub device: noflex_plugin_host::InferenceDevice,
+    /// CPU threads per inference run; 0 picks half the physical cores.
+    pub threads: usize,
+    pub batch_size: u32,
+    pub busy_percent: f32,
+    /// The ONNX Runtime shared library, overriding a bundle's or the system's.
+    #[serde(default)]
+    pub onnxruntime_library: Option<PathBuf>,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        let worker = noflex_plugin_host::embeddings::EmbeddingWorkerConfig::default();
+        Self {
+            device: noflex_plugin_host::InferenceDevice::default(),
+            threads: 0,
+            batch_size: worker.batch_size,
+            busy_percent: worker.busy_percent,
+            onnxruntime_library: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,7 +280,7 @@ impl Default for Config {
             },
             plugin: PluginConfig {
                 search_path: default_search_path(),
-                assets_dir: None,
+                assets_dir: noflex_core::bundle::dir("assets"),
                 overrides: std::collections::HashMap::new(),
                 per_plugin_config: std::collections::HashMap::new(),
             },
@@ -259,6 +288,7 @@ impl Default for Config {
                 debounce_ms: 500,
                 concurrency: 4,
             },
+            search: SearchConfig::default(),
             live_tv: LiveTvConfig {
                 recording_concurrency: 2,
             },
@@ -287,6 +317,8 @@ fn default_paths() -> (PathBuf, PathBuf) {
 
 fn default_search_path() -> Vec<PathBuf> {
     let mut out = Vec::new();
+    // First, so a plugin installed on the host shadows the bundle's copy.
+    out.extend(noflex_core::bundle::dir("plugins"));
     out.push(PathBuf::from("/etc/noflex/plugins"));
     out.push(PathBuf::from("/var/lib/noflex/plugins"));
     if let Some(home) = directories::UserDirs::new().and_then(|u| u.home_dir().to_path_buf().into())
@@ -418,6 +450,11 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("PLUGIN_ASSETS_DIR", "plugin.assets_dir"),
     ("SCANNER_DEBOUNCE_MS", "scanner.debounce_ms"),
     ("SCANNER_CONCURRENCY", "scanner.concurrency"),
+    ("SEARCH_DEVICE", "search.device"),
+    ("SEARCH_THREADS", "search.threads"),
+    ("SEARCH_BATCH_SIZE", "search.batch_size"),
+    ("SEARCH_BUSY_PERCENT", "search.busy_percent"),
+    ("SEARCH_ONNXRUNTIME_LIBRARY", "search.onnxruntime_library"),
     (
         "LIVE_TV_RECORDING_CONCURRENCY",
         "live_tv.recording_concurrency",

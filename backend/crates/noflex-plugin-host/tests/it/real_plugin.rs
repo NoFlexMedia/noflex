@@ -17,7 +17,8 @@
 use std::path::PathBuf;
 
 use noflex_plugin_host::{
-    EngineConfig, HookKind, PluginId, PluginRegistry, build_engine, plugin_types,
+    EmbedDocument, EmbedInput, EngineConfig, HookKind, PluginId, PluginRegistry, build_engine,
+    plugin_types,
 };
 
 fn plugin_wasm_path(crate_name: &str, plugin_id: &str) -> Option<PathBuf> {
@@ -50,7 +51,7 @@ async fn loads_real_tmdb_plugin() {
 
     assert_eq!(info.id, "tmdb", "plugin_id from embedded manifest");
     assert_eq!(info.display_name, "The Movie Database");
-    assert_eq!(info.api_version, "0.9");
+    assert_eq!(info.api_version, "0.10");
     assert!(
         info.hooks.contains(&HookKind::Metadata),
         "exports metadata hook"
@@ -212,8 +213,8 @@ async fn dispatches_search_into_real_plugin() {
 /// the `[embedding]` manifest claim parses, and the embedder hook is
 /// exported. The live-embed assertion is gated on the real model files
 /// being provisioned (they never are in CI — no test downloads the
-/// ~30MB weights); point `NOFLEX_EMBEDDINGS_TEST_ASSETS` at a directory
-/// containing `potion-base-8m/{model.safetensors,tokenizer.json,config.json}`
+/// ~300MB weights); point `NOFLEX_EMBEDDINGS_TEST_ASSETS` at a directory
+/// containing `embeddinggemma-2/{model_text.onnx,model.onnx_data,tokenizer.json}`
 /// to run it locally.
 #[tokio::test]
 async fn loads_real_embeddings_plugin() {
@@ -226,9 +227,9 @@ async fn loads_real_embeddings_plugin() {
 
     let assets = std::env::var_os("NOFLEX_EMBEDDINGS_TEST_ASSETS").map(PathBuf::from);
     let provisioned = assets.as_ref().is_some_and(|dir| {
-        ["model.safetensors", "tokenizer.json", "config.json"]
+        ["model_text.onnx", "model.onnx_data", "tokenizer.json"]
             .iter()
-            .all(|f| dir.join("potion-base-8m").join(f).is_file())
+            .all(|f| dir.join("embeddinggemma-2").join(f).is_file())
     });
 
     let engine = build_engine(&EngineConfig::default()).expect("engine builds");
@@ -240,7 +241,7 @@ async fn loads_real_embeddings_plugin() {
         .unwrap_or_else(|e| panic!("load embeddings plugin: {e}"));
 
     assert_eq!(info.id, "embeddings", "plugin_id from embedded manifest");
-    assert_eq!(info.api_version, "0.9");
+    assert_eq!(info.api_version, "0.10");
     assert!(
         info.hooks.contains(&HookKind::Embedder),
         "exports embedder hook"
@@ -253,10 +254,9 @@ async fn loads_real_embeddings_plugin() {
         .embedding
         .as_ref()
         .expect("[embedding] table parses");
-    assert_eq!(claim.namespace, "potion-base-8m-v2");
-    assert_eq!(claim.model_id, "minishlab/potion-base-8M");
-    assert_eq!(claim.dimensions, 256);
-    assert_eq!(info.manifest.memory_limit_mb, Some(128));
+    assert_eq!(claim.namespace, "embeddinggemma-2-512");
+    assert_eq!(claim.model_id, "google/embeddinggemma-2");
+    assert_eq!(claim.dimensions, 512);
 
     if !provisioned {
         eprintln!(
@@ -269,15 +269,40 @@ async fn loads_real_embeddings_plugin() {
     let plugin = registry
         .get_plugin(&PluginId("embeddings".to_string()))
         .expect("plugin registered");
+    let document = |title: &str, text: &str| {
+        EmbedInput::Document(EmbedDocument {
+            title: title.to_string(),
+            text: text.to_string(),
+        })
+    };
     let vectors = plugin
-        .call_embed(vec!["The Matrix".to_string()])
+        .call_embed(vec![
+            EmbedInput::Query("an astronaut stranded on another planet".to_string()),
+            document(
+                "The Martian (2015)",
+                "A botanist is left behind on Mars and must survive.",
+            ),
+            document(
+                "When Harry Met Sally (1989)",
+                "Two friends wonder if men and women can just be friends.",
+            ),
+            EmbedInput::Query("The Martian (2015)".to_string()),
+        ])
         .await
         .expect("dispatch succeeds")
         .expect("embed returns Ok with provisioned model");
-    assert_eq!(vectors.len(), 1, "one vector per input text");
-    assert_eq!(vectors[0].len(), 256, "manifest-claimed dimensionality");
+    assert_eq!(vectors.len(), 4, "one vector per input");
+    let dot = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f32>();
+    for vector in &vectors {
+        assert_eq!(vector.len(), 512, "manifest-claimed dimensionality");
+        assert!((dot(vector, vector) - 1.0).abs() < 1e-3, "unit length");
+    }
     assert!(
-        vectors[0].iter().any(|&v| v != 0.0),
-        "real text embeds to a non-zero vector"
+        dot(&vectors[0], &vectors[1]) > dot(&vectors[0], &vectors[2]) + 0.05,
+        "the query lands nearer the film about it"
+    );
+    assert!(
+        dot(&vectors[1], &vectors[3]) < 0.99,
+        "documents and queries are prompted differently"
     );
 }

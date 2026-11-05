@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use async_graphql::{Context, Object, connection::Connection};
 use noflex_core::WorkKind;
-use noflex_plugin_host::{PluginRegistry, embed_texts};
+use noflex_plugin_host::{EmbedInput, PluginRegistry, embed_inputs};
 use noflex_storage::{HybridQuery, SearchHit, SearchMode, Storage};
 
 #[derive(Default)]
@@ -134,7 +134,7 @@ async fn embed_query(
     let Ok(registry) = ctx.data::<Arc<PluginRegistry>>() else {
         return Ok(None);
     };
-    let outcome = embed_texts(registry, vec![text.to_string()])
+    let outcome = embed_inputs(registry, vec![EmbedInput::Query(text.to_string())])
         .await
         .map_err(|e| async_graphql::Error::new(e.to_string()))?;
     Ok(outcome.and_then(|o| {

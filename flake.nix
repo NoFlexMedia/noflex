@@ -40,6 +40,7 @@
         # Runtime dependencies we need at both build and run time.
         runtimeDeps = with pkgs; [
           ffmpeg-full
+          onnxruntime
           sqlite
         ];
 
@@ -112,7 +113,8 @@
             nativeBuildInputs = commonArgs.nativeBuildInputs ++ [pkgs.makeWrapper];
             postInstall = ''
               wrapProgram $out/bin/noflex-server \
-                --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps}
+                --prefix PATH : ${pkgs.lib.makeBinPath runtimeDeps} \
+                --set-default ORT_DYLIB_PATH ${pkgs.onnxruntime}/lib/libonnxruntime${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}
             '';
             meta = with pkgs.lib; {
               description = "A self-hosted media server in Rust";
@@ -158,6 +160,8 @@
           # Test threads default to 2 MiB, which the merged GraphQL root's
           # debug-build futures outgrow; the server sets its own workers to match.
           RUST_MIN_STACK = "8388608";
+          # ort loads ONNX Runtime at runtime rather than linking it.
+          ORT_DYLIB_PATH = "${pkgs.onnxruntime}/lib/libonnxruntime${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
 
           shellHook = ''
             # Create cache directories

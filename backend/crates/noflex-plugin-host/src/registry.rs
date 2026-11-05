@@ -9,11 +9,12 @@ use std::{
 use async_graphql::SimpleObject;
 use noflex_storage::Storage;
 use time::OffsetDateTime;
-use tokio::task::JoinHandle;
+use tokio::{sync::Notify, task::JoinHandle};
 use wasmtime::{Engine, component::Linker};
 
 use crate::{
-    EngineConfig, HostError, LoadedPlugin, PluginCtx, PluginId, PluginManifest,
+    EmbedInput, EngineConfig, HostError, LoadedPlugin, PluginCtx, PluginId, PluginManifest,
+    RemoteEmbedder,
     bindings::embedder::noflex::plugin::types as embedder_types,
     manifest::{EmbeddingClaim, HookKind},
     priority::{Overrides, PriorityTable},
@@ -135,6 +136,11 @@ pub struct PluginRegistry {
     /// Root directory `host-assets.read-file` serves. None disables the
     /// import: guests get an `unavailable` plugin error.
     assets_dir: Option<PathBuf>,
+    /// An embeddings API an administrator chose. While set, it takes the place of
+    /// every embedder plugin.
+    remote_embedder: RwLock<Option<Arc<RemoteEmbedder>>>,
+    /// Signalled whenever the embedder in use may have changed.
+    embedder_changed: Arc<Notify>,
     /// Background-task scheduler loops, aborted on unload or hot-reload
     /// replace. JoinHandles detach on drop, so they must live here.
     task_handles: Mutex<HashMap<PluginId, Vec<JoinHandle<()>>>>,
@@ -163,6 +169,8 @@ impl PluginRegistry {
             plugins: Arc::new(RwLock::new(HashMap::new())),
             storage: None,
             assets_dir: None,
+            remote_embedder: RwLock::new(None),
+            embedder_changed: Arc::new(Notify::new()),
             task_handles: Mutex::new(HashMap::new()),
             dispatcher_handle: Mutex::new(None),
         })
@@ -236,8 +244,10 @@ impl PluginRegistry {
         let id = plugin.id.clone();
         let plugin = Arc::new(plugin);
         {
+            self.embedder_changed.notify_one();
             let mut guard = self.plugins.write().expect("registry mutex poisoned");
             guard.insert(id.clone(), Arc::clone(&plugin));
+            self.embedder_changed.notify_one();
         }
         let handles = if plugin.manifest.tasks.is_empty() {
             Vec::new()
@@ -397,12 +407,44 @@ impl PluginRegistry {
             .collect()
     }
 
-    /// The `[embedding]` claim of the highest-priority loaded embedder,
-    /// or None when no embedder plugin is loaded. Ordering follows the
-    /// metadata-candidate rules (manifest `[priority]` defaults, ties by
-    /// plugin id); embedders are work-kind agnostic, so the ranking is
-    /// hook-level only.
+    /// What runs the models behind `host-inference`.
+    pub fn inference(&self) -> &Arc<crate::Inference> {
+        &self.runtime_config.inference
+    }
+
+    /// Use an embeddings API in place of every embedder plugin, or with `None`
+    /// go back to them.
+    pub fn set_remote_embedder(&self, embedder: Option<Arc<RemoteEmbedder>>) {
+        *self
+            .remote_embedder
+            .write()
+            .expect("registry mutex poisoned") = embedder;
+        self.embedder_changed.notify_one();
+    }
+
+    /// The embeddings API in use, if one is configured.
+    pub fn remote_embedder(&self) -> Option<Arc<RemoteEmbedder>> {
+        self.remote_embedder
+            .read()
+            .expect("registry mutex poisoned")
+            .clone()
+    }
+
+    /// Signalled when the embedder in use may have changed; a permit waits if
+    /// nobody is listening yet.
+    pub fn embedder_changed(&self) -> Arc<Notify> {
+        Arc::clone(&self.embedder_changed)
+    }
+
+    /// What the embedder in use stores vectors under: the configured embeddings
+    /// API, else the `[embedding]` claim of the highest-priority loaded embedder
+    /// plugin, else None. Plugin ordering follows the metadata-candidate rules
+    /// (manifest `[priority]` defaults, ties by plugin id); embedders are
+    /// work-kind agnostic, so the ranking is hook-level only.
     pub fn embedder_claim(&self) -> Option<EmbeddingClaim> {
+        if let Some(remote) = self.remote_embedder() {
+            return Some(remote.claim().clone());
+        }
         self.embedder_plugin()
             .and_then(|p| p.manifest.embedding.clone())
     }
@@ -438,7 +480,7 @@ impl PluginRegistry {
 }
 
 /// One completed `embed` batch: the winning plugin's claim plus one
-/// vector per input text, in input order. Downstream (the embedding
+/// vector per input, in input order. Downstream (the embedding
 /// worker, the GraphQL search resolver) persists `namespace` and
 /// `model_id` alongside every vector.
 #[derive(Debug, Clone)]
@@ -448,24 +490,32 @@ pub struct EmbedOutcome {
     pub vectors: Vec<Vec<f32>>,
 }
 
-/// Embed a batch of texts with the highest-priority loaded embedder
-/// plugin. Returns Ok(None) when no embedder is loaded (and on empty
-/// input, which never dispatches). Batches over [`MAX_EMBED_BATCH`]
-/// texts are a host error — split them caller-side. The guest's vectors
+/// Embed a batch with the highest-priority loaded embedder plugin. Returns
+/// Ok(None) when no embedder is loaded (and on empty input, which never
+/// dispatches). Batches over [`MAX_EMBED_BATCH`] inputs are a host error — split them caller-side. The guest's vectors
 /// are validated against its manifest claim before they reach the
 /// caller (see [`LoadedPlugin::call_embed`]).
-pub async fn embed_texts(
+pub async fn embed_inputs(
     registry: &PluginRegistry,
-    texts: Vec<String>,
+    inputs: Vec<EmbedInput>,
 ) -> Result<Option<EmbedOutcome>, HostError> {
-    if texts.is_empty() {
+    if inputs.is_empty() {
         return Ok(None);
     }
-    if texts.len() > MAX_EMBED_BATCH {
+    if inputs.len() > MAX_EMBED_BATCH {
         return Err(HostError::Wasm(format!(
-            "embed batch of {} texts exceeds the {MAX_EMBED_BATCH}-text cap",
-            texts.len()
+            "embed batch of {} inputs exceeds the {MAX_EMBED_BATCH}-input cap",
+            inputs.len()
         )));
+    }
+    if let Some(remote) = registry.remote_embedder() {
+        let vectors = remote.embed(&inputs).await?;
+        let claim = remote.claim();
+        return Ok(Some(EmbedOutcome {
+            namespace: claim.namespace.clone(),
+            model_id: claim.model_id.clone(),
+            vectors,
+        }));
     }
     let Some(plugin) = registry.embedder_plugin() else {
         return Ok(None);
@@ -477,7 +527,7 @@ pub async fn embed_texts(
         ))
     })?;
     let vectors = plugin
-        .call_embed(texts)
+        .call_embed(inputs)
         .await?
         .map_err(|e| HostError::Plugin {
             id: plugin.id.0.clone(),

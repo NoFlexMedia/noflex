@@ -20,9 +20,8 @@ pub struct EmbedResult {
 }
 
 /// Embedding provider for text / image inputs. Production embedders ship
-/// as WASM plugins implementing the `embedder` WIT hook (local inference
-/// only — the self-hosted invariant rules out external inference APIs);
-/// this trait mirrors that surface for native callers.
+/// as WASM plugins implementing the `embedder` WIT hook; this trait mirrors that
+/// surface for native callers.
 #[async_trait]
 pub trait Embedder: Send + Sync {
     fn id(&self) -> &str;

@@ -33,14 +33,20 @@ pub enum Tier {
 }
 
 impl SearchPath {
-    /// Build the standard three-tier search path:
-    /// `/etc/noflex/plugins`, `/var/lib/noflex/plugins`, `$XDG_CONFIG_HOME/noflex/plugins`.
+    /// Build the standard search path: a release bundle's `plugins/` when there
+    /// is one, then `/etc/noflex/plugins`, `/var/lib/noflex/plugins`,
+    /// `$XDG_CONFIG_HOME/noflex/plugins`.
     ///
     /// Missing directories are still recorded — the watcher in
     /// [`crate::watcher`] will pick them up if they appear later, and the
     /// initial scan tolerates absent paths.
     pub fn default_tiers() -> Self {
-        let mut tiers = vec![
+        let bundled = noflex_core::bundle::dir("plugins").map(|path| PluginDir {
+            tier: Tier::System,
+            path,
+        });
+        let mut tiers = Vec::from_iter(bundled);
+        tiers.extend([
             PluginDir {
                 tier: Tier::System,
                 path: PathBuf::from("/etc/noflex/plugins"),
@@ -49,7 +55,7 @@ impl SearchPath {
                 tier: Tier::State,
                 path: PathBuf::from("/var/lib/noflex/plugins"),
             },
-        ];
+        ]);
         if let Some(base) = BaseDirs::new() {
             tiers.push(PluginDir {
                 tier: Tier::User,

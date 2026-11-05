@@ -104,6 +104,8 @@ where
     search_lexical_miss(store).await;
     search_lexical_finds_credited_people(store).await;
     search_vector_similarity(store).await;
+    embedding_model_changes_keep_vectors_until_pruned(store).await;
+    embedding_endpoint_round_trips(store).await;
     search_hybrid_fuses(store).await;
     search_ranks_titles_over_mentions(store).await;
     search_hybrid_keeps_title_hits_first(store).await;
@@ -5061,6 +5063,135 @@ async fn search_lexical_finds_credited_people<S: Storage + ?Sized>(store: &S) {
         store.delete_work(work.id).await.ok();
     }
     store.delete_library(lib.id).await.ok();
+}
+
+/// Vectors from another model survive a change of model, so changing back costs
+/// nothing, until they're pruned. Under the same namespace they can't survive at
+/// all, since searching would compare them with the new model's.
+async fn embedding_model_changes_keep_vectors_until_pruned<S: Storage + ?Sized>(store: &S) {
+    use crate::domain::EmbeddingModel;
+
+    let lib = test_library("Embedding Model Lib");
+    store.upsert_library(&lib).await.expect("library");
+    let work = make_work_of_kind(
+        library_id(&lib),
+        WorkKind::Movie,
+        "Vectors",
+        OffsetDateTime::now_utc(),
+    );
+    store.upsert_work(&work).await.expect("work");
+    let target = noflex_core::EmbeddingTarget::Work(work.id);
+    let model = |namespace: &str, model_id: &str, dimensions| EmbeddingModel {
+        namespace: namespace.to_string(),
+        model_id: model_id.to_string(),
+        dimensions,
+    };
+    let vectors = |namespace: &'static str| async move {
+        store
+            .search_vector(namespace, &[1.0, 0.0], &[], None, 10)
+            .await
+            .expect("search")
+            .len()
+    };
+
+    let first = model("emb-change-a", "a", 2);
+    assert_eq!(
+        store.activate_embedding_model(&first).await.expect("first"),
+        None
+    );
+    assert_eq!(
+        store.active_embedding_model().await.expect("active"),
+        Some(first.clone())
+    );
+    assert_eq!(
+        store.activate_embedding_model(&first).await.expect("again"),
+        None,
+        "activating the active model changes nothing"
+    );
+    store
+        .upsert_embedding(target, "emb-change-a", "a", &[1.0, 0.0])
+        .await
+        .expect("embed a");
+
+    let second = model("emb-change-b", "b", 2);
+    assert_eq!(
+        store
+            .activate_embedding_model(&second)
+            .await
+            .expect("second"),
+        Some(first.clone())
+    );
+    assert_eq!(vectors("emb-change-a").await, 1, "kept across a change");
+    store
+        .upsert_embedding(target, "emb-change-b", "b", &[1.0, 0.0])
+        .await
+        .expect("embed b");
+
+    // A new model under the old namespace invalidates what's stored there.
+    let reused = model("emb-change-b", "b2", 2);
+    assert_eq!(
+        store
+            .activate_embedding_model(&reused)
+            .await
+            .expect("reuse"),
+        Some(second)
+    );
+    assert_eq!(
+        vectors("emb-change-b").await,
+        0,
+        "b's vectors can't be b2's"
+    );
+    store
+        .upsert_embedding(target, "emb-change-b", "b2", &[1.0, 0.0])
+        .await
+        .expect("embed b2");
+
+    // Others in this store share the fate of any namespace but the one kept.
+    let pruned = store.prune_embeddings("emb-change-b").await.expect("prune");
+    assert!(pruned >= 1, "emb-change-a's vector at least");
+
+    assert_eq!(vectors("emb-change-a").await, 0, "pruned");
+    assert_eq!(vectors("emb-change-b").await, 1, "kept");
+
+    store.delete_work(work.id).await.ok();
+    store.delete_library(lib.id).await.ok();
+}
+
+async fn embedding_endpoint_round_trips<S: Storage + ?Sized>(store: &S) {
+    use crate::domain::EmbeddingEndpoint;
+
+    assert_eq!(store.embedding_endpoint().await.expect("unset"), None);
+    let mut endpoint = EmbeddingEndpoint {
+        url: "https://inference.example/v1".to_string(),
+        api_key: Some("sk-test".to_string()),
+        model: "text-embedding-3-small".to_string(),
+        dimensions: 512,
+        request_dimensions: Some(512),
+        query_prefix: "query: ".to_string(),
+        document_prefix: "passage: ".to_string(),
+    };
+    store
+        .set_embedding_endpoint(Some(&endpoint))
+        .await
+        .expect("set");
+    assert_eq!(
+        store.embedding_endpoint().await.expect("read"),
+        Some(endpoint.clone())
+    );
+
+    endpoint.api_key = None;
+    endpoint.request_dimensions = None;
+    store
+        .set_embedding_endpoint(Some(&endpoint))
+        .await
+        .expect("replace");
+    assert_eq!(
+        store.embedding_endpoint().await.expect("read"),
+        Some(endpoint)
+    );
+
+    store.set_embedding_endpoint(None).await.expect("clear");
+    assert_eq!(store.embedding_endpoint().await.expect("cleared"), None);
 }
 
 /// Vector search: the closer the stored vector is to the query, the

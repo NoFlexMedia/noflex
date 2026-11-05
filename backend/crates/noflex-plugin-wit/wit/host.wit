@@ -157,6 +157,24 @@ interface host-assets {
     read-file: async func(name: string) -> result<list<u8>, plugin-error>;
 }
 
+/// Native model inference. WASM has no access to the vector instructions and
+/// accelerators a transformer needs to be usable, so the guest brings the
+/// tokenizer and the understanding of the model, and the host runs the graph.
+/// Requires the `inference.run` capability; every model load is audit-logged.
+interface host-inference {
+    use types.{plugin-error};
+
+    /// Run the embedding model stored at asset path `model`, an ONNX graph taking
+    /// `input_ids` and `attention_mask` with a `sentence_embedding` output, over a
+    /// batch of token sequences: one vector out per sequence, in order. The host
+    /// pads and masks, and chooses the device. Loads the model on first use and keeps it loaded. Slow
+    /// by host-call standards; size the hook's deadline for a slow CPU.
+    embed-tokens: async func(
+        model: string,
+        tokens: list<list<u32>>,
+    ) -> result<list<list<f32>>, plugin-error>;
+}
+
 /// Host-performed HTTP egress. Guests on `wasm32-wasip2` have no socket
 /// access, so outbound HTTP (webhooks, scrobblers, upstream metadata
 /// APIs) goes through the host, which performs the request on the

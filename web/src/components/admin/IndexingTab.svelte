@@ -137,8 +137,8 @@
       <State icon={Books} title="No libraries" message="Create a library on the Libraries tab; its scans, watcher and schedule show up here." />
     {/if}
     {#each entries as entry, index (entry.library.id)}
-      {@const Glyph = KIND_ICON[lib.kind] ?? Books}
       {@const lib = entry.library}
+      {@const Glyph = KIND_ICON[lib.kind] ?? Books}
       {@const st = scanState(entry)}
       {@const w = watcher(entry)}
       {@const next = nextScan(entry)}

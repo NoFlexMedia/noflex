@@ -11,4 +11,5 @@ fragment WatchRoomFields on WatchRoom {
   createdAt
   updatedAt
   work { ...WorkCard }
+  members { userId name joinedAt }
 }

@@ -9,6 +9,7 @@
   import { graphql, ScheduleRecordingStore } from "$houdini";
   import { bytes, date, runtime } from "$lib/format.js";
   import { refetch } from "$lib/graphql.js";
+  import { app } from "$lib/session.svelte.js";
   import { ask, attempt, confirmAction, toast } from "$lib/ui.svelte.js";
   import Dialog from "$components/ui/Dialog.svelte";
   import Select from "$components/ui/Select.svelte";
@@ -145,7 +146,7 @@
               </span>
               <span class="chip {tone}">{#if recording.status === "RUNNING"}<span class="dot live"></span>{/if}{label}</span>
               {#if recording.status === "COMPLETED"}
-                <button class="icon-btn sm" aria-label="Download recording" onclick={() => download(recording)} disabled={downloading === recording.id}>{#if downloading === recording.id}<span class="spinner sm"></span>{:else}<DownloadSimple size={16} />{/if}</button>
+                {#if app.server?.downloadsAllowed}<button class="icon-btn sm" aria-label="Download recording" onclick={() => download(recording)} disabled={downloading === recording.id}>{#if downloading === recording.id}<span class="spinner sm"></span>{:else}<DownloadSimple size={16} />{/if}</button>{/if}
               {/if}
               <button class="icon-btn sm" aria-label="Remove recording" onclick={() => remove(recording)}><Trash size={16} /></button>
             </li>

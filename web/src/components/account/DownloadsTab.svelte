@@ -6,6 +6,7 @@
   import { graphql } from "$houdini";
   import { date } from "$lib/format.js";
   import { refetch } from "$lib/graphql.js";
+  import { connectedServers, serverRequest } from "$lib/servers.svelte.js";
   import { attempt, confirmAction, poll, toast } from "$lib/ui.svelte.js";
   import State from "$components/State.svelte";
   import { ago } from "./relative.js";
@@ -27,11 +28,25 @@
     CANCELLED: ["Cancelled", ""],
   };
 
-  let jobs = $derived([...($account.data?.exportJobs.nodes ?? [])].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)));
+  // An export lives on the server that made it, so a linked server's title leaves one there.
+  const LINKED_JOBS = `query { exportJobs(first: 100) { nodes { id editionId format status progress error createdAt finishedAt work { title } } } }`;
+  let linkedJobs = $state([]);
+  async function loadLinked() {
+    const answers = await Promise.all(connectedServers().map(async (server) => {
+      try {
+        const data = await serverRequest(server, LINKED_JOBS);
+        return data.exportJobs.nodes.map((job) => ({ ...job, server }));
+      } catch { return []; }
+    }));
+    linkedJobs = answers.flat();
+  }
+  $effect(() => { loadLinked(); });
+
+  let jobs = $derived([...($account.data?.exportJobs.nodes ?? []), ...linkedJobs].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)));
   let anyActive = $derived(jobs.some((job) => ACTIVE.includes(job.status)));
   let downloading = $state("");
 
-  $effect(() => { if (anyActive) { const store = account; return poll(() => refetch(store), 3000); } });
+  $effect(() => { if (anyActive) { const store = account; return poll(() => { refetch(store); loadLinked(); }, 3000); } });
 
   const extension = (job) => (job.format === "MKV" ? "mkv" : "mp4");
   const formatLabel = (job) => (job.format === "MKV" ? "MKV" : "MP4");
@@ -39,7 +54,7 @@
   async function download(job) {
     downloading = job.id;
     try {
-      if (await saveFile(`/download/${job.id}/file`, `noflex-${job.id.slice(0, 8)}.${extension(job)}`)) toast("Download complete", "success");
+      if (await saveFile(`/download/${job.id}/file`, `noflex-${job.id.slice(0, 8)}.${extension(job)}`, job.server)) toast("Download complete", "success");
     } catch (cause) {
       toast(cause instanceof Error ? cause.message : String(cause), "error");
     } finally { downloading = ""; }
@@ -47,6 +62,11 @@
 
   async function cancel(job) {
     if (!(await confirmAction({ title: "Cancel this export?", message: "Any partial output is discarded.", confirmLabel: "Cancel export", danger: true }))) return;
+    if (job.server) {
+      await attempt(() => serverRequest(job.server, "mutation($id: ID!) { cancelExportJob(id: $id) { id } }", { id: job.id }), "Export cancelled");
+      await loadLinked();
+      return;
+    }
     await attempt(() => cancelExport.mutate({ id: job.id }), "Export cancelled");
   }
 </script>
@@ -59,15 +79,15 @@
   </State>
 {:else}
   <ul class="jobs stagger">
-    {#each jobs as job, index (job.id)}
+    {#each jobs as job, index (`${job.server?.id ?? "home"}-${job.id}`)}
       {@const [label, tone] = STATUS[job.status] ?? [job.status, ""]}
       <li class="panel job" style:--i={index}>
         <span class="icon" class:ready={job.status === "COMPLETED"} class:failed={job.status === "FAILED"}>{#if job.status === "FAILED"}<WarningCircle size={19} />{:else if job.status === "COMPLETED"}<Check size={19} />{:else}<DownloadSimple size={19} />{/if}</span>
         <div class="body">
           <div class="title-row">
-            <strong>{formatLabel(job)} export</strong>
+            <strong>{job.work?.title ?? "Untitled"} · {formatLabel(job)}</strong>
             <span class="chip {tone}">{#if job.status === "RUNNING" || job.status === "QUEUED"}<span class="dot" class:on={job.status === "RUNNING"}></span>{/if}{label}</span>
-            <code class="faint">edition {job.editionId.slice(0, 8)}</code>
+            {#if job.server}<span class="chip">{job.server.name}</span>{/if}
           </div>
           {#if job.status === "FAILED"}
             <p class="error">{job.error || "The encoder stopped unexpectedly."}</p>
@@ -103,7 +123,6 @@
   .body { flex: 1; display: grid; gap: 4px; min-width: 0; }
   .title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .title-row strong { font-weight: 600; }
-  .title-row code { font-size: 0.76rem; }
   .chip { height: 22px; font-size: 0.72rem; }
   .chip.ready { background: rgb(110 231 168 / 0.12); color: var(--success); }
   .chip .dot { width: 6px; height: 6px; }

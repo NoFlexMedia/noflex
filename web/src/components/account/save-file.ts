@@ -14,10 +14,14 @@ function filenameFrom(response: Response, fallback: string): string {
  * Download an authenticated byte route to disk. Streams straight to a file
  * where the File System Access API exists, so multi-GB exports never sit in
  * memory; elsewhere falls back to a blob link. Resolves false if the user
- * dismissed the save picker.
+ * dismissed the save picker. `server` is a linked server the route is on; its key
+ * goes only to it.
  */
-export async function saveFile(url: string, fallbackName: string): Promise<boolean> {
-  const response = await authFetch(url);
+export async function saveFile(url: string, fallbackName: string, server?: { origin: string; apiKey: string } | null): Promise<boolean> {
+  const response = server
+    ? await fetch(`${server.origin}${url}`, { headers: { Authorization: `Bearer ${server.apiKey}` } })
+    : await authFetch(url);
+  if (response.status === 403) throw new Error("This server doesn’t allow downloads.");
   if (!response.ok) throw new Error(`Download failed (${response.status}).`);
   const name = filenameFrom(response, fallbackName);
   if (window.showSaveFilePicker && response.body) {

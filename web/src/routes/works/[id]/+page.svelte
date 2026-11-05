@@ -28,6 +28,7 @@
     MarkUnplayedStore,
     MediaFilesStore,
     PlaylistMenuStore,
+    ServerInfoStore,
     SetFavoriteStore,
     WorkCrumbStore,
     AddToPlaylistStore,
@@ -111,6 +112,10 @@
   const markUnplayed = new MarkUnplayedStore();
   const addPlaylistItem = new AddToPlaylistStore();
   const createExport = new CreateExportJobStore();
+  // Whichever server this title is on decides, so this asks the active one rather than reading the session.
+  const info = new ServerInfoStore();
+  $effect(() => { fetchQuery(info); });
+  let downloadsAllowed = $derived($info.data?.serverInfo.downloadsAllowed ?? true);
   const createWatchRoom = new CreateWatchRoomStore();
 
   let adminOpen = $state(false);
@@ -325,8 +330,10 @@
             {/if}
             {#if !isContainer}
               <MenuItem icon={Broadcast} disabled={!mediaId} onSelect={createRoom}>Start a watch room</MenuItem>
-              <MenuItem icon={DownloadSimple} disabled={!editionId} onSelect={() => exportEdition("MP4")}>Export for offline (MP4)</MenuItem>
-              <MenuItem icon={DownloadSimple} disabled={!editionId} onSelect={() => exportEdition("MKV")}>Export for offline (MKV)</MenuItem>
+              {#if downloadsAllowed}
+                <MenuItem icon={DownloadSimple} disabled={!editionId} onSelect={() => exportEdition("MP4")}>Export for offline (MP4)</MenuItem>
+                <MenuItem icon={DownloadSimple} disabled={!editionId} onSelect={() => exportEdition("MKV")}>Export for offline (MKV)</MenuItem>
+              {/if}
             {/if}
             <MenuItem icon={Link} onSelect={copyLink}>Copy link</MenuItem>
             {#if manageable}

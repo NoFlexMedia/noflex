@@ -8,12 +8,26 @@
   import Lock from "phosphor-svelte/lib/Lock";
   import Stack from "phosphor-svelte/lib/Stack";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
+  import DownloadSimple from "phosphor-svelte/lib/DownloadSimple";
+  import { graphql } from "$houdini";
   import { app } from "$lib/session.svelte.js";
+  import { attempt } from "$lib/ui.svelte.js";
   import { ago } from "$components/account/relative.js";
   import { size, stamp, uptime } from "./status/fmt.js";
   import { liveStatus, useLiveStatus } from "./status/live.svelte.js";
 
   $effect(() => useLiveStatus());
+
+  const setDownloads = graphql(`
+    mutation SetDownloadsAllowed($allowed: Boolean!) { setDownloadsAllowed(allowed: $allowed) }
+  `);
+  async function changeDownloads(event) {
+    const allowed = event.currentTarget.checked;
+    const result = await attempt(() => setDownloads.mutate({ allowed }), allowed ? "Downloads allowed" : "Downloads turned off");
+    // A failure leaves the switch showing what the server still says.
+    if (result) app.server = { ...app.server, downloadsAllowed: allowed };
+    else event.target.checked = !allowed;
+  }
 
   let s = $derived(liveStatus.status);
   let filter = $state("");
@@ -36,6 +50,14 @@
 {:else}
   {@const db = s.server.database}
   <div class="diag">
+    <section class="panel dense">
+      <header class="panel-head">
+        <span class="panel-icon"><DownloadSimple size={18} /></span>
+        <div class="grow"><h2>Downloads</h2><p>Whether people signed in here, or linked from another server, can keep copies on their devices. Streaming isn’t affected, and copies already on a device stay there.</p></div>
+        <label class="toggle"><input type="checkbox" class="switch" aria-label="Allow downloads" checked={app.server?.downloadsAllowed ?? true} onchange={changeDownloads} /><span><strong>Allow downloads</strong></span></label>
+      </header>
+    </section>
+
     <div class="diag-cols">
       <section class="panel dense">
         <header class="panel-head">

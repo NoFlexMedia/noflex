@@ -358,6 +358,12 @@ async fn run() -> anyhow::Result<()> {
         image_cache_dir.clone(),
     ))
     .spawn(&event_bus);
+    let _movie_art_worker = Arc::new(noflex_server::movie_art::MovieArtWorker::new(
+        storage.clone(),
+        ffmpeg_path.clone(),
+        image_cache_dir.clone(),
+    ))
+    .spawn(&event_bus);
     // Provider metadata + artwork: refresh/identify through GraphQL, and
     // a worker that auto-identifies new works after scans and backfills
     // provider art for identified ones.

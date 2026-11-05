@@ -16,6 +16,7 @@ mod graphql_ws;
 mod images;
 mod library_watchers;
 mod live_tv_dvr;
+mod movie_art;
 mod optimize;
 mod plugin_lifecycle;
 mod plugin_links;

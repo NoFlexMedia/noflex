@@ -3,6 +3,10 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Flutter and the Android SDK follow their own pin so bumping them never
+    # rebuilds the server, and so the unfree Android license stays out of the
+    # package set the server is built from.
+    nixpkgs-flutter.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -16,6 +20,7 @@
   outputs = {
     self,
     nixpkgs,
+    nixpkgs-flutter,
     flake-utils,
     rust-overlay,
     crane,
@@ -123,6 +128,184 @@
               platforms = platforms.unix;
             };
           });
+
+        # ---------------------------------------------------------------
+        # Dev shells, composed from these groups
+        # ---------------------------------------------------------------
+        #
+        # `default` is everything. People who never touch one side of the repo
+        # opt out with `no-flutter` (skips the Android SDK and its gigabytes) or
+        # `flutter-only`. See CONTRIBUTING.md for pinning a choice under direnv.
+
+        rustPkgs = with pkgs; [
+          rustToolchain
+          rustfmtNightly
+          cargo-watch
+          cargo-nextest
+          cargo-deny
+          cargo-public-api
+          cargo-component
+          # Release bundles link against an old glibc; see docs/PACKAGING.md.
+          cargo-zigbuild
+          zig
+          rust-analyzer
+          sccache
+          sqlite-interactive
+          nixpkgs-fmt
+          # WASM plugin toolchain.
+          wasm-tools
+          wit-bindgen
+        ];
+
+        webPkgs = [pkgs.nodejs];
+
+        rustEnv = {
+          # Point `cargo fmt` at nightly rustfmt so it honors the
+          # `imports_granularity = "Crate"` and `group_imports = ...` options
+          # in `rustfmt.toml`. Stable rustfmt warns and silently skips them.
+          RUSTFMT = "${rustfmtNightly}/bin/rustfmt";
+          # Test threads default to 2 MiB, which the merged GraphQL root's
+          # debug-build futures outgrow; the server sets its own workers to match.
+          RUST_MIN_STACK = "8388608";
+          # ort loads ONNX Runtime at runtime rather than linking it.
+          ORT_DYLIB_PATH = "${pkgs.onnxruntime}/lib/libonnxruntime${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
+        };
+
+        rustShellHook = ''
+          # Create cache directories
+          export PROJECT_ROOT="$(git rev-parse --git-common-dir | xargs dirname | xargs realpath)"
+          mkdir -p "$PROJECT_ROOT/.cache"
+
+          # Set up sccache for Rust
+          export RUSTC_WRAPPER=sccache
+          # Default to local cache in the root of the repo
+          export SCCACHE_DIR="''${SCCACHE_DIR:-$PROJECT_ROOT/.cache/sccache}"
+          # Set local cache size to be bigger than default
+          export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-8G}"
+          # Set a separate port so NoFlex gets a unique port
+          export SCCACHE_SERVER_PORT=42225
+
+          echo "🎬 NoFlex development environment loaded!"
+          echo ""
+          echo "Language runtimes:"
+          echo "  - 🦀 Rust:      $(rustc --version 2>/dev/null || echo 'not found')"
+          echo "  - ✨ rustfmt:   $(rustfmt --version 2>/dev/null || echo 'not found')"
+          echo ""
+          echo "Media toolchain:"
+          echo "  - 🎞️ ffmpeg:    $(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}' || echo 'not found')"
+          echo "  - 🗃️ sqlite:    $(sqlite3 --version 2>/dev/null | awk '{print $1}' || echo 'not found')"
+          echo ""
+          echo "Cargo tools:"
+          echo "  - 🧪 nextest:   $(cargo nextest --version 2>/dev/null | head -1 | awk '{print $2}' || echo 'not found')"
+          echo "  - 👁️ watch:     $(cargo watch --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
+          echo "  - 🛡️ deny:      $(cargo deny --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
+          echo ""
+          echo "Caching:"
+          echo "  - ⚡️ Using sccache with $SCCACHE_CACHE_SIZE limit at $SCCACHE_DIR"
+          echo "    * SCCACHE_SERVER_PORT: $SCCACHE_SERVER_PORT"
+          if [ -n "$SCCACHE_GHA_ENABLED" ]; then
+            echo "    * SCCACHE_GHA_ENABLED: $SCCACHE_GHA_ENABLED"
+          fi
+          echo ""
+          echo "WASM toolchain (for plugins):"
+          echo "  - 🕸️ wasm-tools:      $(wasm-tools --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
+          echo "  - 🔗 wit-bindgen:     $(wit-bindgen --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
+          echo "  - 📦 cargo-component: $(cargo component --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
+          echo ""
+          echo "Quickstart (Cargo workspace lives in backend/):"
+          echo "  - 🏗️ build:    cd backend && cargo build"
+          echo "  - 🚀 run:      cd backend && cargo run -p noflex-server"
+          echo "  - ✅ test:     cd backend && cargo nextest run --workspace"
+          echo "  - 🎨 fmt:      cd backend && cargo fmt --all     (uses nightly rustfmt via \$RUSTFMT)"
+          echo "  - 🔍 lint:     cd backend && cargo clippy --workspace --all-targets -- -D warnings"
+          echo ""
+        '';
+
+        # ---- Flutter + Android -------------------------------------------
+        pkgsFlutter = import nixpkgs-flutter {
+          inherit system;
+          config = {
+            allowUnfree = true;
+            android_sdk.accept_license = true;
+          };
+        };
+        flutter = pkgsFlutter.flutter347;
+        jdk = pkgsFlutter.jdk17;
+
+        # Keep in step with flutter/android: AGP can't install anything into the
+        # read-only store, so every compileSdk and the NDK a plugin asks for
+        # must be composed here.
+        androidBuildTools = "36.0.0";
+        androidComposition = (pkgsFlutter.androidenv.override {licenseAccepted = true;}).composeAndroidPackages {
+          buildToolsVersions = [androidBuildTools "35.0.0"];
+          cmakeVersions = ["3.22.1"];
+          platformVersions = ["36" "35" "34" "33"];
+          abiVersions = ["x86_64" "arm64-v8a"];
+          # Google publishes no emulator for arm64 Linux.
+          includeEmulator = !(pkgsFlutter.stdenv.hostPlatform.isLinux && pkgsFlutter.stdenv.hostPlatform.isAarch64);
+          includeSystemImages = true;
+          systemImageTypes = ["google_apis_playstore"];
+          includeNDK = true;
+          ndkVersions = ["28.2.13676358"];
+        };
+        androidSdk = androidComposition.androidsdk;
+        androidSdkRoot = "${androidSdk}/libexec/android-sdk";
+
+        # mpv.pc lists every optional library mpv was built with, and pkg-config
+        # insists on them all just to compile against its client header.
+        mpvClient = pkgsFlutter.runCommand "mpv-client-pc" {} ''
+          mkdir -p $out/lib/pkgconfig
+          sed '/^Requires.private/d' ${pkgsFlutter.mpv-unwrapped.dev}/lib/pkgconfig/mpv.pc > $out/lib/pkgconfig/mpv.pc
+        '';
+
+        # What the Linux desktop build needs beyond Flutter's own GTK: the
+        # player's libmpv and the keyring behind secure storage.
+        flutterLinuxLibs = with pkgsFlutter;
+          lib.optionals stdenv.hostPlatform.isLinux [
+            mpvClient
+            libepoxy
+            libglvnd
+            libsecret
+            # The video plugin includes GDK's Wayland header, which includes this.
+            wayland
+          ];
+
+        flutterPkgs = with pkgsFlutter; [
+          flutter
+          jdk
+          androidSdk
+          git
+          curl
+          unzip
+          pkg-config
+        ];
+
+        flutterEnv = {
+          # ANDROID_SDK_ROOT is deprecated, but older tools still consult it.
+          ANDROID_HOME = androidSdkRoot;
+          ANDROID_SDK_ROOT = androidSdkRoot;
+          JAVA_HOME = "${jdk.home}";
+          # The wrapper only sets this when unset, and a stale value makes it
+          # write a broken `flutter.sdk` into android/local.properties.
+          FLUTTER_ROOT = "${flutter}";
+          # Gradle's bundled aapt2 is a glibc ELF that won't run on NixOS.
+          GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${androidSdkRoot}/build-tools/${androidBuildTools}/aapt2";
+        };
+
+        flutterShellHook = ''
+          export PROJECT_ROOT="$(git rev-parse --git-common-dir | xargs dirname | xargs realpath)"
+          # Keep AVDs with the repo so they don't collide on a shared ~/.android/avd.
+          export ANDROID_AVD_HOME="$PROJECT_ROOT/.cache/android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+
+          ${pkgsFlutter.lib.optionalString pkgsFlutter.stdenv.hostPlatform.isLinux ''
+            # media_kit opens libmpv by name at runtime rather than linking it.
+            export LD_LIBRARY_PATH="${pkgsFlutter.lib.makeLibraryPath [pkgsFlutter.mpv-unwrapped]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          ''}
+          echo "🦋 Flutter ${flutter.version}, Java ${jdk.version}, Android SDK at \$ANDROID_HOME"
+          echo "   Test devices: see flutter/AGENTS.md"
+          echo ""
+        '';
       in {
         packages.default = noflex;
         packages.noflex = noflex;
@@ -133,88 +316,32 @@
           name = "noflex-server";
         };
 
-        devShells.default = pkgs.mkShell {
-          inputsFrom = [noflex];
-          packages = with pkgs; [
-            rustToolchain
-            rustfmtNightly
-            nodejs
-            cargo-watch
-            cargo-nextest
-            cargo-deny
-            cargo-public-api
-            cargo-component
-            # Release bundles link against an old glibc; see docs/PACKAGING.md.
-            cargo-zigbuild
-            zig
-            rust-analyzer
-            sccache
-            sqlite-interactive
-            nixpkgs-fmt
-            # WASM plugin toolchain.
-            wasm-tools
-            wit-bindgen
-          ];
+        devShells = {
+          # Server, web and Flutter: what a plain `nix develop` lands in.
+          default = pkgs.mkShell ({
+              inputsFrom = [noflex];
+              packages = rustPkgs ++ webPkgs ++ flutterPkgs;
+              buildInputs = flutterLinuxLibs;
+              shellHook = rustShellHook + flutterShellHook;
+            }
+            // rustEnv
+            // flutterEnv);
 
-          # Point `cargo fmt` at nightly rustfmt so it honors the
-          # `imports_granularity = "Crate"` and `group_imports = ...` options
-          # in `rustfmt.toml`. Stable rustfmt warns and silently skips them.
-          RUSTFMT = "${rustfmtNightly}/bin/rustfmt";
-          # Test threads default to 2 MiB, which the merged GraphQL root's
-          # debug-build futures outgrow; the server sets its own workers to match.
-          RUST_MIN_STACK = "8388608";
-          # ort loads ONNX Runtime at runtime rather than linking it.
-          ORT_DYLIB_PATH = "${pkgs.onnxruntime}/lib/libonnxruntime${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}";
+          # Server and web, without the Flutter and Android downloads.
+          no-flutter = pkgs.mkShell ({
+              inputsFrom = [noflex];
+              packages = rustPkgs ++ webPkgs;
+              shellHook = rustShellHook;
+            }
+            // rustEnv);
 
-          shellHook = ''
-            # Create cache directories
-            export PROJECT_ROOT="$(git rev-parse --git-common-dir | xargs dirname | xargs realpath)"
-            mkdir -p "$PROJECT_ROOT/.cache"
-
-            # Set up sccache for Rust
-            export RUSTC_WRAPPER=sccache
-            # Default to local cache in the root of the repo
-            export SCCACHE_DIR="''${SCCACHE_DIR:-$PROJECT_ROOT/.cache/sccache}"
-            # Set local cache size to be bigger than default
-            export SCCACHE_CACHE_SIZE="''${SCCACHE_CACHE_SIZE:-8G}"
-            # Set a separate port so NoFlex gets a unique port
-            export SCCACHE_SERVER_PORT=42225
-
-            echo "🎬 NoFlex development environment loaded!"
-            echo ""
-            echo "Language runtimes:"
-            echo "  - 🦀 Rust:      $(rustc --version 2>/dev/null || echo 'not found')"
-            echo "  - ✨ rustfmt:   $(rustfmt --version 2>/dev/null || echo 'not found')"
-            echo ""
-            echo "Media toolchain:"
-            echo "  - 🎞️ ffmpeg:    $(ffmpeg -version 2>/dev/null | head -1 | awk '{print $3}' || echo 'not found')"
-            echo "  - 🗃️ sqlite:    $(sqlite3 --version 2>/dev/null | awk '{print $1}' || echo 'not found')"
-            echo ""
-            echo "Cargo tools:"
-            echo "  - 🧪 nextest:   $(cargo nextest --version 2>/dev/null | head -1 | awk '{print $2}' || echo 'not found')"
-            echo "  - 👁️ watch:     $(cargo watch --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
-            echo "  - 🛡️ deny:      $(cargo deny --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
-            echo ""
-            echo "Caching:"
-            echo "  - ⚡️ Using sccache with $SCCACHE_CACHE_SIZE limit at $SCCACHE_DIR"
-            echo "    * SCCACHE_SERVER_PORT: $SCCACHE_SERVER_PORT"
-            if [ -n "$SCCACHE_GHA_ENABLED" ]; then
-              echo "    * SCCACHE_GHA_ENABLED: $SCCACHE_GHA_ENABLED"
-            fi
-            echo ""
-            echo "WASM toolchain (for plugins):"
-            echo "  - 🕸️ wasm-tools:      $(wasm-tools --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
-            echo "  - 🔗 wit-bindgen:     $(wit-bindgen --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
-            echo "  - 📦 cargo-component: $(cargo component --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
-            echo ""
-            echo "Quickstart (Cargo workspace lives in backend/):"
-            echo "  - 🏗️ build:    cd backend && cargo build"
-            echo "  - 🚀 run:      cd backend && cargo run -p noflex-server"
-            echo "  - ✅ test:     cd backend && cargo nextest run --workspace"
-            echo "  - 🎨 fmt:      cd backend && cargo fmt --all     (uses nightly rustfmt via \$RUSTFMT)"
-            echo "  - 🔍 lint:     cd backend && cargo clippy --workspace --all-targets -- -D warnings"
-            echo ""
-          '';
+          # Flutter and Android alone, for working on the apps only.
+          flutter-only = pkgsFlutter.mkShell ({
+              packages = flutterPkgs;
+              buildInputs = flutterLinuxLibs;
+              shellHook = flutterShellHook;
+            }
+            // flutterEnv);
         };
 
         checks = {

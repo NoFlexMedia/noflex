@@ -16,6 +16,9 @@
          
          This Theme is only used starting with V2 of Flutter's Android embedding. -->
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <!-- Flutter draws its own focus. FlutterView is the whole window, so the
+             platform's highlight would frame the entire app on any key press. -->
+        <item name="android:defaultFocusHighlightEnabled">false</item>
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
 </resources>

@@ -229,7 +229,7 @@
   <div class="page detail">
     <div class="layout" aria-hidden="true">
       <div class="poster skeleton"></div>
-      <div class="stack" style:padding-top="12vh"><div class="skeleton" style:height="18px" style:width="120px"></div><div class="skeleton" style:height="52px" style:width="min(520px, 80%)"></div><div class="skeleton" style:height="88px" style:width="min(640px, 90%)"></div></div>
+      <div class="stack"><div class="skeleton" style:height="18px" style:width="120px"></div><div class="skeleton" style:height="52px" style:width="min(520px, 80%)"></div><div class="skeleton" style:height="88px" style:width="min(640px, 90%)"></div></div>
     </div>
   </div>
 {:else if failure($detail) && !work}
@@ -427,7 +427,7 @@
   .poster:global([data-tilting]) { transition: transform 120ms linear; }
   .poster.skeleton { aspect-ratio: 2 / 3; }
   .poster :global(.art) { border-radius: var(--r-l); }
-  .info { display: grid; gap: 14px; padding-top: clamp(0px, 4vh, 40px); max-width: 860px; }
+  .info { display: grid; gap: 14px; max-width: 860px; }
   .unconfirmed { color: var(--warning); }
   h1 { font-size: clamp(2.2rem, 4.8vw, 4rem); font-weight: 750; letter-spacing: -0.045em; line-height: 1; animation: fade-up 600ms var(--ease-out) both; }
   h1.logo { width: min(460px, 90%); }

@@ -18,12 +18,22 @@ export default function Collections() {
   const [shelves, setShelves] = createSignal<Shelf[] | null>(null);
   const [error, setError] = createSignal("");
 
-  // Collections live per library, and the budget caps what one request can ask for.
+  // Collections live per library, and a request's complexity budget is about one page of shelves.
+  const shelvesOf = async (library: string): Promise<Shelf[]> => {
+    const found: Shelf[] = [];
+    let after: string | null = null;
+    do {
+      const data: { collections: Connection<Shelf> } = await request(COLLECTIONS, { library, after });
+      found.push(...data.collections.nodes);
+      after = data.collections.pageInfo?.hasNextPage ? data.collections.pageInfo.endCursor ?? null : null;
+    } while (after);
+    return found;
+  };
   const load = async () => {
     setError("");
     try {
-      const answers = await Promise.all(app.libraries.map((library) => request<{ collections: Connection<Shelf> }>(COLLECTIONS, { library: library.id })));
-      setShelves(answers.flatMap((answer) => answer.collections.nodes).filter((shelf) => shelf.items.nodes.length));
+      const answers = await Promise.all(app.libraries.map((library) => shelvesOf(library.id)));
+      setShelves(answers.flat().filter((shelf) => shelf.items.nodes.length));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }

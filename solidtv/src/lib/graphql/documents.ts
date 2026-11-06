@@ -149,9 +149,10 @@ query Search($text: String!, $mode: SearchMode!) {
 }`, WORK_CARD);
 
 export const COLLECTIONS = gql(`
-query Collections($library: ID!) {
-  collections(libraryId: $library, first: 40) {
-    nodes { id title items(first: 16) { nodes { ...WorkCard } } }
+query Collections($library: ID!, $after: String) {
+  collections(libraryId: $library, first: 16, after: $after) {
+    nodes { id title items(first: 12) { nodes { ...WorkCard } } }
+    pageInfo { hasNextPage endCursor }
   }
 }`, WORK_CARD);
 

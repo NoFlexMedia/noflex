@@ -101,3 +101,11 @@ export interface SmartMark {
   state: SmartMarkState;
   progress: number;
 }
+
+export interface PreparedVersion {
+  id: string;
+  description: string;
+  sizeBytes?: number | null;
+  lastUsedAt?: string | null;
+  work?: { id: string; title: string } | null;
+}

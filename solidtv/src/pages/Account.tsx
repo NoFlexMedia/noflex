@@ -5,18 +5,19 @@
 // Profile, sessions and server administration are easier with a real keyboard, and stay
 // in the web client and the apps.
 
+import { useNavigate } from "@solidjs/router";
 import { Column, Row } from "@solidtv/solid/primitives";
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, Show, untrack } from "solid-js";
 import type { ElementNode, NodeProps } from "@solidtv/solid";
-import { languageName } from "$lib/format.js";
-import { MY_DEVICES, MY_SMART_MARKS, UNMARK_FOR_SMART_TRANSCODING, UPDATE_DEVICE } from "$lib/graphql/documents.js";
+import { bytes, languageName } from "$lib/format.js";
+import { MY_DEVICES, MY_SMART_MARKS, PREPARED_VERSIONS, UNMARK_FOR_SMART_TRANSCODING, UPDATE_DEVICE } from "$lib/graphql/documents.js";
 import { request } from "$lib/graphql.js";
 import type { IconName } from "$lib/icons.generated.js";
 import { app, changeServer, logout, savePlaybackPrefs, setShowLibraries, thisDeviceId } from "$lib/session.js";
 import { changeSetting, settings, type DeviceSettings } from "$lib/settings.js";
 import { serverOrigin } from "$lib/tokens.js";
 import type { Choice } from "$lib/tracks.js";
-import type { Device, SmartMark, SmartMarkState } from "$lib/types.js";
+import type { Device, PreparedVersion, SmartMark, SmartMarkState } from "$lib/types.js";
 import { attempt } from "$lib/ui.js";
 import { color, motion, PAGE_WIDTH, radius, SCREEN, type, weight } from "../theme.js";
 import Button from "$components/Button.js";
@@ -109,12 +110,17 @@ export default function Account() {
   const [picker, setPicker] = createSignal<Picker | null>(null);
   const [devices, setDevices] = createSignal<Device[] | null>(null);
   const [marks, setMarks] = createSignal<SmartMark[]>([]);
+  const [prepared, setPrepared] = createSignal<PreparedVersion[]>([]);
+  const navigate = useNavigate();
 
   createEffect(() => {
     void request<{ myDevices: Device[] }>(MY_DEVICES).then((data) => setDevices(data.myDevices), () => setDevices([]));
   });
 
-  const loadMarks = () => request<{ mySmartTranscodeMarks: SmartMark[] }>(MY_SMART_MARKS).then((data) => setMarks(data.mySmartTranscodeMarks), () => {});
+  const loadMarks = () => Promise.all([
+    request<{ mySmartTranscodeMarks: SmartMark[] }>(MY_SMART_MARKS).then((data) => setMarks(data.mySmartTranscodeMarks), () => {}),
+    request<{ preparedVersions: PreparedVersion[] }>(PREPARED_VERSIONS).then((data) => setPrepared(data.preparedVersions), () => {}),
+  ]);
   createEffect(() => { if (section() === "smart") void loadMarks(); });
   // Only while it's on screen and something is moving: a TV left here should idle.
   const marksMoving = createMemo(() => section() === "smart" && marks().some((mark) => mark.state === "WAITING" || mark.state === "PREPARING"));
@@ -142,6 +148,14 @@ export default function Account() {
   const saveDevice = (device: Device, change: Record<string, unknown>) => attempt(async () => {
     const data = await request<{ updateDevice: Device }>(UPDATE_DEVICE, { id: device.id, ...change });
     setDevices((list) => (list ?? []).map((item) => (item.id === device.id ? { ...item, ...data.updateDevice } : item)));
+  });
+  // OK on a row opens it, as on every other row with a chevron: leaving the list is a choice.
+  const markOptions = (mark: SmartMark) => choose(mark.work.title, [
+    { value: "open", label: "Go to this title" },
+    { value: "unmark", label: "Unmark", hint: "Keeps what’s already prepared" },
+  ], "", (value) => {
+    if (value === "open") navigate(`/works/${mark.work.id}`);
+    else void unmark(mark);
   });
   const choose = (title: string, choices: Choice[], value: string, pick: (value: string) => void) => {
     setPicker({ title, choices, value, pick });
@@ -187,7 +201,7 @@ export default function Account() {
         </Show>
         <Heading text="Marked to watch next" />
         <Show when={marks().length} fallback={<Note text="Nothing yet. Mark a title from its page, and it’s prepared ahead of anything the server guesses at." />}>
-          <Note text="These are prepared first, in this order, until you watch them. Choose one to unmark it." />
+          <Note text="These are prepared first, in this order, until you watch them." />
           {/* By position: each load brings new objects, and a row holding focus has to survive them. */}
           <Index each={marks()}>
             {(mark) => (
@@ -196,7 +210,22 @@ export default function Account() {
                 label={mark().work.title}
                 detail={mark().device ? `For ${mark().device!.name} only` : "For your devices with smart transcoding on"}
                 value={mark().state === "PREPARING" ? `Preparing ${Math.round(mark().progress * 100)}%` : MARK_STATES[mark().state]}
-                onEnter={() => { void unmark(mark()); return true; }}
+                onEnter={() => markOptions(mark())}
+              />
+            )}
+          </Index>
+        </Show>
+        <Show when={prepared().length}>
+          <Heading text="Ready to play" />
+          <Note text="Already prepared on this server, and used by any device it suits. Unmarking a title doesn’t remove it." />
+          <Index each={prepared()}>
+            {(version) => (
+              <SettingRow
+                width={PANEL_WIDTH}
+                label={version().work?.title ?? "A removed title"}
+                detail={version().description}
+                value={bytes(version().sizeBytes)}
+                onEnter={() => { const id = version().work?.id; if (id) navigate(`/works/${id}`); return true; }}
               />
             )}
           </Index>

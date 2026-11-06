@@ -119,7 +119,9 @@ export const WORKS_BY_ID = gql(`query WorksById($ids: [ID!]!) { worksById(ids: $
 
 export const MY_SMART_MARKS = gql(`query MySmartMarks { mySmartTranscodeMarks { ...SmartMarkFields } }`, SMART_MARK, WORK_CARD);
 
-export const SMART_MARKS_FOR_WORK = `query SmartMarksForWork($work: ID!) { mySmartTranscodeMarks(workId: $work) { device { id } } myDevices { smartTranscode } }`;
+export const PREPARED_VERSIONS = `query PreparedVersions { preparedVersions { id description sizeBytes lastUsedAt work { id title } } }`;
+
+export const SMART_MARKS_FOR_WORK = `query SmartMarksForWork($work: ID!) { mySmartTranscodeMarks(workId: $work) { device { id } state progress } myDevices { smartTranscode } }`;
 
 export const MARK_FOR_SMART_TRANSCODING = `mutation MarkForSmartTranscoding($work: ID!, $device: ID) { markForSmartTranscoding(workId: $work, deviceId: $device) { state } }`;
 

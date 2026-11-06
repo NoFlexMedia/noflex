@@ -16,7 +16,7 @@ import { fetchChildren, isPlayable, player, playWork, subtitleFor } from "$lib/p
 import { revealInRow } from "$lib/rows.js";
 import { app, thisDeviceId } from "$lib/session.js";
 import { audioChoices, preferredAudio, preferredSubtitle, subtitleChoices } from "$lib/tracks.js";
-import type { Edition, MediaFile, Work } from "$lib/types.js";
+import type { Edition, MediaFile, Work, SmartMarkState } from "$lib/types.js";
 import { attempt, toast, ui } from "$lib/ui.js";
 import { chapterStops } from "$lib/player/trickplay.js";
 import { setUserData, userDataOf } from "$lib/watch.js";
@@ -254,21 +254,25 @@ export default function Title() {
     return true;
   };
 
+  const MARK_STATE: Record<SmartMarkState, string> = { WAITING: "in the queue", PREPARING: "preparing", READY: "ready", NOT_NEEDED: "plays as it is", TOO_LARGE: "too large for this server", NO_DEVICES: "no device has it on", NO_SPACE: "waiting for space", FAILED: "failed", DISABLED: "off on this server" };
+  const markState = (mark?: { state: SmartMarkState; progress: number }) => (!mark ? "" : mark.state === "PREPARING" ? `preparing ${Math.round(mark.progress * 100)}%` : MARK_STATE[mark.state]);
   // A mark for this TV alone, or for every device with smart transcoding on.
-  const [marks, setMarks] = createSignal<{ device: boolean; here: boolean; anyDeviceOn: boolean }>({ device: false, here: false, anyDeviceOn: true });
+  const [marks, setMarks] = createSignal<{ device: boolean; here: boolean; anyDeviceOn: boolean; deviceState: string; hereState: string }>({ device: false, here: false, anyDeviceOn: true, deviceState: "", hereState: "" });
   const canMark = () => ["MOVIE", "SERIES", "SEASON", "EPISODE"].indexOf(work()?.kind ?? "") >= 0;
   const me = thisDeviceId();
-  const loadMarks = (id: string) => request<{ mySmartTranscodeMarks: { device?: { id: string } | null }[]; myDevices: { smartTranscode: boolean }[] }>(SMART_MARKS_FOR_WORK, { work: id }).then((data) => {
+  const loadMarks = (id: string) => request<{ mySmartTranscodeMarks: { device?: { id: string } | null; state: SmartMarkState; progress: number }[]; myDevices: { smartTranscode: boolean }[] }>(SMART_MARKS_FOR_WORK, { work: id }).then((data) => {
     setMarks({
       device: data.mySmartTranscodeMarks.some((mark) => !mark.device),
       here: data.mySmartTranscodeMarks.some((mark) => mark.device?.id === me),
       anyDeviceOn: data.myDevices.some((device) => device.smartTranscode),
+      deviceState: markState(data.mySmartTranscodeMarks.find((mark) => !mark.device)),
+      hereState: markState(data.mySmartTranscodeMarks.find((mark) => mark.device?.id === me)),
     });
   }, () => {});
   createEffect(on(() => params.id, (id) => { if (id) void loadMarks(id); }));
   const markTip = (thisTv: boolean) => (thisTv
-    ? marks().here ? "Smart transcoding for this TV. OK stops it" : "Smart transcode for this TV"
-    : marks().device ? "Marked for smart transcoding. OK unmarks it" : "Mark for smart transcoding");
+    ? marks().here ? `For this TV: ${marks().hereState}. OK unmarks it` : "Smart transcode for this TV"
+    : marks().device ? `For your devices: ${marks().deviceState}. OK unmarks it` : "Mark for smart transcoding");
   const toggleMark = (thisTv: boolean) => {
     const current = work();
     if (!current) return true;

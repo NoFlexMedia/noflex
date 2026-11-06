@@ -26,6 +26,7 @@
   import { Slider } from "bits-ui";
   import { CachePolicy, ControlWatchRoomStore, MarkPlayedStore, MediaFilesStore, ReportProgressStore, StopPlaybackStore, WatchRoomEventsStore, WatchRoomStore } from "$houdini";
   import { reportOnExit } from "$lib/api.js";
+  import { chapterStops } from "$lib/chapters.js";
   import { languageName, levelName, profileName, timecode } from "$lib/format.js";
   import { mediaUrl } from "$lib/tokens.js";
   import { request, writeUserData } from "$lib/graphql.js";
@@ -330,7 +331,7 @@
   function showChrome() {
     chromeVisible = true;
     clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => { if (!video?.paused && !scrubbing) chromeVisible = false; }, 2600);
+    idleTimer = setTimeout(() => { if (!video?.paused && !scrubbing && !stripOpen) chromeVisible = false; }, 2600);
   }
 
   function startCountdown() {
@@ -416,6 +417,7 @@
       n: () => next && playNext(),
       s: () => inIntro && seekTo(edition.introEndMs / 1000),
       i: () => (infoOpen = !infoOpen),
+      c: () => { if (stops.length) stripOpen = !stripOpen; },
       Escape: () => { if (!document.fullscreenElement) close(); },
       Home: () => seekTo(0),
     }[event.key];
@@ -465,6 +467,39 @@
   }
   let preview = $derived(hover ? sprite(hover.time) : null);
   let hoverChapter = $derived(hover ? [...chapters].reverse().find((chapter) => chapter.positionMs <= hover.time * 1000) : null);
+
+  // ---- chapters -----------------------------------------------------------
+  const STOP_WIDTH = 208;
+  let stops = $derived(live ? [] : chapterStops(chapters, !!trick?.sheets?.length, edition?.runtimeMs));
+  let stripOpen = $state(false);
+  let strip = $state();
+  let currentStop = $derived(stops.reduce((found, stop, index) => (stop.positionMs <= current * 1000 ? index : found), 0));
+  // Open on where the viewer is, ready for the arrows.
+  $effect(() => {
+    if (!stripOpen || !strip) return;
+    untrack(() => {
+      const here = strip.children[currentStop]?.querySelector("button");
+      here?.focus({ preventScroll: true });
+      here?.scrollIntoView({ inline: "center", block: "nearest" });
+    });
+  });
+  function closeStrip() {
+    stripOpen = false;
+    root?.focus({ preventScroll: true });
+  }
+  function chooseStop(stop) {
+    seekTo(stop.positionMs / 1000);
+    closeStrip();
+  }
+  function stripKey(event) {
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeStrip(); return; }
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const item = event.target.closest("li");
+    (event.key === "ArrowLeft" ? item?.previousElementSibling : item?.nextElementSibling)?.querySelector("button")?.focus();
+    showChrome();
+  }
 
   // ---- watch-room sync ----------------------------------------------------
   // The host's player drives the room; guests follow its events.
@@ -624,6 +659,23 @@
   {/if}
 
   <footer class="bottom chrome">
+    {#if stripOpen && stops.length}
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <ol class="strip" bind:this={strip} aria-label={chapters.length ? "Chapters" : "Scenes"} onkeydown={stripKey}>
+        {#each stops as stop, index (stop.positionMs)}
+          {@const thumb = sprite(stop.positionMs / 1000)}
+          <li>
+            <button class:here={index === currentStop} onclick={() => chooseStop(stop)}>
+              <span class="stop-frame" style:--k={thumb ? STOP_WIDTH / thumb.w : 1} style:aspect-ratio={thumb ? `${thumb.w} / ${thumb.h}` : "16 / 9"}>
+                {#if thumb}<span class="sprite" style:width="{thumb.w}px" style:height="{thumb.h}px" style:background-image="url({thumb.url})" style:background-position="-{thumb.x}px -{thumb.y}px"></span>{/if}
+              </span>
+              <strong>{stop.title || `${chapters.length ? "Chapter" : "Scene"} ${index + 1}`}</strong>
+              <small class="tabular">{timecode(stop.positionMs)}</small>
+            </button>
+          </li>
+        {/each}
+      </ol>
+    {/if}
     {#if !live}
       <div class="scrub" bind:this={bar} role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax={Math.round(duration)} aria-valuenow={Math.round(current)} aria-valuetext={timecode(current * 1000)}
         onpointermove={scrubMove} onpointerleave={() => { if (!scrubbing) hover = null; }} onpointerdown={scrubDown} onpointerup={scrubUp} onkeydown={scrubKey} class:active={scrubbing || hover}>
@@ -662,12 +714,8 @@
       </div>
       <span class="time tabular">{#if live}<span class="live-badge"><span class="dot live"></span>LIVE</span>{:else}{timecode(current * 1000)} <span>/ {timecode(duration * 1000)}</span>{/if}</span>
       <span class="spacer"></span>
-      {#if chapters.length}
-        <Menu portal={root} side="top" width={260}>
-          {#snippet trigger(props)}<button {...props} class="ctl" aria-label="Chapters"><Stack size={20} /></button>{/snippet}
-          <div class="nf-menu-label">Chapters</div>
-          {#each chapters as chapter, index}<MenuItem onSelect={() => seekTo(chapter.positionMs / 1000)} hint={timecode(chapter.positionMs)}>{chapter.title || `Chapter ${index + 1}`}</MenuItem>{/each}
-        </Menu>
+      {#if stops.length}
+        <Tip portal={root} text={chapters.length ? "Chapters" : "Scenes"} hint="c">{#snippet children(props)}<button {...props} class="ctl" class:on={stripOpen} aria-label={chapters.length ? "Chapters" : "Scenes"} aria-expanded={stripOpen} onclick={() => (stripOpen = !stripOpen)}><Stack size={20} /></button>{/snippet}</Tip>
       {/if}
       {#if audioTracks.length > 1}
         <Menu portal={root} side="top" width={220}>
@@ -761,6 +809,16 @@
   .pill { position: absolute; z-index: 3; right: clamp(16px, 3vw, 36px); bottom: 130px; display: inline-flex; align-items: center; gap: 9px; height: 46px; padding: 0 20px; border-radius: 12px; background: rgb(20 20 24 / 0.7); backdrop-filter: blur(16px); border: 1px solid rgb(255 255 255 / 0.25); font-weight: 650; animation: slide-in 420ms var(--ease-spring); transition: background var(--t); }
   .pill:hover { background: #fff; color: #000; }
   @keyframes slide-in { from { opacity: 0; transform: translateX(24px); } }
+  .strip { display: flex; gap: 12px; overflow-x: auto; margin: 0 0 14px; padding: 6px 4px 8px; list-style: none; scrollbar-width: none; animation: fade-up 240ms var(--ease-out); }
+  .strip li { flex: none; }
+  .strip button { display: grid; gap: 2px; width: 208px; text-align: left; color: rgb(255 255 255 / 0.8); border-radius: var(--r-s); outline-offset: 4px; }
+  .strip button:hover, .strip button:focus-visible { color: #fff; }
+  .strip strong { margin-top: 6px; font-size: 0.86rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .strip small { color: rgb(255 255 255 / 0.55); font-size: 0.76rem; }
+  .stop-frame { position: relative; display: block; width: 208px; overflow: hidden; border-radius: var(--r-s); background: rgb(255 255 255 / 0.08); outline: 2px solid transparent; outline-offset: -2px; transition: outline-color var(--t); }
+  .strip .here .stop-frame { outline-color: var(--accent); }
+  .strip button:hover .stop-frame, .strip button:focus-visible .stop-frame { outline-color: #fff; }
+  .stop-frame .sprite { position: absolute; left: 0; top: 0; transform: scale(var(--k)); transform-origin: 0 0; background-repeat: no-repeat; }
   .up-next { position: absolute; z-index: 3; right: clamp(16px, 3vw, 36px); bottom: 130px; display: grid; grid-template-columns: 150px 1fr; gap: 10px 16px; align-items: center; width: min(420px, calc(100vw - 32px)); padding: 14px; border-radius: 18px; background: rgb(18 19 24 / 0.82); backdrop-filter: blur(20px); border: 1px solid rgb(255 255 255 / 0.14); box-shadow: var(--shadow-3); animation: slide-in 460ms var(--ease-spring); }
   .up-next .thumb { position: relative; }
   .up-next svg { position: absolute; right: 8px; bottom: 8px; width: 30px; height: 30px; transform: rotate(-90deg); }

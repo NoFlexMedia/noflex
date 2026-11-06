@@ -7,6 +7,7 @@
   import Key from "phosphor-svelte/lib/Key";
   import Plus from "phosphor-svelte/lib/Plus";
   import Television from "phosphor-svelte/lib/Television";
+  import { page } from "$app/state";
   import { graphql } from "$houdini";
   import { accessClaims, deviceName } from "$lib/api.js";
   import { deviceId } from "$lib/device.js";
@@ -113,7 +114,8 @@
   }
 
   // ---- Device PINs ----
-  let pin = $state("");
+  // A TV's QR code carries the code it's showing.
+  let pin = $state(page.url.searchParams.get("pin")?.toUpperCase() ?? "");
   let authorizing = $state(false);
 
   async function authorize(event) {

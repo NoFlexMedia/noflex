@@ -14,6 +14,7 @@ import { color, radius, SCREEN, type, weight } from "../theme.js";
 import BrandMark from "$components/BrandMark.js";
 import Button from "$components/Button.js";
 import Keyboard, { KEYBOARD_HEIGHT, KEYBOARD_WIDTH } from "$components/Keyboard.js";
+import QrCode from "$components/QrCode.js";
 import TextField from "$components/TextField.js";
 
 const LEFT = 140;
@@ -24,6 +25,10 @@ const PIN_LIFE_MS = 10 * 60 * 1000;
 const ROUNDS = 3;
 const PIN_LENGTH = 6;
 const CELL = { width: 112, height: 144, gap: 14 };
+const GUIDE_X = LEFT + (CELL.width + CELL.gap) * PIN_LENGTH + 80;
+const GUIDE_WIDTH = SCREEN.width - LEFT - GUIDE_X;
+const QR_SIZE = 264;
+const approveUrl = () => `${serverOrigin() ?? ""}/account?tab=devices`;
 
 function Heading() {
   return (
@@ -95,11 +100,15 @@ function CodeSignIn(props: { onPassword: () => void }) {
         </For>
       </view>
       <text x={LEFT} y={572} fontSize={type.caption} fontWeight={weight.semibold} color={problem() ? color.danger : color.text2}>{problem() || (pin() ? "Waiting for you to approve it" : "Getting a code…")}</text>
-      <view x={LEFT + (CELL.width + CELL.gap) * PIN_LENGTH + 80} y={400} width={SCREEN.width - LEFT * 2 - (CELL.width + CELL.gap) * PIN_LENGTH - 80} height={380} skipFocus>
+      <view x={GUIDE_X} y={400} width={GUIDE_WIDTH} height={420} skipFocus>
         <text fontSize={type.lead} fontWeight={weight.semibold}>On a phone or computer</text>
-        <text y={64} width={SCREEN.width - LEFT * 2 - (CELL.width + CELL.gap) * PIN_LENGTH - 80} contain="width" lineHeight={46} fontSize={type.body} color={color.text2}>Open NoFlex where you’re already signed in, go to Devices in your account, and enter this code under Link a device.</text>
-        <text y={240} fontSize={type.caption} color={color.text3}>In a browser, that’s</text>
-        <text y={278} width={SCREEN.width - LEFT * 2 - (CELL.width + CELL.gap) * PIN_LENGTH - 80} contain="width" maxLines={2} lineHeight={36} fontSize={type.caption} fontWeight={weight.semibold}>{`${serverOrigin() ?? ""}/account?tab=devices`}</text>
+        <text y={64} width={GUIDE_WIDTH - QR_SIZE - 48} contain="width" lineHeight={42} fontSize={type.caption} color={color.text2}>Open NoFlex where you’re already signed in, go to Devices in your account, and enter this code under Link a device.</text>
+        <text y={314} fontSize={type.caption} color={color.text3}>Or in a browser, go to</text>
+        <text y={354} width={GUIDE_WIDTH} contain="width" maxLines={2} lineHeight={36} fontSize={type.caption} fontWeight={weight.semibold}>{approveUrl()}</text>
+        <Show when={pin()}>
+          <QrCode x={GUIDE_WIDTH - QR_SIZE} text={`${approveUrl()}&pin=${pin()}`} size={QR_SIZE} />
+          <text x={GUIDE_WIDTH - QR_SIZE} y={QR_SIZE + 10} width={QR_SIZE} contain="width" textAlign="center" fontSize={22} color={color.text3}>Scan to fill the code in</text>
+        </Show>
       </view>
       <text x={LEFT} y={640} width={CELL.width * PIN_LENGTH} contain="width" lineHeight={38} fontSize={type.caption} color={color.text3}>This TV signs in by itself as soon as you do.</text>
     </view>

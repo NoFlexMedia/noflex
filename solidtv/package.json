@@ -26,6 +26,7 @@
     "@solidtv/renderer": "2.0.7",
     "@solidtv/solid": "1.7.1",
     "hls.js": "1.7.4",
+    "qrcode-generator": "2.0.4",
     "solid-js": "1.9.9"
   },
   "devDependencies": {

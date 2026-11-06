@@ -321,10 +321,7 @@ fn default_search_path() -> Vec<PathBuf> {
     out.extend(noflex_core::bundle::dir("plugins"));
     out.push(PathBuf::from("/etc/noflex/plugins"));
     out.push(PathBuf::from("/var/lib/noflex/plugins"));
-    if let Some(home) = directories::UserDirs::new().and_then(|u| u.home_dir().to_path_buf().into())
-    {
-        out.push(home.join(".config").join("noflex").join("plugins"));
-    }
+    out.extend(user_config_dir().map(|dir| dir.join("plugins")));
     out
 }
 
@@ -472,14 +469,19 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
 ];
 
 fn default_user_config_path() -> PathBuf {
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-        return PathBuf::from(xdg).join("noflex").join("config.toml");
-    }
-    if let Some(home) = directories::UserDirs::new().and_then(|u| u.home_dir().to_path_buf().into())
-    {
-        return home.join(".config").join("noflex").join("config.toml");
-    }
-    PathBuf::from("./config.toml")
+    user_config_dir().map_or_else(
+        || PathBuf::from("./config.toml"),
+        |dir| dir.join("config.toml"),
+    )
+}
+
+/// `$XDG_CONFIG_HOME/noflex`, or `~/.config/noflex` without it. `None` when
+/// neither says where home is.
+fn user_config_dir() -> Option<PathBuf> {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| directories::UserDirs::new().map(|u| u.home_dir().join(".config")))?;
+    Some(config.join("noflex"))
 }
 
 #[cfg(test)]

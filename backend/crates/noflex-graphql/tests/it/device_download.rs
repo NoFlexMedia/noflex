@@ -158,6 +158,7 @@ async fn fixture() -> Fixture {
             id: device,
             user_id: viewer.id,
             name: "Phone".into(),
+            client: None,
             capabilities: Json(serde_json::to_value(ClientCapabilities::web()).expect("caps")),
             smart_transcode: false,
             max_bitrate_bps: None,

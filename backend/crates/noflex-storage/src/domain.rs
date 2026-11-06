@@ -657,6 +657,9 @@ pub struct Device {
     #[graphql(skip)]
     pub user_id: UserId,
     pub name: String,
+    /// The app it's running, as a session's `client` is. Together with `name`, what
+    /// clients read to tell what kind of device this is.
+    pub client: Option<String>,
     /// What the client measured it can play, in the shape of the transcoder's
     /// `ClientCapabilities`. Opaque here, since storage sits below it.
     #[graphql(skip)]

@@ -3,7 +3,7 @@
 // What a viewer changes about themselves. Everything else keys on their id, so a
 // new username leaves sessions, marks and history where they were.
 
-use std::{io::Cursor, sync::Arc};
+use std::{io::Cursor, process::Stdio, sync::Arc, time::Duration};
 
 use async_graphql::{Context, Object};
 use base64::Engine;
@@ -21,6 +21,14 @@ const MAX_PICTURE_SIDE: u32 = 8192;
 const MAX_PICTURE_ALLOC: u64 = 256 * 1024 * 1024;
 const PICTURE_SIDE: u32 = 512;
 const PICTURE_QUALITY: u8 = 85;
+/// Enough for the crop that follows, and no more of a phone photo than that.
+const FFMPEG_SCALE: &str = "scale=1024:1024:force_original_aspect_ratio=increase";
+const FFMPEG_TIMEOUT: Duration = Duration::from_secs(6);
+/// ISO base media brands of the still formats `image` can't read: AVIF, HEIC and
+/// the general HEIF family they share.
+const HEIF_BRANDS: [&[u8; 4]; 7] = [
+    b"avif", b"avis", b"heic", b"heix", b"hevc", b"mif1", b"msf1",
+];
 
 fn storage<'a>(ctx: &'a Context<'a>) -> async_graphql::Result<&'a Arc<dyn Storage>> {
     ctx.data::<Arc<dyn Storage>>()
@@ -45,8 +53,62 @@ async fn viewer(ctx: &Context<'_>) -> async_graphql::Result<User> {
 enum PictureError {
     #[error("That picture is too large")]
     TooLarge,
-    #[error("That picture can't be read. Try a JPEG, PNG or WebP")]
+    #[error("That picture can't be read. Try a JPEG, PNG, WebP or AVIF")]
     Unreadable,
+}
+
+/// Whether `bytes` is an ISO base media file claiming an AVIF or HEIF brand.
+fn is_heif(bytes: &[u8]) -> bool {
+    let Some(size) = bytes.get(..4) else {
+        return false;
+    };
+    let size = u32::from_be_bytes([size[0], size[1], size[2], size[3]]) as usize;
+    let Some(header) = bytes.get(8..size.min(bytes.len())) else {
+        return false;
+    };
+    bytes.get(4..8) == Some(b"ftyp")
+        && header
+            .chunks_exact(4)
+            .any(|brand| HEIF_BRANDS.iter().any(|known| brand == known.as_slice()))
+}
+
+/// The first frame of a HEIF-family picture as a PNG, by way of ffmpeg, which reads
+/// grids of tiles and rotation as phones write them. The demuxer is forced and only
+/// files allowed, so what's uploaded can't send it elsewhere the way a playlist
+/// could. From a file because the demuxer seeks.
+async fn decode_with_ffmpeg(bytes: &[u8]) -> Result<Vec<u8>, PictureError> {
+    let unreadable = |error: std::io::Error| {
+        tracing::warn!(%error, "profile picture not handed to ffmpeg");
+        PictureError::Unreadable
+    };
+    let file = tempfile::NamedTempFile::new().map_err(unreadable)?;
+    tokio::fs::write(file.path(), bytes)
+        .await
+        .map_err(unreadable)?;
+    let output =
+        tokio::process::Command::new(noflex_core::bundle::ffmpeg_tool("ffmpeg", "FFMPEG_BIN"))
+            .args(["-nostdin", "-hide_banner", "-loglevel", "error"])
+            .args(["-protocol_whitelist", "file", "-f", "mov", "-i"])
+            .arg(file.path())
+            .args(["-frames:v", "1", "-vf", FFMPEG_SCALE, "-pix_fmt", "rgb24"])
+            .args(["-c:v", "png", "-f", "image2pipe", "-"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .output();
+    match tokio::time::timeout(FFMPEG_TIMEOUT, output).await {
+        Ok(Ok(output)) if output.status.success() && !output.stdout.is_empty() => Ok(output.stdout),
+        Ok(Ok(output)) => {
+            tracing::debug!(stderr = %String::from_utf8_lossy(&output.stderr), "profile picture not decoded");
+            Err(PictureError::Unreadable)
+        }
+        Ok(Err(error)) => Err(unreadable(error)),
+        Err(_) => {
+            tracing::warn!("profile picture took too long to decode");
+            Err(PictureError::Unreadable)
+        }
+    }
 }
 
 /// A centred square JPEG of what was uploaded. Encoding afresh rather than keeping
@@ -151,8 +213,8 @@ impl ProfileMutation {
         Ok(user)
     }
 
-    /// Set the caller's picture from a base64 JPEG, PNG or WebP. It's cropped to a
-    /// centred square and everything but its pixels is dropped.
+    /// Set the caller's picture from a base64 JPEG, PNG, WebP, AVIF or HEIC. It's
+    /// cropped to a centred square and everything but its pixels is dropped.
     async fn set_profile_picture(
         &self,
         ctx: &Context<'_>,
@@ -165,6 +227,13 @@ impl ProfileMutation {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(image.trim())
             .map_err(|_| PictureError::Unreadable.to_string())?;
+        let bytes = if is_heif(&bytes) {
+            decode_with_ffmpeg(&bytes)
+                .await
+                .map_err(|error| error.to_string())?
+        } else {
+            bytes
+        };
         let picture = tokio::task::spawn_blocking(move || prepare_picture(&bytes))
             .await
             .map_err(gql_err)?
@@ -215,6 +284,59 @@ mod tests {
             .to_rgb8();
         assert_eq!(out.dimensions(), (PICTURE_SIDE, PICTURE_SIDE));
         assert!(out.get_pixel(256, 256).0.iter().all(|&channel| channel < 8));
+    }
+
+    #[test]
+    fn only_an_iso_file_with_a_heif_brand_goes_to_ffmpeg() {
+        let ftyp = |brands: &[u8]| {
+            let size = (8 + brands.len()) as u32;
+            let mut file = size.to_be_bytes().to_vec();
+            file.extend_from_slice(b"ftyp");
+            file.extend_from_slice(brands);
+            file
+        };
+        assert!(is_heif(&ftyp(b"avif\0\0\0\0mif1miaf")));
+        assert!(is_heif(&ftyp(b"mif1\0\0\0\0heic")));
+        assert!(!is_heif(&ftyp(b"isom\0\0\x02\0mp41")), "a video");
+        assert!(!is_heif(b"\x89PNG\r\n\x1a\n"));
+        assert!(!is_heif(b"ab"));
+    }
+
+    #[tokio::test]
+    async fn an_avif_comes_through_ffmpeg_as_a_picture_we_can_keep() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wide.avif");
+        let encoded = tokio::process::Command::new("ffmpeg")
+            .args(["-nostdin", "-loglevel", "error", "-f", "lavfi"])
+            .args(["-i", "color=c=red:s=300x100", "-frames:v", "1"])
+            .args([
+                "-c:v",
+                "libaom-av1",
+                "-cpu-used",
+                "8",
+                "-still-picture",
+                "1",
+            ])
+            .arg(&path)
+            .status()
+            .await;
+        if !encoded.is_ok_and(|status| status.success()) {
+            eprintln!("ffmpeg can't write AVIF here; skipping");
+            return;
+        }
+        let avif = std::fs::read(&path).unwrap();
+        assert!(is_heif(&avif));
+        let png = decode_with_ffmpeg(&avif).await.expect("decoded");
+        let prepared = prepare_picture(&png).expect("prepared");
+        let out = image::load_from_memory(&prepared).expect("jpeg").to_rgb8();
+        assert_eq!(out.dimensions(), (PICTURE_SIDE, PICTURE_SIDE));
+        let [red, green, blue] = out.get_pixel(256, 256).0;
+        assert!(red > 200 && green < 60 && blue < 60, "{red} {green} {blue}");
+
+        assert!(matches!(
+            decode_with_ffmpeg(b"\0\0\0\x10ftypavifnonsense").await,
+            Err(PictureError::Unreadable)
+        ));
     }
 
     #[test]

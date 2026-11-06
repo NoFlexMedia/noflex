@@ -735,6 +735,8 @@ CREATE TABLE IF NOT EXISTS devices (
     id                    BLOB PRIMARY KEY,
     user_id               BLOB NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name                  TEXT NOT NULL,
+    -- The app it's running, which often says what a bare model or hostname doesn't.
+    client                TEXT,
     capabilities_json     TEXT NOT NULL,
     smart_transcode       INTEGER NOT NULL DEFAULT 0,
     max_bitrate_bps       INTEGER,

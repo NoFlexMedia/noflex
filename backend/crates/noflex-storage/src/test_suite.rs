@@ -3263,6 +3263,7 @@ fn make_device(user: UserId, name: &str) -> crate::domain::Device {
         id: noflex_core::DeviceId::new(),
         user_id: user,
         name: name.to_string(),
+        client: None,
         capabilities: async_graphql::Json(serde_json::json!({"max_height": 1080})),
         smart_transcode: false,
         max_bitrate_bps: None,

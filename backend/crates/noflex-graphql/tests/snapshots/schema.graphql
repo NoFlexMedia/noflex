@@ -439,6 +439,11 @@ type Device {
 	id: ID!
 	name: String!
 	"""
+	The app it's running, as a session's `client` is. Together with `name`, what
+	clients read to tell what kind of device this is.
+	"""
+	client: String
+	"""
 	Prepare optimized versions for this device while the server is idle.
 	"""
 	smartTranscode: Boolean!
@@ -1455,8 +1460,9 @@ type Mutation {
 	Register this client, or refresh what it can play. Clients choose
 	`id` once and keep it across sign-ins; re-registering keeps the
 	device's settings. An id already registered to someone else fails.
+	`client` is the app it's running, as at `login`; omitted, it stays.
 	"""
-	registerDevice(id: ID!, name: String!, capabilities: ClientCapabilities!): Device!
+	registerDevice(id: ID!, name: String!, client: String, capabilities: ClientCapabilities!): Device!
 	"""
 	Choose the curve HDR is tone-mapped with; null leaves it to the server's
 	configuration. Streams already running keep theirs. Administrator only.
@@ -1625,8 +1631,8 @@ type Mutation {
 	"""
 	changeUsername(username: String!, currentPassword: String!): User!
 	"""
-	Set the caller's picture from a base64 JPEG, PNG or WebP. It's cropped to a
-	centred square and everything but its pixels is dropped.
+	Set the caller's picture from a base64 JPEG, PNG, WebP, AVIF or HEIC. It's
+	cropped to a centred square and everything but its pixels is dropped.
 	"""
 	setProfilePicture(image: String!): User!
 	"""

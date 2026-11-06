@@ -448,11 +448,13 @@ impl DevicesMutation {
     /// Register this client, or refresh what it can play. Clients choose
     /// `id` once and keep it across sign-ins; re-registering keeps the
     /// device's settings. An id already registered to someone else fails.
+    /// `client` is the app it's running, as at `login`; omitted, it stays.
     async fn register_device(
         &self,
         ctx: &Context<'_>,
         id: DeviceId,
         name: String,
+        client: Option<String>,
         capabilities: ClientCapabilities,
     ) -> async_graphql::Result<Device> {
         let principal = authed_principal(ctx)?;
@@ -471,6 +473,7 @@ impl DevicesMutation {
                 id,
                 user_id: principal.user_id,
                 name: String::new(),
+                client: None,
                 capabilities: Json(serde_json::Value::Null),
                 smart_transcode: false,
                 max_bitrate_bps: None,
@@ -484,6 +487,14 @@ impl DevicesMutation {
         };
         device.user_id = principal.user_id;
         device.name = name.to_string();
+        if let Some(client) = client.filter(|client| !client.trim().is_empty()) {
+            if client.chars().count() > MAX_DEVICE_NAME_CHARS {
+                return Err(async_graphql::Error::new(
+                    "client name must be at most 100 characters",
+                ));
+            }
+            device.client = Some(client);
+        }
         device.capabilities = Json(capabilities);
         device.last_seen_at = now;
         store_device(storage, device).await

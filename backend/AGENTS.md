@@ -101,7 +101,8 @@ Don't break these without an architecture discussion in the PR description.
 ### Users
 
 - **`User.name` is for showing, `User.username` for signing in.** `name` falls back to `username`, so show `name` everywhere except where someone needs the credential or has to tell two people apart: admin lists show both, as anyone can choose any name. Key on `id`; a username can change.
-- **`setProfilePicture` re-encodes to a 512 px JPEG**, for size and so nothing but pixels survives. The bytes live in `user_avatars`, apart from `users`, which every request reads.
+- **`setProfilePicture` re-encodes to a 512 px JPEG**, for size and so nothing but pixels survives. The bytes live in `user_avatars`, apart from `users`, which every request reads. AVIF and HEIC go through ffmpeg first, as `image` can't read them: forced to the `mov` demuxer with only the `file` protocol, so an upload can't point it anywhere else, and on a timeout.
+- **`Device.client` and `Session.client` are free text alongside the name**, as a model or hostname often doesn't say what something is. Clients read both through `lib/ts/device.ts`.
 
 ### Plugins
 

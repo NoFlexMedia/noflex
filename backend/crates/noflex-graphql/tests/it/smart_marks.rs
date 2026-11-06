@@ -113,6 +113,7 @@ async fn device_of(fixture: &Fixture, owner: &User) -> DeviceId {
             id,
             user_id: owner.id,
             name: "TV".into(),
+            client: None,
             capabilities: Json(serde_json::json!({})),
             smart_transcode: false,
             max_bitrate_bps: None,

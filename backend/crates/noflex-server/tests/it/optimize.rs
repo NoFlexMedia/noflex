@@ -194,6 +194,7 @@ async fn fixture(source: &Path, dir: std::path::PathBuf) -> Fixture {
             id: DeviceId::new(),
             user_id: user.id,
             name: "Phone".to_string(),
+            client: None,
             capabilities: async_graphql::Json(
                 serde_json::to_value(h264_client()).expect("capabilities"),
             ),

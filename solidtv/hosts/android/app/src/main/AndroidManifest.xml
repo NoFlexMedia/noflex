@@ -4,6 +4,11 @@
 
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="true" />
+
+    <!-- How the app tells Google TV from Android TV for the viewer's device list. -->
+    <queries>
+        <package android:name="com.google.android.apps.tv.launcherx" />
+    </queries>
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- usesCleartextTraffic: a home server is usually plain HTTP on the LAN. -->

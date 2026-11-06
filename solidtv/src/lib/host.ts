@@ -5,6 +5,7 @@
 // away the others' code; NativeScript has no DOM, so its boot file calls
 // `configureHost` before importing the app.
 
+import { browserDeviceName } from "$devices";
 import type { ClientCapabilities } from "$codecs";
 import type { VideoPlayer } from "$lib/player/types.js";
 
@@ -36,9 +37,16 @@ const webStorage: HostStorage = {
   remove: (key) => { try { localStorage.removeItem(key); } catch { /* unavailable */ } },
 };
 
-const TARGET_NAMES: Record<string, string> = { tizen: "Samsung TV", webos: "LG TV", android: "Android TV", firebolt: "RDK TV", browser: "Browser" };
+const TARGET_NAMES: Record<string, string> = { tizen: "Samsung TV", webos: "LG TV", android: "Android TV", firebolt: "RDK TV" };
 
 const declaredGlobal = (name: string): any => (globalThis as any)[name];
+
+function targetDeviceName(): string {
+  if (__TARGET__ === "browser") return browserDeviceName(navigator);
+  // An APK from before the host could say.
+  if (__TARGET__ === "android") return declaredGlobal("NoFlexHost")?.deviceName?.() ?? TARGET_NAMES.android!;
+  return TARGET_NAMES[__TARGET__] ?? "TV";
+}
 
 function exitTarget(): (() => void) | undefined {
   if (__TARGET__ === "tizen") return () => declaredGlobal("tizen")?.application.getCurrentApplication().exit();
@@ -60,7 +68,7 @@ function readyTarget(): void {
 
 export const host: Host = {
   clientName: "NoFlex TV",
-  deviceName: () => TARGET_NAMES[__TARGET__] ?? "TV",
+  deviceName: targetDeviceName,
   storage: webStorage,
   capabilities: () => import("$lib/player/capabilities.js").then(({ clientCapabilities }) => clientCapabilities()),
   createPlayer: () => import("$lib/player/html.js").then(({ HtmlVideoPlayer }) => new HtmlVideoPlayer()),

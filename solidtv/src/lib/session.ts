@@ -62,7 +62,7 @@ function deviceId(): string {
 /** Tell the server what this TV can play, so it can prepare versions. Best effort. */
 async function registerThisDevice(): Promise<void> {
   try {
-    await request(REGISTER_DEVICE, { id: deviceId(), name: host.deviceName(), capabilities: await host.capabilities() });
+    await request(REGISTER_DEVICE, { id: deviceId(), name: host.deviceName(), client: host.clientName, capabilities: await host.capabilities() });
   } catch { /* retried on the next launch */ }
 }
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// A Phosphor icon, from the one white sprite sheet the renderer tints.
+// A Phosphor icon or Simple Icons mark, from the one white sprite sheet the renderer tints.
 
 import { renderer, type NodeProps } from "@solidtv/solid";
 import { ICON_CELL, ICON_CELLS, type IconName } from "$lib/icons.generated.js";

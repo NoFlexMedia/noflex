@@ -6,12 +6,14 @@
 // in the web client and the apps.
 
 import { useNavigate } from "@solidjs/router";
+import { deviceBrand, type DeviceBrand } from "$devices";
 import { Column, Row } from "@solidtv/solid/primitives";
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, Show, untrack } from "solid-js";
 import type { ElementNode, NodeProps } from "@solidtv/solid";
 import { bytes, languageName } from "$lib/format.js";
 import { MY_DEVICES, MY_SMART_MARKS, PREPARED_VERSIONS, UNMARK_FOR_SMART_TRANSCODING, UPDATE_DEVICE } from "$lib/graphql/documents.js";
 import { request } from "$lib/graphql.js";
+import { host } from "$lib/host.js";
 import type { IconName } from "$lib/icons.generated.js";
 import { app, changeServer, logout, savePlaybackPrefs, setShowLibraries, thisDeviceId } from "$lib/session.js";
 import { changeSetting, settings, type DeviceSettings } from "$lib/settings.js";
@@ -99,6 +101,13 @@ function SectionItem(props: NodeProps & { section: (typeof SECTIONS)[number]; ch
 }
 
 const PROFILE_QR = 170;
+
+const BRAND_ICONS: Record<DeviceBrand, IconName> = {
+  android: "android-logo-fill", apple: "apple-logo-fill", archlinux: "mark-archlinux", brave: "mark-brave", browser: "browser", chrome: "mark-chrome", debian: "mark-debian", desktop: "desktop",
+  duckduckgo: "mark-duckduckgo", fedora: "mark-fedora", firefox: "mark-firefox", gamepad: "game-controller", googletv: "mark-googletv", laptop: "laptop", linux: "linux-logo-fill", linuxmint: "mark-linuxmint",
+  manjaro: "mark-manjaro", nixos: "mark-nixos", nvidia: "mark-nvidia", opensuse: "mark-opensuse", opera: "mark-opera", phone: "device-mobile", playstation: "mark-playstation", popos: "mark-popos",
+  safari: "mark-safari", steamdeck: "mark-steamdeck", tablet: "device-tablet", television: "television", ubuntu: "mark-ubuntu", vivaldi: "mark-vivaldi", windows: "windows-logo-fill",
+};
 
 /** "Vera Viewer" is VV, "vera" is VE, as on the other clients. */
 function initials(name: string): string {
@@ -198,6 +207,11 @@ export default function Account() {
     ),
     tv: () => (
       <>
+        <view skipFocus width={PANEL_WIDTH} height={92}>
+          <Icon name={BRAND_ICONS[deviceBrand(host.deviceName(), host.clientName)]} size={56} y={10} />
+          <text x={80} y={6} width={PANEL_WIDTH - 80} contain="width" maxLines={1} fontSize={type.lead} fontWeight={weight.semibold}>{host.deviceName()}</text>
+          <text x={80} y={50} fontSize={type.caption} color={color.text2}>How this TV shows up in your device list</text>
+        </view>
         <SettingRow width={PANEL_WIDTH} label="HDR" detail="Turn off if HDR looks wrong here; the server converts it to SDR" checked={settings.allowHdr} onEnter={() => { device("allowHdr", !settings.allowHdr); return true; }} />
       </>
     ),

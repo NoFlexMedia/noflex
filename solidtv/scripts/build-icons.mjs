@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Packs the Phosphor icons the app draws, and the brand mark, into one white
-// sprite sheet the renderer tints. One texture: every icon on screen batches
+// Packs the Phosphor icons and Simple Icons marks the app draws, and NoFlex's own mark,
+// into one white sprite sheet the renderer tints. One texture: every icon on screen batches
 // into a draw, and the renderer never has to rasterize an SVG, which tvOS can't.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -20,18 +20,30 @@ const ICONS = {
   "lock-key": "regular", "magnifying-glass": "regular", "music-notes": "regular", pause: "fill", play: "fill", "shield-check": "regular",
   "sign-out": "regular", "skip-forward": "fill", sparkle: "regular", stack: "regular", star: "fill", tag: "duotone", subtitles: "regular", television: "regular",
   translate: "regular", user: "regular", "warning-circle": "regular", "arrow-up": "regular", x: "regular",
+  "android-logo-fill": "fill", "apple-logo-fill": "fill", browser: "regular", desktop: "regular", "device-tablet": "regular", "game-controller": "regular", laptop: "regular", "linux-logo-fill": "fill", "windows-logo-fill": "fill",
   "caret-down": "regular", "device-mobile": "regular", "download-simple": "regular", gauge: "regular", "monitor-play": "regular", "sliders-horizontal": "regular",
+};
+
+// Sprite name -> slug, for device brands Phosphor doesn't draw. See lib/ts/device.ts.
+const MARKS = {
+  "mark-archlinux": "archlinux", "mark-brave": "brave", "mark-chrome": "googlechrome", "mark-debian": "debian", "mark-duckduckgo": "duckduckgo", "mark-fedora": "fedora",
+  "mark-firefox": "firefoxbrowser", "mark-googletv": "googletv", "mark-linuxmint": "linuxmint", "mark-manjaro": "manjaro", "mark-nixos": "nixos", "mark-nvidia": "nvidia",
+  "mark-opensuse": "opensuse", "mark-opera": "opera", "mark-playstation": "playstation", "mark-popos": "popos", "mark-safari": "safari", "mark-steamdeck": "steamdeck",
+  "mark-ubuntu": "ubuntu", "mark-vivaldi": "vivaldi",
 };
 
 const source = (name, weight) => readFileSync(`node_modules/@phosphor-icons/core/assets/${weight}/${name.replace(/-fill$/, "")}${weight === "regular" ? "" : `-${weight}`}.svg`, "utf8").replace(/fill="currentColor"/, 'fill="#ffffff"');
 const inner = (svg) => svg.replace(/<!--[\s\S]*?-->\s*/, "").replace(/^<svg[^>]*>/, "").replace(/<\/svg>\s*$/, "");
 
-const names = Object.keys(ICONS).sort();
+const names = [...Object.keys(ICONS), ...Object.keys(MARKS)].sort();
 const rows = Math.ceil(names.length / COLUMNS);
 const cells = names.map((name, index) => {
   const x = (index % COLUMNS) * CELL;
   const y = Math.floor(index / COLUMNS) * CELL;
-  return { name, x, y, body: `<svg x="${x}" y="${y}" width="${CELL}" height="${CELL}" viewBox="0 0 256 256" fill="#ffffff">${inner(source(name, ICONS[name]))}</svg>` };
+  const [box, body] = MARKS[name]
+    ? ["0 0 24 24", inner(readFileSync(`node_modules/simple-icons/icons/${MARKS[name]}.svg`, "utf8")).replace(/<title>.*?<\/title>/, "")]
+    : ["0 0 256 256", inner(source(name, ICONS[name]))];
+  return { name, x, y, body: `<svg x="${x}" y="${y}" width="${CELL}" height="${CELL}" viewBox="${box}" fill="#ffffff">${body}</svg>` };
 });
 const sheet = `<svg xmlns="http://www.w3.org/2000/svg" width="${COLUMNS * CELL}" height="${rows * CELL}">${cells.map((cell) => cell.body).join("")}</svg>`;
 writeFileSync("public/icons.png", new Resvg(sheet, { fitTo: { mode: "original" } }).render().asPng());

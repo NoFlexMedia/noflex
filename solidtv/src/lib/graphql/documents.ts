@@ -133,8 +133,8 @@ mutation UpdateDevice($id: ID!, $smartTranscode: Boolean, $maxBitrateBps: Int, $
 }`, DEVICE);
 
 export const REGISTER_DEVICE = `
-mutation RegisterDevice($id: ID!, $name: String!, $capabilities: ClientCapabilities!) {
-  registerDevice(id: $id, name: $name, capabilities: $capabilities) { id }
+mutation RegisterDevice($id: ID!, $name: String!, $client: String, $capabilities: ClientCapabilities!) {
+  registerDevice(id: $id, name: $name, client: $client, capabilities: $capabilities) { id }
 }`;
 
 // ---- browse -----------------------------------------------------------------

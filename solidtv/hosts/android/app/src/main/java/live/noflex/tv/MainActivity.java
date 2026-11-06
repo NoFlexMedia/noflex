@@ -9,6 +9,7 @@ package live.noflex.tv;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.os.Build;
@@ -139,6 +140,24 @@ public class MainActivity extends Activity {
 
     /** What the page reaches as `window.NoFlexHost`; see src/lib/host.ts. */
     private final class Host {
+        /** One APK runs on all of these, and a WebView's user agent can't tell them apart. */
+        @JavascriptInterface
+        public String deviceName() {
+            PackageManager packages = getPackageManager();
+            String family = "Android TV";
+            if (packages.hasSystemFeature("amazon.hardware.fire_tv")) {
+                family = "Fire TV";
+            } else {
+                try {
+                    packages.getPackageInfo("com.google.android.apps.tv.launcherx", 0);
+                    family = "Google TV";
+                } catch (PackageManager.NameNotFoundException notGoogleTv) {
+                    // Android TV's own launcher, or a vendor's.
+                }
+            }
+            return family + " (" + Build.MODEL + ")";
+        }
+
         @JavascriptInterface
         public void exit() {
             runOnUiThread(MainActivity.this::finish);

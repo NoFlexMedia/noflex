@@ -52,6 +52,8 @@ public/              # committed: Inter atlases, icon sprite, brand mark, their 
 ```
 
 - `$codecs` is `lib/ts/codecSupport.ts`, shared with `web/` rather than ported: a browser engine's probe is the same job, and the Apple host reuses its codec strings and level walks. See [`lib/AGENTS.md`](../lib/AGENTS.md).
+- `$devices` is `lib/ts/device.ts`. `host.deviceName()` is what the viewer sees in their device list, and what it's recognised by: the Android host asks the system whether it's Fire TV, Google TV or Android TV (`NoFlexHost.deviceName`, untested on real ones), and the `browser` target asks `browserDeviceName`.
+- `simple-icons` is a dev dependency: `scripts/build-icons.mjs` packs its marks into the committed sprite as `mark-*`, so nothing ships but pixels. `BRAND_ICONS` in `pages/Account.tsx` maps each brand. Run `just tv assets` after adding one.
 - `format.ts`, `tracks.ts`, `tokens.ts` and `playback.ts` are ports. A fix to timing or track logic in `web/` probably belongs here too.
 
 ## Host seam
@@ -152,7 +154,7 @@ Other notes:
 - `WebViewAssetLoader` gives it a real origin, so module scripts load. It's `http`, not the usual `https`: an https page's `<video>` is auto-upgraded to https whatever the mixed content mode says, so a plain-HTTP home server fails with "Format error" while `fetch` and images work. Measured on the emulator. It isn't a secure context as a result; nothing here needs one.
 - `getDefaultVideoPoster` returns a blank bitmap, or a WebView draws a grey play button over every `<video>`.
 - A WebView keeps Back and media keys, so `dispatchKeyEvent` re-dispatches them into the page. From `targetSdk` 36 Back doesn't reach it at all, and would leave the app: that's the `OnBackInvokedCallback`.
-- `window.NoFlexHost` is `exit` and `keepAwake`. A `<video>` in a WebView doesn't hold off the screensaver.
+- `window.NoFlexHost` is `exit`, `keepAwake` and `deviceName`. A `<video>` in a WebView doesn't hold off the screensaver.
 - Performance is the system WebView's. Very old boxes may ship one that can't cope; GeckoView is the documented fallback.
 - The debug APK enables WebView debugging: `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`, then `chrome://inspect`. On a phone AVD, set `immersive_mode_confirmations` to `confirmed` or a dialog eats the first keys.
 - Uses the flake's `gradle` in the `flutter-android` shell, with AGP 8.13 to match it (Flutter's wrapper is on Gradle 9).
@@ -180,5 +182,5 @@ Administration stays in the web client and the apps; the status dot (`ServerStat
 - Files start with the SPDX header. JSON can't hold one, so `package.json` carries `license`.
 - Import through `$lib`, `$components`, `$pages`, never `../../`. Only `theme.js` is relative, being beside neither.
 - Type sizes are the web's scaled for ten feet. Nothing under `type.caption` except secondary lines at 22.
-- Icons are Phosphor, through `Icon`. A new one goes in `ICONS` in `scripts/build-icons.mjs`, then `just tv assets`.
+- Icons are Phosphor, through `Icon`, with Simple Icons marks for device brands. A new one goes in `ICONS` or `MARKS` in `scripts/build-icons.mjs`, then `just tv assets`.
 - A GraphQL field added to a card costs every card on Home. Detail-only fields go on `WORK_DETAIL`.

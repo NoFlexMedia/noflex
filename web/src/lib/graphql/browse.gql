@@ -73,3 +73,7 @@ query Search($text: String!, $mode: SearchMode!, $kinds: [WorkKind!]) @dedupe(ca
 query WorkCrumb($id: ID!) @cache(policy: CacheOrNetwork) {
   work(id: $id) { ...WorkCard }
 }
+
+query WorksById($ids: [ID!]!) {
+  worksById(ids: $ids) { ...WorkFull }
+}

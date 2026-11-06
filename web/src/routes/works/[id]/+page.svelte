@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
+  import { untrack } from "svelte";
   import Check from "phosphor-svelte/lib/Check";
   import Sparkle from "phosphor-svelte/lib/Sparkle";
   import CheckCircle from "phosphor-svelte/lib/CheckCircle";
@@ -71,6 +72,13 @@
 
   let detail = $derived(route.detail);
   let work = $derived($detail.data?.work);
+  // A match brings cast and tags as well as the card's fields.
+  let wasIndexing = false;
+  $effect(() => {
+    const indexing = !!work?.indexing;
+    if (wasIndexing && !indexing) untrack(() => refetch(detail));
+    wasIndexing = indexing;
+  });
   let editions = $derived($detail.data?.editions ?? []);
   let userData = $derived(work?.userData);
 
@@ -316,7 +324,7 @@
       </div>
 
       <section class="info">
-        <p class="eyebrow">{titleCase(work.kind)}{#if work.metadataStatus === "UNCONFIRMED"}{" · "}<span class="unconfirmed">Unconfirmed match</span>{/if}</p>
+        <p class="eyebrow">{titleCase(work.kind)}{#if work.metadataStatus === "UNCONFIRMED" && !work.indexing}{" · "}<span class="unconfirmed">Unconfirmed match</span>{/if}</p>
         {#if pickImage(work.images, "logo")}
           <h1 class="logo"><span class="sr-only">{work.title}</span><Artwork {work} kind="logo" width={460} rounded={false} /></h1>
         {:else}

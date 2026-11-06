@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Match, Show, Switch, type ParentProps } from "solid-js";
+import { useNavigate } from "@solidjs/router";
+import { createEffect, Match, Show, Switch, type ParentProps } from "solid-js";
 import { useFocusManager, useMouse } from "@solidtv/solid/primitives";
+import { clearKeepAliveRoute } from "@solidtv/solid/primitives/router";
 import type { KeyMap } from "@solidtv/solid";
 import { originX, originY } from "$lib/viewport.js";
 import { SCREEN } from "../theme.js";
 import { host } from "$lib/host.js";
 import { player } from "$lib/playback.js";
 import { app, start } from "$lib/session.js";
+import { ui } from "$lib/ui.js";
 import Backdrop from "$components/Backdrop.js";
 import BrandMark from "$components/BrandMark.js";
 import Player from "$components/player/Player.js";
@@ -38,6 +41,14 @@ export default function App(props: ParentProps) {
   useFocusManager(KEYS);
   // A desktop mouse, and LG's Magic Remote, which points: hovering focuses, a click is Enter.
   if (__TARGET__ === "browser" || __TARGET__ === "webos") useMouse();
+  // Whoever signs in next starts at Home, and not with what kept-alive pages held for the last viewer.
+  const navigate = useNavigate();
+  createEffect(() => {
+    if (app.phase !== "auth") return;
+    clearKeepAliveRoute();
+    ui.backdrop = null;
+    navigate("/", { replace: true });
+  });
   return (
     // Whatever nothing else took: Home's navigation, or a screen with none, like signing in.
     // Returning false too, so tvOS's system takes the press where there's no `exit`.

@@ -53,7 +53,8 @@ export function GridView(props: { category: string; label: string }) {
 
 export default function Browse() {
   const params = useParams();
-  const category = createMemo(() => categoryBySlug(params.category ?? ""));
+  // Kept alive: once the route moves on there's no param, and this page stays what it was.
+  const category = createMemo<ReturnType<typeof categoryBySlug>>((last) => (params.category ? categoryBySlug(params.category) : last));
   return (
     <Page title={category()?.label ?? "Browse"}>
       <Show when={category()} keyed fallback={<State areaWidth={PAGE_WIDTH} autofocus kind="error" title="There’s nothing here" message="This category doesn’t exist on this server." />}>

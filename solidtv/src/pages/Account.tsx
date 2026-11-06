@@ -6,8 +6,8 @@
 // in the web client and the apps.
 
 import { Column, Row } from "@solidtv/solid/primitives";
-import { createEffect, createSignal, For, onCleanup, Show, untrack } from "solid-js";
-import type { NodeProps } from "@solidtv/solid";
+import { createEffect, createMemo, createSignal, For, Index, onCleanup, Show, untrack } from "solid-js";
+import type { ElementNode, NodeProps } from "@solidtv/solid";
 import { languageName } from "$lib/format.js";
 import { MY_DEVICES, MY_SMART_MARKS, UNMARK_FOR_SMART_TRANSCODING, UPDATE_DEVICE } from "$lib/graphql/documents.js";
 import { request } from "$lib/graphql.js";
@@ -115,17 +115,24 @@ export default function Account() {
   });
 
   const loadMarks = () => request<{ mySmartTranscodeMarks: SmartMark[] }>(MY_SMART_MARKS).then((data) => setMarks(data.mySmartTranscodeMarks), () => {});
+  createEffect(() => { if (section() === "smart") void loadMarks(); });
   // Only while it's on screen and something is moving: a TV left here should idle.
+  const marksMoving = createMemo(() => section() === "smart" && marks().some((mark) => mark.state === "WAITING" || mark.state === "PREPARING"));
   createEffect(() => {
-    if (section() !== "smart") return;
-    void loadMarks();
-    if (!marks().some((mark) => mark.state === "WAITING" || mark.state === "PREPARING")) return;
+    if (!marksMoving()) return;
     const timer = setInterval(() => void loadMarks(), MARK_POLL_MS);
     onCleanup(() => clearInterval(timer));
   });
+  let panel: ElementNode | undefined;
   const unmark = (mark: SmartMark) => attempt(async () => {
     await request(UNMARK_FOR_SMART_TRANSCODING, { work: mark.work.id, device: mark.device?.id ?? null });
-    setMarks((list) => list.filter((item) => item !== mark));
+    setMarks((list) => list.filter((item) => item.work.id !== mark.work.id || item.device?.id !== mark.device?.id));
+    // The last row may have gone from under focus; settle on whatever now stands there.
+    if (!panel) return;
+    let index = Math.min(panel.selected ?? 0, panel.children.length - 1);
+    while (index > 0 && panel.children[index]?.skipFocus) index--;
+    panel.selected = index;
+    panel.setFocus();
   });
 
   const prefs = () => app.playbackPrefs;
@@ -181,17 +188,18 @@ export default function Account() {
         <Heading text="Marked to watch next" />
         <Show when={marks().length} fallback={<Note text="Nothing yet. Mark a title from its page, and it’s prepared ahead of anything the server guesses at." />}>
           <Note text="These are prepared first, in this order, until you watch them. Choose one to unmark it." />
-          <For each={marks()}>
+          {/* By position: each load brings new objects, and a row holding focus has to survive them. */}
+          <Index each={marks()}>
             {(mark) => (
               <SettingRow
                 width={PANEL_WIDTH}
-                label={mark.work.title}
-                detail={mark.device ? `For ${mark.device.name} only` : "For your devices with smart transcoding on"}
-                value={mark.state === "PREPARING" ? `Preparing ${Math.round(mark.progress * 100)}%` : MARK_STATES[mark.state]}
-                onEnter={() => { void unmark(mark); return true; }}
+                label={mark().work.title}
+                detail={mark().device ? `For ${mark().device!.name} only` : "For your devices with smart transcoding on"}
+                value={mark().state === "PREPARING" ? `Preparing ${Math.round(mark().progress * 100)}%` : MARK_STATES[mark().state]}
+                onEnter={() => { void unmark(mark()); return true; }}
               />
             )}
-          </For>
+          </Index>
         </Show>
       </>
     ),
@@ -225,7 +233,7 @@ export default function Account() {
           <view width={PANEL_WIDTH} height={BODY_HEIGHT} forwardFocus={0}>
             <Show when={section()} keyed>
               {(chosen) => (
-                <Column width={PANEL_WIDTH} height={SCREEN.height * 2} gap={ROW_GAP} scroll="auto">
+                <Column ref={(node: ElementNode) => { panel = node; }} width={PANEL_WIDTH} height={SCREEN.height * 2} gap={ROW_GAP} scroll="auto">
                   {untrack(panels[chosen])}
                 </Column>
               )}

@@ -46,7 +46,13 @@ export default function Search() {
   }));
 
   return (
-    <view x={PAGE_X} width={PAGE_WIDTH} height={SCREEN.height} forwardFocus={2}>
+    <view x={PAGE_X} width={PAGE_WIDTH} height={SCREEN.height} forwardFocus={0}>
+      <Row autofocus y={180} width={PAGE_WIDTH} height={SCREEN.height - 180} scroll="none" gap={48}>
+        <Keyboard autofocus value={text()} onChange={setText} />
+        <Show when={results().length}>
+          <WorkGrid y={-124} items={results()} columns={Math.floor(RESULTS_WIDTH / (POSTER.width + 36))} />
+        </Show>
+      </Row>
       <TextField y={56} width={KEYBOARD_WIDTH} height={88} fontSize={type.lead} icon="magnifying-glass" value={text()} placeholder="Search titles, people, moods" active skipFocus />
       <Show when={text() && searched() && !results().length}>
         <view x={RESULTS_X} width={RESULTS_WIDTH} height={SCREEN.height} skipFocus>
@@ -56,12 +62,6 @@ export default function Search() {
       <Show when={!text()}>
         <text x={RESULTS_X} y={80} fontSize={type.lead} fontWeight={weight.semibold} color={color.text3}>Results show up here as you type.</text>
       </Show>
-      <Row autofocus y={180} width={PAGE_WIDTH} height={SCREEN.height - 180} scroll="none" gap={48}>
-        <Keyboard autofocus value={text()} onChange={setText} />
-        <Show when={results().length}>
-          <WorkGrid y={-124} items={results()} columns={Math.floor(RESULTS_WIDTH / (POSTER.width + 36))} />
-        </Show>
-      </Row>
     </view>
   );
 }

@@ -69,6 +69,7 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 - `reactive({...})` (`lib/state.ts`) is the web's `$state`: an object of signals read and written as plain properties. `app`, `player` and `ui` are these.
 - `createQuery` paints from the cache, then the network. `preload` warms it, from a card holding focus.
 - `userDataOf(work)` reads play state. The cache holds whole responses, so changes live beside it (`lib/watch.ts`).
+- `latest(work)` is the same for a title still indexing (`lib/indexing.ts`). `Artwork` watches what it shows, so one `worksById` every 4 s covers the screen, and stops when nothing's left.
 
 ## Rendering
 
@@ -82,7 +83,7 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 - **White means focused, and nothing else.** The primary action rests in the accent (`Button`).
 - **The renderer only loads textures it would draw.** A node at `alpha={0}` never fires `loaded`, so anything fading in on load starts at `0.001` (`Artwork`, `Backdrop`).
 - **Text draws after quads**, deferred until a quad with a non-zero `zIndex` flushes it. So whatever covers text needs `zIndex` on the quad that does the covering, not on a parent (`Sheet`, `Nav`). Otherwise text shows through.
-- **Anything moving keeps the renderer drawing every frame.** So no shimmer on skeletons, the status rings don't spin, and `Spinner` mounts only while waiting and after a delay. Let an idle TV idle.
+- **Anything moving keeps the renderer drawing every frame.** So no shimmer on skeletons, the status rings don't spin, and `Spinner` mounts only while waiting and after a delay. Let an idle TV idle. The one lasting exception is `indexingPulse`: one shared pulse, only while a title on screen is indexing, stopped under the player.
 - **SDF text only**, in atlases covering Latin, Latin Extended-A, Greek and Cyrillic. **CJK, Arabic, Hebrew and Indic titles don't render.** One atlas can't hold them, and there's no Canvas2D text path on tvOS. Fixing it means per-script atlases or drawing those strings to textures on hosts that can.
 - Atlases and sprites are generated and committed (`just tv assets`). Inter's `cv11`/`ss01`/`ss03` aren't applied: the generator can't select stylistic sets.
 - `linearGradient` needs `stops`; use `gradient(colors, toward.down)` from `theme.ts`. Directions are the shader's: π/2 runs right to left, so use `toward`, not a bare angle.
@@ -91,6 +92,7 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 ## Signing in
 
 - A code comes first (`createDevicePin`, then `pollDevicePin` every 3 s, as Flutter does); the password is the fallback. Approval is Devices → Link a device on the web and in the apps.
+- `QrCode` draws the approval URL with the code in it (`&pin=`), which the web's Devices tab fills in. It's rectangles, not a canvas: no host-specific drawing, and one quad per run of dark modules.
 - A code lives 10 minutes and renews itself three times, then the screen stops asking the server. A TV's clock can be wrong, so an `expiresAt` that makes no sense counts as the whole 10 minutes.
 
 ## Focus and keys
@@ -103,6 +105,10 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 - Don't let focus jump when data arrives: `Title` shows Play for a series from the start rather than inserting it once the next episode is worked out.
 - A `Row`'s or `Column`'s children need sizes. Rails state `height` explicitly.
 - `KeepAliveRoute` keeps Home and Browse with their focus and scroll. Their effects keep running while hidden; `props.isAlive` says whether they're showing.
+- **A hidden kept page still reacts.** `useParams` goes blank once its route is gone (`Browse` holds its last value), and data arriving late still autofocuses. `Shell` moves focus off any hidden page, and tells one by `page.children`: it leaves that but keeps its `parent`.
+- **Don't hold focus in `<For>` over refetched data.** New objects rebuild every row, destroying the focused one with no event to catch. Use `<Index>` (`Account`'s marks).
+- A numbered `forwardFocus` counts children as they stand: dynamic ones move it. Put what takes focus first and use `0` (`Search`, `Login`).
+- Signing out clears kept pages and returns to `/`, so the next sign-in starts at Home with nothing of the last viewer's (`App`).
 
 ## Playback
 

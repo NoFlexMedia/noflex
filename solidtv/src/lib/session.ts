@@ -8,6 +8,7 @@ import { reactive } from "$lib/state.js";
 import { ApiError, clearSession, hasSession, normalizeOrigin, onSessionExpired, restore, saveSession, serverOrigin, SessionExpiredError, useServer } from "$lib/tokens.js";
 import { noPrefs, readPlaybackPrefs } from "$lib/tracks.js";
 import type { Library, ServerInfo, Viewer } from "$lib/types.js";
+import { resetIndexing } from "$lib/indexing.js";
 import { resetWatch } from "$lib/watch.js";
 
 /** Preference key: list libraries in the navigation alongside content types. */
@@ -33,6 +34,7 @@ export const destinations = () => availableCategories(app.categories);
 function signedOut(authError: string): void {
   resetCache();
   resetWatch();
+  resetIndexing();
   app.viewer = null;
   app.libraries = [];
   app.categories = [];

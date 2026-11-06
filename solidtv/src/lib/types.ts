@@ -5,7 +5,10 @@
 
 export interface Image { kind: string; url: string }
 export interface UserData { played: boolean; positionMs?: number | null; favorite?: boolean | null }
+export type IndexingStage = "ADDING" | "FINDING_DETAILS";
+
 export interface Work {
+  indexing?: IndexingStage | null;
   id: string;
   kind: string;
   parentId?: string | null;

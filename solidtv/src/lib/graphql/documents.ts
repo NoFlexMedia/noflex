@@ -18,6 +18,7 @@ fragment WorkCard on Work {
   indexEnd
   parentIndex
   runtimeMs
+  indexing
   images { kind url }
   userData { played positionMs favorite }
 }`;
@@ -113,6 +114,8 @@ fragment SmartMarkFields on SmartTranscodeMark {
   state
   progress
 }`;
+
+export const WORKS_BY_ID = gql(`query WorksById($ids: [ID!]!) { worksById(ids: $ids) { ...WorkCard } }`, WORK_CARD);
 
 export const MY_SMART_MARKS = gql(`query MySmartMarks { mySmartTranscodeMarks { ...SmartMarkFields } }`, SMART_MARK, WORK_CARD);
 

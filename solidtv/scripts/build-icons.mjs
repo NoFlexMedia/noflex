@@ -18,7 +18,7 @@ const ICONS = {
   check: "bold", "check-circle": "regular", "closed-captioning": "regular", "clock-counter-clockwise": "regular", "film-strip": "regular",
   gear: "regular", globe: "regular", heart: "regular", "heart-fill": "fill", house: "regular", image: "regular", info: "regular",
   "lock-key": "regular", "magnifying-glass": "regular", "music-notes": "regular", pause: "fill", play: "fill", "shield-check": "regular",
-  "sign-out": "regular", "skip-forward": "fill", sparkle: "regular", stack: "regular", star: "fill", subtitles: "regular", television: "regular",
+  "sign-out": "regular", "skip-forward": "fill", sparkle: "regular", stack: "regular", star: "fill", tag: "duotone", subtitles: "regular", television: "regular",
   translate: "regular", user: "regular", "warning-circle": "regular", "arrow-up": "regular", x: "regular",
   "caret-down": "regular", "device-mobile": "regular", "download-simple": "regular", gauge: "regular", "monitor-play": "regular", "sliders-horizontal": "regular",
 };

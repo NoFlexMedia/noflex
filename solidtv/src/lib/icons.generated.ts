@@ -45,11 +45,12 @@ export const ICON_CELLS = {
   "stack": [576, 384],
   "star": [672, 384],
   "subtitles": [0, 480],
-  "television": [96, 480],
-  "translate": [192, 480],
-  "user": [288, 480],
-  "warning-circle": [384, 480],
-  "x": [480, 480],
+  "tag": [96, 480],
+  "television": [192, 480],
+  "translate": [288, 480],
+  "user": [384, 480],
+  "warning-circle": [480, 480],
+  "x": [576, 480],
 } as const;
 
 export type IconName = keyof typeof ICON_CELLS;

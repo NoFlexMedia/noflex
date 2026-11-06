@@ -10,6 +10,7 @@ import type { ElementNode, NodeProps } from "@solidtv/solid";
 import { audioFormat, bytes, codecName, dynamicRange, levelName, profileName, runtime, techBadges, timecode, titleCase, versionLabel } from "$lib/format.js";
 import { MARK_FOR_SMART_TRANSCODING, MARK_PLAYED, MARK_UNPLAYED, MEDIA_FILES, SET_FAVORITE, SMART_MARKS_FOR_WORK, UNMARK_FOR_SMART_TRANSCODING, WORK_CRUMB, WORK_DETAIL } from "$lib/graphql/documents.js";
 import { createQuery, request } from "$lib/graphql.js";
+import { latest } from "$lib/indexing.js";
 import { pickImage } from "$lib/images.js";
 import { fetchChildren, isPlayable, player, playWork, subtitleFor } from "$lib/playback.js";
 import { revealInRow } from "$lib/rows.js";
@@ -174,6 +175,14 @@ export default function Title() {
   const [sheet, setSheet] = createSignal<SheetKind | null>(null);
 
   // A season or episode without art of its own wears its series'.
+  // A match brings cast and tags as well as the card's fields.
+  let wasIndexing = false;
+  createEffect(() => {
+    const current = work();
+    const indexing = !!(current && latest(current).indexing);
+    if (wasIndexing && !indexing) void detail.refetch();
+    wasIndexing = indexing;
+  });
   const parent = createQuery<{ work: Work }>(WORK_CRUMB, () => (work()?.parentId ? { id: work()!.parentId } : null));
   const heroArt = () => pickImage(work()?.images, "backdrop") ?? pickImage(parent.data()?.work.images, "backdrop");
   createEffect(() => { ui.backdrop = heroArt(); });

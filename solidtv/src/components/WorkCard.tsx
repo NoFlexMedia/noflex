@@ -4,7 +4,7 @@
 // card lifts on a spring, so the answer to a key press is immediate.
 
 import { useNavigate } from "@solidjs/router";
-import { createSignal, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { ElementNode, NodeProps } from "@solidtv/solid";
 import { titleCase } from "$lib/format.js";
 import { WORK_DETAIL } from "$lib/graphql/documents.js";
@@ -13,6 +13,7 @@ import { subtitleFor } from "$lib/playback.js";
 import type { Work } from "$lib/types.js";
 import { ui } from "$lib/ui.js";
 import { pickImage } from "$lib/images.js";
+import { latest } from "$lib/indexing.js";
 import { revealInRow } from "$lib/rows.js";
 import { userDataOf } from "$lib/watch.js";
 import { color, gradient, motion, radius, toward, type, weight } from "../theme.js";
@@ -30,6 +31,8 @@ export default function WorkCard(props: NodeProps & { work: Work; wide?: boolean
   const navigate = useNavigate();
   const [focused, setFocused] = createSignal(false);
   const size = () => (props.wide ? WIDE : POSTER);
+  // A match arriving brings its title and year along with the art.
+  const shown = createMemo(() => latest(props.work));
   const data = () => userDataOf(props.work);
   const progress = () => {
     const known = data();
@@ -37,9 +40,9 @@ export default function WorkCard(props: NodeProps & { work: Work; wide?: boolean
     return Math.min(1, known.positionMs / props.work.runtimeMs);
   };
   // Where a list asks for the series, an episode leads with it: "Low Water" means nothing alone.
-  const heading = () => (props.work.kind === "EPISODE" ? props.work.seriesTitle ?? props.work.title : props.work.title);
+  const heading = () => (shown().kind === "EPISODE" ? shown().seriesTitle ?? shown().title : shown().title);
   const line = () => {
-    const work = props.work;
+    const work = shown();
     const episodeTitle = work.kind === "EPISODE" && work.seriesTitle && !/^episode \d+$/i.test(work.title) ? work.title : "";
     return [subtitleFor(work), episodeTitle, work.kind !== "EPISODE" ? titleCase(work.kind) : ""].filter(Boolean).join(" · ");
   };
@@ -56,7 +59,7 @@ export default function WorkCard(props: NodeProps & { work: Work; wide?: boolean
     revealing = setTimeout(() => { if (node) revealInRow(node); }, 0);
     intent = setTimeout(() => {
       preload(WORK_DETAIL, { id: props.work.id });
-      ui.backdrop = pickImage(props.work.images, "backdrop");
+      ui.backdrop = pickImage(shown().images, "backdrop");
     }, INTENT_MS);
   }
 
@@ -76,7 +79,7 @@ export default function WorkCard(props: NodeProps & { work: Work; wide?: boolean
         return true;
       }}
     >
-      <Artwork work={props.work} kind={props.wide ? "thumb" : "poster"} width={size().width} height={size().height} />
+      <Artwork work={shown()} kind={props.wide ? "thumb" : "poster"} width={size().width} height={size().height} />
       <view
         x={-RING}
         y={-RING}

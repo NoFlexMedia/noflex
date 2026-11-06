@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+mutation MarkForSmartTranscoding($work: ID!, $device: ID) {
+  markForSmartTranscoding(workId: $work, deviceId: $device) { state }
+}

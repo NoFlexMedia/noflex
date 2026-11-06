@@ -33,7 +33,10 @@ import '../../graphql/queries/__generated__/poll_device_pin.req.gql.dart';
 import '../../graphql/queries/__generated__/remove_linked_server.req.gql.dart';
 import '../../graphql/queries/__generated__/revoke_api_key.req.gql.dart';
 import '../../graphql/queries/__generated__/revoke_session.req.gql.dart';
+import '../../graphql/queries/__generated__/my_smart_marks.req.gql.dart';
 import '../../graphql/queries/__generated__/set_preference.req.gql.dart';
+import '../../graphql/queries/__generated__/unmark_for_smart_transcoding.req.gql.dart';
+import '../../graphql/queries/fragments/__generated__/smart_mark_fields.data.gql.dart';
 import '../../graphql/queries/__generated__/update_device.req.gql.dart';
 import '../../graphql/queries/__generated__/update_linked_server.req.gql.dart';
 import '../../graphql/queries/fragments/__generated__/export_job_fields.data.gql.dart';
@@ -61,7 +64,8 @@ enum AccountSection {
   devices('Devices', PhosphorIconsRegular.devices),
   servers('Servers', PhosphorIconsRegular.hardDrives),
   history('History', PhosphorIconsRegular.clockCounterClockwise),
-  exports('Offline copies', PhosphorIconsRegular.export);
+  exports('Offline copies', PhosphorIconsRegular.export),
+  smart('Smart transcoding', PhosphorIconsRegular.sparkle);
 
   const AccountSection(this.label, this.icon);
   final String label;
@@ -69,6 +73,7 @@ enum AccountSection {
 }
 
 const _exportPoll = Duration(seconds: 3);
+const _marksPoll = Duration(seconds: 5);
 const _activeExports = {
   GExportJobStatus.QUEUED,
   GExportJobStatus.RUNNING,
@@ -157,6 +162,9 @@ String _pictureTier(int pixels) => pixels >= pixels2160p ? '4K' : '1080p';
 }
 
 class AccountController {
+  Timer? _marksTimer;
+  late final void Function() _stopFollowingMarks;
+
   AccountController() {
     _stopFollowingPrefs = effect(() {
       // Another client may have changed these since this app started.
@@ -166,6 +174,24 @@ class AccountController {
           storedPlayback.value,
         ),
       );
+    });
+    _stopFollowingMarks = effect(() {
+      final polling =
+          section.value == AccountSection.smart &&
+          getIt<NavService>().tab.value == ShellTab.account &&
+          smartMarks.value.any(
+            (mark) =>
+                mark.state == GSmartTranscodeState.WAITING ||
+                mark.state == GSmartTranscodeState.PREPARING,
+          );
+      untracked(() {
+        _marksTimer?.cancel();
+        _marksTimer = polling
+            ? Timer.periodic(_marksPoll, (_) {
+                unawaited(loadSmartMarks().catchError((_) {}));
+              })
+            : null;
+      });
     });
     _stopFollowingExports = effect(() {
       final polling =
@@ -249,6 +275,30 @@ class AccountController {
   });
 
   /// A server that doesn't answer just has nothing to show for now.
+  /// What the viewer has marked, the next to be prepared first.
+  final smartMarks = signal<List<GSmartMarkFields>>(const []);
+
+  Future<void> loadSmartMarks() async {
+    final data = await _graphql.run(
+      GMySmartMarksReq((b) => b..fetchPolicy = FetchPolicy.NetworkOnly),
+    );
+    smartMarks.value = data.mySmartTranscodeMarks.toList();
+  }
+
+  Future<void> unmark(GSmartMarkFields mark) async {
+    final done = await _toasts.attempt(
+      () => _graphql.run(
+        GUnmarkForSmartTranscodingReq(
+          (b) => b.vars
+            ..work = mark.work.id
+            ..device = mark.device?.id,
+        ),
+      ),
+      success: 'Unmarked',
+    );
+    if (done != null) await loadSmartMarks();
+  }
+
   Future<void> loadLinkedExports() async {
     final servers = getIt<SessionService>().connectedServers.peek();
     final answers = await Future.wait(
@@ -313,6 +363,8 @@ class AccountController {
     switch (next) {
       case AccountSection.history:
         unawaited(history.refresh());
+      case AccountSection.smart:
+        break;
       case AccountSection.devices || AccountSection.exports:
         query.refetch();
       case AccountSection.profile || AccountSection.servers:
@@ -590,6 +642,8 @@ class AccountController {
   }
 
   void dispose() {
+    _marksTimer?.cancel();
+    _stopFollowingMarks();
     _poll?.cancel();
     _stopFollowingPrefs();
     _stopFollowingExports();

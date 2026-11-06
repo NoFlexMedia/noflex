@@ -135,6 +135,11 @@ Ferry, against `lib/graphql/schema.graphql`, a symlink to `backend/crates/noflex
 - A manual download asks `deviceDownload`. When that's null, the server has nothing ready for this device and an export job can stand in.
 - The target folder setting is hidden on iOS. Android lists its app-specific volumes, including SD cards, which need no permission. Desktop gets a folder picker.
 
+### Smart transcode marks
+
+- A mark (`smart_marks_section.dart`, You → Smart transcoding) is a hard signal to the server to prepare a title next. It isn't a download: what comes to the phone is still the Downloads section's business.
+- "Mark for smart transcoding" is for every device with smart transcoding on; "Smart transcode for this device" for this one, whatever its setting. The two are independent.
+
 ### Offline copies
 
 - Exports (`ExportJob` in the API) are stream copies, so they keep the original's codecs. They're saved from You → Offline copies.

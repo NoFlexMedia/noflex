@@ -172,15 +172,15 @@ The curve HDR is mapped to SDR with when a client can't present the HDR itself. 
 - **Type:** table
 - **Env:** `NOFLEX_TRANSCODER_OPTIMIZE_<KEY>`, except `encode_video` (use TOML)
 
-Smart transcoding: preparing versions in the background for titles users are likely to watch next, for devices that opt in from their account settings. `dir`, `max_storage_gb` and `max_version_gb` are defaults: administrators can override them under Administration → Transcoding.
+Smart transcoding: preparing versions in the background for titles users are likely to watch next, for devices that opt in from their account settings. Viewers can also mark a title, for those devices or just the one they're on; marks go ahead of every guess, first come first served, and are never evicted while they stand. `dir`, `max_storage_gb` and `max_version_gb` are defaults: administrators can override them under Administration → Transcoding.
 
 | Key | Default | |
 |---|---|---|
 | `enabled` | `true` | Nothing is prepared until a device opts in. |
 | `dir` | `optimized/` under `data_dir` | Where finished versions live. They take real disk, so don't point this at a cache volume. Changing it leaves existing versions where they are. |
-| `max_storage_gb` | `200` | Versions nobody is likely to watch are evicted past this, least recently used first, and no new job starts while over it. |
+| `max_storage_gb` | `200` | Versions nobody is likely to watch are evicted past this, least recently used first, and no new job starts while over it. A marked title waiting for space evicts guesses too. |
 | `max_version_gb` | unset | Titles whose version is estimated larger than this aren't prepared. |
-| `max_cpu_percent` | `40` | Jobs start only below this CPU use. Jobs also wait for playback to end, and running jobs pause while anyone is watching. |
+| `max_cpu_percent` | `40` | Jobs start only below this CPU use, marked titles included. Jobs also wait for playback to end, and running jobs pause while anyone is watching. |
 | `plan_interval_secs` | `900` | How often to work out what's likely to be watched next. |
 | `lookahead_episodes` | `3` | Episodes to prepare beyond each next episode. |
 | `recommendations` | `5` | Top recommendations to prepare. |

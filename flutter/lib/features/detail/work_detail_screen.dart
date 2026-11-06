@@ -11,6 +11,10 @@ import 'package:signals_flutter/signals_flutter.dart';
 
 import '../../di.dart';
 import '../../graphql/__generated__/schema.schema.gql.dart';
+import '../../graphql/queries/__generated__/mark_for_smart_transcoding.req.gql.dart';
+import '../../graphql/queries/__generated__/smart_marks_for_work.data.gql.dart';
+import '../../graphql/queries/__generated__/smart_marks_for_work.req.gql.dart';
+import '../../graphql/queries/__generated__/unmark_for_smart_transcoding.req.gql.dart';
 import '../../graphql/queries/__generated__/add_to_playlist.req.gql.dart';
 import '../../graphql/queries/__generated__/collection_items.req.gql.dart';
 import '../../graphql/queries/__generated__/collection_menu.req.gql.dart';
@@ -1369,6 +1373,8 @@ class _MoreMenu extends SignalWidget {
         const exportMp4 = 'mp4';
         const exportMkv = 'mkv';
         const manage = 'manage';
+        const markDevices = 'mark';
+        const markHere = 'mark-here';
         // A linked server's title belongs to that server's administrator, and
         // its rooms to that server's list.
         final linked = controller.server != null;
@@ -1376,9 +1382,52 @@ class _MoreMenu extends SignalWidget {
             !linked && (getIt<SessionService>().viewer.value?.isAdmin ?? false);
         final exportable =
             !work.isContainer && controller.downloadsAllowed.value;
+        // Marks and the devices they name live on the home server.
+        final marks =
+            !linked &&
+                const {
+                  'MOVIE',
+                  'SERIES',
+                  'SEASON',
+                  'EPISODE',
+                }.contains(work.kind)
+            ? await _smartMarks(work)
+            : null;
+        final thisDevice = getIt<SessionService>().device.value?.id;
+        final markedForDevices =
+            marks?.mySmartTranscodeMarks.any((mark) => mark.device == null) ??
+            false;
+        final markedForHere =
+            marks?.mySmartTranscodeMarks.any(
+              (mark) => mark.device?.id == thisDevice,
+            ) ??
+            false;
         final choice = await pickOption<String>(
           title: work.title,
           options: [
+            if (marks != null) ...[
+              NfOption(
+                markDevices,
+                'Mark for smart transcoding',
+                leading: Icon(
+                  markedForDevices
+                      ? PhosphorIconsBold.check
+                      : PhosphorIconsRegular.sparkle,
+                  size: 18,
+                ),
+              ),
+              if (thisDevice != null)
+                NfOption(
+                  markHere,
+                  'Smart transcode for this device',
+                  leading: Icon(
+                    markedForHere
+                        ? PhosphorIconsBold.check
+                        : PhosphorIconsRegular.sparkle,
+                    size: 18,
+                  ),
+                ),
+            ],
             const NfOption(
               playlist,
               'Add to playlist',
@@ -1439,8 +1488,76 @@ class _MoreMenu extends SignalWidget {
             await makeCopy(GExportFormat.MKV);
           case manage:
             await openManageSheet(controller);
+          case markDevices:
+            await _toggleMark(
+              work,
+              device: null,
+              marked: markedForDevices,
+              anyDeviceOn:
+                  marks?.myDevices.any((known) => known.smartTranscode) ??
+                  false,
+            );
+          case markHere:
+            await _toggleMark(
+              work,
+              device: thisDevice,
+              marked: markedForHere,
+              anyDeviceOn: true,
+            );
         }
       },
+    );
+  }
+
+  /// Null when they can't be read, which leaves these out of the menu.
+  static Future<GSmartMarksForWorkData?> _smartMarks(WorkSummary work) async {
+    try {
+      return await getIt<GraphqlService>().run(
+        GSmartMarksForWorkReq(
+          (b) => b
+            ..fetchPolicy = FetchPolicy.NetworkOnly
+            ..vars.work = work.id,
+        ),
+      );
+    } on Exception {
+      return null;
+    }
+  }
+
+  static Future<void> _toggleMark(
+    WorkSummary work, {
+    required String? device,
+    required bool marked,
+    required bool anyDeviceOn,
+  }) async {
+    final graphql = getIt<GraphqlService>();
+    final toasts = getIt<ToastService>();
+    final done = await toasts.attempt(
+      () => marked
+          ? graphql.run(
+              GUnmarkForSmartTranscodingReq(
+                (b) => b.vars
+                  ..work = work.id
+                  ..device = device,
+              ),
+            )
+          : graphql.run(
+              GMarkForSmartTranscodingReq(
+                (b) => b.vars
+                  ..work = work.id
+                  ..device = device,
+              ),
+            ),
+    );
+    if (done == null) return;
+    toasts.show(
+      marked
+          ? 'Unmarked'
+          : device != null
+          ? 'It’ll be ready for this device next. Follow it under You → Smart transcoding.'
+          : anyDeviceOn
+          ? 'Marked. It’ll be ready next on your devices with smart transcoding on.'
+          : 'Marked, but none of your devices has smart transcoding on yet. Turn it on under You → Devices.',
     );
   }
 

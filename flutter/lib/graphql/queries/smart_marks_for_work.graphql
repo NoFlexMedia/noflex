@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# A title's own marks, and whether marking it for "my devices" would reach any.
+query SmartMarksForWork($work: ID!) {
+  mySmartTranscodeMarks(workId: $work) { device { id } }
+  myDevices { smartTranscode }
+}

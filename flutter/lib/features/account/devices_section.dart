@@ -624,7 +624,7 @@ class _SmartTranscodingPanel extends SignalWidget {
     return AccountPanel(
       icon: PhosphorIconsRegular.devices,
       title: 'Smart transcoding',
-      detail: 'The server can prepare what you’re likely to watch next while it’s idle, so playback starts without a live transcode',
+      detail: 'For these devices, the server prepares what you’re likely to watch next while it’s idle, so playback starts without a live transcode, and what you’ve marked before anything else',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

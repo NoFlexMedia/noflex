@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+fragment SmartMarkFields on SmartTranscodeMark {
+  work { id title }
+  device { id name }
+  markedAt
+  state
+  progress
+}

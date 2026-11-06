@@ -23,6 +23,7 @@ import 'account_controller.dart';
 import 'account_widgets.dart';
 import 'devices_section.dart';
 import 'exports_section.dart';
+import 'smart_marks_section.dart';
 import 'history_section.dart';
 import 'profile_section.dart';
 import 'servers_section.dart';
@@ -314,7 +315,8 @@ class _SectionSliver extends StatelessWidget {
           );
         case AccountSection.profile ||
             AccountSection.devices ||
-            AccountSection.exports:
+            AccountSection.exports ||
+            AccountSection.smart:
           break;
       }
       final query = controller.query;
@@ -338,6 +340,7 @@ class _SectionSliver extends StatelessWidget {
         child: switch (section) {
           AccountSection.devices => DevicesSection(controller: controller),
           AccountSection.exports => ExportsSection(controller: controller),
+          AccountSection.smart => SmartMarksSection(controller: controller),
           _ => ProfileSection(controller: controller),
         },
       );

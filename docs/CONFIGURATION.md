@@ -257,17 +257,19 @@ The issuer and discovered endpoints must use HTTPS, except for loopback HTTP
 in development. NoFlex matches accounts only by the verified issuer and
 subject; it never links an external identity by email address or username.
 
-The first-party TMDb plugin needs an API key from
-<https://www.themoviedb.org/settings/api>: either the v4 read access token
-or the v3 key. Store it the same way, as `tmdb.toml` in a secret tier:
+The first-party TMDb plugin works out of the box with NoFlex's shared API key,
+which TMDb's terms allow for non-commercial use only. Commercial use needs your
+own key and a license from TMDb. To use your own, take the v4 read access token
+or the v3 key from <https://www.themoviedb.org/settings/api> and store it the
+same way, as `tmdb.toml` in a secret tier:
 
 ```toml
 api_key = "replace-me"
 ```
 
-The first-party TheTVDB plugin needs an API key from
-<https://thetvdb.com/api-information>, stored as `tvdb.toml`. `pin` is your
-subscriber PIN, only for a user-supported key:
+The first-party TheTVDB plugin also works out of the box with a shared key. To
+use your own from <https://thetvdb.com/api-information>, store it as
+`tvdb.toml`. `pin` is your subscriber PIN, only for a user-supported key:
 
 ```toml
 api_key = "replace-me"

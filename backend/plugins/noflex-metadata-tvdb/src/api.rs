@@ -195,6 +195,18 @@ pub struct Chosen {
     pub height: Option<u32>,
 }
 
+/// NoFlex's own key, so metadata works without any setup. Anyone holding the
+/// plugin can read it, so it was never going to stay private.
+const SHARED_API_KEY: &str = "0f21a124-f851-4556-b418-f62be5e89b06";
+
+/// The operator's `api_key` secret when they set one, otherwise the shared key.
+pub fn key_to_use(secret: Option<&str>) -> &str {
+    secret
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .unwrap_or(SHARED_API_KEY)
+}
+
 /// The `/login` body. TVDB wants `pin` left out unless the key is user-supported.
 pub fn login_body(key: &str, pin: Option<&str>) -> Vec<u8> {
     let mut body = serde_json::Map::new();
@@ -1416,6 +1428,13 @@ mod tests {
         for bad in ["121361", "series/x", "episode/5", "series/1/episode/1", ""] {
             assert!(TvdbId::parse(bad).is_err(), "accepted {bad:?}");
         }
+    }
+
+    #[test]
+    fn a_blank_secret_uses_the_shared_key() {
+        assert_eq!(key_to_use(Some(" mine\n")), "mine");
+        assert_eq!(key_to_use(Some("  ")), SHARED_API_KEY);
+        assert_eq!(key_to_use(None), SHARED_API_KEY);
     }
 
     #[test]

@@ -170,6 +170,19 @@ pub struct Chosen {
     pub height: Option<u32>,
 }
 
+/// NoFlex's own key, so metadata works without any setup. Anyone holding the
+/// plugin can read it, so it was never going to stay private, and TMDb issues
+/// it to a free application. Its terms cover non-commercial use only.
+const SHARED_API_KEY: &str = "2eebc214f9c6f772dc6f859c76179249";
+
+/// The operator's `api_key` secret when they set one, otherwise the shared key.
+pub fn key_to_use(secret: Option<&str>) -> &str {
+    secret
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .unwrap_or(SHARED_API_KEY)
+}
+
 /// How a request authenticates: v4 read tokens (JWTs) go in a bearer
 /// header, v3 keys in the query string.
 pub fn authorize(url: &str, key: &str) -> (String, Vec<(String, String)>) {
@@ -1228,6 +1241,10 @@ mod tests {
         let (url, headers) = authorize("https://x/3/movie/1", "eyJhbGciOi.token");
         assert_eq!(url, "https://x/3/movie/1");
         assert!(headers.contains(&("authorization".into(), "Bearer eyJhbGciOi.token".into())));
+
+        assert_eq!(key_to_use(Some(" mine\n")), "mine");
+        assert_eq!(key_to_use(Some("  ")), SHARED_API_KEY);
+        assert_eq!(key_to_use(None), SHARED_API_KEY);
 
         assert_eq!(primary_language("en-US").as_deref(), Some("en"));
         assert_eq!(primary_language("PT_br").as_deref(), Some("pt"));

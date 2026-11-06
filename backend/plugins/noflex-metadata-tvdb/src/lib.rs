@@ -3,10 +3,11 @@
 // TheTVDB metadata + image provider — first-party WASM plugin.
 //
 // All egress goes through `host-net` to the manifest's two hosts. `/login`
-// trades the `api_key` secret (and `pin`, for a user-supported key) for a
-// month-long bearer token, held until the API refuses it. Both secrets live in
-// `tvdb.toml` in a secret tier. Request building and parsing live in `api` so
-// they are testable off-target; this module is only the WIT glue.
+// trades NoFlex's shared key, or the `api_key` secret when an operator sets one
+// (and `pin`, for a user-supported key), for a month-long bearer token, held
+// until the API refuses it. Both secrets live in `tvdb.toml` in a secret tier.
+// Request building and parsing live in `api` so they are testable off-target;
+// this module is only the WIT glue.
 //
 // Season and episode matches need no request: the host's search hints name the
 // parent series' id and the numbers, from which the child's id follows; `fetch`
@@ -74,9 +75,8 @@ mod guest {
         if let Some(token) = TOKEN.with(|t| t.borrow().clone()) {
             return Ok(token);
         }
-        let key = secret("api_key").await.ok_or_else(|| {
-            PluginError::Unavailable("tvdb: secret `api_key` missing or empty".into())
-        })?;
+        let key = secret("api_key").await;
+        let key = api::key_to_use(key.as_deref());
         let pin = secret("pin").await;
         let response = host_net::request(host_net::HttpRequest {
             method: "POST".into(),
@@ -86,7 +86,7 @@ mod guest {
                 ("content-type".into(), "application/json".into()),
                 ("user-agent".into(), api::USER_AGENT.into()),
             ],
-            body: Some(api::login_body(&key, pin.as_deref())),
+            body: Some(api::login_body(key, pin.as_deref())),
             timeout_ms: Some(TIMEOUT_MS),
         })
         .await

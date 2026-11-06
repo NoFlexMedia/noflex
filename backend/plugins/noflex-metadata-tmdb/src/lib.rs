@@ -4,8 +4,9 @@
 //
 // All egress goes through `host-net` to the manifest's two hosts: the v3
 // API for search/details/image listings and the image CDN for bytes. The
-// API key (a v4 read token or a v3 key) is the `api_key` secret, i.e.
-// `tmdb.toml` in a secret tier. Request building and parsing live in `api` so they are testable
+// API key is NoFlex's shared one unless an operator sets the `api_key`
+// secret (a v4 read token or a v3 key), i.e. `tmdb.toml` in a secret tier.
+// Request building and parsing live in `api` so they are testable
 // off-target; this module is only the WIT glue. External-id conventions
 // are documented at the top of `api.rs`.
 //
@@ -93,18 +94,17 @@ mod guest {
         if let Some(key) = API_KEY.with(|k| k.borrow().clone()) {
             return Ok(key);
         }
-        let key = host_secrets::read(SECRET_KEY.into())
-            .await
-            .map_err(|e| {
-                PluginError::Unavailable(format!("tmdb: secret `{SECRET_KEY}` unreadable: {e:?}"))
-            })?
-            .trim()
-            .to_string();
-        if key.is_empty() {
-            return Err(PluginError::Unavailable(format!(
-                "tmdb: secret `{SECRET_KEY}` is empty"
-            )));
-        }
+        let secret = match host_secrets::read(SECRET_KEY.into()).await {
+            Ok(value) => Some(value),
+            // The host's answer when no tier sets it, which is the usual case.
+            Err(PluginError::Unavailable(_)) => None,
+            Err(e) => {
+                return Err(PluginError::Unavailable(format!(
+                    "tmdb: secret `{SECRET_KEY}` unreadable: {e:?}"
+                )));
+            }
+        };
+        let key = api::key_to_use(secret.as_deref()).to_string();
         API_KEY.with(|k| *k.borrow_mut() = Some(key.clone()));
         Ok(key)
     }

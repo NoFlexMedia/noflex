@@ -384,6 +384,16 @@ fn two_letter_country(tvdb: &str) -> Option<String> {
 
 // ---- response shapes ------------------------------------------------------
 
+/// TVDB answers `null` rather than an empty value for much of a record, which
+/// `#[serde(default)]` alone refuses.
+fn nullable<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[derive(Debug, Deserialize)]
 struct Envelope<T> {
     data: T,
@@ -396,7 +406,7 @@ struct LoginData {
 
 #[derive(Debug, Default, Deserialize)]
 struct Named {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     name: String,
 }
 
@@ -406,58 +416,62 @@ struct Translation {
     name: Option<String>,
     overview: Option<String>,
     tagline: Option<String>,
-    #[serde(default, rename = "isAlias")]
+    #[serde(default, rename = "isAlias", deserialize_with = "nullable")]
     is_alias: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct Translations {
-    #[serde(default, rename = "nameTranslations")]
+    #[serde(default, rename = "nameTranslations", deserialize_with = "nullable")]
     names: Vec<Translation>,
-    #[serde(default, rename = "overviewTranslations")]
+    #[serde(
+        default,
+        rename = "overviewTranslations",
+        deserialize_with = "nullable"
+    )]
     overviews: Vec<Translation>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct RemoteId {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     id: String,
-    #[serde(default, rename = "sourceName")]
+    #[serde(default, rename = "sourceName", deserialize_with = "nullable")]
     source: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct CharacterRecord {
-    #[serde(default, rename = "personName")]
+    #[serde(default, rename = "personName", deserialize_with = "nullable")]
     person: String,
     name: Option<String>,
-    #[serde(default, rename = "peopleType")]
+    #[serde(default, rename = "peopleType", deserialize_with = "nullable")]
     people_type: String,
     #[serde(rename = "personImgURL")]
     photo: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     sort: i64,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct ContentRating {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     country: String,
 }
 
 /// One entry of a record's artwork listing.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ArtEntry {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     image: String,
-    #[serde(default, rename = "type")]
+    #[serde(default, rename = "type", deserialize_with = "nullable")]
     kind: u32,
     language: Option<String>,
     width: Option<u32>,
     height: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     score: f32,
     /// Made from the record's own `image`, whose language isn't known.
     #[serde(skip)]
@@ -478,13 +492,13 @@ struct SeasonBase {
     name: Option<String>,
     image: Option<String>,
     year: Option<String>,
-    #[serde(default, rename = "type")]
+    #[serde(default, rename = "type", deserialize_with = "nullable")]
     season_type: SeasonType,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct CompanyRecord {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     name: String,
     #[serde(rename = "primaryCompanyType")]
     company_type: Option<u32>,
@@ -493,7 +507,7 @@ struct CompanyRecord {
 #[derive(Debug, Deserialize)]
 struct SeriesRecord {
     id: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     name: String,
     overview: Option<String>,
     #[serde(rename = "firstAired")]
@@ -507,22 +521,22 @@ struct SeriesRecord {
     language: Option<String>,
     #[serde(rename = "originalNetwork")]
     network: Option<Named>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     companies: Vec<CompanyRecord>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     genres: Vec<Named>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     characters: Vec<CharacterRecord>,
-    #[serde(default, rename = "contentRatings")]
+    #[serde(default, rename = "contentRatings", deserialize_with = "nullable")]
     ratings: Vec<ContentRating>,
-    #[serde(default, rename = "remoteIds")]
+    #[serde(default, rename = "remoteIds", deserialize_with = "nullable")]
     remote_ids: Vec<RemoteId>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     artworks: Vec<ArtEntry>,
     image: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     translations: Translations,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     seasons: Vec<SeasonBase>,
     #[serde(rename = "defaultSeasonType")]
     default_season_type: Option<u64>,
@@ -530,9 +544,9 @@ struct SeriesRecord {
 
 #[derive(Debug, Default, Deserialize)]
 struct MovieCompanies {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     studio: Vec<Named>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     production: Vec<Named>,
 }
 
@@ -544,7 +558,7 @@ struct Release {
 #[derive(Debug, Deserialize)]
 struct MovieRecord {
     id: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     name: String,
     overview: Option<String>,
     year: Option<String>,
@@ -555,22 +569,22 @@ struct MovieRecord {
     country: Option<String>,
     #[serde(rename = "originalLanguage")]
     language: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     studios: Vec<Named>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     companies: MovieCompanies,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     genres: Vec<Named>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     characters: Vec<CharacterRecord>,
-    #[serde(default, rename = "contentRatings")]
+    #[serde(default, rename = "contentRatings", deserialize_with = "nullable")]
     ratings: Vec<ContentRating>,
-    #[serde(default, rename = "remoteIds")]
+    #[serde(default, rename = "remoteIds", deserialize_with = "nullable")]
     remote_ids: Vec<RemoteId>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     artworks: Vec<ArtEntry>,
     image: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     translations: Translations,
 }
 
@@ -592,11 +606,11 @@ struct SeasonRecord {
     name: Option<String>,
     image: Option<String>,
     year: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     artwork: Vec<ArtEntry>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     episodes: Vec<EpisodeBase>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     translations: Vec<Translation>,
 }
 
@@ -608,17 +622,17 @@ struct EpisodeRecord {
     aired: Option<String>,
     runtime: Option<i64>,
     image: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     characters: Vec<CharacterRecord>,
-    #[serde(default, rename = "remoteIds")]
+    #[serde(default, rename = "remoteIds", deserialize_with = "nullable")]
     remote_ids: Vec<RemoteId>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     translations: Translations,
 }
 
 #[derive(Debug, Deserialize)]
 struct EpisodeListing {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     episodes: Vec<EpisodeBase>,
 }
 
@@ -627,9 +641,9 @@ struct SearchResult {
     tvdb_id: Option<String>,
     name: Option<String>,
     year: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     aliases: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     translations: HashMap<String, String>,
     #[serde(rename = "type")]
     kind: Option<String>,
@@ -1343,6 +1357,51 @@ mod tests {
     const EPISODE: &[u8] = include_bytes!("../fixtures/episode_3254641.json");
     const LOOKUP: &[u8] = include_bytes!("../fixtures/series_121361_episodes.json");
     const SEARCH: &[u8] = include_bytes!("../fixtures/search_series.json");
+
+    /// The real shape, `null`s included. The fixtures above are written to pin
+    /// down behaviour, and can't show what the API really leaves out.
+    #[test]
+    fn responses_recorded_from_the_api_parse() {
+        let found = parse_search(
+            SearchKind::Series,
+            include_bytes!("../fixtures/live_search_series.json"),
+            "Caminandes",
+            Some(2013),
+        )
+        .unwrap();
+        assert_eq!(found[0].id.path(), "series/276116");
+
+        let (movie, art) = parse_movie(include_bytes!("../fixtures/live_movie_9413.json")).unwrap();
+        assert_eq!((movie.title.as_str(), movie.year), ("Sintel", Some(2010)));
+        assert!(!art.is_empty());
+
+        let (series, art) =
+            parse_series(include_bytes!("../fixtures/live_series_276116.json")).unwrap();
+        assert_eq!(series.title, "Caminandes");
+        assert!(!art.is_empty());
+
+        let (season, _) = parse_season(
+            276116,
+            1,
+            include_bytes!("../fixtures/live_season_569834.json"),
+        )
+        .unwrap();
+        assert!(
+            season
+                .ids
+                .iter()
+                .any(|(_, id)| id == "series/276116/season/1")
+        );
+
+        let (episode, _) = parse_episode(
+            276116,
+            1,
+            1,
+            include_bytes!("../fixtures/live_episode_4734685.json"),
+        )
+        .unwrap();
+        assert_eq!(episode.title, "Llama Drama");
+    }
 
     #[test]
     fn ids_round_trip_through_their_paths() {

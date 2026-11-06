@@ -1,0 +1,43 @@
+{
+  "name": "noflex-tv-apple",
+  "private": true,
+  "version": "0.0.1",
+  "license": "AGPL-3.0-only",
+  "description": "The TV app on Apple TV and iOS: the NativeScript project around ../../src",
+  "main": "app/app.ts",
+  "scripts": {
+    "tvos": "ns run tvos --emulator --no-hmr",
+    "ios": "ns run ios --emulator --no-hmr",
+    "build:tvos": "ns build tvos",
+    "build:ios": "ns build ios",
+    "clean": "ns clean"
+  },
+  "dependencies": {
+    "@nativescript/canvas": "3.0.0-alpha.10",
+    "@nativescript/canvas-polyfill": "3.0.0-alpha.10",
+    "@nativescript/core": "9.2.0-tvos.0",
+    "@solid-primitives/event-listener": "2.4.6",
+    "@solid-primitives/list": "0.1.2",
+    "@solid-primitives/mouse": "2.1.7",
+    "@solid-primitives/scheduled": "1.5.3",
+    "@solidjs/router": "0.16.1",
+    "@solidtv/nativescript": "0.1.3",
+    "@solidtv/renderer": "2.0.7",
+    "@solidtv/solid": "1.7.1",
+    "solid-js": "1.9.9"
+  },
+  "devDependencies": {
+    "@nativescript/ios": "9.1.0",
+    "@nativescript/tvos": "9.1.0",
+    "@nativescript/types": "9.1.1",
+    "@nativescript/webpack": "5.0.39-tvos.0",
+    "nativescript": "9.2.0-tvos.0",
+    "typescript": "6.0.3"
+  },
+  "overrides": {
+    "@nativescript/canvas": "3.0.0-alpha.10",
+    "@nativescript/canvas-media": "3.0.0-alpha.10",
+    "@nativescript/canvas-svg": "file:./stubs/canvas-svg",
+    "webpack": "5.111.0"
+  }
+}

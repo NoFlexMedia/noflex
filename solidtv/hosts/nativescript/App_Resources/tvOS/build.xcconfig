@@ -1,0 +1,3 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+TVOS_DEPLOYMENT_TARGET = 16.0;
+// DEVELOPMENT_TEAM = YOUR_TEAM_ID;

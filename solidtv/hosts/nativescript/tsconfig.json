@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "module": "esnext",
+    "target": "ES2020",
+    "moduleResolution": "bundler",
+    "experimentalDecorators": true,
+    "noEmitHelpers": true,
+    "noEmitOnError": true,
+    "skipLibCheck": true,
+    "lib": ["ESNext", "dom"],
+    "jsx": "preserve",
+    "jsxImportSource": "@solidtv/solid",
+    "preserveSymlinks": true,
+    "paths": {
+      "$lib/*": ["../../src/lib/*"],
+      "$components/*": ["../../src/components/*"],
+      "$pages/*": ["../../src/pages/*"],
+      "$codecs": ["../../../web/src/lib/codecSupport.ts"]
+    }
+  },
+  "include": ["app/**/*"],
+  "files": ["./references.d.ts"],
+  "exclude": ["node_modules", "platforms"]
+}

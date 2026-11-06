@@ -45,7 +45,6 @@ fragment WorkFull on Work {
   addedAt
   externalIds { kind value }
   userData { ...UserDataFields }
-  attributions { provider name text url logoUrl }
 }
 
 fragment EditionFull on Edition {

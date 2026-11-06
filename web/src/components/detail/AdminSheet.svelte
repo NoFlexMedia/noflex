@@ -25,12 +25,18 @@
   `);
   const identifyWork = graphql(`
     mutation IdentifyWork($id: ID!, $provider: String!, $kind: ExternalIdKind!, $value: String!) {
-      identifyWork(workId: $id, provider: $provider, externalId: { kind: $kind, value: $value }) { ...WorkFull }
+      identifyWork(workId: $id, provider: $provider, externalId: { kind: $kind, value: $value }) {
+        ...WorkFull
+        attributions { provider name text url logoUrl }
+      }
     }
   `);
   const refreshMetadata = graphql(`
     mutation RefreshMetadata($id: ID!, $force: Boolean!) {
-      refreshMetadata(workId: $id, force: $force) { ...WorkFull }
+      refreshMetadata(workId: $id, force: $force) {
+        ...WorkFull
+        attributions { provider name text url logoUrl }
+      }
     }
   `);
   const updateWork = graphql(`

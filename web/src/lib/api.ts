@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { browserDeviceName } from "$devices";
 import { browser } from "$app/environment";
 import { activeGraphqlUrl, activeHeaders, authHeaders, currentAccessToken, hasSession, refreshAccessToken } from "$lib/tokens.js";
 
 /** A human-readable device label for the sessions list, e.g. "Firefox on Linux". */
 export function deviceName(): string {
-  if (!browser) return "Browser";
-  const ua = navigator.userAgent;
-  const browserName = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Browser";
-  const os = /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iOS" : /Mac OS X/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : "";
-  return os ? `${browserName} on ${os}` : browserName;
+  return browser ? browserDeviceName(navigator) : "Browser";
 }
 
 /** Authenticated GET for byte routes that don't take a media token. */

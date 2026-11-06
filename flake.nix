@@ -75,7 +75,7 @@
           preBuild = pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             autoPatchelf node_modules/houdini-core-linux-* node_modules/houdini-svelte-linux-*
           '';
-          npmDepsHash = "sha256-UiYZbW3Vdf6M2hWApQ2vZmIwhGO5CNPNPjWxBFW4oxA=";
+          npmDepsHash = "sha256-eMS6Fg1TTTZCC+csAxXk9AXHE1ii+wbDBDD9rm1ZGBw=";
           npmBuildScript = "build";
           installPhase = ''
             runHook preInstall

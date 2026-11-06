@@ -60,7 +60,7 @@ mutation RedeemInvite($token: String!, $username: String!, $password: String!, $
 }
 
 mutation RegisterDevice($id: ID!, $name: String!, $capabilities: ClientCapabilities!) {
-  registerDevice(id: $id, name: $name, capabilities: $capabilities) { id }
+  registerDevice(id: $id, name: $name, client: "NoFlex Web", capabilities: $capabilities) { id }
 }
 
 mutation Login($username: String!, $password: String!, $device: String!) {

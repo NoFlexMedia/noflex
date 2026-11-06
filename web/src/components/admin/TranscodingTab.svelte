@@ -19,7 +19,7 @@
   import State from "$components/State.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
   import Select from "$components/ui/Select.svelte";
-  import { deviceIcon } from "$components/account/deviceIcon.js";
+  import DeviceIcon from "$components/DeviceIcon.svelte";
   import { ago } from "$components/account/relative.js";
   import { codec } from "./status/fmt.js";
 
@@ -41,7 +41,7 @@
       optimizedVersion(id: $id) {
         id
         unwantedSince
-        targets { user { id name username avatarUrl } reason device { id name } }
+        targets { user { id name username avatarUrl } reason device { id name client } }
         marks { user { id name username avatarUrl } work { id title } device { id name } }
       }
     }
@@ -219,9 +219,8 @@
       </header>
       <ul>
         {#each viewer.rows as row}
-          {@const Icon = row.device ? deviceIcon({ device: row.device.name }) : Devices}
           <li>
-            <span class="row-icon"><Icon size={17} /></span>
+            <span class="row-icon">{#if row.device}<DeviceIcon device={row.device.name} client={row.device.client} size={17} />{:else}<Devices size={17} />{/if}</span>
             <span class="row-what"><span>{row.device?.name ?? "No device to reach"}</span><small>{REASON[row.reason]}</small></span>
             {#if row.reason === "PREDICTED" && row.device}<button class="btn ghost sm" onclick={() => turnOff(version, row)}>Turn off</button>{/if}
           </li>

@@ -4,14 +4,14 @@
   import { request } from "$lib/graphql.js";
   import { attempt } from "$lib/ui.svelte.js";
   import { ago } from "$components/account/relative.js";
-  import { deviceIcon } from "$components/account/deviceIcon.js";
+  import DeviceIcon from "$components/DeviceIcon.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
 
   let { open = $bindable(false), user = null } = $props();
 
   const devices = graphql(`
     query UserDevices($user: ID!) @cache(policy: NetworkOnly) {
-      userDevices(userId: $user) { id name smartTranscode smartDownloads lastSeenAt }
+      userDevices(userId: $user) { id name client smartTranscode smartDownloads lastSeenAt }
     }
   `);
   const setSmart = graphql(`
@@ -53,9 +53,8 @@
   {:else}
     <ul>
       {#each list as device (device.id)}
-        {@const Icon = deviceIcon({ device: device.name })}
         <li>
-          <span class="icon"><Icon size={20} /></span>
+          <span class="icon"><DeviceIcon device={device.name} client={device.client} size={20} /></span>
           <span class="what"><strong>{device.name}</strong><small>Last seen {ago(device.lastSeenAt)}</small></span>
           <label class="toggle">
             <small>Smart transcoding</small>

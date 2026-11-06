@@ -17,7 +17,7 @@
   import { attempt, confirmAction, poll, toast } from "$lib/ui.svelte.js";
   import Dialog from "$components/ui/Dialog.svelte";
   import Select from "$components/ui/Select.svelte";
-  import { deviceIcon } from "./deviceIcon.js";
+  import DeviceIcon from "$components/DeviceIcon.svelte";
   import { ago } from "./relative.js";
 
   let { account } = $props();
@@ -257,9 +257,8 @@
       </header>
       <ul class="list">
         {#each sessions as session (session.id)}
-          {@const Glyph = deviceIcon(session)}
           <li class:current={session.id === currentId}>
-            <span class="glyph"><Glyph size={18} /></span>
+            <span class="glyph"><DeviceIcon device={session.device} client={session.client} /></span>
             <span class="what">
               <strong>{session.device || "Unknown device"}{#if session.id === currentId}<span class="chip accent">This browser</span>{/if}</strong>
               <small>{[session.client, session.appVersion && `v${session.appVersion}`].filter(Boolean).join(" ") || "NoFlex client"} · signed in {date(session.createdAt)}</small>

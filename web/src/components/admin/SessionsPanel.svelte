@@ -8,7 +8,7 @@
   import SignOut from "phosphor-svelte/lib/SignOut";
   import X from "phosphor-svelte/lib/X";
   import { date } from "$lib/format.js";
-  import { deviceIcon } from "$components/account/deviceIcon.js";
+  import DeviceIcon from "$components/DeviceIcon.svelte";
   import { ago } from "$components/account/relative.js";
   import Dialog from "$components/ui/Dialog.svelte";
   import Segmented from "$components/ui/Segmented.svelte";
@@ -67,9 +67,8 @@
 </script>
 
 {#snippet row(session, withOwner)}
-  {@const Glyph = deviceIcon(session)}
   <li>
-    <span class="glyph" class:on={isActive(session)}><Glyph size={18} /></span>
+    <span class="glyph" class:on={isActive(session)}><DeviceIcon device={session.device} client={session.client} /></span>
     <span class="what">
       <strong>{withOwner ? owner(session) : device(session)}</strong>
       <small>{#if withOwner}{device(session)}{" · "}{:else if session.client}{session.client}{" · "}{/if}<time datetime={session.lastSeenAt} title={date(session.lastSeenAt, { dateStyle: "medium", timeStyle: "short" })}>{isActive(session) ? "active now" : ago(session.lastSeenAt)}</time></small>

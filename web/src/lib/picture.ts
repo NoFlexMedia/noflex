@@ -1,14 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Profile pictures. The browser reads whatever it can show, including what the server
-// can't (HEIC in Safari), and sends a square small enough not to matter on a phone
-// connection. The server re-encodes it anyway.
+// Profile pictures. The browser sends a square small enough not to matter on a phone
+// connection, or the file as it is when it can't read it (HEIC outside Safari, AVIF on
+// an old one), which the server can. The server re-encodes it either way.
 
 const SIDE = 1024;
 
 /** A centred square of `file`, as the base64 JPEG `setProfilePicture` takes. */
 export async function pictureForUpload(file: File): Promise<string> {
-  const bitmap = await createImageBitmap(file);
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    return fileAsBase64(file);
+  }
   const crop = Math.min(bitmap.width, bitmap.height);
   const side = Math.min(crop, SIDE);
   const canvas = document.createElement("canvas");
@@ -17,6 +22,18 @@ export async function pictureForUpload(file: File): Promise<string> {
   bitmap.close();
   const url = canvas.toDataURL("image/jpeg", 0.9);
   return url.slice(url.indexOf(",") + 1);
+}
+
+function fileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result);
+      resolve(url.slice(url.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 /** "Vera Viewer" is VV, "vera" is VE. */

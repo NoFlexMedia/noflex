@@ -1,0 +1,49 @@
+{
+  "name": "noflex-tv",
+  "private": true,
+  "version": "0.0.1",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build --mode browser",
+    "build:tizen": "vite build --mode tizen",
+    "build:webos": "vite build --mode webos",
+    "build:android": "vite build --mode android",
+    "build:firebolt": "vite build --mode firebolt",
+    "check": "tsc --noEmit && vitest run",
+    "assets:fonts": "node scripts/build-fonts.mjs",
+    "assets:icons": "node scripts/build-icons.mjs",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@firebolt-js/sdk": "1.7.0",
+    "@solid-primitives/event-listener": "2.4.6",
+    "@solid-primitives/list": "0.1.2",
+    "@solid-primitives/mouse": "2.1.7",
+    "@solid-primitives/scheduled": "1.5.3",
+    "@solidjs/router": "0.16.1",
+    "@solidtv/renderer": "2.0.7",
+    "@solidtv/solid": "1.7.1",
+    "hls.js": "1.7.4",
+    "solid-js": "1.9.9"
+  },
+  "devDependencies": {
+    "@babel/core": "8.1.0",
+    "@babel/preset-env": "8.0.7",
+    "@phosphor-icons/core": "2.1.1",
+    "@resvg/resvg-js": "2.6.2",
+    "@types/node": "26.6.6",
+    "@vitejs/plugin-legacy": "8.2.4",
+    "@webos-tools/cli": "3.2.6",
+    "graphql": "16.14.2",
+    "inter-ui": "3.19.3",
+    "msdf-bmfont-xml": "2.8.0",
+    "terser": "5.51.2",
+    "typescript": "6.0.3",
+    "vite": "8.3.5",
+    "vite-plugin-solid": "2.11.15",
+    "vitest": "5.1.0",
+    "whatwg-fetch": "3.6.20"
+  }
+}

@@ -1,0 +1,6 @@
+/*! SPDX-License-Identifier: AGPL-3.0-only */
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #07080b; }
+/* The renderer's canvas sits over the player's video, which shows wherever the UI clears to transparent. */
+#app { position: absolute; inset: 0; z-index: 1; top: 0; left: 0; right: 0; bottom: 0; }
+#app canvas { position: absolute; top: 0; left: 0; }
+#nf-video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; background: #000; object-fit: contain; }

@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": false,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "jsxImportSource": "@solidtv/solid",
+    "types": ["vite/client", "node"],
+    "customConditions": ["@solidtv/source"],
+    "paths": {
+      "$lib/*": ["./src/lib/*"],
+      "$components/*": ["./src/components/*"],
+      "$pages/*": ["./src/pages/*"],
+      "$codecs": ["../web/src/lib/codecSupport.ts"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

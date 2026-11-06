@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// What the client reads from the API. Generated types would need a codegen step
+// on every target's build; `graphql.test.ts` holds the documents to the schema.
+
+export interface Image { kind: string; url: string }
+export interface UserData { played: boolean; positionMs?: number | null; favorite?: boolean | null }
+export interface Work {
+  id: string;
+  kind: string;
+  parentId?: string | null;
+  libraryId: string;
+  title: string;
+  year?: number | null;
+  communityRating?: number | null;
+  indexNumber?: number | null;
+  indexEnd?: number | null;
+  parentIndex?: number | null;
+  runtimeMs?: number | null;
+  images?: Image[] | null;
+  userData?: UserData | null;
+  overview?: string | null;
+  tagline?: string | null;
+  seriesTitle?: string | null;
+  tags?: { id: string; namespace: string; display: string }[] | null;
+  credits?: { personId: string; name: string; role: string; character?: string | null }[] | null;
+}
+export interface Edition {
+  id: string;
+  workId: string;
+  name?: string | null;
+  runtimeMs?: number | null;
+  introStartMs?: number | null;
+  introEndMs?: number | null;
+  creditsStartMs?: number | null;
+  chapters?: { positionMs: number; title?: string | null }[] | null;
+  trickplay?: Trickplay | null;
+}
+export interface Trickplay {
+  intervalMs: number;
+  thumbWidth: number;
+  thumbHeight: number;
+  tileColumns: number;
+  tileRows: number;
+  sheets: { index: number; tileCount: number; url: string }[];
+}
+export interface SubtitleTrack { language?: string | null; codec?: string | null; default?: boolean | null; forced?: boolean | null; title?: string | null; srtCompatible?: boolean | null }
+export interface MediaFile { id: string; editionId: string; partIndex: number; path: string; probe?: any; subtitleTracks?: SubtitleTrack[] | null }
+export interface Library { id: string; name: string; kind: string }
+export interface Viewer { id: string; name: string; isAdmin: boolean }
+export interface ServerInfo { name: string; version: string; backend: string; isConfigured: boolean }
+export interface Connection<T> { nodes: T[]; pageInfo?: { hasNextPage: boolean; endCursor?: string | null } }
+export interface SubtitleDelivery { index: number; language?: string | null; title?: string | null; forced: boolean; default: boolean; url: string }
+export interface PlaybackSession {
+  sessionId: string;
+  route: string;
+  url: string;
+  jobId?: string | null;
+  startPositionMs?: number;
+  subtitles?: SubtitleDelivery[];
+}

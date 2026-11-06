@@ -14,6 +14,8 @@ interface ButtonProps extends NodeProps {
   kind?: ButtonKind;
   size?: "md" | "lg";
   busy?: boolean;
+  /** What focus on this button means, for whatever says so nearby. */
+  onFocused?: (has: boolean) => void;
   /** Fixes the width, and ellipsizes a label that won't fit. Otherwise the button fits its label. */
   width?: number;
 }
@@ -58,7 +60,7 @@ export default function Button(props: ButtonProps) {
       borderRadius={height() / 2}
       scale={focused() ? 1.06 : 1}
       transition={{ scale: motion.spring, color: motion.fast }}
-      onFocusChanged={setFocused}
+      onFocusChanged={(has: boolean) => { setFocused(has); props.onFocused?.(has); }}
     >
       <Show when={props.icon}>
         <Icon name={props.icon!} size={iconSize()} x={iconX()} y={(height() - iconSize()) / 2} color={ink()} alpha={props.busy ? 0.4 : 1} />

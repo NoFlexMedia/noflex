@@ -7,7 +7,7 @@
 
 import { useLocation, useNavigate } from "@solidjs/router";
 import { activeElement, type ElementNode } from "@solidtv/solid";
-import { createEffect, on, type ParentProps } from "solid-js";
+import { createComputed, on, type ParentProps } from "solid-js";
 import { ui } from "$lib/ui.js";
 import { SCREEN } from "../theme.js";
 import Nav from "$components/Nav.js";
@@ -19,8 +19,9 @@ export default function Shell(props: ParentProps) {
   let page: ElementNode | undefined;
   let lastFocused: ElementNode | undefined;
 
-  // Each page brings its own art, if it has any.
-  createEffect(on(() => location.pathname, () => { ui.backdrop = null; }, { defer: true }));
+  // Each page brings its own art, if it has any. Ahead of effects, or this would
+  // clear what a page with its data already cached has just set.
+  createComputed(on(() => location.pathname, () => { ui.backdrop = null; }, { defer: true }));
 
   const inNav = () => !!nav?.states.has("$focus");
   const atDestination = () => location.pathname.indexOf("/works/") !== 0 && !/\/all$/.test(location.pathname);

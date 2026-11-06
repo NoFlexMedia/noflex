@@ -46,7 +46,7 @@ export interface Trickplay {
   sheets: { index: number; tileCount: number; url: string }[];
 }
 export interface SubtitleTrack { language?: string | null; codec?: string | null; default?: boolean | null; forced?: boolean | null; title?: string | null; srtCompatible?: boolean | null }
-export interface MediaFile { id: string; editionId: string; partIndex: number; path: string; probe?: any; subtitleTracks?: SubtitleTrack[] | null }
+export interface MediaFile { id: string; editionId: string; partIndex: number; path: string; sizeBytes?: number | null; container?: string | null; probe?: any; subtitleTracks?: SubtitleTrack[] | null }
 export interface Library { id: string; name: string; kind: string }
 export interface Viewer { id: string; name: string; isAdmin: boolean }
 export interface ServerInfo { name: string; version: string; backend: string; isConfigured: boolean }

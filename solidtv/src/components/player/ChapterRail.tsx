@@ -54,15 +54,15 @@ function ChapterCard(props: NodeProps & { stop: Stop; label: string; trick?: Tri
   );
 }
 
-export default function ChapterRail(props: NodeProps & { width: number; stops: Stop[]; scenes: boolean; trick?: Trickplay | null; position: number; onFocused: (stop: Stop) => void; onChosen: (stop: Stop) => void }) {
+export default function ChapterRail(props: NodeProps & { width: number; stops: Stop[]; scenes?: boolean; trick?: Trickplay | null; playhead?: number; takeFocus?: boolean; onFocused?: (stop: Stop) => void; onChosen: (stop: Stop) => void }) {
   const current = () => {
     let found = 0;
-    props.stops.forEach((stop, index) => { if (stop.positionMs <= props.position * 1000) found = index; });
+    props.stops.forEach((stop, index) => { if (stop.positionMs <= (props.playhead ?? 0) * 1000) found = index; });
     return found;
   };
   const start = current();
   let row: ElementNode | undefined;
-  onMount(() => row?.setFocus());
+  onMount(() => { if (props.takeFocus) row?.setFocus(); });
   return (
     // Left and Right off its ends mustn't reach the scrub handlers around it.
     <view {...props} width={props.width} height={CHAPTER_HEIGHT} forwardFocus={0} onLeft={() => true} onRight={() => true}>
@@ -73,8 +73,8 @@ export default function ChapterRail(props: NodeProps & { width: number; stops: S
               stop={stop}
               label={stop.title || `${props.scenes ? "Scene" : "Chapter"} ${index() + 1}`}
               trick={props.trick}
-              current={index() === current()}
-              onFocused={() => props.onFocused(stop)}
+              current={props.playhead !== undefined && index() === current()}
+              onFocused={() => props.onFocused?.(stop)}
               onChosen={() => props.onChosen(stop)}
             />
           )}

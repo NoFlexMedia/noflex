@@ -11,6 +11,8 @@ export const ui = reactive({
   toast: null as { message: string; kind: ToastKind; key: number } | null,
   /** The art behind the page; a null keeps the page's plain dark. */
   backdrop: null as string | null,
+  /** Quieten the art, for a page with a lot to read over it. */
+  backdropDim: false,
   ambient: AMBIENT as number,
 });
 

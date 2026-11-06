@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { useSearchParams } from "@solidjs/router";
 import { Row } from "@solidtv/solid/primitives";
 import { createEffect, createSignal, on, Show } from "solid-js";
 import { SEARCH } from "$lib/graphql/documents.js";
@@ -17,7 +18,9 @@ const RESULTS_X = KEYBOARD_WIDTH + 48;
 const RESULTS_WIDTH = PAGE_WIDTH - RESULTS_X;
 
 export default function Search() {
-  const [text, setText] = createSignal("");
+  // Cast & Crew arrives with a name, for that person's filmography.
+  const [params] = useSearchParams();
+  const [text, setText] = createSignal(String(params.q ?? ""));
   const [results, setResults] = createSignal<Work[]>([]);
   const [error, setError] = createSignal("");
   const [searched, setSearched] = createSignal(false);
@@ -30,7 +33,8 @@ export default function Search() {
     if (!value.trim()) { setResults([]); setSearched(false); return; }
     timer = setTimeout(async () => {
       try {
-        const data = await request(SEARCH, { text: value, mode: "HYBRID" });
+        // A name from Cast & Crew wants exact words: a filmography, not its nearest neighbours.
+        const data = await request(SEARCH, { text: value, mode: value === params.q ? "LEXICAL" : "HYBRID" });
         if (run !== ticket) return;
         setResults(data.search.edges.map((edge: { node: { work: Work } }) => edge.node.work).filter(Boolean));
         setError("");
@@ -39,7 +43,7 @@ export default function Search() {
       }
       if (run === ticket) setSearched(true);
     }, DEBOUNCE_MS);
-  }, { defer: true }));
+  }));
 
   return (
     <view x={PAGE_X} width={PAGE_WIDTH} height={SCREEN.height} forwardFocus={2}>

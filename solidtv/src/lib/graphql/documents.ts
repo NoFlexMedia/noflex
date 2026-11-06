@@ -41,6 +41,8 @@ fragment MediaFileFull on MediaFile {
   editionId
   path
   partIndex
+  sizeBytes
+  container
   probe
   subtitleTracks { language codec default forced title srtCompatible }
 }`;

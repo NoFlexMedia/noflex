@@ -5,27 +5,85 @@
 
 import { useNavigate, useParams } from "@solidjs/router";
 import { Column, Row } from "@solidtv/solid/primitives";
-import { createEffect, createMemo, createSignal, on, onCleanup, Show, untrack } from "solid-js";
-import { audioFormat, runtime, titleCase, versionLabel } from "$lib/format.js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, untrack } from "solid-js";
+import type { ElementNode, NodeProps } from "@solidtv/solid";
+import { audioFormat, bytes, codecName, dynamicRange, levelName, profileName, runtime, techBadges, timecode, titleCase, versionLabel } from "$lib/format.js";
 import { MARK_PLAYED, MARK_UNPLAYED, MEDIA_FILES, SET_FAVORITE, WORK_CRUMB, WORK_DETAIL } from "$lib/graphql/documents.js";
 import { createQuery, request } from "$lib/graphql.js";
 import { pickImage } from "$lib/images.js";
 import { fetchChildren, isPlayable, player, playWork, subtitleFor } from "$lib/playback.js";
+import { revealInRow } from "$lib/rows.js";
 import { app } from "$lib/session.js";
 import { audioChoices, preferredAudio, preferredSubtitle, subtitleChoices } from "$lib/tracks.js";
 import type { Edition, MediaFile, Work } from "$lib/types.js";
 import { attempt, ui } from "$lib/ui.js";
+import { chapterStops } from "$lib/player/trickplay.js";
 import { setUserData, userDataOf } from "$lib/watch.js";
-import { color, PAGE_WIDTH, PAGE_X, SCREEN, type, weight } from "../theme.js";
-import Button from "$components/Button.js";
+import { color, motion, PAGE_WIDTH, PAGE_X, radius, SCREEN, type, weight } from "../theme.js";
 import Icon from "$components/Icon.js";
+import Button, { labelWidth } from "$components/Button.js";
+import ChapterRail, { CHAPTER_HEIGHT } from "$components/player/ChapterRail.js";
 import Rail, { railHeight } from "$components/Rail.js";
 import Sheet from "$components/Sheet.js";
 import Skeleton from "$components/Skeleton.js";
 import State from "$components/State.js";
 import Artwork from "$components/Artwork.js";
 
-const HERO_HEIGHT = 840;
+const HERO_HEIGHT = 760;
+const POSTER_WIDTH = 340;
+const INFO_X = POSTER_WIDTH + 60;
+const INFO_WIDTH = PAGE_WIDTH - INFO_X - 64;
+const PROGRESS_WIDTH = 220;
+const FACE = 150;
+const CARD = 230;
+const CAST_HEIGHT = FACE + 90;
+const SECTION_HEAD = 72;
+const FACT_ROW = 88;
+const FACT_WIDTH = (PAGE_WIDTH - 64) / 3;
+const FACE_TINTS = [0x5a688cff, 0x7a5a8cff, 0x5a8c7aff, 0x8c7a5aff, 0x8c5a68ff, 0x5a7a8cff];
+const CREW_ROLES = ["Director", "Writer", "Producer", "Composer"];
+
+const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part.charAt(0)).join("").toUpperCase();
+const tintOf = (name: string) => FACE_TINTS[name.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0) % FACE_TINTS.length];
+
+function Badge(props: { label: string }) {
+  return (
+    <view width={labelWidth(props.label, 20) + 24} height={34} borderRadius={radius.xs} color={color.clear} border={{ width: 2, color: color.lineStrong }}>
+      <text width={labelWidth(props.label, 20) + 24} height={34} lineHeight={34} contain="both" textAlign="center" fontSize={20} fontWeight={weight.semibold} color={color.text2}>{props.label}</text>
+    </view>
+  );
+}
+
+function CastCard(props: NodeProps & { name: string; detail?: string }) {
+  const [focused, setFocused] = createSignal(false);
+  let node: ElementNode | undefined;
+  let revealing: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(revealing));
+  return (
+    <view
+      {...props}
+      ref={(element: ElementNode) => { node = element; }}
+      width={CARD}
+      height={CAST_HEIGHT}
+      scale={focused() ? 1.06 : 1}
+      zIndex={focused() ? 5 : 1}
+      transition={{ scale: motion.spring }}
+      onFocusChanged={(has: boolean) => {
+        setFocused(has);
+        clearTimeout(revealing);
+        if (has) revealing = setTimeout(() => { if (node) revealInRow(node); }, 0);
+      }}
+    >
+      <view x={(CARD - FACE) / 2} width={FACE} height={FACE} borderRadius={FACE / 2} color={tintOf(props.name)} border={{ width: 4, color: focused() ? color.focus : color.clear }}>
+        <text width={FACE} height={FACE} lineHeight={FACE} contain="both" textAlign="center" fontSize={type.title} fontWeight={weight.bold}>{initials(props.name)}</text>
+      </view>
+      <text y={FACE + 14} width={CARD} contain="width" maxLines={1} textAlign="center" fontSize={type.caption} fontWeight={weight.semibold} color={focused() ? color.text : color.text2}>{props.name}</text>
+      <Show when={props.detail}>
+        <text y={FACE + 48} width={CARD} contain="width" maxLines={1} textAlign="center" fontSize={21} color={color.text3}>{props.detail}</text>
+      </Show>
+    </view>
+  );
+}
 type SheetKind = "version" | "edition" | "audio" | "subtitle";
 
 function Children(props: { work: Work; onUpNext: (next: { work: Work; resume?: boolean; rewatch?: boolean } | null) => void }) {
@@ -87,6 +145,7 @@ function Children(props: { work: Work; onUpNext: (next: { work: Work; resume?: b
 
 export default function Title() {
   const params = useParams();
+  const navigate = useNavigate();
   const detail = createQuery<{ work: Work; editions: Edition[] }>(WORK_DETAIL, () => ({ id: params.id }));
   const work = () => detail.data()?.work;
   const editions = () => detail.data()?.editions ?? [];
@@ -118,16 +177,47 @@ export default function Title() {
   const parent = createQuery<{ work: Work }>(WORK_CRUMB, () => (work()?.parentId ? { id: work()!.parentId } : null));
   const heroArt = () => pickImage(work()?.images, "backdrop") ?? pickImage(parent.data()?.work.images, "backdrop");
   createEffect(() => { ui.backdrop = heroArt(); });
+  onMount(() => { ui.backdropDim = true; });
+  onCleanup(() => { ui.backdropDim = false; });
 
   const known = createMemo(() => (work() ? userDataOf(work()!) : null));
   const resumeMs = () => (known() && !known()!.played ? known()!.positionMs ?? 0 : 0);
   const canPlay = () => isPlayable(work());
-  const genres = () => work()?.tags?.filter((tag) => tag.namespace === "genre").map((tag) => tag.display).slice(0, 3) ?? [];
+  const genres = () => work()?.tags?.filter((tag) => tag.namespace === "genre").map((tag) => tag.display).slice(0, 4) ?? [];
   const parental = () => work()?.tags?.find((tag) => tag.namespace === "parental")?.display;
-  const meta = () => [subtitleFor(work()) || work()?.year, titleCase(work()?.kind ?? ""), runtime(edition()?.runtimeMs ?? work()?.runtimeMs), parental(), ...genres()].filter(Boolean).join("  ·  ");
-  const tech = () => [versionLabel(file()?.probe), audioStreams()[audio() ?? 0] ? audioFormat(audioStreams()[audio() ?? 0]) : ""].filter(Boolean).join("  ·  ");
-  const cast = () => (work()?.credits ?? []).filter((credit) => credit.role === "ACTOR" || credit.character).slice(0, 5).map((credit) => credit.name).join(", ");
-  const directedBy = () => (work()?.credits ?? []).filter((credit) => credit.role === "DIRECTOR").slice(0, 2).map((credit) => credit.name).join(", ");
+  const metaParts = () => [subtitleFor(work()) !== String(work()?.year) ? subtitleFor(work()) : "", work()?.year, runtime(edition()?.runtimeMs ?? work()?.runtimeMs), parental()].filter(Boolean).join("  ·  ");
+  const chosenAudio = () => audioStreams()[audio() ?? 0];
+  const badges = () => (canPlay() ? techBadges(file()?.probe, chosenAudio()) : []);
+  const credits = () => work()?.credits ?? [];
+  const crew = () => CREW_ROLES.map((role) => [role, credits().filter((credit) => credit.role === role).map((credit) => credit.name).join(", ")] as const).filter(([, names]) => names);
+  const castCards = () => credits().slice(0, 30);
+  const resumePercent = () => {
+    const length = edition()?.runtimeMs ?? work()?.runtimeMs ?? 0;
+    return length ? Math.min(1, resumeMs() / length) : 0;
+  };
+  const stops = () => {
+    const current = edition();
+    const chapters = current?.trickplay?.chapterCues?.length ? current.trickplay.chapterCues : current?.chapters;
+    return chapters?.length ? chapterStops(chapters, current?.trickplay, current?.runtimeMs) : [];
+  };
+  const facts = () => {
+    const video = file()?.probe?.video;
+    if (!video) return [];
+    const fps = video.frame_rate ? ` @ ${Number(video.frame_rate).toFixed(3).replace(/\.?0+$/, "")} fps` : "";
+    const rows: [string, string | null | undefined][] = [
+      ["Video", [codecName(video.codec), profileName(video.profile), levelName(video.codec, video.level)].filter(Boolean).join(" · ")],
+      ["Resolution", video.width && video.height ? `${video.width} × ${video.height}${fps}` : null],
+      ["Dynamic range", dynamicRange(video) || "SDR"],
+      ["Bit depth", video.bit_depth ? `${video.bit_depth}-bit${video.pixel_format ? ` · ${String(video.pixel_format).toUpperCase()}` : ""}` : null],
+      ["Audio", chosenAudio() ? audioFormat(chosenAudio()) : null],
+      ["Container", file()?.container?.toUpperCase()],
+      ["File size", bytes(file()?.sizeBytes)],
+      ["Community score", work()?.communityRating ? `${work()!.communityRating!.toFixed(1)} / 10` : null],
+    ];
+    return rows.filter(([, value]) => value) as [string, string][];
+  };
+  const [tip, setTip] = createSignal("");
+  const tipFor = (text: string) => (has: boolean) => setTip((shown) => (has ? text : shown === text ? "" : shown));
 
   const options = () => ({ editionId: editionId() ?? undefined, mediaFileId: mediaId() ?? undefined, audioStream: audio(), subtitleIndex: subtitle() });
   const start = (fromStart: boolean) => {
@@ -176,18 +266,18 @@ export default function Title() {
           <>
             <Column autofocus width={PAGE_WIDTH} height={SCREEN.height * 2} scroll="always" gap={8}>
               <view width={PAGE_WIDTH} height={HERO_HEIGHT} forwardFocus={0}>
-                <Row y={588} width={PAGE_WIDTH - 80} height={80} gap={18} scroll="auto">
+                <Row x={INFO_X} y={596} width={INFO_WIDTH} height={80} gap={18} scroll="auto">
                   <Show when={canPlay()}>
                     <Button
                       size="lg"
                       kind="primary"
                       icon="play"
                       busy={player.preparing === current.id}
-                      label={resumeMs() > 60_000 ? `Resume · ${runtime((edition()?.runtimeMs ?? current.runtimeMs ?? 0) - resumeMs())} left` : "Play"}
+                      label={resumeMs() > 30_000 ? `Resume from ${timecode(resumeMs())}` : "Play"}
                       onEnter={() => start(false)}
                     />
-                    <Show when={resumeMs() > 60_000}>
-                      <Button size="lg" icon="clock-counter-clockwise" label="From the start" onEnter={() => start(true)} />
+                    <Show when={resumeMs() > 30_000}>
+                      <Button size="lg" icon="clock-counter-clockwise" onFocused={tipFor("Play from the beginning")} onEnter={() => start(true)} />
                     </Show>
                   </Show>
                   {/* There from the start, so focus doesn't jump when the next episode is worked out. */}
@@ -201,8 +291,8 @@ export default function Title() {
                       onEnter={() => { const next = upNext(); if (next) void playWork(next.work); return true; }}
                     />
                   </Show>
-                  <Button size="lg" icon={known()?.favorite ? "heart-fill" : "heart"} onEnter={toggleFavorite} />
-                  <Button size="lg" icon={known()?.played ? "check-circle" : "check"} onEnter={toggleWatched} />
+                  <Button size="lg" icon={known()?.favorite ? "heart-fill" : "heart"} onFocused={tipFor(known()?.favorite ? "Remove from favorites" : "Add to favorites")} onEnter={toggleFavorite} />
+                  <Button size="lg" icon={known()?.played ? "check-circle" : "check"} onFocused={tipFor(known()?.played ? "Mark as unwatched" : "Mark as watched")} onEnter={toggleWatched} />
                   <Show when={editions().length > 1}>
                     <Button size="lg" icon="stack" label={edition()?.name || "Edition"} onEnter={() => { setSheet("edition"); return true; }} />
                   </Show>
@@ -216,21 +306,80 @@ export default function Title() {
                     <Button size="lg" icon="subtitles" label="Subtitles" onEnter={() => { setSheet("subtitle"); return true; }} />
                   </Show>
                 </Row>
-                <view y={90} width={1300} height={474} display="flex" flexDirection="column" justifyContent="flexEnd" gap={18} skipFocus>
-                  <text width={1300} contain="width" maxLines={2} lineHeight={84} fontSize={72} fontWeight={weight.bold}>{current.title}</text>
-                  <view width={1300} height={36} display="flex" gap={14} alignItems="center">
+                <Artwork work={current} kind={current.kind === "EPISODE" ? "thumb" : "poster"} y={72} width={POSTER_WIDTH} height={current.kind === "EPISODE" ? 191 : 510} skipFocus />
+                <view x={INFO_X} y={72} width={INFO_WIDTH} height={510} display="flex" flexDirection="column" justifyContent="flexEnd" gap={14} skipFocus>
+                  <text fontSize={22} fontWeight={weight.semibold} letterSpacing={3} color={color.text3}>{titleCase(current.kind).toUpperCase()}</text>
+                  <text width={INFO_WIDTH} contain="width" maxLines={2} lineHeight={84} fontSize={72} fontWeight={weight.bold}>{current.title}</text>
+                  <view width={INFO_WIDTH} height={36} display="flex" gap={14} alignItems="center">
                     <Show when={current.communityRating}>
                       <Icon name="star" size={28} color={color.warning} />
                       <text fontSize={type.caption} fontWeight={weight.semibold} color={color.warning}>{current.communityRating?.toFixed(1)}</text>
                     </Show>
-                    <text fontSize={type.caption} fontWeight={weight.semibold} color={color.text2}>{meta()}</text>
+                    <text fontSize={type.caption} fontWeight={weight.semibold} color={color.text2}>{metaParts()}</text>
                   </view>
-                  <text width={1100} contain="width" maxLines={4} lineHeight={42} fontSize={type.body} color={color.text2}>{current.overview ?? current.tagline ?? ""}</text>
+                  <Show when={genres().length}>
+                    <text width={INFO_WIDTH} contain="width" maxLines={1} fontSize={type.caption} color={color.text3}>{genres().join(" · ")}</text>
+                  </Show>
+                  <Show when={badges().length}>
+                    <view width={INFO_WIDTH} height={34} display="flex" gap={10}>
+                      <For each={badges()}>{(badge) => <Badge label={badge} />}</For>
+                    </view>
+                  </Show>
+                  <Show when={current.tagline}>
+                    <text width={INFO_WIDTH} contain="width" maxLines={1} fontSize={type.body} fontWeight={weight.semibold} color={color.text}>{current.tagline ?? ""}</text>
+                  </Show>
+                  <text width={1180} contain="width" maxLines={current.tagline ? 2 : 3} lineHeight={40} fontSize={type.body} color={color.text2}>{current.overview ?? ""}</text>
                 </view>
-                <text y={700} width={1400} contain="width" maxLines={1} fontSize={type.caption} color={color.text3}>{tech()}</text>
-                <text y={742} width={1400} contain="width" maxLines={1} fontSize={type.caption} color={color.text3}>{[directedBy() && `Directed by ${directedBy()}`, cast() && `With ${cast()}`].filter(Boolean).join("   ·   ")}</text>
+                <Show when={canPlay() && resumePercent() > 0}>
+                  <view x={INFO_X + 28} y={684} width={PROGRESS_WIDTH} height={6} borderRadius={3} color={color.surface3} skipFocus>
+                    <view width={PROGRESS_WIDTH * resumePercent()} height={6} borderRadius={3} color={color.accent} />
+                  </view>
+                </Show>
+                <text x={INFO_X} y={704} fontSize={22} color={color.text2}>{tip()}</text>
               </view>
               <Children work={current} onUpNext={setUpNext} />
+              <Show when={stops().length}>
+                <view width={PAGE_WIDTH} height={SECTION_HEAD + CHAPTER_HEIGHT + 40} forwardFocus={1}>
+                  <text height={56} lineHeight={56} fontSize={type.lead} fontWeight={weight.semibold}>Chapters</text>
+                  <ChapterRail y={SECTION_HEAD} width={PAGE_WIDTH - 64} stops={stops()} trick={edition()?.trickplay} onChosen={(stop) => { if (work()) void playWork(work()!, { ...options(), positionMs: stop.positionMs }); }} />
+                </view>
+              </Show>
+              <Show when={credits().length}>
+                <view width={PAGE_WIDTH} height={SECTION_HEAD + (crew().length ? 90 : 0) + CAST_HEIGHT + 40} forwardFocus={crew().length ? 2 : 1}>
+                  <text height={56} lineHeight={56} fontSize={type.lead} fontWeight={weight.semibold}>Cast & Crew</text>
+                  <Show when={crew().length}>
+                    <view y={SECTION_HEAD - 6} width={PAGE_WIDTH - 64} height={70} display="flex" gap={56} skipFocus>
+                      <For each={crew()}>
+                        {([role, names]) => (
+                          <view width={(PAGE_WIDTH - 64 - 56 * (crew().length - 1)) / crew().length} height={70}>
+                            <text fontSize={20} fontWeight={weight.semibold} letterSpacing={2} color={color.text3}>{role.toUpperCase()}</text>
+                            <text y={32} width={(PAGE_WIDTH - 64 - 56 * (crew().length - 1)) / crew().length} contain="width" maxLines={1} fontSize={type.caption}>{names}</text>
+                          </view>
+                        )}
+                      </For>
+                    </view>
+                  </Show>
+                  <Row y={SECTION_HEAD + (crew().length ? 90 : 0)} width={PAGE_WIDTH - 64} height={CAST_HEIGHT} gap={12} scroll="auto">
+                    <For each={castCards()}>
+                      {(person) => <CastCard name={person.name} detail={person.character ?? person.role ?? undefined} onEnter={() => { navigate(`/search?q=${encodeURIComponent(person.name)}`); return true; }} />}
+                    </For>
+                  </Row>
+                </view>
+              </Show>
+              {/* Focusable with nothing to do: the column only scrolls to what can take focus. */}
+              <Show when={facts().length}>
+                <view width={PAGE_WIDTH} height={SECTION_HEAD + Math.ceil(facts().length / 3) * FACT_ROW + 200} onEnter={() => true}>
+                  <text height={56} lineHeight={56} fontSize={type.lead} fontWeight={weight.semibold}>Technical details</text>
+                  <For each={facts()}>
+                    {([term, value], position) => (
+                      <view x={(position() % 3) * FACT_WIDTH} y={SECTION_HEAD + Math.floor(position() / 3) * FACT_ROW} width={FACT_WIDTH - 32} height={FACT_ROW} skipFocus>
+                        <text fontSize={20} fontWeight={weight.semibold} letterSpacing={2} color={color.text3}>{term.toUpperCase()}</text>
+                        <text y={30} width={FACT_WIDTH - 32} contain="width" maxLines={1} fontSize={type.caption}>{value}</text>
+                      </view>
+                    )}
+                  </For>
+                </view>
+              </Show>
             </Column>
             <Show when={current.kind === "PHOTO"}>
               <Artwork work={current} kind="poster" x={PAGE_WIDTH - 900} y={140} width={820} height={800} skipFocus />

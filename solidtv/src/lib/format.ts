@@ -45,6 +45,13 @@ export function techBadges(probe: any, audio: any): string[] {
   return [tier, CODEC_NAMES[name] ?? name.toUpperCase(), video ? dynamicRange(video) : "", audio ? audioFormat(audio) : ""].filter(Boolean);
 }
 
+export function bytes(size?: number | null): string {
+  if (!size) return "";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const power = Math.min(units.length - 1, Math.floor(Math.log(size) / Math.log(1024)));
+  return `${(size / 1024 ** power).toFixed(power > 2 ? 1 : 0)} ${units[power]}`;
+}
+
 /** A codec enum or ffprobe name as viewers know it: `H265` → "HEVC". */
 export function codecName(code?: string | null): string {
   const name = String(code ?? "").toLowerCase();

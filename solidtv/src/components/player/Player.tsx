@@ -582,7 +582,8 @@ export default function Player(props: { playback: Playback }) {
                 stops={stops()}
                 scenes={!realChapters().length}
                 trick={edition()?.trickplay}
-                position={position()}
+                playhead={position()}
+                takeFocus
                 onFocused={setFocusedStop}
                 onChosen={chooseStop}
               />
@@ -600,11 +601,11 @@ export default function Player(props: { playback: Playback }) {
       </Show>
       <Show when={countdown() != null && next()}>
         {(upNext) => (
-          <view x={SCREEN.width - GUTTER - 640} y={SCREEN.height - 480} width={640} height={190} borderRadius={radius.l} color={0x0c0e12f2} border={{ width: 2, color: color.lineStrong }} skipFocus>
+          <view x={SCREEN.width - GUTTER - 720} y={SCREEN.height - 480} width={720} height={190} borderRadius={radius.l} color={0x0c0e12f2} border={{ width: 2, color: color.lineStrong }} skipFocus>
             <Artwork work={upNext()} kind="thumb" x={20} y={20} width={266} height={150} />
             <text x={306} y={24} fontSize={22} fontWeight={weight.semibold} color={color.accent}>{`Up next in ${countdown()}`}</text>
-            <text x={306} y={60} width={310} contain="width" maxLines={2} lineHeight={36} fontSize={type.caption} fontWeight={weight.semibold}>{upNext().title}</text>
-            <text x={306} y={138} width={310} contain="width" maxLines={1} fontSize={20} color={color.text3}>OK plays it · Back keeps watching</text>
+            <text x={306} y={60} width={390} contain="width" maxLines={2} lineHeight={36} fontSize={type.caption} fontWeight={weight.semibold}>{upNext().title}</text>
+            <text x={306} y={138} width={390} contain="width" maxLines={1} fontSize={20} color={color.text3}>OK plays it · Back keeps watching</text>
           </view>
         )}
       </Show>

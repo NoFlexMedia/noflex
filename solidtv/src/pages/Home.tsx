@@ -2,7 +2,7 @@
 
 import { useNavigate } from "@solidjs/router";
 import { Column, Row } from "@solidtv/solid/primitives";
-import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show, For } from "solid-js";
 import { HOME } from "$lib/graphql/documents.js";
 import { createQuery } from "$lib/graphql.js";
 import { pickImage } from "$lib/images.js";
@@ -12,7 +12,7 @@ import { app } from "$lib/session.js";
 import type { Work } from "$lib/types.js";
 import { poll, ui } from "$lib/ui.js";
 import { userDataOf } from "$lib/watch.js";
-import { color, PAGE_WIDTH, PAGE_X, SCREEN, type, weight } from "../theme.js";
+import { color, motion, PAGE_WIDTH, PAGE_X, SCREEN, type, weight } from "../theme.js";
 import Button from "$components/Button.js";
 import Icon from "$components/Icon.js";
 import Rail, { railHeight } from "$components/Rail.js";
@@ -80,6 +80,12 @@ function Hero(props: { items: Work[] }) {
           <text fontSize={type.caption} fontWeight={weight.semibold} color={color.text2}>{meta()}</text>
         </view>
         <text width={1000} contain="width" maxLines={3} lineHeight={42} fontSize={type.body} color={color.text2}>{current().overview ?? ""}</text>
+      </view>
+      {/* The web's: which of these this is, and that there are more. */}
+      <view x={PAGE_WIDTH - 64 - props.items.length * 44} y={630} width={props.items.length * 44} height={6} display="flex" gap={8} skipFocus>
+        <For each={props.items}>
+          {(_item, position) => <view width={36} height={4} borderRadius={2} color={position() === index() % props.items.length ? color.text : color.surface3} transition={{ color: motion.out }} />}
+        </For>
       </view>
     </view>
   );

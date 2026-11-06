@@ -19,9 +19,12 @@ export default function Backdrop() {
   const [loaded, setLoaded] = createSignal(-1);
 
   createEffect(on(() => ui.backdrop, (url) => {
+    const src = url ? sized(url, WIDTH, HEIGHT) : null;
+    if (src === layers()[front()]) return;
     const next = front() === 0 ? 1 : 0;
-    setLoaded(-1);
-    setLayers((current) => { const copy = current.slice(); copy[next] = url ? sized(url, WIDTH, HEIGHT) : null; return copy; });
+    // A layer already holding this image has nothing left to load, so no `loaded` is coming.
+    setLoaded(src && src === layers()[next] ? next : -1);
+    setLayers((current) => { const copy = current.slice(); copy[next] = src; return copy; });
     setFront(next);
     if (!url) { ui.ambient = AMBIENT; return; }
     ambientColor(url).then((tint) => { if (ui.backdrop === url) ui.ambient = tint ?? AMBIENT; });
@@ -44,6 +47,7 @@ export default function Backdrop() {
           />
         )}
       </Index>
+      <view width={WIDTH} height={HEIGHT} color={0x07080b00 + (ui.backdropDim ? 0x99 : 0)} transition={fade} />
       <view width={WIDTH} height={HEIGHT} linearGradient={gradient([0x07080bfa, 0x07080bd9, 0x07080b73, 0x07080b00], toward.right, [0, 0.35, 0.62, 0.9])} />
       <view width={WIDTH} height={HEIGHT} linearGradient={gradient([0x07080bff, 0x07080bcc, 0x07080b00], toward.up, [0, 0.28, 0.62])} />
     </view>

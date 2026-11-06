@@ -78,7 +78,7 @@ export const SERVER_INFO = `query ServerInfo { serverInfo { name version backend
 
 export const BOOTSTRAP = `
 query Bootstrap {
-  viewer { id name isAdmin }
+  viewer { id name username avatarUrl isAdmin }
   libraries { id name kind }
   contentCategories { category workCount }
   preferences { key value }

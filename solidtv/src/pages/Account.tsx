@@ -6,17 +6,17 @@
 // in the web client and the apps.
 
 import { Column, Row } from "@solidtv/solid/primitives";
-import { createEffect, createSignal, For, Show, untrack } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import type { NodeProps } from "@solidtv/solid";
 import { languageName } from "$lib/format.js";
-import { MY_DEVICES, UPDATE_DEVICE } from "$lib/graphql/documents.js";
+import { MY_DEVICES, MY_SMART_MARKS, UNMARK_FOR_SMART_TRANSCODING, UPDATE_DEVICE } from "$lib/graphql/documents.js";
 import { request } from "$lib/graphql.js";
 import type { IconName } from "$lib/icons.generated.js";
 import { app, changeServer, logout, savePlaybackPrefs, setShowLibraries, thisDeviceId } from "$lib/session.js";
 import { changeSetting, settings, type DeviceSettings } from "$lib/settings.js";
 import { serverOrigin } from "$lib/tokens.js";
 import type { Choice } from "$lib/tracks.js";
-import type { Device } from "$lib/types.js";
+import type { Device, SmartMark, SmartMarkState } from "$lib/types.js";
 import { attempt } from "$lib/ui.js";
 import { color, motion, PAGE_WIDTH, radius, SCREEN, type, weight } from "../theme.js";
 import Button from "$components/Button.js";
@@ -29,14 +29,14 @@ const SECTIONS_WIDTH = 340;
 const GAP = 48;
 const PANEL_WIDTH = PAGE_WIDTH - SECTIONS_WIDTH - GAP - 64;
 const ROW_GAP = 10;
-const GB = 1024 ** 3;
+const MARK_POLL_MS = 5000;
 
-type Section = "playback" | "player" | "tv" | "downloads" | "account";
+type Section = "playback" | "player" | "tv" | "smart" | "account";
 const SECTIONS: { id: Section; label: string; icon: IconName }[] = [
   { id: "playback", label: "Playback", icon: "play" },
   { id: "player", label: "Player", icon: "sliders-horizontal" },
   { id: "tv", label: "This TV", icon: "television" },
-  { id: "downloads", label: "Smart Downloads", icon: "download-simple" },
+  { id: "smart", label: "Smart transcoding", icon: "sparkle" },
   { id: "account", label: "Account", icon: "user" },
 ];
 
@@ -55,7 +55,17 @@ const PREPARE: Choice[] = [
   { value: "8000000", label: "Up to 8 Mbps" },
   { value: "4000000", label: "Up to 4 Mbps" },
 ];
-const BUDGETS: Choice[] = [{ value: "", label: "No limit" }, ...[5, 10, 25, 50, 100].map((size) => ({ value: String(size * GB), label: `${size} GB` }))];
+const MARK_STATES: Record<SmartMarkState, string> = {
+  WAITING: "In the queue",
+  PREPARING: "Preparing",
+  READY: "Ready",
+  NOT_NEEDED: "Plays as it is",
+  TOO_LARGE: "Too large for this server",
+  NO_DEVICES: "No device has it on",
+  NO_SPACE: "Waiting for space",
+  FAILED: "Failed. Unmark to retry",
+  DISABLED: "Off on this server",
+};
 const SKIPS: Choice[] = [5, 10, 15, 30].map((seconds) => ({ value: String(seconds), label: `${seconds} seconds` }));
 const COUNTDOWNS: Choice[] = [5, 10, 20, 30].map((seconds) => ({ value: String(seconds), label: `${seconds} seconds` }));
 const CAPTION_SIZES: Choice[] = [{ value: "small", label: "Small" }, { value: "medium", label: "Medium" }, { value: "large", label: "Large" }];
@@ -64,9 +74,6 @@ const CAPTION_BACKS: Choice[] = [{ value: "none", label: "None" }, { value: "dim
 const labelOf = (choices: Choice[], value: string) => choices.find((choice) => choice.value === value)?.label ?? value;
 // A language picked here goes first; any others set from a browser stay behind it.
 const putFirst = (list: string[], first: string) => (first ? [first, ...list.filter((item) => item !== first)] : []);
-
-// Only the apps on phones, tablets and computers keep files: a browser or a TV has nowhere to.
-const canKeepFiles = (device: Device) => !/\b(chrome|firefox|safari|edge|browser)\b|\btv\b|tvos/i.test(device.name);
 
 interface Picker { title: string; choices: Choice[]; value: string; pick: (value: string) => void }
 
@@ -101,18 +108,28 @@ export default function Account() {
   const [section, setSection] = createSignal<Section>("playback");
   const [picker, setPicker] = createSignal<Picker | null>(null);
   const [devices, setDevices] = createSignal<Device[] | null>(null);
-  const [downloadsAllowed, setDownloadsAllowed] = createSignal(true);
+  const [marks, setMarks] = createSignal<SmartMark[]>([]);
 
   createEffect(() => {
-    void request<{ myDevices: Device[]; serverInfo: { downloadsAllowed: boolean } }>(MY_DEVICES).then((data) => {
-      setDevices(data.myDevices);
-      setDownloadsAllowed(data.serverInfo.downloadsAllowed);
-    }, () => setDevices([]));
+    void request<{ myDevices: Device[] }>(MY_DEVICES).then((data) => setDevices(data.myDevices), () => setDevices([]));
+  });
+
+  const loadMarks = () => request<{ mySmartTranscodeMarks: SmartMark[] }>(MY_SMART_MARKS).then((data) => setMarks(data.mySmartTranscodeMarks), () => {});
+  // Only while it's on screen and something is moving: a TV left here should idle.
+  createEffect(() => {
+    if (section() !== "smart") return;
+    void loadMarks();
+    if (!marks().some((mark) => mark.state === "WAITING" || mark.state === "PREPARING")) return;
+    const timer = setInterval(() => void loadMarks(), MARK_POLL_MS);
+    onCleanup(() => clearInterval(timer));
+  });
+  const unmark = (mark: SmartMark) => attempt(async () => {
+    await request(UNMARK_FOR_SMART_TRANSCODING, { work: mark.work.id, device: mark.device?.id ?? null });
+    setMarks((list) => list.filter((item) => item !== mark));
   });
 
   const prefs = () => app.playbackPrefs;
   const here = () => devices()?.find((device) => device.id === thisDeviceId());
-  const keepers = () => (devices() ?? []).filter((device) => device.id !== thisDeviceId() && canKeepFiles(device));
 
   const savePlayback = (change: (stored: any) => any) => attempt(() => savePlaybackPrefs(change));
   const saveDevice = (device: Device, change: Record<string, unknown>) => attempt(async () => {
@@ -149,39 +166,33 @@ export default function Account() {
     tv: () => (
       <>
         <SettingRow width={PANEL_WIDTH} label="HDR" detail="Turn off if HDR looks wrong here; the server converts it to SDR" checked={settings.allowHdr} onEnter={() => { device("allowHdr", !settings.allowHdr); return true; }} />
+      </>
+    ),
+    smart: () => (
+      <>
         <Show when={here()} fallback={<Note text="This TV hasn’t registered with the server yet. It does when it starts." />}>
           {(me) => (
             <>
-              <SettingRow width={PANEL_WIDTH} label="Prepare versions on the server" detail="While it’s idle, it encodes what you’ll likely watch for this TV" checked={me().smartTranscode} onEnter={() => { void saveDevice(me(), { smartTranscode: !me().smartTranscode }); return true; }} />
+              <SettingRow width={PANEL_WIDTH} label="Smart transcoding on this TV" detail="While it’s idle, the server prepares what you’ll likely watch here" checked={me().smartTranscode} onEnter={() => { void saveDevice(me(), { smartTranscode: !me().smartTranscode }); return true; }} />
               <SettingRow width={PANEL_WIDTH} label="Quality of prepared versions" value={labelOf(PREPARE, String(me().maxBitrateBps ?? ""))} onEnter={() => choose("Quality of prepared versions", PREPARE, String(me().maxBitrateBps ?? ""), (value) => void saveDevice(me(), value ? { maxBitrateBps: Number(value) } : { clearMaxBitrate: true }))} />
             </>
           )}
         </Show>
-      </>
-    ),
-    downloads: () => (
-      <>
-        <Note text="Keeps what you’re likely to watch on your phones, tablets and computers, ready for when you’re offline. They pick up a change here the next time the app starts. TVs stream, so this TV isn’t listed." />
-        <Show when={!downloadsAllowed()}>
-          <Note text="This server’s administrator has turned downloads off, so nothing new will be kept." />
+        <Heading text="Marked to watch next" />
+        <Show when={marks().length} fallback={<Note text="Nothing yet. Mark a title from its page, and it’s prepared ahead of anything the server guesses at." />}>
+          <Note text="These are prepared first, in this order, until you watch them. Choose one to unmark it." />
+          <For each={marks()}>
+            {(mark) => (
+              <SettingRow
+                width={PANEL_WIDTH}
+                label={mark.work.title}
+                detail={mark.device ? `For ${mark.device.name} only` : "For your devices with smart transcoding on"}
+                value={mark.state === "PREPARING" ? `Preparing ${Math.round(mark.progress * 100)}%` : MARK_STATES[mark.state]}
+                onEnter={() => { void unmark(mark); return true; }}
+              />
+            )}
+          </For>
         </Show>
-        <Show when={devices() && !keepers().length}>
-          <Heading text="No devices that can keep titles yet" />
-          <Note text="Sign in with the NoFlex app on a phone, tablet or computer, and it shows up here." />
-        </Show>
-        <For each={keepers()}>
-          {(item) => {
-            const current = () => (devices() ?? []).find((known) => known.id === item.id) ?? item;
-            return (
-              <>
-                <Heading text={item.name} />
-                <SettingRow width={PANEL_WIDTH} label="Smart Downloads" checked={current().smartDownloads} onEnter={() => { void saveDevice(current(), { smartDownloads: !current().smartDownloads }); return true; }} />
-                <SettingRow width={PANEL_WIDTH} label="Space to use" value={labelOf(BUDGETS, String(current().downloadBudgetBytes ?? ""))} onEnter={() => choose(`Space to use on ${item.name}`, BUDGETS, String(current().downloadBudgetBytes ?? ""), (value) => void saveDevice(current(), value ? { downloadBudgetBytes: Number(value) } : { clearDownloadBudget: true }))} />
-                <SettingRow width={PANEL_WIDTH} label="Wait for Wi-Fi" checked={current().downloadsWifiOnly} onEnter={() => { void saveDevice(current(), { downloadsWifiOnly: !current().downloadsWifiOnly }); return true; }} />
-              </>
-            );
-          }}
-        </For>
       </>
     ),
     account: () => (

@@ -8,15 +8,15 @@ import { Column, Row } from "@solidtv/solid/primitives";
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { ElementNode, NodeProps } from "@solidtv/solid";
 import { audioFormat, bytes, codecName, dynamicRange, levelName, profileName, runtime, techBadges, timecode, titleCase, versionLabel } from "$lib/format.js";
-import { MARK_PLAYED, MARK_UNPLAYED, MEDIA_FILES, SET_FAVORITE, WORK_CRUMB, WORK_DETAIL } from "$lib/graphql/documents.js";
+import { MARK_FOR_SMART_TRANSCODING, MARK_PLAYED, MARK_UNPLAYED, MEDIA_FILES, SET_FAVORITE, SMART_MARKS_FOR_WORK, UNMARK_FOR_SMART_TRANSCODING, WORK_CRUMB, WORK_DETAIL } from "$lib/graphql/documents.js";
 import { createQuery, request } from "$lib/graphql.js";
 import { pickImage } from "$lib/images.js";
 import { fetchChildren, isPlayable, player, playWork, subtitleFor } from "$lib/playback.js";
 import { revealInRow } from "$lib/rows.js";
-import { app } from "$lib/session.js";
+import { app, thisDeviceId } from "$lib/session.js";
 import { audioChoices, preferredAudio, preferredSubtitle, subtitleChoices } from "$lib/tracks.js";
 import type { Edition, MediaFile, Work } from "$lib/types.js";
-import { attempt, ui } from "$lib/ui.js";
+import { attempt, toast, ui } from "$lib/ui.js";
 import { chapterStops } from "$lib/player/trickplay.js";
 import { setUserData, userDataOf } from "$lib/watch.js";
 import { color, motion, PAGE_WIDTH, PAGE_X, radius, SCREEN, type, weight } from "../theme.js";
@@ -245,6 +245,37 @@ export default function Title() {
     return true;
   };
 
+  // A mark for this TV alone, or for every device with smart transcoding on.
+  const [marks, setMarks] = createSignal<{ device: boolean; here: boolean; anyDeviceOn: boolean }>({ device: false, here: false, anyDeviceOn: true });
+  const canMark = () => ["MOVIE", "SERIES", "SEASON", "EPISODE"].indexOf(work()?.kind ?? "") >= 0;
+  const me = thisDeviceId();
+  const loadMarks = (id: string) => request<{ mySmartTranscodeMarks: { device?: { id: string } | null }[]; myDevices: { smartTranscode: boolean }[] }>(SMART_MARKS_FOR_WORK, { work: id }).then((data) => {
+    setMarks({
+      device: data.mySmartTranscodeMarks.some((mark) => !mark.device),
+      here: data.mySmartTranscodeMarks.some((mark) => mark.device?.id === me),
+      anyDeviceOn: data.myDevices.some((device) => device.smartTranscode),
+    });
+  }, () => {});
+  createEffect(on(() => params.id, (id) => { if (id) void loadMarks(id); }));
+  const markTip = (thisTv: boolean) => (thisTv
+    ? marks().here ? "Smart transcoding for this TV. OK stops it" : "Smart transcode for this TV"
+    : marks().device ? "Marked for smart transcoding. OK unmarks it" : "Mark for smart transcoding");
+  const toggleMark = (thisTv: boolean) => {
+    const current = work();
+    if (!current) return true;
+    const marked = thisTv ? marks().here : marks().device;
+    void attempt(async () => {
+      await request(marked ? UNMARK_FOR_SMART_TRANSCODING : MARK_FOR_SMART_TRANSCODING, { work: current.id, device: thisTv ? me : null });
+      await loadMarks(current.id);
+      setTip(markTip(thisTv));
+      if (marked) toast("Unmarked", "success");
+      else if (thisTv) toast("It’ll be ready for this TV next", "success");
+      else if (marks().anyDeviceOn) toast("Marked. It’ll be ready next on your devices with smart transcoding on", "success");
+      else toast("Marked, but none of your devices has smart transcoding on. Turn it on in Settings", "info");
+    });
+    return true;
+  };
+
   // Read once when opened: the values it picks would otherwise rebuild it mid-pick.
   const sheetFor = (kind: SheetKind) => {
     switch (kind) {
@@ -293,6 +324,10 @@ export default function Title() {
                   </Show>
                   <Button size="lg" icon={known()?.favorite ? "heart-fill" : "heart"} onFocused={tipFor(known()?.favorite ? "Remove from favorites" : "Add to favorites")} onEnter={toggleFavorite} />
                   <Button size="lg" icon={known()?.played ? "check-circle" : "check"} onFocused={tipFor(known()?.played ? "Mark as unwatched" : "Mark as watched")} onEnter={toggleWatched} />
+                  <Show when={canMark()}>
+                    <Button size="lg" icon="sparkle" kind={marks().device ? "primary" : "glass"} onFocused={tipFor(markTip(false))} onEnter={() => toggleMark(false)} />
+                    <Button size="lg" icon="television" kind={marks().here ? "primary" : "glass"} onFocused={tipFor(markTip(true))} onEnter={() => toggleMark(true)} />
+                  </Show>
                   <Show when={editions().length > 1}>
                     <Button size="lg" icon="stack" label={edition()?.name || "Edition"} onEnter={() => { setSheet("edition"); return true; }} />
                   </Show>

@@ -89,8 +89,12 @@ export interface Device {
   name: string;
   smartTranscode: boolean;
   maxBitrateBps?: number | null;
-  smartDownloads: boolean;
-  downloadBudgetBytes?: number | null;
-  downloadsWifiOnly: boolean;
-  lastSeenAt: string;
+}
+export type SmartMarkState = "WAITING" | "PREPARING" | "READY" | "NOT_NEEDED" | "TOO_LARGE" | "NO_DEVICES" | "NO_SPACE" | "FAILED" | "DISABLED";
+export interface SmartMark {
+  work: Work;
+  device?: { id: string; name: string } | null;
+  markedAt: string;
+  state: SmartMarkState;
+  progress: number;
 }

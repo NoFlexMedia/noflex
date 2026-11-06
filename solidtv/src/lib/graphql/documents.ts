@@ -101,13 +101,30 @@ export const POLL_DEVICE_PIN = `mutation PollDevicePin($pin: String!) { pollDevi
 export const SET_PREFERENCE = `mutation SetPreference($key: String!, $value: JSON!) { setPreference(key: $key, value: $value) { key } }`;
 
 const DEVICE = `
-fragment DeviceFields on Device { id name smartTranscode maxBitrateBps smartDownloads downloadBudgetBytes downloadsWifiOnly lastSeenAt }`;
+fragment DeviceFields on Device { id name smartTranscode maxBitrateBps }`;
 
-export const MY_DEVICES = gql(`query MyDevices { myDevices { ...DeviceFields } serverInfo { downloadsAllowed } }`, DEVICE);
+export const MY_DEVICES = gql(`query MyDevices { myDevices { ...DeviceFields } }`, DEVICE);
+
+const SMART_MARK = `
+fragment SmartMarkFields on SmartTranscodeMark {
+  work { ...WorkCard }
+  device { id name }
+  markedAt
+  state
+  progress
+}`;
+
+export const MY_SMART_MARKS = gql(`query MySmartMarks { mySmartTranscodeMarks { ...SmartMarkFields } }`, SMART_MARK, WORK_CARD);
+
+export const SMART_MARKS_FOR_WORK = `query SmartMarksForWork($work: ID!) { mySmartTranscodeMarks(workId: $work) { device { id } } myDevices { smartTranscode } }`;
+
+export const MARK_FOR_SMART_TRANSCODING = `mutation MarkForSmartTranscoding($work: ID!, $device: ID) { markForSmartTranscoding(workId: $work, deviceId: $device) { state } }`;
+
+export const UNMARK_FOR_SMART_TRANSCODING = `mutation UnmarkForSmartTranscoding($work: ID!, $device: ID) { unmarkForSmartTranscoding(workId: $work, deviceId: $device) { markedAt } }`;
 
 export const UPDATE_DEVICE = gql(`
-mutation UpdateDevice($id: ID!, $smartTranscode: Boolean, $maxBitrateBps: Int, $clearMaxBitrate: Boolean, $smartDownloads: Boolean, $downloadBudgetBytes: Int, $clearDownloadBudget: Boolean, $downloadsWifiOnly: Boolean) {
-  updateDevice(id: $id, smartTranscode: $smartTranscode, maxBitrateBps: $maxBitrateBps, clearMaxBitrate: $clearMaxBitrate, smartDownloads: $smartDownloads, downloadBudgetBytes: $downloadBudgetBytes, clearDownloadBudget: $clearDownloadBudget, downloadsWifiOnly: $downloadsWifiOnly) { ...DeviceFields }
+mutation UpdateDevice($id: ID!, $smartTranscode: Boolean, $maxBitrateBps: Int, $clearMaxBitrate: Boolean) {
+  updateDevice(id: $id, smartTranscode: $smartTranscode, maxBitrateBps: $maxBitrateBps, clearMaxBitrate: $clearMaxBitrate) { ...DeviceFields }
 }`, DEVICE);
 
 export const REGISTER_DEVICE = `

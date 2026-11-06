@@ -16,7 +16,7 @@
       "$lib/*": ["../../src/lib/*"],
       "$components/*": ["../../src/components/*"],
       "$pages/*": ["../../src/pages/*"],
-      "$codecs": ["../../../web/src/lib/codecSupport.ts"]
+      "$codecs": ["../../../lib/ts/codecSupport.ts"]
     }
   },
   "include": ["app/**/*"],

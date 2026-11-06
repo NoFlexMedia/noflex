@@ -274,7 +274,7 @@ pub fn dovi_codec_string(
 
 /// Map a base-layer level onto the lowest Dolby Vision level whose max
 /// pixel rate covers it. The tables are mirrored in
-/// `web/src/lib/codecSupport.ts` for probing; a level beyond every row
+/// `lib/ts/codecSupport.ts` for probing; a level beyond every row
 /// maps to the top DoVi level 13.
 pub fn dovi_level(codec: VideoCodec, level: u32) -> u8 {
     // (max base level, DoVi level); compared with <=.

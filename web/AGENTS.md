@@ -20,6 +20,7 @@ npm run build   # writes build/, which the next noflex-server build embeds
 - `src/components/ui/` — bits-ui primitives (dialog, menu, select, tabs, tooltip, segmented) wrapped in the app's styles. Reach for these before writing a new control.
 - `src/lib/` — session, playback, and UI state, plus helpers: `ui.svelte.ts` (`toast`, `attempt`, `confirmAction`, `poll`), `graphql.ts` (store helpers), `format.ts` (display formatting).
 - `src/lib/graphql/*.gql` — shared fragments and documents used by loaders and `lib/`. Component-only documents sit inline in `graphql(...)`.
+- `$codecs` — `lib/ts/codecSupport.ts`, shared with `solidtv/`. See [`lib/AGENTS.md`](../lib/AGENTS.md).
 - `src/client.ts` — the Houdini client: auth headers, one refresh-and-retry, transport errors as GraphQL errors. `src/lib/live.ts` carries subscriptions over `graphql-ws`.
 - `src/app.css` — design tokens (`--bg`, `--text-2`, `--accent`, `--r`, ...) and shared classes (`btn`, `field`, `chip`, ...).
 

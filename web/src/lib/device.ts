@@ -6,7 +6,7 @@
 
 import { RegisterDeviceStore } from "$houdini";
 import { deviceName } from "$lib/api.js";
-import { clientCapabilities } from "$lib/codecSupport.js";
+import { clientCapabilities } from "$codecs";
 import { request } from "$lib/graphql.js";
 
 const DEVICE_KEY = "noflex.deviceId";

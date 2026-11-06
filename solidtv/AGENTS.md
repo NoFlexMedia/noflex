@@ -51,7 +51,7 @@ scripts/             # asset generators
 public/              # committed: Inter atlases, icon sprite, brand mark, their licenses
 ```
 
-- `$codecs` is `web/src/lib/codecSupport.ts`, imported rather than ported: a browser engine's probe is the same job, and the Apple host reuses its codec strings and level walks. It has to stay free of `$lib` imports.
+- `$codecs` is `lib/ts/codecSupport.ts`, shared with `web/` rather than ported: a browser engine's probe is the same job, and the Apple host reuses its codec strings and level walks. See [`lib/AGENTS.md`](../lib/AGENTS.md).
 - `format.ts`, `tracks.ts`, `tokens.ts` and `playback.ts` are ports. A fix to timing or track logic in `web/` probably belongs here too.
 
 ## Host seam

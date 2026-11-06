@@ -9,7 +9,7 @@
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
   import X from "phosphor-svelte/lib/X";
   import { AdminTranscoderStore, graphql } from "$houdini";
-  import { clientCapabilities } from "$lib/codecSupport.js";
+  import { clientCapabilities } from "$codecs";
   import { bytes, pixelTier, profileName } from "$lib/format.js";
   import { failure, fetchQuery, refetch, request } from "$lib/graphql.js";
   import { attempt, poll } from "$lib/ui.svelte.js";

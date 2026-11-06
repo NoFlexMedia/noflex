@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { CachePolicy, ChildPageStore, MediaFilesStore, StartPlaybackStore, StopPlaybackStore, WorkDetailStore } from "$houdini";
-import { clientCapabilities } from "$lib/codecSupport.js";
+import { clientCapabilities } from "$codecs";
 import { app } from "$lib/session.svelte.js";
 import { syncWatchState } from "$lib/sync.js";
 import { isImageSubtitle, preferredAudio, preferredSubtitle } from "$lib/tracks.js";

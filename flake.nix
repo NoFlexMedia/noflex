@@ -54,7 +54,8 @@
           version = "0.0.1";
           # Houdini validates every document against the server's committed
           # SDL snapshot, so it travels with the web sources at the same
-          # relative path. Local installs and build output stay out.
+          # relative path, as does the source shared with other clients. Local
+          # installs and build output stay out.
           src = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
@@ -65,6 +66,7 @@
                 ./web/.houdini
               ])))
               ./backend/crates/noflex-graphql/tests/snapshots/schema.graphql
+              ./lib/ts
             ];
           };
           sourceRoot = "source/web";

@@ -4,7 +4,7 @@
 // Jellyfin's DeviceProfile but trimmed to what a browser can actually
 // report: per-delivery container/codec allow-lists plus per-codec
 // decoder limits. Clients probe these themselves (the web client in
-// `web/src/lib/codecSupport.ts`); the server never guesses from a user
+// `lib/ts/codecSupport.ts`); the server never guesses from a user
 // agent.
 
 use async_graphql::{Enum, InputObject};

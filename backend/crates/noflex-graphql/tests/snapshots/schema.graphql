@@ -1889,6 +1889,11 @@ type OptimizedVersion {
 	finishedAt: DateTime
 	lastUsedAt: DateTime
 	"""
+	Since when nothing has wanted this finished copy. A copy left unwanted and
+	unplayed for a day is swept up.
+	"""
+	unwantedSince: DateTime
+	"""
 	The title this is a version of; null once it's gone, or for a viewer who
 	can't see it.
 	"""

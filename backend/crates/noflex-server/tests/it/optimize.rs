@@ -784,3 +784,81 @@ async fn a_mark_waiting_for_space_evicts_guesses_and_is_never_evicted_itself() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[tokio::test]
+async fn a_copy_left_unwanted_and_unplayed_is_swept_up_while_there_is_room() {
+    let dir = std::env::temp_dir().join(format!("noflex-sweep-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("source.mkv");
+    if !make_source(&source) {
+        eprintln!("ffmpeg unavailable; skipping");
+        return;
+    }
+    let fixture = fixture(&source, dir.clone()).await;
+    let worker = worker(&fixture, config());
+    let two_days_ago = OffsetDateTime::now_utc() - time::Duration::days(2);
+
+    worker.plan().await.expect("plan");
+    assert!(worker.run_next().await.expect("run"));
+    let ready = fixture
+        .store
+        .list_optimized_versions()
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        ready.status,
+        OptimizedVersionStatus::Ready,
+        "{:?}",
+        ready.error
+    );
+    let file = std::path::PathBuf::from(ready.path.clone().expect("path"));
+    assert!(file.exists());
+    let stored = async || fixture.store.get_optimized_version(ready.id).await.unwrap();
+
+    // Still wanted, so it doesn't matter what an earlier plan thought.
+    fixture
+        .store
+        .mark_optimized_version_unwanted(ready.id, two_days_ago)
+        .await
+        .unwrap();
+    worker.plan().await.expect("plan");
+    assert_eq!(stored().await.unwrap().unwanted_since, None);
+
+    turn_smart_transcoding_off(&fixture).await;
+    worker.plan().await.expect("plan");
+    assert!(
+        stored().await.expect("kept").unwanted_since.is_some(),
+        "out of a plan once is no reason to remake it later"
+    );
+
+    let mut played = stored().await.unwrap();
+    played.last_used_at = Some(OffsetDateTime::now_utc());
+    fixture
+        .store
+        .update_optimized_version(&played)
+        .await
+        .unwrap();
+    let mut device = phone(&fixture).await;
+    device.smart_transcode = true;
+    fixture.store.upsert_device(&device).await.unwrap();
+    worker.plan().await.expect("plan");
+    fixture
+        .store
+        .mark_optimized_version_unwanted(ready.id, two_days_ago)
+        .await
+        .unwrap();
+    turn_smart_transcoding_off(&fixture).await;
+    worker.plan().await.expect("plan");
+    assert!(stored().await.is_some(), "someone's just played it");
+
+    played.last_used_at = Some(two_days_ago);
+    fixture
+        .store
+        .update_optimized_version(&played)
+        .await
+        .unwrap();
+    worker.plan().await.expect("plan");
+    assert!(stored().await.is_none());
+    assert!(!file.exists(), "and it frees the disk");
+}

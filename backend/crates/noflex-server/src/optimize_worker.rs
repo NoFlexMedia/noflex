@@ -54,6 +54,10 @@ const MIB: u64 = 1024 * 1024;
 /// Where marked titles start in the queue: ahead of every guess, whose priorities
 /// count up from 0, and in the order they were marked.
 const MARKED_PRIORITY: i32 = i32::MIN / 2;
+/// How long a finished copy stays once nothing wants it and nobody's played it.
+/// Predictions shift as people watch, so anything shorter would remake the same
+/// titles, and a day is longer than a viewer stays in the middle of one.
+const SWEEP_AFTER: time::Duration = time::Duration::days(1);
 
 /// Everything the worker depends on but doesn't own.
 pub struct OptimizeWorker {
@@ -169,8 +173,8 @@ impl OptimizeWorker {
 
     /// Bring the queue in line with what viewers have marked and are likely to
     /// watch: queue what's missing, drop waiting jobs nobody wants now, remove
-    /// versions of files that have changed, and evict over quota. Touches no
-    /// running job. Returns the versions wanted.
+    /// versions of files that have changed, sweep up copies left unwanted, and
+    /// evict over quota. Touches no running job. Returns the versions wanted.
     pub async fn plan(&self) -> anyhow::Result<Keep> {
         let limits = self.limits().await?;
         // Before queuing: a stale row would block its replacement's key.
@@ -270,6 +274,7 @@ impl OptimizeWorker {
                         created_at: now,
                         finished_at: None,
                         last_used_at: None,
+                        unwanted_since: None,
                     })
                     .await?;
             }
@@ -437,8 +442,9 @@ impl OptimizeWorker {
         Ok(())
     }
 
-    /// Remove what nobody wants and make room. Versions of `marked` files are
-    /// never evicted while wanted. A marked job waiting on space can evict what's
+    /// Remove what nobody wants, whether or not there's room: a job at once, and
+    /// a finished copy after [`SWEEP_AFTER`]. Then make room. Versions of `marked`
+    /// files are never evicted while wanted. A marked job waiting on space can evict what's
     /// only a guess, which a later plan queues again behind it.
     async fn prune(
         &self,
@@ -451,6 +457,7 @@ impl OptimizeWorker {
         let mut guesses = Vec::new();
         let mut marked_waiting = false;
         let mut used = 0_u64;
+        let now = OffsetDateTime::now_utc();
         for version in self.storage.list_optimized_versions().await? {
             let wanted = keep.contains(&(version.media_file_id, version.variant_key.clone()));
             let is_marked = wanted && marked.contains(&version.media_file_id);
@@ -463,6 +470,22 @@ impl OptimizeWorker {
             if unwanted_job {
                 self.remove(&version).await?;
                 continue;
+            }
+            if version.status == OptimizedVersionStatus::Ready && !wanted {
+                let since = version.unwanted_since.unwrap_or(now);
+                if version.unwanted_since.is_none() {
+                    self.storage
+                        .mark_optimized_version_unwanted(version.id, now)
+                        .await?;
+                }
+                let played_lately = version
+                    .last_used_at
+                    .is_some_and(|at| now - at < SWEEP_AFTER);
+                if now - since >= SWEEP_AFTER && !played_lately {
+                    tracing::info!(version = %version.id, "smart transcoding: sweeping up an unwanted copy");
+                    self.remove(&version).await?;
+                    continue;
+                }
             }
             known.insert(version.id);
             marked_waiting |= is_marked && version.status == OptimizedVersionStatus::Queued;

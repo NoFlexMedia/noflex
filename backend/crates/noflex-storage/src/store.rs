@@ -518,8 +518,17 @@ pub trait Storage: Send + Sync + 'static {
     async fn delete_device(&self, user: UserId, id: DeviceId) -> StorageResult<bool>;
 
     /// Queue a version, or re-prioritize one that's still waiting. A version
-    /// of the same media file and key in any other state is left alone.
+    /// of the same media file and key in any other state is left alone, except
+    /// that being planned means it's wanted, clearing its
+    /// [`OptimizedVersion::unwanted_since`].
     async fn enqueue_optimized_version(&self, version: &OptimizedVersion) -> StorageResult<()>;
+    /// Record that a plan didn't want this. An earlier `at` stands, so it reads as
+    /// the start of the stretch until the next enqueue clears it.
+    async fn mark_optimized_version_unwanted(
+        &self,
+        id: OptimizedVersionId,
+        at: OffsetDateTime,
+    ) -> StorageResult<()>;
     async fn get_optimized_version(
         &self,
         id: OptimizedVersionId,

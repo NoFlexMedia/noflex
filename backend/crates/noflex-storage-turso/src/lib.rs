@@ -870,6 +870,14 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.writer().await?;
         repo::optimized_versions::enqueue(&conn, version).await
     }
+    async fn mark_optimized_version_unwanted(
+        &self,
+        id: noflex_core::OptimizedVersionId,
+        at: OffsetDateTime,
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::optimized_versions::mark_unwanted(&conn, id, at).await
+    }
     async fn get_optimized_version(
         &self,
         id: noflex_core::OptimizedVersionId,

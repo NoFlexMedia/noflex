@@ -761,6 +761,8 @@ CREATE TABLE IF NOT EXISTS optimized_versions (
     created_at    TEXT NOT NULL,
     finished_at   TEXT,
     last_used_at  TEXT,
+    -- Since when no plan has wanted this; each plan that does clears it.
+    unwanted_since TEXT,
     UNIQUE (media_file_id, variant_key)
 );
 

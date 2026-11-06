@@ -3524,6 +3524,7 @@ async fn optimized_versions_queue_by_priority<S: Storage + ?Sized>(store: &S) {
         created_at: now,
         finished_at: None,
         last_used_at: None,
+        unwanted_since: None,
     };
     let later = version("later", 2);
     let sooner = version("sooner", 1);
@@ -3549,6 +3550,32 @@ async fn optimized_versions_queue_by_priority<S: Storage + ?Sized>(store: &S) {
             .len(),
         2
     );
+
+    // The stretch starts when it first goes unwanted, and being planned ends it.
+    let unwanted_since = async || {
+        store
+            .get_optimized_version(sooner.id)
+            .await
+            .expect("get")
+            .expect("version")
+            .unwanted_since
+            .map(OffsetDateTime::unix_timestamp)
+    };
+    let earlier = now - time::Duration::hours(1);
+    store
+        .mark_optimized_version_unwanted(sooner.id, earlier)
+        .await
+        .expect("unwanted");
+    store
+        .mark_optimized_version_unwanted(sooner.id, now)
+        .await
+        .expect("still unwanted");
+    assert_eq!(unwanted_since().await, Some(earlier.unix_timestamp()));
+    store
+        .enqueue_optimized_version(&version("sooner", 1))
+        .await
+        .expect("wanted again");
+    assert_eq!(unwanted_since().await, None);
 
     let claimed = store
         .claim_optimized_version()

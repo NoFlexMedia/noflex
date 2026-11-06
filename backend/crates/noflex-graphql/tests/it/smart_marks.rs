@@ -405,6 +405,7 @@ async fn prepared_versions_list_ready_titles_a_viewer_can_see() {
         created_at: now,
         finished_at: None,
         last_used_at: None,
+        unwanted_since: None,
     };
     let queued = version("av1-720p-1556k-av1main/aac2");
     let mut ready = version("copy-h264/aac2");
@@ -518,6 +519,7 @@ async fn an_administrator_sees_who_a_version_is_for_and_can_clear_it() {
         created_at: now,
         finished_at: None,
         last_used_at: None,
+        unwanted_since: None,
     };
     fixture
         .storage

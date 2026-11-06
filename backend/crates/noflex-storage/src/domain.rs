@@ -761,6 +761,9 @@ pub struct OptimizedVersion {
     pub created_at: OffsetDateTime,
     pub finished_at: Option<OffsetDateTime>,
     pub last_used_at: Option<OffsetDateTime>,
+    /// Since when nothing has wanted this finished copy. A copy left unwanted and
+    /// unplayed for a day is swept up.
+    pub unwanted_since: Option<OffsetDateTime>,
 }
 
 #[async_graphql::ComplexObject]

@@ -666,6 +666,7 @@ async fn a_ready_version_offers_its_file_beside_its_playlist() {
         created_at: OffsetDateTime::now_utc(),
         finished_at: None,
         last_used_at: None,
+        unwanted_since: None,
     };
     f.store
         .enqueue_optimized_version(&version)

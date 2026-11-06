@@ -21,7 +21,7 @@ use crate::{
 
 const COLUMNS: &str = "id, media_file_id, variant_key, status, priority, plan_json, source_size, \
     source_mtime, progress, attempts, path, size_bytes, index_json, probe_json, error, \
-    created_at, finished_at, last_used_at";
+    created_at, finished_at, last_used_at, unwanted_since";
 
 fn status_to_text(status: OptimizedVersionStatus) -> &'static str {
     match status {
@@ -75,6 +75,7 @@ fn row_to_version(row: &turso::Row) -> StorageResult<OptimizedVersion> {
         created_at: text_to_dt(col_text(&get(15)?)?)?,
         finished_at: time(col_text_opt(&get(16)?)?)?,
         last_used_at: time(col_text_opt(&get(17)?)?)?,
+        unwanted_since: time(col_text_opt(&get(18)?)?)?,
     })
 }
 
@@ -92,6 +93,24 @@ async fn select(
     Ok(out)
 }
 
+pub(crate) async fn mark_unwanted(
+    conn: &Connection,
+    id: OptimizedVersionId,
+    at: OffsetDateTime,
+) -> StorageResult<()> {
+    conn.execute(
+        "UPDATE optimized_versions SET unwanted_since = ?2 \
+         WHERE id = ?1 AND unwanted_since IS NULL",
+        vec![
+            Value::Blob(uuid_to_blob(id.into_uuid())),
+            Value::Text(dt_to_text(at)?),
+        ],
+    )
+    .await
+    .map_err(map_turso)?;
+    Ok(())
+}
+
 pub(crate) async fn enqueue(conn: &Connection, version: &OptimizedVersion) -> StorageResult<()> {
     // Re-planning only moves a waiting job up or down the queue, but always says
     // who it's for now. The key fixes the contents, so the rest of the plan can't
@@ -101,6 +120,7 @@ pub(crate) async fn enqueue(conn: &Connection, version: &OptimizedVersion) -> St
             plan_json, source_size, source_mtime, created_at) \
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) \
          ON CONFLICT(media_file_id, variant_key) DO UPDATE SET plan_json = excluded.plan_json, \
+            unwanted_since = NULL, \
             priority = CASE WHEN optimized_versions.status = 'queued' \
                 THEN excluded.priority ELSE optimized_versions.priority END",
         vec![

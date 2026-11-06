@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+fragment SmartMarkFields on SmartTranscodeMark {
+  work { id kind title year parentIndex indexNumber images { kind url } }
+  device { id name }
+  markedAt
+  state
+  progress
+}
+
+query MySmartMarks {
+  mySmartTranscodeMarks { ...SmartMarkFields }
+}
+
+# A title's own marks, and whether marking it for "my devices" would reach any.
+query SmartMarksForWork($work: ID!) {
+  mySmartTranscodeMarks(workId: $work) { device { id } }
+  myDevices { id smartTranscode }
+}
+
+mutation MarkForSmartTranscoding($work: ID!, $device: ID) {
+  markForSmartTranscoding(workId: $work, deviceId: $device) { ...SmartMarkFields }
+}
+
+mutation UnmarkForSmartTranscoding($work: ID!, $device: ID) {
+  unmarkForSmartTranscoding(workId: $work, deviceId: $device) { markedAt }
+}

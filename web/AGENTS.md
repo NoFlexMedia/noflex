@@ -39,4 +39,6 @@ npm run build   # writes build/, which the next noflex-server build embeds
 - The CSP is strict (`style-src 'self'`, no `data:`). Never write static `style="…"` attributes — use `style:prop={…}` directives, which Svelte applies through the CSSOM.
 - Auth and refresh tokens live in `sessionStorage`, never `localStorage`, and are sent only to same-origin routes. Linked servers' keys stay in memory and go only to the server that issued them.
 - API responses use paths relative to the server that sent them. Pass any URL you render through `mediaUrl` (`$lib/tokens.js`), so it works while a linked server is active.
+- A smart transcode mark is a hard signal to prepare a title next (`markForSmartTranscoding`). "Mark for smart transcoding" is for every device with it on, "Smart transcode for this device" for this browser alone; the queue is Account → Smart transcoding (`SmartTranscodingTab`). An offline copy is different: the original repackaged as one file to save.
+- A dropdown's `SubContent` goes in its own `DropdownMenu.Portal`, or the parent menu's `overflow` clips it to nothing.
 - Layouts must work at phone width; check the mobile nav and sheets when you change a page.

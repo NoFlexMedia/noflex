@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
   import Check from "phosphor-svelte/lib/Check";
+  import Sparkle from "phosphor-svelte/lib/Sparkle";
   import CheckCircle from "phosphor-svelte/lib/CheckCircle";
   import Heart from "phosphor-svelte/lib/Heart";
   import Books from "phosphor-svelte/lib/Books";
@@ -21,8 +22,14 @@
   import Star from "phosphor-svelte/lib/Star";
   import { goto } from "$app/navigation";
   import {
+    cache,
     CollectionMenuStore,
+    CreateCollectionStore,
     CreateExportJobStore,
+    CreatePlaylistStore,
+    MarkForSmartTranscodingStore,
+    SmartMarksForWorkStore,
+    UnmarkForSmartTranscodingStore,
     CreateWatchRoomStore,
     MarkPlayedStore,
     MarkUnplayedStore,
@@ -40,6 +47,7 @@
   import { ambientColor, pickImage } from "$lib/images.js";
   import { fetchChildren, player, playWork, subtitleFor } from "$lib/playback.svelte.js";
   import { app } from "$lib/session.svelte.js";
+  import { deviceId } from "$lib/device.js";
   import { servers } from "$lib/servers.svelte.js";
   import { audioChoices, preferredAudio, preferredSubtitle, subtitleChoices } from "$lib/tracks.js";
   import { ambient, attempt, toast } from "$lib/ui.svelte.js";
@@ -50,6 +58,7 @@
   import Children from "$components/detail/Children.svelte";
   import Credits from "$components/detail/Credits.svelte";
   import TechSpecs from "$components/detail/TechSpecs.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
   import Menu from "$components/ui/Menu.svelte";
   import MenuItem from "$components/ui/MenuItem.svelte";
   import Select from "$components/ui/Select.svelte";
@@ -101,6 +110,57 @@
   let grandparentId = $derived(parentWork?.parentId);
   $effect(() => { if (grandparentId) fetchQuery(grandparent, { id: grandparentId }); });
   let grandparentWork = $derived(grandparentId && $grandparent.data?.work?.id === grandparentId ? $grandparent.data.work : null);
+
+  // ---- smart transcoding marks --------------------------------------------
+  // Marks live on the home server, like the devices they name.
+  const smartMarks = new SmartMarksForWorkStore();
+  const markForSmart = new MarkForSmartTranscodingStore();
+  const unmarkForSmart = new UnmarkForSmartTranscodingStore();
+  const thisDevice = deviceId();
+  let canMark = $derived(!servers.active && ["MOVIE", "SERIES", "SEASON", "EPISODE"].includes(work?.kind));
+  let workMarks = $derived($smartMarks.data?.mySmartTranscodeMarks ?? []);
+  let markedForDevices = $derived(workMarks.some((mark) => !mark.device));
+  let markedForHere = $derived(workMarks.some((mark) => mark.device?.id === thisDevice));
+  $effect(() => { if (canMark && work?.id) fetchQuery(smartMarks, { work: work.id }); });
+
+  async function toggleMark(device) {
+    const marked = device ? markedForHere : markedForDevices;
+    const store = marked ? unmarkForSmart : markForSmart;
+    if ((await attempt(() => store.mutate({ work: work.id, device }))) === null) return;
+    refetch(smartMarks);
+    if (marked) { toast("Unmarked", "success"); return; }
+    const view = { label: "View", run: () => goto("/account?tab=smart") };
+    if (device) toast("It’ll be ready for this device next", "success", view);
+    else if ($smartMarks.data?.myDevices.some((known) => known.smartTranscode)) toast("Marked. It’ll be ready next on your devices with smart transcoding on", "success", view);
+    else toast("Marked, but none of your devices has smart transcoding on yet", "info", { label: "Choose devices", run: () => goto("/account?tab=devices") });
+  }
+
+  // ---- new playlist or collection, with this title in it ------------------
+  const createPlaylist = new CreatePlaylistStore();
+  const createCollection = new CreateCollectionStore();
+  let newList = $state({ open: false, kind: "playlist", title: "", saving: false });
+
+  async function saveNewList(event) {
+    event.preventDefault();
+    newList.saving = true;
+    const title = newList.title.trim();
+    const library = libraryId;
+    const isCollection = newList.kind === "collection";
+    const done = await attempt(async () => {
+      if (isCollection) {
+        const { data } = await createCollection.mutate({ library, title, overview: null });
+        // Collection lists are per library; only that library's take the new one.
+        const record = cache.get("Collection", { id: data.createCollection.id });
+        for (const name of ["Collections", "CollectionMenu"]) cache.list(name).when({ must: { libraryId: library } }).append(record);
+        await addToCollection(data.createCollection.id, work.id);
+      } else {
+        const { data } = await createPlaylist.mutate({ title, overview: null });
+        await addPlaylistItem.mutate({ id: data.createPlaylist.id, items: [{ kind: "WORK", id: work.id }] });
+      }
+    }, `Added to “${title}”`);
+    newList.saving = false;
+    if (done !== null) { newList.open = false; refetch(playlists); }
+  }
 
   const playlists = new PlaylistMenuStore();
   $effect(() => { fetchQuery(playlists); });
@@ -311,23 +371,35 @@
           <Tip text={userData?.played ? "Mark unwatched" : "Mark watched"}>
             {#snippet children(props)}<button {...props} class="icon-btn glass lg-icon watched-btn" class:on={userData?.played} aria-pressed={userData?.played} aria-label="Watched" onclick={togglePlayed}>{#key playedPop}<span class="burst accent" class:go={playedPop > 0}></span><span class="pop" class:go={playedPop > 0}>{#if userData?.played}<CheckCircle size={20} />{:else}<Check size={20} />{/if}</span>{/key}</button>{/snippet}
           </Tip>
-          <Menu width={250} align="start">
+          <Menu width={290} align="start">
             {#snippet trigger(props)}<button {...props} class="icon-btn glass lg-icon" aria-label="More actions"><DotsThree size={20} weight="bold" /></button>{/snippet}
             <DropdownMenu.Sub>
               <DropdownMenu.SubTrigger class="nf-menu-item"><CardsThree size={17} /><span>Add to playlist</span><CaretRight size={15} /></DropdownMenu.SubTrigger>
-              <DropdownMenu.SubContent class="nf-menu" sideOffset={6}>
+              <DropdownMenu.Portal>
+              <DropdownMenu.SubContent class="nf-menu" sideOffset={6} collisionPadding={12} style="--menu-w: 240px">
                 {#each $playlists.data?.playlists.edges.map((edge) => edge.node) ?? [] as playlist (playlist.id)}<MenuItem onSelect={() => addToPlaylist(playlist)}>{playlist.title}</MenuItem>{:else}<div class="nf-menu-label">No playlists yet</div>{/each}
                 <div class="nf-menu-sep"></div>
-                <MenuItem icon={Plus} href="/collections?tab=playlists">New playlist…</MenuItem>
+                <MenuItem icon={Plus} onSelect={() => (newList = { open: true, kind: "playlist", title: "", saving: false })}>New playlist…</MenuItem>
               </DropdownMenu.SubContent>
+              </DropdownMenu.Portal>
             </DropdownMenu.Sub>
             {#if manageable}
               <DropdownMenu.Sub>
                 <DropdownMenu.SubTrigger class="nf-menu-item"><Books size={17} /><span>Add to collection</span><CaretRight size={15} /></DropdownMenu.SubTrigger>
-                <DropdownMenu.SubContent class="nf-menu" sideOffset={6}>
+                <DropdownMenu.Portal>
+                <DropdownMenu.SubContent class="nf-menu" sideOffset={6} collisionPadding={12} style="--menu-w: 240px">
                   {#each $collections.data?.collections.edges.map((edge) => edge.node) ?? [] as collection (collection.id)}<MenuItem onSelect={() => addToLibraryCollection(collection)}>{collection.title}</MenuItem>{:else}<div class="nf-menu-label">No collections in this library</div>{/each}
+                  <div class="nf-menu-sep"></div>
+                  <MenuItem icon={Plus} onSelect={() => (newList = { open: true, kind: "collection", title: "", saving: false })}>New collection…</MenuItem>
                 </DropdownMenu.SubContent>
+                </DropdownMenu.Portal>
               </DropdownMenu.Sub>
+            {/if}
+            {#if canMark}
+              <div class="nf-menu-sep"></div>
+              <MenuItem icon={markedForDevices ? Check : Sparkle} onSelect={() => toggleMark(null)}>Mark for smart transcoding</MenuItem>
+              {#if thisDevice}<MenuItem icon={markedForHere ? Check : Sparkle} onSelect={() => toggleMark(thisDevice)}>Smart transcode for this device</MenuItem>{/if}
+              <div class="nf-menu-sep"></div>
             {/if}
             {#if !isContainer}
               <MenuItem icon={Broadcast} disabled={!mediaId} onSelect={createRoom}>Start a watch room</MenuItem>
@@ -410,6 +482,16 @@
 
     <Attributions attributions={work.attributions} />
   </div>
+
+  <Dialog bind:open={newList.open} title={newList.kind === "collection" ? "New collection" : "New playlist"} description="“{work.title}” goes in it." width={460}>
+    <form id="new-list" class="stack" onsubmit={saveNewList}>
+      <label class="field">Title<input bind:value={newList.title} required placeholder={newList.kind === "collection" ? "The Criterion shelf" : "Sunday night"} /></label>
+    </form>
+    {#snippet footer()}
+      <button class="btn ghost" onclick={() => (newList.open = false)}>Cancel</button>
+      <button class="btn primary" form="new-list" disabled={newList.saving || !newList.title.trim()}>{#if newList.saving}<span class="spinner sm"></span>{/if}Create</button>
+    {/snippet}
+  </Dialog>
 
   {#if manageable}
     <AdminSheet bind:open={adminOpen} {work} {edition} media={mediaFile} onremoved={() => { refetch(detail); refetch(media); }} />

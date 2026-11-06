@@ -229,7 +229,7 @@
     <section class="panel wide" style:--i={2}>
       <header class="panel-head">
         <span class="panel-icon"><Devices size={19} /></span>
-        <div><h2>Smart transcoding</h2><p>The server can prepare what you’re likely to watch next while it’s idle, so playback starts without a live transcode</p></div>
+        <div><h2>Smart transcoding</h2><p>For these devices, the server prepares what you’re likely to watch next while it’s idle, so playback starts without a live transcode, and <a class="inline" href="/account?tab=smart">what you’ve marked</a> before anything else</p></div>
       </header>
       {#if devices.length}
         <ul class="list smart-devices">
@@ -309,6 +309,7 @@
   .seen code { color: var(--text-3); font-size: 0.78rem; }
   .seen time { color: var(--text-3); font-size: 0.83rem; }
   .keys li { padding-block: 10px; }
+  a.inline { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
   .inline-form { display: flex; gap: 10px; align-items: flex-end; margin-top: 14px; }
   .inline-form .grow { flex: 1; }
   .inline-form .btn { height: 42px; }

@@ -582,7 +582,7 @@
     <button class="icon-btn glass" aria-label="Close player" onclick={close}><ArrowLeft size={20} /></button>
     <div class="title">
       <strong>{playback.title}</strong>
-      {#if playback.subtitle || playback.room}<small>{#if playback.room}<span class="dot live"></span>Watch room · {playback.room.isHost ? "you’re hosting" : "synced to host"}{#if playback.subtitle} · {/if}{/if}{playback.subtitle ?? ""}</small>{/if}
+      {#if playback.subtitle || playback.room}<small>{#if playback.room}<span class="dot live"></span>Watch room · {playback.room.isHost ? "you’re hosting" : "synced to host"}{#if playback.subtitle}{" · "}{/if}{/if}{playback.subtitle ?? ""}</small>{/if}
     </div>
     <button class="route" aria-pressed={infoOpen} aria-label="Playback info" onclick={() => (infoOpen = !infoOpen)}>{playback.route === "TRANSCODE" ? "Adaptive" : playback.route === "OPTIMIZED" ? "Optimized" : "Direct"}</button>
   </header>

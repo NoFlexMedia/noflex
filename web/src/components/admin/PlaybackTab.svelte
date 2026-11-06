@@ -88,7 +88,7 @@
             <span class="avatar">{stream.user.name.slice(0, 2).toUpperCase()}</span>
             <div class="who">
               <h3>{#if stream.work}<a href="/works/{stream.work.parentId ?? stream.work.id}">{stream.work.title}</a>{:else}{stream.channelId ? "Live TV channel" : "Unknown title"}{/if}{#if stream.work?.year}<span class="faint year">({stream.work.year})</span>{/if}</h3>
-              <p>{stream.user.name}{stream.device ? ` · ${stream.device}` : ""} · started {ago(stream.startedAt)}{#if idle(stream)} · <span class="warn-text">idle {ago(stream.lastActiveAt)}</span>{/if}</p>
+              <p>{stream.user.name}{stream.device ? ` · ${stream.device}` : ""} · started {ago(stream.startedAt)}{#if idle(stream)}{" · "}<span class="warn-text">idle {ago(stream.lastActiveAt)}</span>{/if}</p>
             </div>
             <span class="spacer"></span>
             <span class="state {planTone(d.plan)}">{PLAN[d.plan] ?? titleCase(d.plan)}</span>

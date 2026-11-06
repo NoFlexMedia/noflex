@@ -256,7 +256,7 @@
       </div>
 
       <section class="info">
-        <p class="eyebrow">{titleCase(work.kind)}{#if work.metadataStatus === "UNCONFIRMED"} · <span class="unconfirmed">Unconfirmed match</span>{/if}</p>
+        <p class="eyebrow">{titleCase(work.kind)}{#if work.metadataStatus === "UNCONFIRMED"}{" · "}<span class="unconfirmed">Unconfirmed match</span>{/if}</p>
         {#if pickImage(work.images, "logo")}
           <h1 class="logo"><span class="sr-only">{work.title}</span><Artwork {work} kind="logo" width={460} rounded={false} /></h1>
         {:else}

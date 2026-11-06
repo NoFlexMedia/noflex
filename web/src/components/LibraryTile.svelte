@@ -40,7 +40,7 @@
   <div class="text">
     <span class="glyph"><Glyph size={20} /></span>
     <h2>{library.name}</h2>
-    <p>{titleCase(library.kind)}{#if library.config?.watchEnabled} · <span class="watching"><span class="dot on"></span>Watching</span>{/if}</p>
+    <p>{titleCase(library.kind)}{#if library.config?.watchEnabled}{" · "}<span class="watching"><span class="dot on"></span>Watching</span>{/if}</p>
   </div>
   <div class="fan" aria-hidden="true">
     {#each posters as work, index (work.id)}

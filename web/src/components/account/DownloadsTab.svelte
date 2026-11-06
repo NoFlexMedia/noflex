@@ -105,7 +105,7 @@
           {#if job.status === "FAILED"}
             <p class="error">{job.error || "The encoder stopped unexpectedly."}</p>
           {:else}
-            <p>Requested {ago(job.createdAt)}{#if job.finishedAt} · finished {date(job.finishedAt, { dateStyle: "medium", timeStyle: "short" })}{/if}</p>
+            <p>Requested {ago(job.createdAt)}{#if job.finishedAt}{" · "}finished {date(job.finishedAt, { dateStyle: "medium", timeStyle: "short" })}{/if}</p>
           {/if}
           {#if ACTIVE.includes(job.status)}
             <div class="progress">

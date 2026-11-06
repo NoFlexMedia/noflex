@@ -72,13 +72,15 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 
 ## Rendering
 
-- **No DOM, no CSS.** `<view>` and `<text>`, in a 1920×1080 space the renderer scales. Colors are `0xRRGGBBAA` numbers from `theme.ts`.
+- **No DOM, no CSS.** `<view>` and `<text>`, in a 1920×1080 space fitted whole inside the window (`lib/viewport.ts`). Colors are `0xRRGGBBAA` numbers from `theme.ts`.
+- **The canvas's size is fixed at startup**, so the `browser` target reloads on resize. A window that isn't 16:9 gets bands, drawn by centering the root node: `useMouse` reads window coordinates, so moving the canvas would offset every hit.
+- **A flex row doesn't lay out when a child changes width.** `Button` asks its parent to, for labels that change.
 - **The renderer only loads textures it would draw.** A node at `alpha={0}` never fires `loaded`, so anything fading in on load starts at `0.001` (`Artwork`, `Backdrop`).
 - **Text draws after quads**, deferred until a quad with a non-zero `zIndex` flushes it. So whatever covers text needs `zIndex` on the quad that does the covering, not on a parent (`Sheet`, `Nav`). Otherwise text shows through.
 - **Anything moving keeps the renderer drawing every frame.** So no shimmer on skeletons, the status rings don't spin, and `Spinner` mounts only while waiting and after a delay. Let an idle TV idle.
 - **SDF text only**, in atlases covering Latin, Latin Extended-A, Greek and Cyrillic. **CJK, Arabic, Hebrew and Indic titles don't render.** One atlas can't hold them, and there's no Canvas2D text path on tvOS. Fixing it means per-script atlases or drawing those strings to textures on hosts that can.
 - Atlases and sprites are generated and committed (`just tv assets`). Inter's `cv11`/`ss01`/`ss03` aren't applied: the generator can't select stylistic sets.
-- `linearGradient` needs `stops`; use `gradient(colors, toward.down)` from `theme.ts`. Angle 0 runs top to bottom, which isn't what the shader's source suggests.
+- `linearGradient` needs `stops`; use `gradient(colors, toward.down)` from `theme.ts`. Directions are the shader's: π/2 runs right to left, so use `toward`, not a bare angle.
 - Ask the server for the size a box needs (`sized`). Texture memory is the budget on a TV.
 
 ## Focus and keys
@@ -142,7 +144,7 @@ Administration stays in the web client and the apps; the status dot (`ServerStat
 
 - **Watch together:** needs a WebSocket, which NativeScript's runtime lacks.
 - **Linked servers:** rails and search stay on the home server.
-- **External login:** needs a browser to redirect through. There's no device-code flow in the API yet, which would also spare typing a password on a remote.
+- **External login:** needs a browser to redirect through. The API's device-PIN flow (`createDevicePin`, `pollDevicePin`) isn't used yet; it would also spare typing a password on a remote.
 - **Live TV's programme grid and recording rules:** channels with what's on now, and tuning in.
 - **Photos:** a title page with the image; no slideshow.
 - **Downloads and offline copies, library management, filters, per-title admin.**

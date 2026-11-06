@@ -3,6 +3,7 @@
 import { Match, Show, Switch, type ParentProps } from "solid-js";
 import { useFocusManager, useMouse } from "@solidtv/solid/primitives";
 import type { KeyMap } from "@solidtv/solid";
+import { originX, originY } from "$lib/viewport.js";
 import { SCREEN } from "../theme.js";
 import { host } from "$lib/host.js";
 import { player } from "$lib/playback.js";
@@ -40,7 +41,7 @@ export default function App(props: ParentProps) {
   return (
     // Whatever nothing else took: Home's navigation, or a screen with none, like signing in.
     // Returning false too, so tvOS's system takes the press where there's no `exit`.
-    <view width={SCREEN.width} height={SCREEN.height} onBack={() => { host.exit?.(); return false; }}>
+    <view x={originX} y={originY} width={SCREEN.width} height={SCREEN.height} onBack={() => { host.exit?.(); return false; }}>
       {/* Hidden rather than unmounted under the player: Back lands on the same card. */}
       <view width={SCREEN.width} height={SCREEN.height} alpha={player.current ? 0 : 1} forwardFocus={1}>
         <Backdrop />

@@ -9,7 +9,9 @@ import { Rounded, RoundedWithBorder, RoundedWithBorderAndShadow, RoundedWithShad
 import { fonts } from "./fonts.js";
 import { color, ease, SCREEN, type as typeScale } from "./theme.js";
 import { host } from "$lib/host.js";
+import { player } from "$lib/playback.js";
 import { start } from "$lib/session.js";
+import { appHeight, appWidth, scale } from "$lib/viewport.js";
 import App from "$components/App.js";
 import Shell from "$components/Shell.js";
 import Account from "$pages/Account.js";
@@ -44,11 +46,10 @@ Config.fontWeightAlias = { 400: "", regular: "", semibold: 600, bold: 700 };
 // A press a handler took stays with the app; tvOS gives the rest to the system.
 Config.preventDefaultOnHandledKeys = __TARGET__ === "nativescript";
 
-// The 1080p design space scales to the window; never draws more pixels than the panel has.
-const scale = (typeof window !== "undefined" && window.innerHeight ? window.innerHeight : SCREEN.height) / SCREEN.height;
+// Never draws more pixels than the panel has.
 Config.rendererOptions = {
-  appWidth: SCREEN.width,
-  appHeight: SCREEN.height,
+  appWidth,
+  appHeight,
   deviceLogicalPixelRatio: scale,
   devicePhysicalPixelRatio: scale >= 1 ? 1 : (typeof window !== "undefined" && window.devicePixelRatio) || 1,
   // 0: the canvas clears to transparent, which is how the video shows through it.
@@ -58,6 +59,16 @@ Config.rendererOptions = {
   imageDecodeConcurrency: typeof createImageBitmap === "function" ? 4 : 2,
   boundsMargin: 400,
 };
+
+// The renderer fixes the canvas's size at startup, so a resized window starts over on
+// the same page. Only here: TVs don't resize, and one that reports it mustn't reload.
+if (__TARGET__ === "browser") {
+  let resizing: ReturnType<typeof setTimeout> | undefined;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizing);
+    resizing = setTimeout(() => { if (!player.current) location.reload(); }, 300);
+  });
+}
 
 // A frame first, so a slow engine paints the page's background before the renderer starts up.
 requestAnimationFrame(() => {

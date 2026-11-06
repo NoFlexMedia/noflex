@@ -30,6 +30,7 @@ npm run build   # writes build/, which the next noflex-server build embeds
 - Every file starts with an SPDX header — `<!-- SPDX-License-Identifier: AGPL-3.0-only -->` in `.svelte`.
 - GraphQL documents are validated against the server's committed SDL snapshot (`backend/crates/noflex-graphql/tests/snapshots/schema.graphql`). A backend schema change regenerates that snapshot first; then update documents here.
 - Home lists 24 `WorkFull`s, so each field there costs 24 times over. What only the title page draws goes on `WorkDetail` instead, as `attributions` does.
+- `Artwork` handles a title still indexing, and asks `lib/indexing.svelte.ts` to watch it. One `worksById` covers the screen, and the answer goes through the normalized cache, so nothing else has to refetch. A linked server's title isn't followed.
 - Wrap user-triggered mutations in `attempt(...)` so failures surface as toasts and successes can confirm with one.
 - **Removals are declarative.** Select `id @Session_delete` on what the mutation returns, or `...Preferences_remove` for a type keyed on something else, and tag the query's field with `@list`; a connection needs `edges { node }` for that. Refetch only where a row leaving mid-action has side effects: `leaveWatchRoom` would otherwise re-trigger the page's auto-join.
 - A list returned by a mutation doesn't update a query: Houdini stores it under the mutation's own key. Only records it can key update, and `cache.get(...).delete()` repaints no list without `@list` (`Session` rows stayed on screen until a reload).

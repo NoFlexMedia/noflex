@@ -10,11 +10,12 @@
   import X from "phosphor-svelte/lib/X";
   import { AdminTranscoderStore, graphql } from "$houdini";
   import { clientCapabilities } from "$lib/codecSupport.js";
-  import { pixelTier, profileName } from "$lib/format.js";
+  import { bytes, pixelTier, profileName } from "$lib/format.js";
   import { failure, fetchQuery, refetch } from "$lib/graphql.js";
   import { attempt, poll } from "$lib/ui.svelte.js";
   import State from "$components/State.svelte";
   import Select from "$components/ui/Select.svelte";
+  import { ago } from "$components/account/relative.js";
   import { codec } from "./status/fmt.js";
 
   const transcoder = new AdminTranscoderStore();
@@ -22,7 +23,7 @@
 
   const versions = graphql(`
     query AdminOptimizedVersions {
-      optimizedVersions { id variantKey status progress sizeBytes error }
+      optimizedVersions { id variantKey status progress sizeBytes error description lastUsedAt finishedAt work { id title } }
     }
   `);
   $effect(() => { fetchQuery(versions); });
@@ -30,7 +31,10 @@
   let versionList = $derived($versions.data?.optimizedVersions ?? []);
   let versionCount = (status) => versionList.filter((version) => version.status === status).length;
   let preparedGb = $derived(versionList.reduce((total, version) => total + (version.status === "READY" ? version.sizeBytes ?? 0 : 0), 0) / 1024 ** 3);
-  let activeVersions = $derived(versionList.filter((version) => version.status === "RUNNING" || version.status === "FAILED"));
+  // What needs a look first, then the newest of what's done.
+  const STATUS_ORDER = { RUNNING: 0, FAILED: 1, QUEUED: 2, READY: 3 };
+  const STATUS_LABEL = { RUNNING: "Preparing", FAILED: "Failed", QUEUED: "In the queue", READY: "Ready" };
+  let sortedVersions = $derived([...versionList].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || String(b.finishedAt ?? "").localeCompare(String(a.finishedAt ?? ""))));
 
   const smart = graphql(`
     query AdminSmartTranscoding {
@@ -158,15 +162,24 @@
           <div class="smart-actions"><button class="btn sm primary" disabled={saving}>{#if saving}<span class="spinner sm"></span>{/if}Save</button></div>
         </form>
       {/if}
-      {#if activeVersions.length}
+      {#if sortedVersions.length}
         <ul class="versions">
-          {#each activeVersions as version (version.id)}
+          {#each sortedVersions as version (version.id)}
             <li>
-              <code>{version.variantKey}</code>
-              {#if version.status === "RUNNING"}<span>{Math.round(version.progress * 100)}%</span>{:else}<span class="failed"><WarningCircle size={15} />{version.error ?? "Failed"}</span>{/if}
+              <div class="version-main">
+                {#if version.work}<a href="/works/{version.work.id}">{version.work.title}</a>{:else}<span>A removed title</span>{/if}
+                <small title={version.variantKey}>{version.description}</small>
+                {#if version.status === "FAILED"}<small class="failed"><WarningCircle size={14} />{version.error ?? "Failed"}</small>{/if}
+              </div>
+              <div class="version-side">
+                <span class="state" class:accent={version.status === "RUNNING"}>{version.status === "RUNNING" ? `${STATUS_LABEL.RUNNING} ${Math.round(version.progress * 100)}%` : STATUS_LABEL[version.status]}</span>
+                {#if version.status === "READY"}<small class="tabular">{bytes(version.sizeBytes)} · {version.lastUsedAt ? `last played ${ago(version.lastUsedAt)}` : "not played yet"}</small>{/if}
+              </div>
             </li>
           {/each}
         </ul>
+      {:else}
+        <p class="muted-note">Nothing prepared yet. Versions appear here once viewers mark titles or turn smart transcoding on for a device.</p>
       {/if}
     </section>
 
@@ -281,10 +294,16 @@
   .smart-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px 20px; align-items: start; margin-bottom: 14px; }
   .smart-form .wide { grid-column: 1 / -1; }
   .smart-actions { grid-column: 1 / -1; }
-  .versions { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; font-size: 0.86rem; }
-  .versions li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; }
-  .versions code { overflow-wrap: anywhere; }
+  .versions { display: grid; gap: 2px; max-height: 440px; overflow-y: auto; list-style: none; margin: 0; padding: 0; font-size: 0.88rem; }
+  .versions li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 14px; padding: 9px 0; border-top: 1px solid var(--line); }
+  .versions li:first-child { border-top: 0; }
+  .version-main { display: grid; gap: 2px; min-width: 0; }
+  .version-main a { font-weight: 600; }
+  .version-main a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  .version-side { display: grid; justify-items: end; gap: 2px; }
+  .versions small { color: var(--text-3); font-size: 0.8rem; }
   .versions .failed { display: inline-flex; align-items: center; gap: 6px; color: var(--danger); }
+  .muted-note { color: var(--text-3); font-size: 0.86rem; }
   .tall { height: 220px; }
   .error { display: flex; align-items: flex-start; gap: 8px; color: var(--danger); font-size: 0.86rem; margin-bottom: 14px; }
   .error.warn { color: var(--warning); }

@@ -3,7 +3,8 @@
   import Check from "phosphor-svelte/lib/Check";
   import Sparkle from "phosphor-svelte/lib/Sparkle";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
-  import { MySmartMarksStore, UnmarkForSmartTranscodingStore } from "$houdini";
+  import { MySmartMarksStore, PreparedVersionsStore, UnmarkForSmartTranscodingStore } from "$houdini";
+  import { bytes } from "$lib/format.js";
   import { fetchQuery, refetch } from "$lib/graphql.js";
   import { subtitleFor } from "$lib/playback.svelte.js";
   import { attempt, poll } from "$lib/ui.svelte.js";
@@ -12,7 +13,8 @@
 
   const marks = new MySmartMarksStore();
   const unmark = new UnmarkForSmartTranscodingStore();
-  $effect(() => { fetchQuery(marks); });
+  const prepared = new PreparedVersionsStore();
+  $effect(() => { fetchQuery(marks); fetchQuery(prepared); });
 
   // [label, chip tone, what it means when that isn't obvious]
   const STATES = {
@@ -29,11 +31,17 @@
 
   let list = $derived($marks.data?.mySmartTranscodeMarks ?? []);
   let active = $derived(list.some((mark) => mark.state === "WAITING" || mark.state === "PREPARING"));
-  $effect(() => { if (active) { const store = marks; return poll(() => refetch(store), 5000); } });
+  let ready = $derived($prepared.data?.preparedVersions ?? []);
+  $effect(() => {
+    if (!active) return;
+    const [one, other] = [marks, prepared];
+    return poll(() => { refetch(one); refetch(other); }, 5000);
+  });
 
   async function remove(mark) {
     await attempt(() => unmark.mutate({ work: mark.work.id, device: mark.device?.id ?? null }), "Unmarked");
     refetch(marks);
+    refetch(prepared);
   }
 </script>
 
@@ -43,11 +51,12 @@
 
 {#if $marks.fetching && !$marks.data}
   <div class="marks" aria-busy="true">{#each Array(3) as _}<div class="skeleton mark-skel"></div>{/each}</div>
-{:else if !list.length}
+{:else if !list.length && !ready.length}
   <State icon={Sparkle} title="Nothing marked yet" message="Open a film or show, choose ••• → Mark for smart transcoding, and it’ll be ready before you sit down to watch.">
     <a class="btn sm" href="/">Browse your libraries</a>
   </State>
-{:else}
+{:else if list.length}
+  <h3 class="heading">Marked to watch next</h3>
   <ul class="marks stagger">
     {#each list as mark, index (`${mark.work.id}-${mark.device?.id ?? "all"}`)}
       {@const [label, tone, detail] = STATES[mark.state] ?? [mark.state, "", ""]}
@@ -74,7 +83,32 @@
   </ul>
 {/if}
 
+{#if ready.length}
+  <h3 class="heading">Ready to play</h3>
+  <p class="intro">Already prepared on this server, whoever or whatever asked for it, and used by any device it suits. Unmarking a title doesn’t remove it. The least recently played make room when space runs out.</p>
+  <ul class="marks">
+    {#each ready as version (version.id)}
+      <li class="panel mark">
+        <span class="icon ready"><Check size={19} /></span>
+        <div class="body">
+          <div class="title-row">
+            {#if version.work}
+              <a class="title" href="/works/{version.work.id}">{version.work.title}{#if version.work.kind === "EPISODE" && subtitleFor(version.work)}<small> {subtitleFor(version.work)}</small>{/if}</a>
+            {:else}
+              <span class="title">A removed title</span>
+            {/if}
+            <span class="chip">{bytes(version.sizeBytes)}</span>
+          </div>
+          <p>{[version.description, version.finishedAt ? `prepared ${ago(version.finishedAt)}` : "", version.lastUsedAt ? `last played ${ago(version.lastUsedAt)}` : "not played yet"].filter(Boolean).join(" · ")}</p>
+        </div>
+      </li>
+    {/each}
+  </ul>
+{/if}
+
 <style>
+  .heading { margin: 26px 0 12px; font-size: 0.98rem; font-weight: 600; }
+  .heading:first-of-type { margin-top: 0; }
   .intro { max-width: 720px; margin-bottom: 20px; color: var(--text-2); font-size: 0.92rem; line-height: 1.5; }
   .intro a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
   .marks { display: grid; gap: 10px; max-width: 920px; }

@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
   import CaretDown from "phosphor-svelte/lib/CaretDown";
+  import Sparkle from "phosphor-svelte/lib/Sparkle";
   import ClockCounterClockwise from "phosphor-svelte/lib/ClockCounterClockwise";
   import Devices from "phosphor-svelte/lib/Devices";
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
@@ -48,6 +49,7 @@
     <div class="nf-menu-label">{app.viewer.name} · {titleCase(app.viewer.role)}</div>
     <MenuItem icon={User} href="/account">Account</MenuItem>
     <MenuItem icon={Devices} href="/account?tab=devices">Devices & keys</MenuItem>
+    <MenuItem icon={Sparkle} href="/account?tab=smart">Smart transcoding</MenuItem>
     <MenuItem icon={ClockCounterClockwise} href="/account?tab=history">Watch history</MenuItem>
     {#if app.viewer.isAdmin}<MenuItem icon={ShieldCheck} href="/admin">Administration</MenuItem>{/if}
     <div class="nf-menu-sep"></div>

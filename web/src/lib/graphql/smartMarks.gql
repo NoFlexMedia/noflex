@@ -12,9 +12,20 @@ query MySmartMarks {
   mySmartTranscodeMarks { ...SmartMarkFields }
 }
 
+query PreparedVersions {
+  preparedVersions {
+    id
+    description
+    sizeBytes
+    finishedAt
+    lastUsedAt
+    work { id kind title year parentIndex indexNumber }
+  }
+}
+
 # A title's own marks, and whether marking it for "my devices" would reach any.
 query SmartMarksForWork($work: ID!) {
-  mySmartTranscodeMarks(workId: $work) { device { id } }
+  mySmartTranscodeMarks(workId: $work) { device { id } state progress }
   myDevices { id smartTranscode }
 }
 

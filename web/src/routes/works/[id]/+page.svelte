@@ -129,6 +129,15 @@
   let workMarks = $derived($smartMarks.data?.mySmartTranscodeMarks ?? []);
   let markedForDevices = $derived(workMarks.some((mark) => !mark.device));
   let markedForHere = $derived(workMarks.some((mark) => mark.device?.id === thisDevice));
+  const MARK_STATE = { WAITING: "In the queue", READY: "Ready", NOT_NEEDED: "Plays as it is", TOO_LARGE: "Too large", NO_DEVICES: "No devices", NO_SPACE: "Waiting for space", FAILED: "Failed", DISABLED: "Off on this server" };
+  const markState = (mark) => (!mark ? "" : mark.state === "PREPARING" ? `Preparing ${Math.round(mark.progress * 100)}%` : MARK_STATE[mark.state] ?? "");
+  let stateForDevices = $derived(markState(workMarks.find((mark) => !mark.device)));
+  let stateForHere = $derived(markState(workMarks.find((mark) => mark.device?.id === thisDevice)));
+  $effect(() => {
+    if (!workMarks.some((mark) => mark.state === "WAITING" || mark.state === "PREPARING")) return;
+    const store = smartMarks;
+    return poll(() => refetch(store), 5000);
+  });
   $effect(() => { if (canMark && work?.id) fetchQuery(smartMarks, { work: work.id }); });
 
   async function toggleMark(device) {
@@ -405,8 +414,8 @@
             {/if}
             {#if canMark}
               <div class="nf-menu-sep"></div>
-              <MenuItem icon={markedForDevices ? Check : Sparkle} onSelect={() => toggleMark(null)}>Mark for smart transcoding</MenuItem>
-              {#if thisDevice}<MenuItem icon={markedForHere ? Check : Sparkle} onSelect={() => toggleMark(thisDevice)}>Smart transcode for this device</MenuItem>{/if}
+              <MenuItem icon={markedForDevices ? Check : Sparkle} onSelect={() => toggleMark(null)}>Mark for smart transcoding{#if stateForDevices} · {stateForDevices}{/if}</MenuItem>
+              {#if thisDevice}<MenuItem icon={markedForHere ? Check : Sparkle} onSelect={() => toggleMark(thisDevice)}>Smart transcode for this device{#if stateForHere} · {stateForHere}{/if}</MenuItem>{/if}
               <div class="nf-menu-sep"></div>
             {/if}
             {#if !isContainer}

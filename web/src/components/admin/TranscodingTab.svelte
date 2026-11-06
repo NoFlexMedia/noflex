@@ -11,9 +11,10 @@
   import { AdminTranscoderStore, graphql } from "$houdini";
   import { clientCapabilities } from "$lib/codecSupport.js";
   import { bytes, pixelTier, profileName } from "$lib/format.js";
-  import { failure, fetchQuery, refetch } from "$lib/graphql.js";
+  import { failure, fetchQuery, refetch, request } from "$lib/graphql.js";
   import { attempt, poll } from "$lib/ui.svelte.js";
   import State from "$components/State.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
   import Select from "$components/ui/Select.svelte";
   import { ago } from "$components/account/relative.js";
   import { codec } from "./status/fmt.js";
@@ -21,20 +22,89 @@
   const transcoder = new AdminTranscoderStore();
   $effect(() => { fetchQuery(transcoder); });
 
+  const PAGE_SIZE = 25;
   const versions = graphql(`
-    query AdminOptimizedVersions {
-      optimizedVersions { id variantKey status progress sizeBytes error description lastUsedAt finishedAt work { id title } }
+    query AdminOptimizedVersions($after: String) @cache(policy: NetworkOnly) {
+      optimizedVersionStats { ready queued running failed readyBytes }
+      optimizedVersions(first: 25, after: $after) {
+        nodes { id variantKey status progress sizeBytes error description lastUsedAt finishedAt work { id title } }
+        pageInfo { hasNextPage endCursor }
+      }
     }
   `);
-  $effect(() => { fetchQuery(versions); });
-  $effect(() => poll(() => refetch(versions), 5000));
-  let versionList = $derived($versions.data?.optimizedVersions ?? []);
-  let versionCount = (status) => versionList.filter((version) => version.status === status).length;
-  let preparedGb = $derived(versionList.reduce((total, version) => total + (version.status === "READY" ? version.sizeBytes ?? 0 : 0), 0) / 1024 ** 3);
-  // What needs a look first, then the newest of what's done.
-  const STATUS_ORDER = { RUNNING: 0, FAILED: 1, QUEUED: 2, READY: 3 };
+  const versionDetail = graphql(`
+    query OptimizedVersionDetail($id: ID!) @cache(policy: NetworkOnly) {
+      optimizedVersion(id: $id) {
+        id
+        targets { userId userName reason device { id name } }
+        marks { userId userName work { id title } device { id name } }
+      }
+    }
+  `);
+  const removeVersion = graphql(`
+    mutation RemoveOptimizedVersion($id: ID!) { removeOptimizedVersion(id: $id) }
+  `);
+  const unmarkViewer = graphql(`
+    mutation UnmarkViewerForSmartTranscoding($user: ID!, $work: ID!, $device: ID) {
+      unmarkViewerForSmartTranscoding(userId: $user, workId: $work, deviceId: $device)
+    }
+  `);
+  // The cursor each page we've walked through starts after.
+  let cursors = $state([null]);
+  let after = $derived(cursors[cursors.length - 1]);
+  $effect(() => {
+    const current = after;
+    fetchQuery(versions, { after: current });
+    return poll(() => fetchQuery(versions, { after: current }), 5000);
+  });
+  let stats = $derived($versions.data?.optimizedVersionStats);
+  let versionList = $derived($versions.data?.optimizedVersions.nodes ?? []);
+  let pageInfo = $derived($versions.data?.optimizedVersions.pageInfo);
+  let versionTotal = $derived(stats ? stats.ready + stats.queued + stats.running + stats.failed : 0);
+  let preparedGb = $derived((stats?.readyBytes ?? 0) / 1024 ** 3);
+  let pageStart = $derived((cursors.length - 1) * PAGE_SIZE);
+  // Removing the last row of the last page leaves nothing to stand on.
+  $effect(() => { if ($versions.data && !versionList.length && cursors.length > 1) cursors = cursors.slice(0, -1); });
   const STATUS_LABEL = { RUNNING: "Preparing", FAILED: "Failed", QUEUED: "In the queue", READY: "Ready" };
-  let sortedVersions = $derived([...versionList].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || String(b.finishedAt ?? "").localeCompare(String(a.finishedAt ?? ""))));
+  const REASON = { MARKED: "Marked to watch next", PREDICTED: "Predicted, with smart transcoding on", EARLIER: "Asked for earlier, not any more" };
+
+  let opened = $state(null);
+  let detail = $state(null);
+  let removing = $state(null);
+  let removeOpen = $state(false);
+  async function loadDetail(id) {
+    const data = await attempt(() => request(versionDetail, { id }));
+    detail = data?.optimizedVersion ?? null;
+  }
+  function toggle(version) {
+    if (opened === version.id) { opened = null; return; }
+    opened = version.id;
+    detail = null;
+    loadDetail(version.id);
+  }
+  function askToRemove(version) {
+    removing = version;
+    removeOpen = true;
+    detail = null;
+    opened = null;
+    loadDetail(version.id);
+  }
+  async function confirmRemove() {
+    const id = removing.id;
+    if ((await attempt(() => request(removeVersion, { id }), "Removed")) === null) return;
+    removeOpen = false;
+    fetchQuery(versions, { after });
+  }
+  async function unmark(version, mark) {
+    const done = await attempt(() => request(unmarkViewer, { user: mark.userId, work: mark.work.id, device: mark.device?.id ?? null }), `Unmarked for ${mark.userName}`);
+    if (done !== null) loadDetail(version.id);
+  }
+  // Each viewer once, however many of their devices it's for.
+  const byViewer = (targets) => {
+    const groups = new Map();
+    for (const target of targets) groups.set(target.userName, [...(groups.get(target.userName) ?? []), target]);
+    return [...groups];
+  };
 
   const smart = graphql(`
     query AdminSmartTranscoding {
@@ -115,6 +185,35 @@
   let binaries = $derived(info ? [["ffmpeg", info.ffmpeg], ["ffprobe", info.ffprobe]] : []);
 </script>
 
+{#snippet audience(version, info)}
+  {#if !info.targets.length && !info.marks.length}
+    <small>Nobody wants this any more, so it’s first to go when space runs out.</small>
+  {/if}
+  {#each byViewer(info.targets) as [viewer, rows]}
+    <div>
+      <div class="viewer">{viewer}</div>
+      <ul>
+        {#each rows as row}
+          <li><span>{row.device?.name ?? "No device to reach"}</span><small>{REASON[row.reason]}</small></li>
+        {/each}
+      </ul>
+    </div>
+  {/each}
+  {#if info.marks.length}
+    <div>
+      <div class="viewer">Marks keeping it wanted</div>
+      <ul>
+        {#each info.marks as mark}
+          <li>
+            <span>{mark.userName}: {mark.work.title}, {mark.device ? `for ${mark.device.name}` : "for all their devices"}</span>
+            <button class="btn ghost sm" onclick={() => unmark(version, mark)}>Unmark</button>
+          </li>
+        {/each}
+      </ul>
+    </div>
+  {/if}
+{/snippet}
+
 {#if $transcoder.fetching && !info}
   <div class="diag"><div class="diag-cols">{#each Array(2) as _}<div class="panel skeleton tall"></div>{/each}</div><div class="panel skeleton tall"></div></div>
 {:else if failure($transcoder) && !info}
@@ -149,7 +248,7 @@
     <section class="panel dense">
       <header class="panel-head">
         <span class="panel-icon"><Stack size={18} /></span>
-        <div><h2>Smart transcoding</h2><p>{versionCount("READY")} ready · {preparedGb.toFixed(1)}{settings ? ` of ${settings.maxStorageGb}` : ""} GB · {versionCount("QUEUED")} queued</p></div>
+        <div><h2>Smart transcoding</h2><p>{stats?.ready ?? 0} ready · {preparedGb.toFixed(1)}{settings ? ` of ${settings.maxStorageGb}` : ""} GB · {stats?.queued ?? 0} queued</p></div>
       </header>
       {#if settings && !settings.enabled}
         <p class="error warn"><WarningCircle size={14} />Turned off by <code>transcoder.optimize.enabled</code> in the server’s configuration.</p>
@@ -162,23 +261,41 @@
           <div class="smart-actions"><button class="btn sm primary" disabled={saving}>{#if saving}<span class="spinner sm"></span>{/if}Save</button></div>
         </form>
       {/if}
-      {#if sortedVersions.length}
+      {#if versionList.length}
         <ul class="versions">
-          {#each sortedVersions as version (version.id)}
+          {#each versionList as version (version.id)}
             <li>
-              <div class="version-main">
-                {#if version.work}<a href="/works/{version.work.id}">{version.work.title}</a>{:else}<span>A removed title</span>{/if}
-                <small title={version.variantKey}>{version.description}</small>
-                {#if version.status === "FAILED"}<small class="failed"><WarningCircle size={14} />{version.error ?? "Failed"}</small>{/if}
+              <div class="version-row">
+                <div class="version-main">
+                  {#if version.work}<a href="/works/{version.work.id}">{version.work.title}</a>{:else}<span>A removed title</span>{/if}
+                  <small title={version.variantKey}>{version.description}</small>
+                  {#if version.status === "FAILED"}<small class="failed"><WarningCircle size={14} />{version.error ?? "Failed"}</small>{/if}
+                </div>
+                <div class="version-side">
+                  <span class="state" class:accent={version.status === "RUNNING"}>{version.status === "RUNNING" ? `${STATUS_LABEL.RUNNING} ${Math.round(version.progress * 100)}%` : STATUS_LABEL[version.status]}</span>
+                  {#if version.status === "READY"}<small class="tabular">{bytes(version.sizeBytes)} · {version.lastUsedAt ? `last played ${ago(version.lastUsedAt)}` : "not played yet"}</small>{/if}
+                </div>
+                <div class="version-actions">
+                  <button class="btn ghost sm" aria-expanded={opened === version.id} onclick={() => toggle(version)}>Who it’s for</button>
+                  <button class="btn ghost sm" onclick={() => askToRemove(version)}>Remove</button>
+                </div>
               </div>
-              <div class="version-side">
-                <span class="state" class:accent={version.status === "RUNNING"}>{version.status === "RUNNING" ? `${STATUS_LABEL.RUNNING} ${Math.round(version.progress * 100)}%` : STATUS_LABEL[version.status]}</span>
-                {#if version.status === "READY"}<small class="tabular">{bytes(version.sizeBytes)} · {version.lastUsedAt ? `last played ${ago(version.lastUsedAt)}` : "not played yet"}</small>{/if}
-              </div>
+              {#if opened === version.id}
+                <div class="audience fade-up">
+                  {#if detail}{@render audience(version, detail)}{:else}<span class="spinner sm"></span>{/if}
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>
-      {:else}
+        {#if versionTotal > PAGE_SIZE || cursors.length > 1}
+          <div class="pager">
+            <span class="tabular">{pageStart + 1}–{pageStart + versionList.length} of {versionTotal}</span>
+            <button class="btn ghost sm" disabled={cursors.length === 1} onclick={() => { cursors = cursors.slice(0, -1); opened = null; }}>Previous</button>
+            <button class="btn ghost sm" disabled={!pageInfo?.hasNextPage} onclick={() => { cursors = [...cursors, pageInfo.endCursor]; opened = null; }}>Next</button>
+          </div>
+        {/if}
+      {:else if $versions.data}
         <p class="muted-note">Nothing prepared yet. Versions appear here once viewers mark titles or turn smart transcoding on for a device.</p>
       {/if}
     </section>
@@ -289,14 +406,42 @@
   </div>
 {/if}
 
+<Dialog bind:open={removeOpen} title="Remove this copy of {removing?.work?.title ?? 'this title'}?" description={removing?.sizeBytes ? `Frees ${bytes(removing.sizeBytes)}.` : "Stops it being prepared."} width={560}>
+  <div class="audience">
+    {#if !detail}
+      <span class="spinner sm"></span>
+    {:else if detail.marks.length || detail.targets.some((target) => target.reason === "PREDICTED")}
+      <p class="remove-note">It’ll be prepared again while these still want it. Unmark anyone you don’t want it prepared for. Predicted devices have no mark to take back, so it may return for them.</p>
+      {@render audience(removing, detail)}
+    {:else}
+      <p class="remove-note">Nothing wants it now, so it won’t come back unless someone asks.</p>
+    {/if}
+  </div>
+  {#snippet footer()}
+    <button class="btn ghost" onclick={() => (removeOpen = false)}>Cancel</button>
+    <button class="btn danger" onclick={confirmRemove}>Remove</button>
+  {/snippet}
+</Dialog>
+
 <style>
   .curve { min-width: 200px; }
   .smart-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px 20px; align-items: start; margin-bottom: 14px; }
   .smart-form .wide { grid-column: 1 / -1; }
   .smart-actions { grid-column: 1 / -1; }
-  .versions { display: grid; gap: 2px; max-height: 440px; overflow-y: auto; list-style: none; margin: 0; padding: 0; font-size: 0.88rem; }
-  .versions li { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 14px; padding: 9px 0; border-top: 1px solid var(--line); }
-  .versions li:first-child { border-top: 0; }
+  .versions { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; font-size: 0.88rem; }
+  .versions > li { padding: 9px 0; border-top: 1px solid var(--line); }
+  .versions > li:first-child { border-top: 0; }
+  .version-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+  .version-main { flex: 1; }
+  .version-actions { display: flex; gap: 4px; }
+  .audience { display: grid; gap: 10px; margin-top: 8px; padding: 12px 14px; border-radius: var(--r); background: var(--surface); font-size: 0.86rem; }
+  .audience ul { display: grid; gap: 4px; list-style: none; margin: 0; padding: 0; }
+  .audience li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
+  .audience small { color: var(--text-3); }
+  .audience .viewer { font-weight: 600; margin-bottom: 2px; }
+  .pager { display: flex; align-items: center; justify-content: flex-end; gap: 6px; font-size: 0.84rem; color: var(--text-3); }
+  .pager span { margin-right: 8px; }
+  .remove-note { color: var(--text-2); font-size: 0.9rem; line-height: 1.5; }
   .version-main { display: grid; gap: 2px; min-width: 0; }
   .version-main a { font-weight: 600; }
   .version-main a:hover { text-decoration: underline; text-underline-offset: 3px; }

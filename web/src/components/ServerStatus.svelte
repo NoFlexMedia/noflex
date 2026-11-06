@@ -23,7 +23,8 @@
   `);
   const versions = graphql(`
     query ServerActivityVersions @cache(policy: NetworkOnly) {
-      optimizedVersions { id status progress }
+      optimizedVersionStats { queued }
+      optimizedVersions(first: 4) { nodes { id status progress } }
     }
   `);
 
@@ -62,9 +63,10 @@
   let playing = $derived(streams.filter((stream) => stream.transcode?.status !== "running"));
   let scanning = $derived(scanCount ? ($scans.data?.scannerStatus ?? []).filter((row) => row.activeScan || row.scan.state === "RUNNING") : []);
   // Polled more slowly, so it can outlive the moment the server stops answering.
-  let versionRows = $derived(watching && !unreachable ? $versions.data?.optimizedVersions ?? [] : []);
-  let optimizing = $derived(versionRows.filter((version) => version.status === "RUNNING"));
-  let queued = $derived(versionRows.filter((version) => version.status === "QUEUED").length);
+  let versionData = $derived(watching && !unreachable ? $versions.data : null);
+  // Running ones lead the list, so the first few hold them all.
+  let optimizing = $derived((versionData?.optimizedVersions.nodes ?? []).filter((version) => version.status === "RUNNING"));
+  let queued = $derived(versionData?.optimizedVersionStats.queued ?? 0);
 
   function scanDetail(rows) {
     const run = rows.length === 1 ? rows[0].activeScan : null;

@@ -91,6 +91,13 @@ mutation Login($username: String!, $password: String!, $client: String!, $device
 
 export const LOGOUT = `mutation Logout { logout }`;
 
+export const CREATE_DEVICE_PIN = `
+mutation CreateDevicePin($client: String!, $device: String!) {
+  createDevicePin(client: $client, device: $device) { pin expiresAt }
+}`;
+
+export const POLL_DEVICE_PIN = `mutation PollDevicePin($pin: String!) { pollDevicePin(pin: $pin) { token refreshToken } }`;
+
 export const SET_PREFERENCE = `mutation SetPreference($key: String!, $value: JSON!) { setPreference(key: $key, value: $value) { key } }`;
 
 const DEVICE = `

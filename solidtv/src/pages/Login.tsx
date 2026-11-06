@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+//
+// Signing in. A code to approve from a phone or computer comes first, because a
+// password on a remote is the worst thing this app asks of anyone. The password is
+// there for whoever has nothing else signed in.
 
-import { Column } from "@solidtv/solid/primitives";
-import { createSignal, Show } from "solid-js";
+import { Column, Row } from "@solidtv/solid/primitives";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { ElementNode, NodeProps } from "@solidtv/solid";
-import { app, changeServer, signIn } from "$lib/session.js";
+import { app, changeServer, checkDevicePin, requestDevicePin, signIn } from "$lib/session.js";
 import { serverOrigin } from "$lib/tokens.js";
 import { attempt } from "$lib/ui.js";
-import { color, SCREEN, type, weight } from "../theme.js";
+import { color, radius, SCREEN, type, weight } from "../theme.js";
 import BrandMark from "$components/BrandMark.js";
 import Button from "$components/Button.js";
 import Keyboard, { KEYBOARD_HEIGHT, KEYBOARD_WIDTH } from "$components/Keyboard.js";
@@ -14,6 +18,93 @@ import TextField from "$components/TextField.js";
 
 const LEFT = 140;
 const FIELD = 720;
+const POLL_MS = 3000;
+const PIN_LIFE_MS = 10 * 60 * 1000;
+// Half an hour of codes. After that a TV left on this screen stops asking the server.
+const ROUNDS = 3;
+const PIN_LENGTH = 6;
+const CELL = { width: 112, height: 144, gap: 14 };
+
+function Heading() {
+  return (
+    <>
+      <BrandMark x={LEFT} y={110} size={80} />
+      <text x={LEFT} y={214} fontSize={type.heading} fontWeight={weight.bold}>Sign in</text>
+      <text x={LEFT} y={290} width={FIELD} contain="width" maxLines={1} fontSize={type.caption} color={color.text3}>{app.server?.name ? `${app.server.name} · ${serverOrigin() ?? ""}` : serverOrigin() ?? ""}</text>
+      <Show when={app.authError}>
+        <text x={LEFT} y={330} width={SCREEN.width - LEFT * 2} contain="width" maxLines={2} fontSize={type.caption} color={color.danger}>{app.authError}</text>
+      </Show>
+    </>
+  );
+}
+
+function CodeSignIn(props: { onPassword: () => void }) {
+  const [pin, setPin] = createSignal("");
+  const [problem, setProblem] = createSignal("");
+  let round = 0;
+  let poll: ReturnType<typeof setInterval> | undefined;
+  let renew: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+
+  const stop = () => { clearInterval(poll); clearTimeout(renew); };
+  async function issue(): Promise<void> {
+    stop();
+    setProblem("");
+    try {
+      const info = await requestDevicePin();
+      if (disposed) return;
+      setPin(info.pin);
+      // A blip doesn't matter: the code outlives it, and the next poll asks again.
+      poll = setInterval(() => { void checkDevicePin(info.pin).catch(() => {}); }, POLL_MS);
+      // TV clocks are often wrong, so a time that makes no sense means the code's whole life.
+      const left = Date.parse(info.expiresAt) - Date.now();
+      renew = setTimeout(() => {
+        round += 1;
+        if (round < ROUNDS) { void issue(); return; }
+        stop();
+        setPin("");
+        setProblem("That code expired. Choose New code when you’re ready.");
+      }, left > 0 && left <= PIN_LIFE_MS ? left : PIN_LIFE_MS);
+    } catch (cause) {
+      if (!disposed) setProblem(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+  onMount(() => void issue());
+  onCleanup(() => { disposed = true; stop(); });
+
+  const cells = () => {
+    const letters = pin().split("");
+    return Array.from({ length: PIN_LENGTH }, (_, index) => letters[index] ?? "");
+  };
+
+  return (
+    <view width={SCREEN.width} height={SCREEN.height} forwardFocus={0}>
+      <Row autofocus x={LEFT} y={850} width={SCREEN.width - LEFT * 2} height={80} gap={20} scroll="none">
+        <Button size="lg" kind="primary" icon="lock-key" label="Use a password instead" onEnter={() => { props.onPassword(); return true; }} />
+        <Button size="lg" icon="arrow-clockwise" label="New code" onEnter={() => { round = 0; void issue(); return true; }} />
+        <Button size="lg" icon="globe" label="Change server" onEnter={() => { changeServer(); return true; }} />
+      </Row>
+      <Heading />
+      <view x={LEFT} y={400} width={(CELL.width + CELL.gap) * PIN_LENGTH} height={CELL.height} display="flex" gap={CELL.gap} skipFocus>
+        <For each={cells()}>
+          {(letter) => (
+            <view width={CELL.width} height={CELL.height} borderRadius={radius.m} color={color.surface2} border={{ width: 2, color: color.lineStrong }}>
+              <text width={CELL.width} height={CELL.height} lineHeight={CELL.height} contain="both" textAlign="center" fontSize={type.display} fontWeight={weight.bold}>{letter}</text>
+            </view>
+          )}
+        </For>
+      </view>
+      <text x={LEFT} y={572} fontSize={type.caption} fontWeight={weight.semibold} color={problem() ? color.danger : color.text2}>{problem() || (pin() ? "Waiting for you to approve it" : "Getting a code…")}</text>
+      <view x={LEFT + (CELL.width + CELL.gap) * PIN_LENGTH + 80} y={400} width={SCREEN.width - LEFT * 2 - (CELL.width + CELL.gap) * PIN_LENGTH - 80} height={380} skipFocus>
+        <text fontSize={type.lead} fontWeight={weight.semibold}>On a phone or computer</text>
+        <text y={64} width={SCREEN.width - LEFT * 2 - (CELL.width + CELL.gap) * PIN_LENGTH - 80} contain="width" lineHeight={46} fontSize={type.body} color={color.text2}>Open NoFlex where you’re already signed in, go to Devices in your account, and enter this code under Link a device.</text>
+        <text y={240} fontSize={type.caption} color={color.text3}>In a browser, that’s</text>
+        <text y={278} width={SCREEN.width - LEFT * 2 - (CELL.width + CELL.gap) * PIN_LENGTH - 80} contain="width" maxLines={2} lineHeight={36} fontSize={type.caption} fontWeight={weight.semibold}>{`${serverOrigin() ?? ""}/account?tab=devices`}</text>
+      </view>
+      <text x={LEFT} y={640} width={CELL.width * PIN_LENGTH} contain="width" lineHeight={38} fontSize={type.caption} color={color.text3}>This TV signs in by itself as soon as you do.</text>
+    </view>
+  );
+}
 
 function Field(props: NodeProps & { label: string; value: string; secret?: boolean; active: boolean }) {
   return (
@@ -24,7 +115,7 @@ function Field(props: NodeProps & { label: string; value: string; secret?: boole
   );
 }
 
-export default function Login() {
+function PasswordSignIn(props: { onCode: () => void }) {
   const [username, setUsername] = createSignal("");
   const [password, setPassword] = createSignal("");
   const [active, setActive] = createSignal<"username" | "password">("username");
@@ -42,17 +133,14 @@ export default function Login() {
   const edit = (field: "username" | "password") => { setActive(field); keyboard?.setFocus(); return true; };
 
   return (
-    <view width={SCREEN.width} height={SCREEN.height} forwardFocus={5}>
-      <BrandMark x={LEFT} y={110} size={80} />
-      <text x={LEFT} y={214} fontSize={type.heading} fontWeight={weight.bold}>Sign in</text>
-      <text x={LEFT} y={290} width={FIELD} contain="width" maxLines={1} fontSize={type.caption} color={color.text3}>{app.server?.name ? `${app.server.name} · ${serverOrigin()}` : serverOrigin() ?? ""}</text>
-      <Show when={app.authError} fallback={<view skipFocus />}>
-        <text x={LEFT} y={330} width={FIELD} contain="width" maxLines={2} fontSize={type.caption} color={color.danger}>{app.authError}</text>
-      </Show>
+    <view width={SCREEN.width} height={SCREEN.height} forwardFocus={1} onBack={() => { props.onCode(); return true; }}>
       <Column x={LEFT} y={400} width={FIELD} height={520} gap={24} scroll="none" onRight={() => { keyboard?.setFocus(); return true; }}>
         <Field label="Username" value={username()} active={active() === "username"} onEnter={() => edit("username")} />
         <Field label="Password" value={password()} secret active={active() === "password"} onEnter={() => edit("password")} />
-        <Button width={280} label="Change server" onEnter={() => { changeServer(); return true; }} />
+        <Row width={FIELD} height={80} gap={20} scroll="none">
+          <Button icon="television" label="Use a code instead" onEnter={() => { props.onCode(); return true; }} />
+          <Button icon="globe" label="Change server" onEnter={() => { changeServer(); return true; }} />
+        </Row>
       </Column>
       <Keyboard
         ref={(node: ElementNode) => { keyboard = node; }}
@@ -65,6 +153,18 @@ export default function Login() {
         onSubmit={submit}
         onTab={() => setActive(active() === "username" ? "password" : "username")}
       />
+      <Heading />
+    </view>
+  );
+}
+
+export default function Login() {
+  const [usePassword, setUsePassword] = createSignal(false);
+  return (
+    <view width={SCREEN.width} height={SCREEN.height} forwardFocus={0}>
+      <Show when={usePassword()} fallback={<CodeSignIn onPassword={() => setUsePassword(true)} />}>
+        <PasswordSignIn onCode={() => setUsePassword(false)} />
+      </Show>
     </view>
   );
 }

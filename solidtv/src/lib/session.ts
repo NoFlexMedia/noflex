@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { availableCategories } from "$lib/categories.js";
-import { BOOTSTRAP, LOGIN, LOGOUT, REGISTER_DEVICE, SET_PREFERENCE, SERVER_INFO } from "$lib/graphql/documents.js";
+import { BOOTSTRAP, LOGIN, LOGOUT, CREATE_DEVICE_PIN, POLL_DEVICE_PIN, REGISTER_DEVICE, SET_PREFERENCE, SERVER_INFO } from "$lib/graphql/documents.js";
 import { request, resetCache } from "$lib/graphql.js";
 import { host } from "$lib/host.js";
 import { reactive } from "$lib/state.js";
@@ -153,6 +153,23 @@ export async function signIn(username: string, password: string): Promise<void> 
   const data = await request(LOGIN, { username, password, client: host.clientName, device: host.deviceName() }, { noRefresh: true });
   saveSession(data.login);
   await bootstrap();
+}
+
+/** A code to approve from a device that's already signed in, so nobody types a password on a remote. */
+export async function requestDevicePin(): Promise<{ pin: string; expiresAt: string }> {
+  const data = await request(CREATE_DEVICE_PIN, { client: host.clientName, device: host.deviceName() }, { noRefresh: true });
+  return data.createDevicePin;
+}
+
+/** Sign in if the code has been approved. Null until then, and for a code that has expired. */
+export async function checkDevicePin(pin: string): Promise<boolean> {
+  const asked = serverOrigin();
+  const data = await request(POLL_DEVICE_PIN, { pin }, { noRefresh: true });
+  // The viewer may have moved on to another server while this was out.
+  if (!data.pollDevicePin || serverOrigin() !== asked) return false;
+  saveSession(data.pollDevicePin);
+  await bootstrap();
+  return true;
 }
 
 export async function logout(): Promise<void> {

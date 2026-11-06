@@ -88,6 +88,11 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 - `linearGradient` needs `stops`; use `gradient(colors, toward.down)` from `theme.ts`. Directions are the shader's: π/2 runs right to left, so use `toward`, not a bare angle.
 - Ask the server for the size a box needs (`sized`). Texture memory is the budget on a TV.
 
+## Signing in
+
+- A code comes first (`createDevicePin`, then `pollDevicePin` every 3 s, as Flutter does); the password is the fallback. Approval is Devices → Link a device on the web and in the apps.
+- A code lives 10 minutes and renews itself three times, then the screen stops asking the server. A TV's clock can be wrong, so an `expiresAt` that makes no sense counts as the whole 10 minutes.
+
 ## Focus and keys
 
 - `App.tsx` maps keys. The framework reads `event.key` before `keyCode`, so TV-reported names must be listed, not just codes.
@@ -158,7 +163,7 @@ Administration stays in the web client and the apps; the status dot (`ServerStat
 
 - **Watch together:** needs a WebSocket, which NativeScript's runtime lacks.
 - **Linked servers:** rails and search stay on the home server.
-- **External login:** needs a browser to redirect through. The API's device-PIN flow (`createDevicePin`, `pollDevicePin`) isn't used yet; it would also spare typing a password on a remote.
+- **External login:** needs a browser to redirect through. A device-PIN (`pages/Login.tsx`) is the way in without typing a password, and covers it: whoever approves it can have signed in however they like.
 - **Live TV's programme grid and recording rules:** channels with what's on now, and tuning in.
 - **Photos:** a title page with the image; no slideshow.
 - **Offline copies and downloading on the TV itself, library management, filters, per-title admin.**

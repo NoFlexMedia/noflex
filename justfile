@@ -19,6 +19,9 @@ mod web "tasks/web.just"
 # Flutter app and its test devices.
 mod app "tasks/app.just"
 
+# SolidTV app for TVs: Samsung, LG, Android TV, RDK, Apple TV, and any browser.
+mod tv "tasks/tv.just"
+
 # The sample library of Blender open movies, on one server or several.
 mod demo "tasks/demo.just"
 

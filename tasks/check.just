@@ -23,6 +23,11 @@ backend:
 web:
     npm run check
 
+# Check the TV app and build every web-based target.
+tv:
+    just tv check
+    just tv build
+
 # Analyze and test the Flutter app.
 [working-directory('../flutter')]
 app:
@@ -43,4 +48,4 @@ nix:
     nix flake check
 
 # Run every client and backend gate; `just check nix` is the one left out.
-all: tasks backend web app
+all: tasks backend web tv app

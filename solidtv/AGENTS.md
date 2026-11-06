@@ -41,10 +41,10 @@ src/
 ├── index.tsx        # renderer setup, routes
 ├── theme.ts         # tokens ported from web/src/app.css, as 0xRRGGBBAA
 ├── fonts.ts
-├── lib/             # session, playback, tokens, graphql, watch, ui, host
+├── lib/             # session, settings, playback, tokens, graphql, watch, ui, host, viewport, rows
 │   ├── graphql/documents.ts  # every operation; graphql.test.ts validates them
-│   └── player/      # VideoPlayer, the <video> one, the capability probe, WebVTT
-├── components/      # App, Shell, Nav, Rail, WorkCard, Keyboard, Sheet, player/Player
+│   └── player/      # VideoPlayer, the <video> one, the capability probe, WebVTT, trickplay
+├── components/      # App, Shell, Nav, Rail, WorkCard, Keyboard, Sheet, SettingRow, player/
 └── pages/
 hosts/               # tizen, webos, android, nativescript
 scripts/             # asset generators
@@ -75,6 +75,11 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 - **No DOM, no CSS.** `<view>` and `<text>`, in a 1920×1080 space fitted whole inside the window (`lib/viewport.ts`). Colors are `0xRRGGBBAA` numbers from `theme.ts`.
 - **The canvas's size is fixed at startup**, so the `browser` target reloads on resize. A window that isn't 16:9 gets bands, drawn by centering the root node: `useMouse` reads window coordinates, so moving the canvas would offset every hit.
 - **A flex row doesn't lay out when a child changes width.** `Button` asks its parent to, for labels that change.
+- **Text measures itself a frame late**, through `onEvent={{ loaded }}`'s `dimensions`. `Button` and `TextField` use that. Don't estimate a width from the character count where text gets clipped to it.
+- **A row's `width` is its content's once laid out.** To ask what's in view, compare against the screen (`revealInRow`).
+- **Don't name a prop `on`** on anything spread onto a node: it replaces the node's event method.
+- **A node given an image it already has fires no `loaded`.** `Backdrop` allows for it.
+- **White means focused, and nothing else.** The primary action rests in the accent (`Button`).
 - **The renderer only loads textures it would draw.** A node at `alpha={0}` never fires `loaded`, so anything fading in on load starts at `0.001` (`Artwork`, `Backdrop`).
 - **Text draws after quads**, deferred until a quad with a non-zero `zIndex` flushes it. So whatever covers text needs `zIndex` on the quad that does the covering, not on a parent (`Sheet`, `Nav`). Otherwise text shows through.
 - **Anything moving keeps the renderer drawing every frame.** So no shimmer on skeletons, the status rings don't spin, and `Spinner` mounts only while waiting and after a delay. Let an idle TV idle.
@@ -86,6 +91,8 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 ## Focus and keys
 
 - `App.tsx` maps keys. The framework reads `event.key` before `keyCode`, so TV-reported names must be listed, not just codes.
+- `useMouse` focuses a child directly, which a row's scroller never hears about: whatever sits in a row calls `revealInRow` a tick after focus.
+- A real keyboard is taken in `Keyboard`'s capture-phase listener, ahead of focus, so Backspace erases until a field is empty and then means Back again. The Siri Remote's Menu arrives as Backspace, so tvOS skips it.
 - Back does double duty (`Shell.tsx`): a title goes back; a destination opens the nav; the nav goes Home; Home's nav leaves the app. On tvOS leaving means returning false, so the system takes the press, as review expects.
 - Anything that takes focus gives it back: `Sheet`, `Player` store `activeElement` and restore it. The page stays mounted under the player, at `alpha={0}`, so Back lands on the same card.
 - Don't let focus jump when data arrives: `Title` shows Play for a series from the start rather than inserting it once the next episode is worked out.
@@ -95,6 +102,13 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 ## Playback
 
 The transport is one component (`player/Player.tsx`) over `VideoPlayer` (`lib/player/types.ts`). Timing rules are `web/src/components/Player.svelte`'s.
+
+- **Up and Down walk a stack:** the rail (focus on the player itself; Left and Right scrub), the buttons, the chapters. Up off the rail dismisses the overlay. Hiding it moves focus back to the player, or a key would act on buttons nobody can see.
+- **Chapters are `chapterStops`:** the file's, or evenly spaced scenes where it has none but trickplay can show them. `web/src/lib/chapters.ts` is the same logic.
+- Skip intro floats outside the overlay, and OK on the player takes it. Same for the up-next card.
+- Settings split on who they belong to: the `playback` preference follows the viewer and every client shares it, so save through `savePlaybackPrefs`, which keeps other clients' fields. `lib/settings.ts` is this TV's room and remote.
+- **Streaming quality** lowers `maxHeight` in the capabilities sent to `startPlaybackSession`, and HDR off clears `videoRanges`. Measured: 480p on a 4K VP9 file gets `av1_nvenc` at 1146×480, with the reason in the info panel.
+- **Smart Downloads** here only flips `updateDevice` for phones, tablets and computers. `canKeepFiles` guesses from the device's name, as the API has no device kind. Each picks it up when its app next starts. A TV doesn't download: nothing plays local files here, and tvOS has no persistent storage to keep them in.
 
 - **Video sits behind the canvas, which clears to transparent.** `clearColor: 0` plus the renderer's alpha, premultiplied context. On the web hosts it's a `<video>` under `#app`, measured working in Chrome with a 4K stream under the UI. Don't draw video into a GL texture: it loses HDR and hardware composition.
 - Subtitles draw on the canvas (`lib/player/vtt.ts`) on every host: `<track>` doesn't exist on tvOS, and AVPlayer takes no sidecar without a manifest rewrite. Image formats are burned in by the server.
@@ -140,14 +154,14 @@ Other notes:
 
 ## What's trimmed
 
-Administration stays in the web client and the apps; the status dot (`ServerStatus`) is what admins get here.
+Administration stays in the web client and the apps; the status dot (`ServerStatus`) is what admins get here. Settings (`pages/Account.tsx`) has what a viewer changes from the couch, not their profile, sessions or API keys.
 
 - **Watch together:** needs a WebSocket, which NativeScript's runtime lacks.
 - **Linked servers:** rails and search stay on the home server.
 - **External login:** needs a browser to redirect through. The API's device-PIN flow (`createDevicePin`, `pollDevicePin`) isn't used yet; it would also spare typing a password on a remote.
 - **Live TV's programme grid and recording rules:** channels with what's on now, and tuning in.
 - **Photos:** a title page with the image; no slideshow.
-- **Downloads and offline copies, library management, filters, per-title admin.**
+- **Offline copies and downloading on the TV itself, library management, filters, per-title admin.**
 
 ## Conventions
 

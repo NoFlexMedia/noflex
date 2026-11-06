@@ -1,6 +1,6 @@
 # NoFlex
 
-NoFlex is a self-hosted media server: a Rust backend whose only client surface is a GraphQL API, WASM plugins for every provider integration, a SvelteKit web client, and a Flutter app for phones, tablets, foldables and desktops.
+NoFlex is a self-hosted media server: a Rust backend whose only client surface is a GraphQL API, WASM plugins for every provider integration, a SvelteKit web client, a Flutter app for phones, tablets, foldables and desktops, and a SolidTV app for TVs.
 
 ## Read every `AGENTS.md` on your path
 
@@ -9,6 +9,7 @@ Each project subdirectory owns an `AGENTS.md` describing its stack, commands, an
 - [`backend/AGENTS.md`](backend/AGENTS.md) — Rust workspace, plugins, architecture invariants.
 - [`web/AGENTS.md`](web/AGENTS.md) — SvelteKit client.
 - [`flutter/AGENTS.md`](flutter/AGENTS.md) — Flutter app: signals, playback, downloads, test devices.
+- [`solidtv/AGENTS.md`](solidtv/AGENTS.md) — TV app: rendering, focus, hosts, and what each target has been verified on.
 
 ### Writing an `AGENTS.md`
 
@@ -25,6 +26,7 @@ Each project subdirectory owns an `AGENTS.md` describing its stack, commands, an
 - `backend/` — Cargo workspace: crates in `backend/crates/`, first-party WASM plugins in `backend/plugins/`, `cargo xtask` in `backend/xtask/`.
 - `web/` — SvelteKit client, embedded into the server binary at build time.
 - `flutter/` — Flutter app for Android, iOS, macOS, Windows and Linux.
+- `solidtv/` — SolidTV app for Samsung, LG, Android TV, RDK and Apple TV, and any browser.
 - `nix/` — NixOS module. `flake.nix` at the root provides the dev shell, packages, and checks.
 - `justfile`, `tasks/`, `scripts/tasks/` — the command interface: one `mod` per group, with anything longer than a few lines in a script.
 - `docs/` — operator and contributor docs, linked from `README.md`.
@@ -73,4 +75,5 @@ nix flake check                                          # repo root: release pa
 cd backend && cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 cd web && npm run check
 cd flutter && flutter analyze --no-pub && flutter test --no-pub
+cd solidtv && npm run check
 ```

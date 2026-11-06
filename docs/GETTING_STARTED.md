@@ -83,6 +83,17 @@ just app run         # the Linux desktop, or `just app run <device>`
 
 From an Android emulator the server on your machine is at `10.0.2.2:8096`, and emulators need one extra build flag, which `just app run-emulator` passes; see "Test devices" in [`flutter/AGENTS.md`](../flutter/AGENTS.md).
 
+## Run the TV app
+
+The TV app lives in `solidtv/`, and runs in a browser while you work on it. Arrow keys, Enter and Backspace stand in for the remote.
+
+```sh
+just tv install
+just tv dev          # http://localhost:5174, pointed at http://127.0.0.1:8096
+```
+
+Packaging for Samsung, LG, Android TV, RDK and Apple TV, and what each needs, is in [`PACKAGING.md`](PACKAGING.md#tv-app).
+
 ## Install plugins
 
 Metadata providers, login providers, scrobblers, and embeddings are all WASM plugins. Build one and hot-reload it into your running server:

@@ -183,3 +183,19 @@ for the others.
 - **Linux and Windows CI.** `ffmpeg-build` compiles from pinned inputs, so a release
   workflow can cache on the hash of `pipeline/`. It needs writing, along with a place to
   publish the corresponding source.
+
+## TV app
+
+`just tv package <target>` builds one target of `solidtv/` into `dist/tv/`. It isn't in the release workflow yet, since most targets haven't run on a real device. [`solidtv/AGENTS.md`](../solidtv/AGENTS.md) says what each has been verified on.
+
+| Target     | Output                       | Needs | Install on a device |
+| ---------- | ---------------------------- | ----- | ------------------- |
+| `tizen`    | signed `.wgt`                | Samsung's `tizen` CLI and a certificate made with it; without them, stops at `solidtv/dist/tizen` | Developer mode on the TV (`12345` in Apps), then `tizen install` |
+| `webos`    | `.ipk`                       | nothing beyond `just tv install` | Developer Mode app, then `npx ares-install` from `solidtv/` |
+| `android`  | APK, debug-signed            | the `flutter-android` shell | `adb install`; covers Android TV, Google TV and Fire TV |
+| `firebolt` | `tar.gz` to host at a URL    | nothing | Register the URL with the RDK platform |
+| `browser`  | `tar.gz` to host at a URL    | nothing | Also how to reach TVs with no store of their own: Vizio, Hisense, Titan OS, Xbox's browser |
+| `tvos`     | built by `ns`                | a Mac with Xcode, the tvOS platform, and the `xcodeproj` gem | `just tv run tvos --device <id>`, with a team ID in `App_Resources/tvOS/build.xcconfig` |
+| `ios`      | built by `ns`                | the same | The same, under `App_Resources/iOS` |
+
+The server has to allow cross-origin requests for every target except `tvos` and `ios`, which is `cross_origin`'s default. Every web host runs from another origin, or from `file://` with none.

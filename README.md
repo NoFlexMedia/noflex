@@ -24,6 +24,8 @@ NoFlex is a self-hosted media server for movies, shows, music, audiobooks, and p
 
 **📱 Apps: Flutter.** `flutter/` is one app for Android, iOS, macOS, Windows and Linux, adapting from phones to foldables to desktop windows. It plays through libmpv, preferring what each device decodes in hardware, and keeps titles offline with Smart Downloads.
 
+**📺 TVs: SolidTV.** `solidtv/` is one app for Samsung (Tizen), LG (webOS), Android TV and Fire TV, RDK, Apple TV and any browser, driven by a remote and drawn on the GPU rather than the DOM. It plays through each device's own decoders, with native video composited under its interface.
+
 **🗃️ Storage: Turso.** An in-process, SQLite-compatible engine by default, behind a backend-agnostic `Storage` trait.
 
 **❄️ Nix.** One flake provides the dev shell, the packages, CI checks, and a hardened NixOS module.
@@ -36,7 +38,7 @@ NoFlex takes the learnings from previous legacy projects and makes more modern c
 - **Bring your library as it is.** NoFlex reads the most common ways of organizing a media library, with richer parsing than many other servers, Jellyfin included. Tidy layouts like `Breaking Bad (2008)/Season 01/Breaking Bad - s01e01 - Pilot.mkv` and `Inception (2010) {edition-Director's Cut}.mkv` work, and so do release names like `Inception.2010.1080p.BluRay.x264-SPARKS.mkv`, season folders like `Game of Thrones Season 1 (1080p Tigole)`, and one show's versions split across `Season 01 (1080p)` and `Season 01 (4K)`.
 - **One canonical API.** Every client, ours or yours, talks GraphQL. The Rust domain type _is_ the GraphQL type, so the API never drifts from the model.
 - **Extensible plugin system.** NoFlex is built to be modular. Metadata, login, scrobbling, notifications and embeddings are all plugins, sandboxed, capability-gated and audit-logged, and they can't touch the database or the network except through narrow host imports. First-party providers use the same boundary, so the plugin API is exercised on every startup. Storage is just as replaceable: Turso is the default, and another engine is a crate that passes the shared conformance suite, not a fork.
-- **Cross-platform, performant frameworks.** We prefer frameworks that reach as many platforms as possible from one codebase, so a small project has less to maintain: Svelte for the web, Flutter for phones, tablets and desktops, and SolidTV planned for TVs.
+- **Cross-platform, performant frameworks.** We prefer frameworks that reach as many platforms as possible from one codebase, so a small project has less to maintain: Svelte for the web, Flutter for phones, tablets and desktops, and SolidTV for TVs.
 - **First-class multi-server.** Connect to your friends' servers and browse, stream and download from them alongside your own. Your client talks to their server directly, with no middleman in between.
 - **Self-hosted, end to end.** No accounts with us, no relay, no cloud inference unless you configure it. Search combines full-text with vector search over embeddings computed locally while your server is idle, and media bytes never leave your network unless you send them.
 

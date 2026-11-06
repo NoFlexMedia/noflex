@@ -21,13 +21,37 @@ Under direnv, put `export NOFLEX_SHELL=no-flutter` in `.envrc.local`.
 
 The shell also routes `rustc` through a shared `sccache`. If you juggle several branches, read [`GIT_WORKTREES.md`](GIT_WORKTREES.md) — it makes builds across worktrees share one cache.
 
-## Run the server
+Common tasks are [`just`](https://just.systems) recipes. `just` lists them all, and `just <group>` lists one group.
 
-The Cargo workspace lives in `backend/`:
+## Try the sample library
+
+`just demo up` gives you a working server without touching your own data. It downloads Blender's open movies (about 2 GB, once, and resumable), builds everything, and starts a server at `http://127.0.0.1:8096`. Sign in as `admin` with the password `noflex-demo-pass`. Titles get real metadata from TMDb and TheTVDB.
+
+To test multi-server features, ask for more servers:
 
 ```sh
-cd backend
-cargo run -p noflex-server
+just demo up --servers 3   # on :8096, :8097 and :8098
+```
+
+Each server has a share of the films, and Sintel is on all of them. Every server's admin is already linked to the others, so clients see them all after signing in to one.
+
+Clients connect to linked servers directly, so the links have to use an address the client can reach. That matters when the client isn't on this machine:
+
+```sh
+just demo up --servers 2 --bind 0.0.0.0 --advertise 10.0.2.2       # for an Android emulator
+just demo up --servers 2 --bind 0.0.0.0 --advertise 192.168.1.20   # for a phone on your network
+```
+
+The password is public, so only bind beyond this machine on a network you trust.
+
+Running `just demo up` again rebuilds and restarts the servers and keeps their data, unless you change the options, which starts afresh. `just demo` lists the rest: `status`, `logs`, `down`, `reset`, and `clean` to delete the films too. Everything lives under `.cache/`.
+
+## Run the server
+
+To run against your own data:
+
+```sh
+just server run
 ```
 
 The server listens on `http://127.0.0.1:8096`. Open it in a browser: the first visit walks you through creating the admin account, then adding a library.
@@ -39,14 +63,13 @@ Configuration is optional for local development; see [`CONFIGURATION.md`](CONFIG
 The server embeds a built client. To iterate on the client with hot reload, run Vite alongside the server:
 
 ```sh
-cd web
-npm install
-npm run dev      # http://localhost:5173, proxying the API to :8096
+just web install
+just web dev     # http://localhost:5173, proxying the API to :8096
 ```
 
 See [`web/README.md`](../web/README.md) for how builds are embedded.
 
-Semantic search also needs the embedding model; `cargo xtask model-fetch <dir>`
+Semantic search also needs the embedding model; `just server model-fetch <dir>`
 downloads it, then point `plugin.assets_dir` at `<dir>`.
 
 ## Run the app
@@ -54,42 +77,33 @@ downloads it, then point `plugin.assets_dir` at `<dir>`.
 The Flutter app lives in `flutter/`. It asks for your server's address on first launch.
 
 ```sh
-cd flutter
-flutter pub get
-dart run build_runner build   # generates the GraphQL types
-flutter run -d linux          # or an Android device or emulator
+just app setup       # fetches dependencies and generates the GraphQL types
+just app run         # the Linux desktop, or `just app run <device>`
 ```
 
-From an Android emulator the server on your machine is at `10.0.2.2:8096`, and emulators need one extra build flag; see "Test devices" in [`flutter/AGENTS.md`](../flutter/AGENTS.md).
+From an Android emulator the server on your machine is at `10.0.2.2:8096`, and emulators need one extra build flag, which `just app run-emulator` passes; see "Test devices" in [`flutter/AGENTS.md`](../flutter/AGENTS.md).
 
 ## Install plugins
 
 Metadata providers, login providers, scrobblers, and embeddings are all WASM plugins. Build one and hot-reload it into your running server:
 
 ```sh
-cd backend
-cargo xtask plugin-build tmdb   # by plugin id or crate name
-cargo xtask plugin-dev tmdb     # symlinks into $XDG_CONFIG_HOME/noflex/plugins/
+just plugin build tmdb   # by plugin id or crate name
+just plugin dev tmdb     # symlinks into $XDG_CONFIG_HOME/noflex/plugins/
 ```
 
-Plugins that call an API read their keys from `$XDG_CONFIG_HOME/noflex/secrets/<plugin-id>.toml`. Writing your own? Read [`PLUGINS.md`](PLUGINS.md).
+Plugins that need an API key read it from `$XDG_CONFIG_HOME/noflex/secrets/<plugin-id>.toml`. TMDb and TheTVDB ship with shared keys, so they don't need one. Writing your own? Read [`PLUGINS.md`](PLUGINS.md).
 
 ## Check your work
 
-CI runs the Rust gates and `nix flake check`; run the client check too:
-
 ```sh
-cd backend
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace          # or: cargo nextest run --workspace
-cd ../web && npm run check
-cd .. && nix flake check
+just check crate <name>   # format, lint and test one crate, while you work
+just check all            # every backend and client gate
+just check nix            # nix flake check, which CI also runs
 ```
 
 The GraphQL schema is code-first. When you change it, the drift test in `noflex-graphql` fails until you regenerate the SDL snapshot the web client validates against; commit it with the change:
 
 ```sh
-cd backend
-NOFLEX_UPDATE_SNAPSHOTS=1 cargo test -p noflex-graphql --test it schema_snapshot
+just server snapshot
 ```

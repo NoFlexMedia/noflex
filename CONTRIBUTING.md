@@ -9,13 +9,8 @@ Thanks for your interest in NoFlex! This page covers how changes land. For build
 - Before opening a pull request, run the gates CI runs:
 
   ```sh
-  cd backend
-  cargo fmt --all
-  cargo clippy --workspace --all-targets -- -D warnings
-  cargo test --workspace
-  cd ../web && npm run check
-  cd ../flutter && flutter analyze --no-pub && flutter test --no-pub
-  cd .. && nix flake check
+  just check all
+  just check nix
   ```
 
 - Schema changes include the regenerated GraphQL snapshot; see [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md#check-your-work).

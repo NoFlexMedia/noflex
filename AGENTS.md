@@ -26,6 +26,7 @@ Each project subdirectory owns an `AGENTS.md` describing its stack, commands, an
 - `web/` — SvelteKit client, embedded into the server binary at build time.
 - `flutter/` — Flutter app for Android, iOS, macOS, Windows and Linux.
 - `nix/` — NixOS module. `flake.nix` at the root provides the dev shell, packages, and checks.
+- `justfile`, `tasks/`, `scripts/tasks/` — the command interface: one `mod` per group, with anything longer than a few lines in a script.
 - `docs/` — operator and contributor docs, linked from `README.md`.
 
 ## Domain
@@ -52,6 +53,9 @@ NoFlex has one design language, and every client designs around it rather than a
 ## Conventions
 
 - The toolchain comes from the Nix flake — enter it with `nix develop` or `direnv`. Never `rustup`, never a system `cargo`, `node` or `flutter`. Need a tool? Add it to `flake.nix`, in the group its shell composes from.
+- `just` is the entry point for common tasks: `just` lists every recipe, `just <group>` one group. A command people run more than once gets a recipe.
+- `just demo up [--servers N]` starts throwaway servers with a real library and linked to each other. Use it to see a change working, rather than building a library by hand.
+- Shell scripts pass `shfmt --indent 2` and `shellcheck`, justfiles `just --fmt` (`just check tasks`).
 - License is AGPL-3.0-only. Every source file starts with an SPDX header (`// SPDX-License-Identifier: AGPL-3.0-only`, or the file type's comment equivalent).
 - Comments explain **why**, not what. Keep them minimal.
 - No back-compat shims for hypothetical changes. Pre-1.0, breaking changes land cleanly.
@@ -62,7 +66,7 @@ NoFlex has one design language, and every client designs around it rather than a
 
 ## Quality gates
 
-CI runs these; run them before committing (details in each subdirectory's `AGENTS.md`):
+CI runs these; run them before committing (details in each subdirectory's `AGENTS.md`). `just check` has them as recipes, along with `just check crate <name>` for one crate:
 
 ```sh
 nix flake check                                          # repo root: release package + fmt

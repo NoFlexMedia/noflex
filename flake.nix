@@ -137,6 +137,9 @@
         # opt out with `no-flutter` (skips the Android SDK and its gigabytes) or
         # `flutter-only`. See CONTRIBUTING.md for pinning a choice under direnv.
 
+        # `just` and what its recipes call; see tasks/ and scripts/tasks/.
+        taskPkgs = with pkgs; [just curl jq unzip shellcheck shfmt];
+
         rustPkgs = with pkgs; [
           rustToolchain
           rustfmtNightly
@@ -212,12 +215,11 @@
           echo "  - 🔗 wit-bindgen:     $(wit-bindgen --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
           echo "  - 📦 cargo-component: $(cargo component --version 2>/dev/null | awk '{print $2}' || echo 'not found')"
           echo ""
-          echo "Quickstart (Cargo workspace lives in backend/):"
-          echo "  - 🏗️ build:    cd backend && cargo build"
-          echo "  - 🚀 run:      cd backend && cargo run -p noflex-server"
-          echo "  - ✅ test:     cd backend && cargo nextest run --workspace"
-          echo "  - 🎨 fmt:      cd backend && cargo fmt --all     (uses nightly rustfmt via \$RUSTFMT)"
-          echo "  - 🔍 lint:     cd backend && cargo clippy --workspace --all-targets -- -D warnings"
+          echo "Quickstart:"
+          echo "  - 📋 commands: just"
+          echo "  - 🚀 run:      just server run"
+          echo "  - 🎬 demo:     just demo up --servers 2"
+          echo "  - ✅ check:    just check crate <crate>"
           echo ""
         '';
 
@@ -332,7 +334,7 @@
           # Server, web and Flutter: what a plain `nix develop` lands in.
           default = pkgs.mkShell ({
               inputsFrom = [noflex];
-              packages = rustPkgs ++ webPkgs ++ flutterPkgs;
+              packages = taskPkgs ++ rustPkgs ++ webPkgs ++ flutterPkgs;
               buildInputs = flutterLinuxLibs;
               shellHook = rustShellHook + flutterShellHook;
             }
@@ -342,14 +344,14 @@
           # Server and web, without the Flutter and Android downloads.
           no-flutter = pkgs.mkShell ({
               inputsFrom = [noflex];
-              packages = rustPkgs ++ webPkgs;
+              packages = taskPkgs ++ rustPkgs ++ webPkgs;
               shellHook = rustShellHook;
             }
             // rustEnv);
 
           # Flutter and Android alone, for working on the apps only.
           flutter-only = pkgsFlutter.mkShell ({
-              packages = flutterPkgs;
+              packages = taskPkgs ++ flutterPkgs;
               buildInputs = flutterLinuxLibs;
               shellHook = flutterShellHook;
             }

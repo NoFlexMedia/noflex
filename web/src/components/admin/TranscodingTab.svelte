@@ -145,7 +145,7 @@
     <section class="panel dense">
       <header class="panel-head">
         <span class="panel-icon"><Stack size={18} /></span>
-        <div><h2>Smart transcoding</h2><p>{versionCount("READY")} ready · {preparedGb.toFixed(1)}{#if settings} of {settings.maxStorageGb}{/if} GB · {versionCount("QUEUED")} queued</p></div>
+        <div><h2>Smart transcoding</h2><p>{versionCount("READY")} ready · {preparedGb.toFixed(1)}{settings ? ` of ${settings.maxStorageGb}` : ""} GB · {versionCount("QUEUED")} queued</p></div>
       </header>
       {#if settings && !settings.enabled}
         <p class="error warn"><WarningCircle size={14} />Turned off by <code>transcoder.optimize.enabled</code> in the server’s configuration.</p>

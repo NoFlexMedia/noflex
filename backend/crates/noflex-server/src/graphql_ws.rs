@@ -165,10 +165,9 @@ fn payload_credential(payload: &serde_json::Value) -> Option<HeaderMap> {
     } else if let Some(token) = field("token") {
         let value = HeaderValue::from_str(&format!("Bearer {token}")).ok()?;
         headers.insert(header::AUTHORIZATION, value);
-    } else if let Some(key) = field("apiKey").or_else(|| field("x-api-key")) {
-        headers.insert("x-api-key", HeaderValue::from_str(key).ok()?);
     } else {
-        return None;
+        let key = field("apiKey").or_else(|| field("x-api-key"))?;
+        headers.insert("x-api-key", HeaderValue::from_str(key).ok()?);
     }
     Some(headers)
 }

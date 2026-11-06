@@ -505,12 +505,11 @@ fn bit_depth_from_pix_fmt(pix_fmt: &str) -> Option<u8> {
     // 8-bit forms have no such suffix.
     let lower = pix_fmt.to_ascii_lowercase();
     for suffix in ["le", "be"] {
-        if let Some(stripped) = lower.strip_suffix(suffix) {
-            if let Some(digits) = stripped.rsplit(|c: char| !c.is_ascii_digit()).next()
-                && !digits.is_empty()
-            {
-                return digits.parse::<u8>().ok();
-            }
+        if let Some(stripped) = lower.strip_suffix(suffix)
+            && let Some(digits) = stripped.rsplit(|c: char| !c.is_ascii_digit()).next()
+            && !digits.is_empty()
+        {
+            return digits.parse::<u8>().ok();
         }
     }
     Some(8)

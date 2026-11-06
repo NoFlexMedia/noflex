@@ -128,7 +128,7 @@ pub async fn serve_image(
             opened
         } else {
             if let Err(resp) = render_resize(source, &source_path, &cached, w, h, fill).await {
-                return resp;
+                return *resp;
             }
             match cache_root.open(&cached).await {
                 Ok(opened) => opened,
@@ -211,12 +211,14 @@ async fn render_resize(
     w: Option<u32>,
     h: Option<u32>,
     fill: bool,
-) -> Result<(), Response> {
-    if let Some(parent) = dest.parent() {
-        if let Err(e) = tokio::fs::create_dir_all(parent).await {
-            tracing::error!(error = %e, path = %parent.display(), "image cache dir create failed");
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, "cache write failed").into_response());
-        }
+) -> Result<(), Box<Response>> {
+    if let Some(parent) = dest.parent()
+        && let Err(e) = tokio::fs::create_dir_all(parent).await
+    {
+        tracing::error!(error = %e, path = %parent.display(), "image cache dir create failed");
+        return Err(Box::new(
+            (StatusCode::INTERNAL_SERVER_ERROR, "cache write failed").into_response(),
+        ));
     }
 
     let source_path = source_path.to_path_buf();
@@ -269,11 +271,15 @@ async fn render_resize(
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => {
             tracing::error!(error = %e, "image resize failed");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, "resize failed").into_response())
+            Err(Box::new(
+                (StatusCode::INTERNAL_SERVER_ERROR, "resize failed").into_response(),
+            ))
         }
         Err(e) => {
             tracing::error!(error = %e, "image resize task panicked");
-            Err((StatusCode::INTERNAL_SERVER_ERROR, "resize failed").into_response())
+            Err(Box::new(
+                (StatusCode::INTERNAL_SERVER_ERROR, "resize failed").into_response(),
+            ))
         }
     }
 }

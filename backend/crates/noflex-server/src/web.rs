@@ -39,18 +39,19 @@ async fn serve(storage: Option<Extension<Arc<dyn Storage>>>, uri: Uri) -> Respon
     };
     let path = uri.path().trim_start_matches('/');
     let mut response = None;
-    if path == "index.html" || !path.ends_with(".html") {
-        if let Some((_, bytes)) = embedded::ASSETS.iter().find(|(asset, _)| *asset == path) {
-            response = Some(asset_response(path, bytes));
-        }
+    if (path == "index.html" || !path.ends_with(".html"))
+        && let Some((_, bytes)) = embedded::ASSETS.iter().find(|(asset, _)| *asset == path)
+    {
+        response = Some(asset_response(path, bytes));
     }
-    if response.is_none() && is_client_route(uri.path()) && !is_asset_like(uri.path()) {
-        if let Some((_, index)) = embedded::ASSETS
+    if response.is_none()
+        && is_client_route(uri.path())
+        && !is_asset_like(uri.path())
+        && let Some((_, index)) = embedded::ASSETS
             .iter()
             .find(|(asset, _)| *asset == "index.html")
-        {
-            response = Some(asset_response("index.html", index));
-        }
+    {
+        response = Some(asset_response("index.html", index));
     }
     let mut response = response.unwrap_or_else(|| {
         protected_response(StatusCode::NOT_FOUND, Body::empty(), None, NO_CACHE)

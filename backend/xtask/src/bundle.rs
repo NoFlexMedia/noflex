@@ -267,7 +267,12 @@ pub fn bundle(root: &Path, options: &BundleOptions) -> Result<()> {
     let status = Command::new("tar")
         .current_dir(&dist)
         // Not `--zstd`, which macOS's tar may lack.
-        .args(["--use-compress-program=zstd", "-cf", &archive, &format!("noflex-{target}")])
+        .args([
+            "--use-compress-program=zstd",
+            "-cf",
+            &archive,
+            &format!("noflex-{target}"),
+        ])
         .status()
         .context("run tar")?;
     if !status.success() {

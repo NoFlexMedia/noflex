@@ -577,7 +577,7 @@ async fn slow_loop(service: Weak<SystemStatusService>) {
             return;
         };
         service
-            .refresh_slow(n % CONTENT_EVERY_SLOW_TICKS == 0)
+            .refresh_slow(n.is_multiple_of(CONTENT_EVERY_SLOW_TICKS))
             .await;
     }
 }

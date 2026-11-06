@@ -608,8 +608,10 @@ mod tests {
         assert!(status.success(), "decoding {playlist}");
         let samples = std::fs::read(&pcm)
             .unwrap()
-            .chunks_exact(2)
-            .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| i16::from_le_bytes(*pair))
             .collect::<Vec<_>>();
         let crossings = samples
             .windows(2)

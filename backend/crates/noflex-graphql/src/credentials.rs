@@ -64,7 +64,8 @@ fn generate_pin() -> String {
     while pin.len() < PIN_LEN {
         for pair in noflex_auth::generate_refresh_token()
             .into_bytes()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
         {
             let (Some(hi), Some(lo)) = (
                 (pair[0] as char).to_digit(16),

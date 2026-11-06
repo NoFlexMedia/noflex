@@ -27,7 +27,7 @@ edition = "2024"
 version = "0.0.1"
 license = "AGPL-3.0-only"
 repository = "https://github.com/godtamit/noflex"
-rust-version = "1.85"
+rust-version = "1.99.1"
 
 # Crane reads workspace.metadata.crane.name to label the workspace build.
 # Without it, crane emits an evaluation warning and falls back to a placeholder.
@@ -50,7 +50,7 @@ noflex-plugin-sdk = { path = "crates/noflex-plugin-sdk" }
 
 # Async / runtime
 tokio = { version = "1", features = ["full"] }
-async-trait = "0.1"
+async-trait = "0.1.92"
 futures = "0.3"
 async-stream = "0.3"
 tokio-util = { version = "0.7", features = ["io"] }

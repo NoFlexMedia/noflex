@@ -96,13 +96,11 @@ fn vet_addresses(
     if addrs.is_empty() {
         return Err(format!("destination `{host}` resolved to no addresses").into());
     }
-    if !allow_private {
-        if let Some(addr) = addrs.iter().find(|addr| forbidden_ip(addr.ip())) {
-            return Err(Box::new(ForbiddenDestination {
-                host: host.to_string(),
-                ip: addr.ip(),
-            }));
-        }
+    if !allow_private && let Some(addr) = addrs.iter().find(|addr| forbidden_ip(addr.ip())) {
+        return Err(Box::new(ForbiddenDestination {
+            host: host.to_string(),
+            ip: addr.ip(),
+        }));
     }
     Ok(addrs)
 }

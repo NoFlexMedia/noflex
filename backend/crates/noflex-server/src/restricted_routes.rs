@@ -236,9 +236,9 @@ async fn authorize_optimized(
     principal: &Principal,
     id: &str,
     token: Option<&str>,
-) -> Result<(noflex_storage::domain::OptimizedVersion, Option<String>), Response> {
+) -> Result<(noflex_storage::domain::OptimizedVersion, Option<String>), Box<Response>> {
     let id = parse_path_id(id, noflex_core::OptimizedVersionId::from_uuid)
-        .ok_or_else(|| invalid_id_response(id))?;
+        .ok_or_else(|| Box::new(invalid_id_response(id)))?;
     let (principal, token) = stream::byte_route_principal(
         state.storage.as_ref(),
         principal,
@@ -247,13 +247,13 @@ async fn authorize_optimized(
         &format!("optimized:{id}"),
     )
     .await
-    .map_err(IntoResponse::into_response)?;
+    .map_err(|error| Box::new(error.into_response()))?;
     let version = optimized_serve::ready_version(&state.storage, id)
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(|error| Box::new(error.into_response()))?;
     stream::media_access(state.storage.as_ref(), &principal, version.media_file_id)
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(|error| Box::new(error.into_response()))?;
     Ok((version, token))
 }
 
@@ -267,7 +267,7 @@ async fn optimized_master(
         Ok((version, token)) => {
             optimized_serve::serve_master(&state.storage, version, token.as_deref()).await
         }
-        Err(response) => response,
+        Err(response) => *response,
     }
 }
 
@@ -284,7 +284,7 @@ async fn optimized_part(
     let (version, token) =
         match authorize_optimized(&state, &principal, &id, query.token.as_deref()).await {
             Ok(authorized) => authorized,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
     // Versions stay where they were written when the folder setting changes.
     let Some(dir) = version

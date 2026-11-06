@@ -38,7 +38,9 @@ RUN wget https://archive.ubuntu.com/ubuntu/pool/main/a/autoconf/autoconf_2.73-2_
 RUN python3 -m pip install --break-system-packages meson
 
 ENV CARGO_HOME="/opt/cargo" RUSTUP_HOME="/opt/rustup" PATH="/opt/cargo/bin:${PATH}"
-RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --no-modify-path && \
+ARG RUST_VERSION
+RUN test -n "$RUST_VERSION" && \
+    curl https://sh.rustup.rs -sSf | bash -s -- -y --no-modify-path --default-toolchain "$RUST_VERSION" && \
     ( [ "$TARGETPLATFORM" = "linux/riscv64" ] || cargo install cargo-c ) && \
     rm -rf "${CARGO_HOME}"/registry "${CARGO_HOME}"/git
 

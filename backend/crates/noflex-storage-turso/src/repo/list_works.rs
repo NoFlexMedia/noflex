@@ -123,10 +123,10 @@ pub(crate) async fn list(conn: &Connection, q: &ListWorksQuery) -> StorageResult
     if !q.recursive && q.parent.is_none() {
         where_clauses.push("parent_id IS NULL".to_string());
     }
-    if let Some(cursor) = &q.cursor {
-        if let Some(keyset) = parse_cursor(cursor, q.sort) {
-            push_cursor_clause(&mut where_clauses, &mut params, q.sort, keyset);
-        }
+    if let Some(cursor) = &q.cursor
+        && let Some(keyset) = parse_cursor(cursor, q.sort)
+    {
+        push_cursor_clause(&mut where_clauses, &mut params, q.sort, keyset);
     }
 
     if !where_clauses.is_empty() {
@@ -534,7 +534,7 @@ fn push_cursor_clause(
 fn decode_hex(hex: &str) -> Option<Vec<u8>> {
     // Only even-length ASCII can be sliced pairwise below; anything
     // else is just "no cursor".
-    if hex.len() % 2 != 0 || !hex.is_ascii() {
+    if !hex.len().is_multiple_of(2) || !hex.is_ascii() {
         return None;
     }
     (0..hex.len())

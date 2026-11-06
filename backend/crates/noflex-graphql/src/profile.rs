@@ -68,7 +68,9 @@ fn is_heif(bytes: &[u8]) -> bool {
     };
     bytes.get(4..8) == Some(b"ftyp")
         && header
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|brand| HEIF_BRANDS.iter().any(|known| brand == known.as_slice()))
 }
 

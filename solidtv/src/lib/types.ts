@@ -37,6 +37,7 @@ export interface Edition {
   trickplay?: Trickplay | null;
 }
 export interface Trickplay {
+  chapterCues?: { positionMs: number; title?: string | null }[] | null;
   intervalMs: number;
   thumbWidth: number;
   thumbHeight: number;
@@ -58,4 +59,38 @@ export interface PlaybackSession {
   jobId?: string | null;
   startPositionMs?: number;
   subtitles?: SubtitleDelivery[];
+  decision?: PlaybackDecision | null;
+}
+export interface StreamSummary {
+  container?: string | null;
+  videoCodec?: string | null;
+  videoProfile?: string | null;
+  videoLevel?: number | null;
+  bitDepth?: number | null;
+  width?: number | null;
+  height?: number | null;
+  videoRange?: string | null;
+  audioCodec?: string | null;
+  audioChannels?: number | null;
+  bitrateBps?: number | null;
+}
+export interface PlaybackDecision {
+  plan: string;
+  reasons: { code: string; description: string }[];
+  source: StreamSummary;
+  target: StreamSummary;
+  encoder?: string | null;
+  audioEncoder?: string | null;
+  hardware: boolean;
+  tonemap: boolean;
+}
+export interface Device {
+  id: string;
+  name: string;
+  smartTranscode: boolean;
+  maxBitrateBps?: number | null;
+  smartDownloads: boolean;
+  downloadBudgetBytes?: number | null;
+  downloadsWifiOnly: boolean;
+  lastSeenAt: string;
 }

@@ -6,15 +6,17 @@
 import { audioFormat, languageCode, languageName } from "$lib/format.js";
 import type { SubtitleTrack } from "$lib/types.js";
 
-export interface PlaybackPrefs { audioLanguages: string[]; subtitlesOn: boolean; subtitleLanguages: string[] }
+export interface PlaybackPrefs { audioLanguages: string[]; subtitlesOn: boolean; subtitleLanguages: string[]; quality: string; autoplayNext: boolean }
 
-export const noPrefs: PlaybackPrefs = { audioLanguages: [], subtitlesOn: false, subtitleLanguages: [] };
+export const noPrefs: PlaybackPrefs = { audioLanguages: [], subtitlesOn: false, subtitleLanguages: [], quality: "auto", autoplayNext: true };
 
 export function readPlaybackPrefs(value: any): PlaybackPrefs {
   return {
     audioLanguages: value?.audio?.languages ?? [],
     subtitlesOn: Boolean(value?.subtitles?.enabled),
     subtitleLanguages: value?.subtitles?.languages ?? [],
+    quality: String(value?.quality ?? "auto"),
+    autoplayNext: value?.autoplayNext ?? true,
   };
 }
 

@@ -8,7 +8,7 @@
 // NSObject with exposed selectors, for what a few reads a second tells just as well.
 
 import type { View } from "@nativescript/core";
-import type { AudioTrack, PlayerEvent, VideoPlayer, VideoSource } from "$lib/player/types.js";
+import type { AudioTrack, PlayerEvent, PlayerStats, VideoPlayer, VideoSource } from "$lib/player/types.js";
 
 // In the runtime's metadata, though @nativescript/types leaves CoreMedia's C functions out.
 declare function CMTimeGetSeconds(time: any): number;
@@ -76,6 +76,7 @@ export class AvVideoPlayer implements VideoPlayer {
   private lastControl = -1;
   private lastPosition = -1;
   private audioGroup: AVMediaSelectionGroup | null = null;
+  private rate = 1;
 
   constructor() {
     this.layer = AVPlayerLayer.playerLayerWithPlayer(this.player);
@@ -106,7 +107,7 @@ export class AvVideoPlayer implements VideoPlayer {
     const item = AVPlayerItem.playerItemWithURL(url);
     this.endObserver = NSNotificationCenter.defaultCenter.addObserverForNameObjectQueueUsingBlock(AVPlayerItemDidPlayToEndTimeNotification, item, NSOperationQueue.mainQueue, () => this.emit({ type: "ended" }));
     this.player.replaceCurrentItemWithPlayerItem(item);
-    this.player.play();
+    this.play();
     this.timer = setInterval(() => this.tick(source), POLL_MS);
   }
 
@@ -156,7 +157,11 @@ export class AvVideoPlayer implements VideoPlayer {
     this.timer = null;
   }
 
-  play(): void { this.player.play(); }
+  play(): void {
+    this.player.play();
+    // play() means a rate of 1.
+    if (this.rate !== 1) this.player.rate = this.rate;
+  }
   pause(): void { this.player.pause(); }
   seek(target: number): void { this.player.seekToTime(CMTimeMakeWithSeconds(target, TIMESCALE)); }
   position(): number { return seconds(this.player.currentTime()); }
@@ -170,7 +175,35 @@ export class AvVideoPlayer implements VideoPlayer {
     const range = ranges.objectAtIndex(ranges.count - 1).CMTimeRangeValue;
     return seconds(range.start) + seconds(range.duration);
   }
+  buffered(): number {
+    const ranges = this.player.currentItem?.loadedTimeRanges;
+    const at = this.position();
+    if (!ranges) return at;
+    for (let index = 0; index < ranges.count; index += 1) {
+      const range = ranges.objectAtIndex(index).CMTimeRangeValue;
+      const start = seconds(range.start);
+      const end = start + seconds(range.duration);
+      if (start <= at && at <= end) return end;
+    }
+    return at;
+  }
   paused(): boolean { return this.player.timeControlStatus === CONTROL_PAUSED; }
+  setRate(rate: number): void {
+    this.rate = rate;
+    if (this.player.timeControlStatus !== CONTROL_PAUSED) this.player.rate = rate;
+  }
+  stats(): PlayerStats {
+    const item = this.player.currentItem;
+    // The most recent access log event describes the variant playing now.
+    const log = item?.accessLog()?.events?.lastObject as AVPlayerItemAccessLogEvent | undefined;
+    return {
+      width: item?.presentationSize.width ?? 0,
+      height: item?.presentationSize.height ?? 0,
+      droppedFrames: log?.numberOfDroppedVideoFrames,
+      bandwidthBps: log?.observedBitrate,
+      streamBitrateBps: log?.indicatedBitrate,
+    };
+  }
   setAudioTrack(id: number): void {
     const option = this.audioGroup?.options.objectAtIndex(id);
     if (option && this.audioGroup) this.player.currentItem?.selectMediaOptionInMediaSelectionGroup(option, this.audioGroup);

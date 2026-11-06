@@ -36,6 +36,34 @@ export function audioFormat(track: any): string {
   return [AUDIO_NAMES[codec] ?? codec.toUpperCase(), CHANNEL_NAMES[track?.channels] ?? (track?.channels ? `${track.channels} ch` : "")].filter(Boolean).join(" ");
 }
 
+/** What a file's picture and chosen sound are, in a few badges: resolution, codec, HDR, audio. */
+export function techBadges(probe: any, audio: any): string[] {
+  const video = probe?.video;
+  const height = video?.height;
+  const tier = !height ? "" : height >= 2000 ? "4K" : height >= 1400 ? "1440p" : height >= 1000 ? "1080p" : height >= 700 ? "720p" : `${height}p`;
+  const name = String(video?.codec ?? "").toLowerCase();
+  return [tier, CODEC_NAMES[name] ?? name.toUpperCase(), video ? dynamicRange(video) : "", audio ? audioFormat(audio) : ""].filter(Boolean);
+}
+
+/** A codec enum or ffprobe name as viewers know it: `H265` → "HEVC". */
+export function codecName(code?: string | null): string {
+  const name = String(code ?? "").toLowerCase();
+  return CODEC_NAMES[name] ?? name.toUpperCase();
+}
+
+/** A level in the server's (ffprobe's) units: H.264 ×10, HEVC ×30, AV1 `seq_level_idx`. */
+export function levelName(codec?: string | null, level?: number | null): string | null {
+  if (level == null || level <= 0) return null;
+  const name = String(codec ?? "").toLowerCase();
+  return name === "h264" ? `L${level / 10}` : name === "h265" || name === "hevc" ? `L${Math.round(level / 3) / 10}` : `L${level}`;
+}
+
+/** A profile enum as it's usually written: `HEVC_MAIN10` → "Main 10". */
+export function profileName(profile?: string | null): string {
+  if (!profile) return "";
+  return profile.replace(/^(H264|HEVC|AV1|VP9)_/i, "").replace(/(\D)(\d+)$/, "$1 $2").replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+}
+
 /** A media file's version as viewers name it: "4K · HEVC · HDR10". Null when the probe has no video. */
 export function versionLabel(probe: any): string | null {
   const video = probe?.video;

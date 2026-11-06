@@ -24,6 +24,16 @@ export type PlayerEvent =
   | { type: "tracks"; tracks: AudioTrack[]; current: number }
   | { type: "error"; message: string };
 
+/** Whatever this engine can say about what it's doing. Blank where it can't. */
+export interface PlayerStats {
+  width: number;
+  height: number;
+  droppedFrames?: number;
+  totalFrames?: number;
+  bandwidthBps?: number;
+  streamBitrateBps?: number;
+}
+
 export interface VideoPlayer {
   load(source: VideoSource): Promise<void>;
   play(): void;
@@ -34,8 +44,12 @@ export interface VideoPlayer {
   duration(): number;
   /** How far the stream reaches, for telling a seek the transcoder can serve from one it can't. */
   seekableEnd(): number;
+  /** Stream time the buffer reaches from the playhead. */
+  buffered(): number;
   paused(): boolean;
   setAudioTrack(id: number): void;
+  setRate(rate: number): void;
+  stats(): PlayerStats;
   on(listener: (event: PlayerEvent) => void): void;
   destroy(): void;
 }

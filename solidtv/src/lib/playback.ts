@@ -4,8 +4,10 @@
 
 import { CHILD_PAGE, MEDIA_FILES, START_LIVE, START_PLAYBACK, STOP_PLAYBACK, WORK_DETAIL } from "$lib/graphql/documents.js";
 import { cached, request } from "$lib/graphql.js";
+import type { ClientCapabilities } from "$codecs";
 import { host } from "$lib/host.js";
 import { app } from "$lib/session.js";
+import { QUALITY_HEIGHTS, settings } from "$lib/settings.js";
 import { reactive } from "$lib/state.js";
 import { mediaUrl } from "$lib/tokens.js";
 import { isImageSubtitle, preferredAudio, preferredSubtitle } from "$lib/tracks.js";
@@ -41,9 +43,19 @@ function absolute(session: PlaybackSession): PlaybackSession {
   return { ...session, url: mediaUrl(session.url), subtitles: session.subtitles?.map((track) => ({ ...track, url: mediaUrl(track.url) })) };
 }
 
+/** What this TV can play, less what the viewer has asked it not to. */
+function limited(capabilities: ClientCapabilities): ClientCapabilities {
+  const ceiling = QUALITY_HEIGHTS[app.playbackPrefs.quality];
+  return {
+    ...capabilities,
+    maxHeight: ceiling && capabilities.maxHeight ? Math.min(ceiling, capabilities.maxHeight) : ceiling ?? capabilities.maxHeight,
+    videoCodecs: settings.allowHdr ? capabilities.videoCodecs : capabilities.videoCodecs.map((codec) => ({ ...codec, videoRanges: [] })),
+  };
+}
+
 /** Open a session; a transcode starts at `startPositionMs` so far seeks don't wait on ffmpeg. */
 export async function startSession(mediaFileId: string, subtitle: number | null = null, startPositionMs = 0, audioStream: number | null = null): Promise<PlaybackSession> {
-  const capabilities = await host.capabilities();
+  const capabilities = limited(await host.capabilities());
   const data = await request(START_PLAYBACK, { media: mediaFileId, capabilities, subtitle, start: Math.max(0, Math.round(startPositionMs)), audio: audioStream });
   return absolute(data.startPlaybackSession);
 }

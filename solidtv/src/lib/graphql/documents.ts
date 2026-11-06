@@ -32,7 +32,7 @@ fragment EditionFull on Edition {
   introEndMs
   creditsStartMs
   chapters { positionMs title }
-  trickplay { intervalMs thumbWidth thumbHeight tileColumns tileRows sheets { index tileCount url } }
+  trickplay { intervalMs thumbWidth thumbHeight tileColumns tileRows sheets { index tileCount url } chapterCues { positionMs title } }
 }`;
 
 const MEDIA_FILE = `
@@ -56,7 +56,18 @@ fragment SessionFields on PlaybackSession {
   jobId
   startPositionMs
   subtitles { index language title forced default url }
-}`;
+  decision {
+    plan
+    reasons { code description }
+    source { ...StreamFields }
+    target { ...StreamFields }
+    encoder
+    audioEncoder
+    hardware
+    tonemap
+  }
+}
+fragment StreamFields on StreamSummary { container videoCodec videoProfile videoLevel bitDepth width height videoRange audioCodec audioChannels bitrateBps }`;
 
 // ---- session ----------------------------------------------------------------
 
@@ -77,6 +88,18 @@ mutation Login($username: String!, $password: String!, $client: String!, $device
 }`;
 
 export const LOGOUT = `mutation Logout { logout }`;
+
+export const SET_PREFERENCE = `mutation SetPreference($key: String!, $value: JSON!) { setPreference(key: $key, value: $value) { key } }`;
+
+const DEVICE = `
+fragment DeviceFields on Device { id name smartTranscode maxBitrateBps smartDownloads downloadBudgetBytes downloadsWifiOnly lastSeenAt }`;
+
+export const MY_DEVICES = gql(`query MyDevices { myDevices { ...DeviceFields } serverInfo { downloadsAllowed } }`, DEVICE);
+
+export const UPDATE_DEVICE = gql(`
+mutation UpdateDevice($id: ID!, $smartTranscode: Boolean, $maxBitrateBps: Int, $clearMaxBitrate: Boolean, $smartDownloads: Boolean, $downloadBudgetBytes: Int, $clearDownloadBudget: Boolean, $downloadsWifiOnly: Boolean) {
+  updateDevice(id: $id, smartTranscode: $smartTranscode, maxBitrateBps: $maxBitrateBps, clearMaxBitrate: $clearMaxBitrate, smartDownloads: $smartDownloads, downloadBudgetBytes: $downloadBudgetBytes, clearDownloadBudget: $clearDownloadBudget, downloadsWifiOnly: $downloadsWifiOnly) { ...DeviceFields }
+}`, DEVICE);
 
 export const REGISTER_DEVICE = `
 mutation RegisterDevice($id: ID!, $name: String!, $capabilities: ClientCapabilities!) {

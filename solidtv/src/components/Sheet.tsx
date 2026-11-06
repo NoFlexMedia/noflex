@@ -44,7 +44,7 @@ export default function Sheet(props: { title: string; choices: Choice[]; value: 
   onMount(() => list?.setFocus());
   onCleanup(() => { if (previous && !previous.destroyed) previous.setFocus(); });
   return (
-    <view width={SCREEN.width} height={SCREEN.height} zIndex={150} onBack={() => { props.onClose(); return true; }} forwardFocus={2}>
+    <view width={SCREEN.width} height={SCREEN.height} zIndex={150} onBack={() => { props.onClose(); return true; }} onLeft={() => true} onRight={() => true} onUp={() => true} onDown={() => true} forwardFocus={2}>
       {/* On these quads, not just a parent: only a quad with a zIndex draws over text queued before it. */}
       <view width={SCREEN.width} height={SCREEN.height} zIndex={150} color={0x030406b8} />
       <view x={SCREEN.width - WIDTH} width={WIDTH} height={SCREEN.height} zIndex={150} color={0x16181eff}>

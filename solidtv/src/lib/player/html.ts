@@ -5,7 +5,7 @@
 // reason as the web client: it retries playlists the transcoder hasn't finished
 // writing, which native HLS won't.
 
-import type { AudioTrack, PlayerEvent, VideoPlayer, VideoSource } from "$lib/player/types.js";
+import type { AudioTrack, PlayerEvent, PlayerStats, VideoPlayer, VideoSource } from "$lib/player/types.js";
 import { languageName } from "$lib/format.js";
 
 export class HtmlVideoPlayer implements VideoPlayer {
@@ -93,8 +93,26 @@ export class HtmlVideoPlayer implements VideoPlayer {
     const ranges = this.video.seekable;
     return ranges.length ? ranges.end(ranges.length - 1) : this.duration();
   }
+  buffered(): number {
+    const ranges = this.video.buffered;
+    const at = this.video.currentTime;
+    for (let index = 0; index < ranges.length; index++) if (ranges.start(index) <= at && at <= ranges.end(index)) return ranges.end(index);
+    return at;
+  }
   paused(): boolean { return this.video.paused; }
   setAudioTrack(id: number): void { if (this.hls) this.hls.audioTrack = id; }
+  setRate(rate: number): void { this.video.playbackRate = rate; }
+  stats(): PlayerStats {
+    const quality = this.video.getVideoPlaybackQuality?.();
+    return {
+      width: this.video.videoWidth,
+      height: this.video.videoHeight,
+      droppedFrames: quality?.droppedVideoFrames,
+      totalFrames: quality?.totalVideoFrames,
+      bandwidthBps: this.hls?.bandwidthEstimate,
+      streamBitrateBps: this.hls?.levels?.[this.hls.currentLevel]?.bitrate,
+    };
+  }
 
   destroy(): void {
     this.disposed = true;

@@ -5,7 +5,7 @@
 // a transcode's stream time zero being `startPositionMs` into it.
 
 import { Row } from "@solidtv/solid/primitives";
-import { activeElement, renderer, type ElementNode } from "@solidtv/solid";
+import { activeElement, type ElementNode } from "@solidtv/solid";
 import { createEffect, createMemo, createSignal, on, onCleanup, onMount, Show, untrack } from "solid-js";
 import { timecode } from "$lib/format.js";
 import { MARK_PLAYED, REPORT_PROGRESS } from "$lib/graphql/documents.js";
@@ -13,32 +13,40 @@ import { request } from "$lib/graphql.js";
 import { host } from "$lib/host.js";
 import { pickImage, sized } from "$lib/images.js";
 import { closePlayer, isAudioOnly, nextSibling, type Playback, playWork, restartSession, stopSession } from "$lib/playback.js";
+import { chapterStops, thumbAt, type Stop } from "$lib/player/trickplay.js";
 import type { AudioTrack, VideoPlayer } from "$lib/player/types.js";
 import { cueAt, parseVtt, type Cue } from "$lib/player/vtt.js";
-import { mediaUrl } from "$lib/tokens.js";
+import { app } from "$lib/session.js";
+import { CAPTION_BACKGROUNDS, CAPTION_SIZES, settings } from "$lib/settings.js";
 import { audioChoices, isImageSubtitle, subtitleChoices } from "$lib/tracks.js";
 import type { Work } from "$lib/types.js";
 import { toast } from "$lib/ui.js";
 import { setUserData } from "$lib/watch.js";
 import { color, gradient, GUTTER, motion, radius, SCREEN, toward, type, weight } from "../../theme.js";
+import Artwork from "$components/Artwork.js";
 import Button from "$components/Button.js";
 import Icon from "$components/Icon.js";
+import ChapterRail, { CHAPTER_HEIGHT } from "$components/player/ChapterRail.js";
+import PlaybackInfo from "$components/player/PlaybackInfo.js";
+import Timeline from "$components/player/Timeline.js";
 import Sheet from "$components/Sheet.js";
 import Spinner from "$components/Spinner.js";
 
 const CHROME_MS = 4000;
 const HEARTBEAT_MS = 15_000;
-const SKIP = 10;
+const HELD_STEP = 30;
 // Within what the transcoder has produced (plus a little it will reach soon) a
 // seek is native; further, a new session starting at the target beats waiting.
 const TRANSCODE_REACH = 30;
 const SCRUB_COMMIT_MS = 600;
 const BAR_WIDTH = SCREEN.width - GUTTER * 2;
-const UP_NEXT_SECONDS = 10;
 const THUMB_WIDTH = 384;
-const CAPTION_SIZE = 44;
-const CAPTION_LINE = 56;
 const CAPTION_PAD = 10;
+// How far the transport slides up to make room for the chapters below it.
+const LIFT = CHAPTER_HEIGHT + 92;
+const SCRIM = 460;
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const ROUTE: Record<string, string> = { DIRECT: "Direct", OPTIMIZED: "Optimized", TRANSCODE: "Adaptive" };
 
 export default function Player(props: { playback: Playback }) {
   const playback = () => props.playback;
@@ -66,7 +74,13 @@ export default function Player(props: { playback: Playback }) {
   const [countdown, setCountdown] = createSignal<number | null>(null);
   const [tracks, setTracks] = createSignal<AudioTrack[]>([]);
   const [audioTrack, setAudioTrack] = createSignal(-1);
-  const [sheet, setSheet] = createSignal<"audio" | "subtitle" | null>(null);
+  const [sheet, setSheet] = createSignal<"audio" | "subtitle" | "speed" | null>(null);
+  const [info, setInfo] = createSignal(false);
+  const [rate, setRate] = createSignal(1);
+  const [buffered, setBuffered] = createSignal(0);
+  const [chaptersOpen, setChaptersOpen] = createSignal(false);
+  const [focusedStop, setFocusedStop] = createSignal<Stop | null>(null);
+  let introSkipped = false;
   const [subtitleIndex, setSubtitleIndex] = createSignal<number | null>(untrack(() => props.playback.subtitleIndex ?? null));
   const [cues, setCues] = createSignal<Cue[]>([]);
   const [caption, setCaption] = createSignal("");
@@ -84,7 +98,9 @@ export default function Player(props: { playback: Playback }) {
     if (!transcoding()) return own;
     return (edition()?.runtimeMs ?? playback().work?.runtimeMs ?? 0) / 1000 || offset() + own;
   };
-  const shown = () => scrub() ?? position();
+  const stops = () => chapterStops(realChapters(), edition()?.trickplay, edition()?.runtimeMs ?? playback().work?.runtimeMs);
+  const realChapters = () => (edition()?.trickplay?.chapterCues?.length ? edition()!.trickplay!.chapterCues! : edition()?.chapters ?? []);
+  const shown = () => scrub() ?? (focusedStop() ? focusedStop()!.positionMs / 1000 : position());
   const fraction = () => (length() > 0 ? Math.min(1, shown() / length()) : 0);
   const inIntro = () => {
     const end = edition()?.introEndMs;
@@ -93,16 +109,25 @@ export default function Player(props: { playback: Playback }) {
   const inCredits = () => edition()?.creditsStartMs != null && length() > 0 && position() * 1000 >= edition()!.creditsStartMs!;
   const delivered = () => playback().subtitles ?? [];
   // Measured ahead of the renderer, which would answer a frame late; Inter averages about half an em.
+  const captionSize = () => CAPTION_SIZES[settings.captionSize];
+  const captionLine = () => Math.round(captionSize() * 1.27);
   const captionBox = () => {
     const lines = caption().split("\n");
     const longest = lines.reduce((most, line) => Math.max(most, line.length), 0);
-    return { width: Math.min(SCREEN.width - GUTTER * 2, longest * CAPTION_SIZE * 0.52 + 48), height: lines.length * CAPTION_LINE + CAPTION_PAD * 2 };
+    return { width: Math.min(SCREEN.width - GUTTER * 2, longest * captionSize() * 0.52 + 48), height: lines.length * captionLine() + CAPTION_PAD * 2 };
   };
 
   function showChrome(): void {
     setChrome(true);
     clearTimeout(chromeTimer);
-    chromeTimer = setTimeout(() => { if (!video?.paused() && scrub() == null && !sheet()) setChrome(false); }, CHROME_MS);
+    chromeTimer = setTimeout(() => { if (!video?.paused() && scrub() == null && !sheet() && !chaptersOpen()) hideChrome(); }, CHROME_MS);
+  }
+
+  // Focus comes along, or a key would act on buttons nobody can see.
+  function hideChrome(): void {
+    clearTimeout(chromeTimer);
+    setChrome(false);
+    if (controlsFocused()) root?.setFocus();
   }
 
   async function report(state: "PLAYING" | "PAUSED" | "STOPPED"): Promise<void> {
@@ -138,7 +163,7 @@ export default function Player(props: { playback: Playback }) {
   }
 
   function startCountdown(): void {
-    setCountdown(UP_NEXT_SECONDS);
+    setCountdown(settings.upNextSeconds);
     showChrome();
     countdownTimer = setInterval(() => {
       const left = (countdown() ?? 1) - 1;
@@ -173,6 +198,7 @@ export default function Player(props: { playback: Playback }) {
         switch (event.type) {
           case "ready":
             setLength(timeline());
+            created.setRate(rate());
             { // A transcode already starts at the resume point; a file seeks to it.
               const resume = (playback().resumeMs ?? 0) / 1000 - offset();
               if (resume > 1 && created.position() < 1) created.seek(resume);
@@ -200,12 +226,17 @@ export default function Player(props: { playback: Playback }) {
             if (restarting() != null) break;
             setPosition(mediaTime());
             setLength(timeline());
+            setBuffered(offset() + created.buffered());
+            if (settings.autoSkipIntro && !introSkipped && inIntro()) {
+              introSkipped = true;
+              seekTo(edition()!.introEndMs! / 1000);
+            }
             if (cues().length) {
               const found = cueAt(cues(), created.position(), cueIndex);
               cueIndex = found.index;
               setCaption(found.text);
             }
-            if (inCredits() && next() && countdown() == null && !countdownTimer && !created.paused()) startCountdown();
+            if (app.playbackPrefs.autoplayNext && inCredits() && next() && countdown() == null && !countdownTimer && !created.paused()) startCountdown();
             break;
           case "ended":
             // The server infers completion from progress, but only with a known runtime.
@@ -213,7 +244,7 @@ export default function Player(props: { playback: Playback }) {
               const workId = playback().workId!;
               request(MARK_PLAYED, { id: workId }).then((data) => setUserData(workId, data.markPlayed), () => {});
             }
-            if (next()) void playNext(); else void close();
+            if (next() && app.playbackPrefs.autoplayNext) void playNext(); else void close();
             break;
           case "tracks":
             setTracks(event.tracks);
@@ -235,6 +266,9 @@ export default function Player(props: { playback: Playback }) {
     setPosition((playback().resumeMs ?? 0) / 1000);
     setTracks([]);
     cancelCountdown();
+    introSkipped = false;
+    setFocusedStop(null);
+    setChaptersOpen(false);
   }, { defer: true }));
 
   createEffect(on(() => playback().work, (work) => {
@@ -317,7 +351,7 @@ export default function Player(props: { playback: Playback }) {
   // A held key walks the scrub head; the seek lands when it stops, so the decoder isn't asked for every step.
   function nudge(direction: number, repeat: boolean): boolean {
     if (live()) { showChrome(); return true; }
-    const step = repeat ? 30 : SKIP;
+    const step = repeat ? HELD_STEP : settings.skipStep;
     setScrub(Math.max(0, Math.min(length() || Infinity, (scrub() ?? position()) + direction * step)));
     showChrome();
     clearTimeout(scrubTimer);
@@ -332,41 +366,80 @@ export default function Player(props: { playback: Playback }) {
 
   const onBack = () => {
     if (sheet()) { setSheet(null); return true; }
+    if (chaptersOpen()) { closeChapters(); return true; }
     if (scrub() != null) { clearTimeout(scrubTimer); setScrub(null); showChrome(); return true; }
     if (countdown() != null) { cancelCountdown(); return true; }
-    if (chrome() && !paused() && controlsFocused()) { root?.setFocus(); setChrome(false); return true; }
+    if (info()) { setInfo(false); return true; }
+    if (chrome() && !paused() && controlsFocused()) { hideChrome(); return true; }
     void close();
     return true;
   };
 
+  // The transport is a stack: the rail, the buttons under it, the chapters under those.
+  // Off the top of it, the overlay goes away.
   const [controlsFocused, setControlsFocused] = createSignal(false);
   const focusControls = () => { showChrome(); controls?.setFocus(); return true; };
+  function openChapters(): void {
+    setChaptersOpen(true);
+    showChrome();
+  }
+  function closeChapters(): void {
+    setChaptersOpen(false);
+    setFocusedStop(null);
+    focusControls();
+  }
+  function goUp(): boolean {
+    if (chaptersOpen()) closeChapters();
+    else if (controlsFocused()) { root?.setFocus(); showChrome(); }
+    else if (chrome()) hideChrome();
+    else showChrome();
+    return true;
+  }
+  function goDown(): boolean {
+    if (chaptersOpen()) return true;
+    if (!controlsFocused()) return focusControls();
+    if (!live() && stops().length) openChapters(); else showChrome();
+    return true;
+  }
+  function chooseStop(stop: Stop): void {
+    setChaptersOpen(false);
+    setFocusedStop(null);
+    root?.setFocus();
+    seekTo(stop.positionMs / 1000);
+    showChrome();
+  }
+  function onEnter(): boolean {
+    if (inIntro()) seekTo(edition()!.introEndMs! / 1000);
+    else if (countdown() != null) void playNext();
+    else if (!chrome()) showChrome();
+    else toggle();
+    return true;
+  }
+  const pickSpeed = (value: string) => { setRate(Number(value)); video?.setRate(Number(value)); };
 
   // ---- trickplay ------------------------------------------------------------
-  const trick = () => edition()?.trickplay;
   const preview = createMemo(() => {
     const time = scrub();
-    const data = trick();
-    if (time == null || !data?.sheets?.length) return null;
-    const perSheet = data.tileColumns * data.tileRows;
-    const index = Math.floor((time * 1000) / data.intervalMs);
-    const page = data.sheets.find((item) => item.index === Math.floor(index / perSheet));
-    if (!page) return null;
-    const within = index % perSheet;
-    return {
-      texture: renderer.createTexture("SubTexture", {
-        texture: renderer.createTexture("ImageTexture", { src: mediaUrl(page.url) }),
-        x: (within % data.tileColumns) * data.thumbWidth,
-        y: Math.floor(within / data.tileColumns) * data.thumbHeight,
-        w: data.thumbWidth,
-        h: data.thumbHeight,
-      }),
-      height: THUMB_WIDTH * (data.thumbHeight / data.thumbWidth),
-    };
+    const data = edition()?.trickplay;
+    if (time == null || !data) return null;
+    const texture = thumbAt(data, time * 1000);
+    return texture ? { texture, height: THUMB_WIDTH * (data.thumbHeight / data.thumbWidth) } : null;
   });
   const headX = () => GUTTER + BAR_WIDTH * fraction();
   const thumbX = () => Math.max(GUTTER, Math.min(SCREEN.width - GUTTER - THUMB_WIDTH, headX() - THUMB_WIDTH / 2));
-
+  const stopAt = (ms: number) => {
+    let found: Stop | null = null;
+    for (const stop of realChapters()) if (stop.positionMs <= ms) found = stop;
+    return found;
+  };
+  const chapterName = () => stopAt(shown() * 1000)?.title ?? "";
+  const marks = () => (length() > 0 ? realChapters().filter((stop) => stop.positionMs > 0).map((stop) => stop.positionMs / 1000 / length()) : []);
+  const introZone = () => {
+    const end = edition()?.introEndMs;
+    if (end == null || !length()) return null;
+    return { from: (edition()?.introStartMs ?? 0) / 1000 / length(), to: end / 1000 / length() };
+  };
+  const lift = () => (chaptersOpen() ? -LIFT : 0);
   // ---- track pickers --------------------------------------------------------
   const audioOptions = () => (tracks().length > 1 ? tracks().map((track) => ({ value: String(track.id), label: track.label })) : audioChoices(playback().audioStreams));
   const pickAudio = (value: string) => {
@@ -393,11 +466,11 @@ export default function Player(props: { playback: Playback }) {
       height={SCREEN.height}
       zIndex={120}
       onBack={onBack}
-      onEnter={() => { if (!chrome()) showChrome(); else toggle(); return true; }}
+      onEnter={onEnter}
       onLeft={(event: KeyboardEvent) => nudge(-1, !!event?.repeat)}
       onRight={(event: KeyboardEvent) => nudge(1, !!event?.repeat)}
-      onUp={focusControls}
-      onDown={focusControls}
+      onUp={goUp}
+      onDown={goDown}
       onPlayPause={() => { toggle(); return true; }}
       onPlay={() => { video?.play(); showChrome(); return true; }}
       onPause={() => { video?.pause(); return true; }}
@@ -410,9 +483,9 @@ export default function Player(props: { playback: Playback }) {
         <view src={sized(art()!, 640, 640)} x={(SCREEN.width - 640) / 2} y={120} width={640} height={640} borderRadius={radius.l} skipFocus />
       </Show>
 
-      <Show when={caption()}>
-        <view x={(SCREEN.width - captionBox().width) / 2} y={(chrome() ? 800 : 1000) - captionBox().height} width={captionBox().width} height={captionBox().height} borderRadius={radius.s} color={0x000000b3} transition={{ y: motion.out }} skipFocus>
-          <text y={CAPTION_PAD} width={captionBox().width} contain="width" textAlign="center" lineHeight={CAPTION_LINE} fontSize={CAPTION_SIZE} fontWeight={weight.semibold}>{caption()}</text>
+      <Show when={caption() && !chaptersOpen()}>
+        <view x={(SCREEN.width - captionBox().width) / 2} y={(chrome() ? 780 : 1000) - captionBox().height} width={captionBox().width} height={captionBox().height} borderRadius={radius.s} color={CAPTION_BACKGROUNDS[settings.captionBackground]} transition={{ y: motion.out }} skipFocus>
+          <text y={CAPTION_PAD} width={captionBox().width} contain="width" textAlign="center" lineHeight={captionLine()} fontSize={captionSize()} fontWeight={weight.semibold}>{caption()}</text>
         </view>
       </Show>
 
@@ -431,64 +504,123 @@ export default function Player(props: { playback: Playback }) {
       {/* Left and Right off either end of the buttons mustn't reach the scrub handlers above. */}
       <view width={SCREEN.width} height={SCREEN.height} alpha={chrome() ? 1 : 0} transition={{ alpha: motion.out }} forwardFocus={3} onLeft={controlsFocused} onRight={controlsFocused}>
         <view width={SCREEN.width} height={240} linearGradient={gradient([0x000000cc, 0x00000000], toward.down)} skipFocus />
-        <view y={SCREEN.height - 400} width={SCREEN.width} height={400} linearGradient={gradient([0x00000000, 0x000000e6], toward.down)} skipFocus />
+        <view y={SCREEN.height - SCRIM + lift()} width={SCREEN.width} height={SCRIM + LIFT} linearGradient={gradient([0x00000000, 0x000000a6, 0x000000eb, 0x000000f2], toward.down, [0, (SCRIM * 0.45) / (SCRIM + LIFT), (SCRIM * 0.8) / (SCRIM + LIFT), 1])} transition={{ y: motion.out }} skipFocus />
         <view skipFocus>
           <text x={GUTTER} y={52} width={1400} contain="width" maxLines={1} fontSize={type.title} fontWeight={weight.bold}>{playback().title}</text>
           <text x={GUTTER} y={108} fontSize={type.caption} color={color.text2}>{playback().subtitle ?? (live() ? "Live" : "")}</text>
           <Show when={live()}>
             <view x={GUTTER} y={150} width={16} height={16} borderRadius={8} color={color.live} />
           </Show>
-          <Show when={!live()}>
-            <view x={GUTTER} y={SCREEN.height - 200} width={BAR_WIDTH} height={10} borderRadius={5} color={0xffffff38}>
-              <view width={BAR_WIDTH * fraction()} height={10} borderRadius={5} color={color.accent} />
+          <view x={SCREEN.width - GUTTER - 170} y={56} width={170} height={48} borderRadius={24} color={color.clear} border={{ width: 2, color: 0xffffff4d }}>
+            <text width={170} height={48} lineHeight={48} contain="both" textAlign="center" fontSize={22} fontWeight={weight.semibold} color={color.text2}>{ROUTE[playback().route] ?? playback().route}</text>
+          </view>
+        </view>
+        <view y={lift()} width={SCREEN.width} height={SCREEN.height} transition={{ y: motion.out }} forwardFocus={1}>
+          <view skipFocus>
+            <Show when={!live()}>
+              <text x={GUTTER} y={SCREEN.height - 232} fontSize={type.caption} fontWeight={weight.semibold}>{`${timecode(shown() * 1000)} / ${timecode(length() * 1000)}`}</text>
+              <text x={SCREEN.width / 2 - 500} y={SCREEN.height - 232} width={1000} contain="width" textAlign="center" maxLines={1} fontSize={type.caption} color={color.text2}>{chapterName()}</text>
+              <text x={SCREEN.width - GUTTER - 240} y={SCREEN.height - 232} width={240} contain="width" textAlign="right" fontSize={type.caption} color={color.text2}>{`-${timecode((length() - shown()) * 1000)}`}</text>
+              <Timeline
+                x={GUTTER}
+                y={SCREEN.height - 200}
+                width={BAR_WIDTH}
+                played={fraction()}
+                buffered={length() > 0 ? Math.min(1, buffered() / length()) : 0}
+                marks={marks()}
+                intro={introZone()}
+                active={!controlsFocused() && !chaptersOpen()}
+              />
+            </Show>
+            <Show when={preview()}>
+              {(thumb) => (
+                <view x={thumbX()} y={SCREEN.height - 250 - thumb().height} width={THUMB_WIDTH} height={thumb().height} borderRadius={radius.s} texture={thumb().texture} />
+              )}
+            </Show>
+          </view>
+          <Row
+            ref={(node: ElementNode) => { controls = node; }}
+            x={GUTTER}
+            y={SCREEN.height - 136}
+            width={BAR_WIDTH}
+            height={80}
+            gap={18}
+            scroll="none"
+            onFocusChanged={(has: boolean) => { setControlsFocused(has); if (has) showChrome(); }}
+            onLeft={() => { showChrome(); return false; }}
+            onRight={() => { showChrome(); return false; }}
+          >
+            <Button icon={paused() ? "play" : "pause"} size="lg" onEnter={() => { toggle(); return true; }} />
+            <Show when={!live()}>
+              <Button icon="arrow-counter-clockwise" size="lg" onEnter={() => { seekTo(position() - settings.skipStep); showChrome(); return true; }} />
+              <Button icon="arrow-clockwise" size="lg" onEnter={() => { seekTo(position() + settings.skipStep); showChrome(); return true; }} />
+            </Show>
+            <Show when={next()}>
+              <Button icon="skip-forward" size="lg" label="Next" onEnter={() => { void playNext(); return true; }} />
+            </Show>
+            <Show when={canPickAudio()}>
+              <Button icon="translate" size="lg" label="Audio" onEnter={() => { setSheet("audio"); return true; }} />
+            </Show>
+            <Show when={canPickSubtitles()}>
+              <Button icon="subtitles" size="lg" label="Subtitles" onEnter={() => { setSheet("subtitle"); return true; }} />
+            </Show>
+            <Show when={!live()}>
+              <Button icon="gauge" size="lg" label={rate() === 1 ? "Speed" : `${rate()}×`} onEnter={() => { setSheet("speed"); return true; }} />
+            </Show>
+            <Button icon="info" size="lg" label="Info" onEnter={() => { setInfo(!info()); showChrome(); return true; }} />
+          </Row>
+          <Show when={!live() && stops().length}>
+            <view x={GUTTER} y={SCREEN.height - 48} width={400} height={36} skipFocus>
+              <Icon name="caret-down" size={26} y={5} color={color.text3} alpha={chaptersOpen() ? 0 : 1} />
+              <text x={chaptersOpen() ? 0 : 34} height={36} lineHeight={36} fontSize={22} fontWeight={weight.semibold} color={color.text3}>{realChapters().length ? "Chapters" : "Scenes"}</text>
             </view>
-            <view x={headX() - 14} y={SCREEN.height - 209} width={28} height={28} borderRadius={14} color={color.light} alpha={scrub() != null ? 1 : 0} />
-            <text x={GUTTER} y={SCREEN.height - 180} fontSize={type.caption} fontWeight={weight.semibold}>{timecode(shown() * 1000)}</text>
-            <text x={SCREEN.width - GUTTER - 240} y={SCREEN.height - 180} width={240} contain="width" textAlign="right" fontSize={type.caption} color={color.text2}>{`-${timecode((length() - shown()) * 1000)}`}</text>
-          </Show>
-          <Show when={preview()}>
-            {(thumb) => (
-              <view x={thumbX()} y={SCREEN.height - 240 - thumb().height} width={THUMB_WIDTH} height={thumb().height} borderRadius={radius.s} texture={thumb().texture} />
-            )}
+            <Show when={chaptersOpen()}>
+              <ChapterRail
+                x={GUTTER}
+                y={SCREEN.height}
+                width={BAR_WIDTH}
+                stops={stops()}
+                scenes={!realChapters().length}
+                trick={edition()?.trickplay}
+                position={position()}
+                onFocused={setFocusedStop}
+                onChosen={chooseStop}
+              />
+            </Show>
           </Show>
         </view>
-        <Row
-          ref={(node: ElementNode) => { controls = node; }}
-          x={GUTTER}
-          y={SCREEN.height - 124}
-          width={BAR_WIDTH}
-          height={80}
-          gap={18}
-          scroll="none"
-          onFocusChanged={setControlsFocused}
-          onLeft={() => { showChrome(); return false; }}
-          onRight={() => { showChrome(); return false; }}
-        >
-          <Button icon={paused() ? "play" : "pause"} kind="primary" size="lg" onEnter={() => { toggle(); return true; }} />
-          <Show when={!live()}>
-            <Button icon="arrow-counter-clockwise" size="lg" onEnter={() => { seekTo(position() - SKIP); showChrome(); return true; }} />
-            <Button icon="arrow-clockwise" size="lg" onEnter={() => { seekTo(position() + SKIP); showChrome(); return true; }} />
-          </Show>
-          <Show when={inIntro()}>
-            <Button icon="skip-forward" size="lg" label="Skip intro" onEnter={() => { seekTo(edition()!.introEndMs! / 1000); showChrome(); return true; }} />
-          </Show>
-          <Show when={next()}>
-            <Button icon="skip-forward" size="lg" label={countdown() != null ? `Next in ${countdown()}` : "Next"} kind={countdown() != null ? "primary" : "glass"} onEnter={() => { void playNext(); return true; }} />
-          </Show>
-          <Show when={canPickAudio()}>
-            <Button icon="translate" size="lg" label="Audio" onEnter={() => { setSheet("audio"); return true; }} />
-          </Show>
-          <Show when={canPickSubtitles()}>
-            <Button icon="subtitles" size="lg" label="Subtitles" onEnter={() => { setSheet("subtitle"); return true; }} />
-          </Show>
-        </Row>
       </view>
+
+      {/* Outside the overlay: they matter whether it's showing or not, and OK takes them. */}
+      <Show when={inIntro()}>
+        <view x={SCREEN.width - GUTTER - 260} y={chrome() ? SCREEN.height - 310 : SCREEN.height - 140} width={260} height={76} borderRadius={38} color={controlsFocused() ? 0xffffff24 : color.light} transition={{ y: motion.out, color: motion.fast }} skipFocus>
+          <Icon name="skip-forward" size={32} x={30} y={22} color={controlsFocused() ? color.text : color.lightInk} />
+          <text x={76} height={76} lineHeight={76} fontSize={type.body} fontWeight={weight.semibold} color={controlsFocused() ? color.text : color.lightInk}>Skip intro</text>
+        </view>
+      </Show>
+      <Show when={countdown() != null && next()}>
+        {(upNext) => (
+          <view x={SCREEN.width - GUTTER - 640} y={SCREEN.height - 480} width={640} height={190} borderRadius={radius.l} color={0x0c0e12f2} border={{ width: 2, color: color.lineStrong }} skipFocus>
+            <Artwork work={upNext()} kind="thumb" x={20} y={20} width={266} height={150} />
+            <text x={306} y={24} fontSize={22} fontWeight={weight.semibold} color={color.accent}>{`Up next in ${countdown()}`}</text>
+            <text x={306} y={60} width={310} contain="width" maxLines={2} lineHeight={36} fontSize={type.caption} fontWeight={weight.semibold}>{upNext().title}</text>
+            <text x={306} y={138} width={310} contain="width" maxLines={1} fontSize={20} color={color.text3}>OK plays it · Back keeps watching</text>
+          </view>
+        )}
+      </Show>
+
+      <Show when={info()}>
+        <PlaybackInfo x={GUTTER} y={160} playback={playback()} stats={() => video?.stats() ?? null} buffered={() => (video ? video.buffered() - video.position() : 0)} live={live()} />
+      </Show>
 
       <Show when={sheet() === "audio"}>
         <Sheet title="Audio" choices={audioOptions()} value={tracks().length > 1 ? String(audioTrack()) : String(playback().audioStream ?? 0)} onPick={(value) => { pickAudio(value); setSheet(null); showChrome(); }} onClose={() => setSheet(null)} />
       </Show>
       <Show when={sheet() === "subtitle"}>
         <Sheet title="Subtitles" choices={subtitleChoices(playback().subtitleTracks)} value={subtitleIndex() == null ? "off" : String(subtitleIndex())} onPick={(value) => { pickSubtitle(value); setSheet(null); showChrome(); }} onClose={() => setSheet(null)} />
+      </Show>
+      <Show when={sheet() === "speed"}>
+        <Sheet title="Speed" choices={SPEEDS.map((value) => ({ value: String(value), label: value === 1 ? "Normal" : `${value}×` }))} value={String(rate())} onPick={(value) => { pickSpeed(value); setSheet(null); showChrome(); }} onClose={() => setSheet(null)} />
       </Show>
     </view>
   );

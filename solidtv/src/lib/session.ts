@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { availableCategories } from "$lib/categories.js";
-import { BOOTSTRAP, LOGIN, LOGOUT, REGISTER_DEVICE, SERVER_INFO } from "$lib/graphql/documents.js";
+import { BOOTSTRAP, LOGIN, LOGOUT, REGISTER_DEVICE, SET_PREFERENCE, SERVER_INFO } from "$lib/graphql/documents.js";
 import { request, resetCache } from "$lib/graphql.js";
 import { host } from "$lib/host.js";
 import { reactive } from "$lib/state.js";
@@ -64,6 +64,25 @@ async function registerThisDevice(): Promise<void> {
   } catch { /* retried on the next launch */ }
 }
 
+// Whole, so fields another client wrote survive being saved from here.
+let storedPlayback: any = null;
+
+/** Change the viewer's playback preference, which follows them to every client. `change` receives what's stored. */
+export async function savePlaybackPrefs(change: (stored: any) => any): Promise<void> {
+  const base = storedPlayback && typeof storedPlayback === "object" && !Array.isArray(storedPlayback) ? storedPlayback : {};
+  const value = change(base);
+  await request(SET_PREFERENCE, { key: "playback", value });
+  storedPlayback = value;
+  app.playbackPrefs = readPlaybackPrefs(value);
+}
+
+export async function setShowLibraries(show: boolean): Promise<void> {
+  await request(SET_PREFERENCE, { key: SHOW_LIBRARIES_KEY, value: show });
+  app.showLibraries = show;
+}
+
+export const thisDeviceId = deviceId;
+
 async function bootstrap(): Promise<void> {
   try {
     const data = await request(BOOTSTRAP);
@@ -72,7 +91,8 @@ async function bootstrap(): Promise<void> {
     app.libraries = data.libraries;
     app.categories = data.contentCategories;
     app.showLibraries = data.preferences.some((item: { key: string; value: unknown }) => item.key === SHOW_LIBRARIES_KEY && item.value === true);
-    app.playbackPrefs = readPlaybackPrefs(data.preferences.find((item: { key: string; value: unknown }) => item.key === "playback")?.value);
+    storedPlayback = data.preferences.find((item: { key: string; value: unknown }) => item.key === "playback")?.value ?? null;
+    app.playbackPrefs = readPlaybackPrefs(storedPlayback);
     app.authError = "";
     app.phase = "app";
     void registerThisDevice();

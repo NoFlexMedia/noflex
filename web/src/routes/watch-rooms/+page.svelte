@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
+  import Avatar from "$components/Avatar.svelte";
   import ArrowLeft from "phosphor-svelte/lib/ArrowLeft";
   import Broadcast from "phosphor-svelte/lib/Broadcast";
   import Link from "phosphor-svelte/lib/Link";
@@ -145,7 +146,7 @@
         <ul>
           {#each focused.members ?? [] as member (member.userId)}
             <li>
-              <span class="avatar" aria-hidden="true">{memberName(member).slice(0, 2).toUpperCase()}</span>
+              <Avatar user={{ name: memberName(member), avatarUrl: member.avatarUrl }} />
               <span class="who"><strong>{memberName(member)}</strong><small>{member.userId === focused.hostUserId ? `Opened ${ago(member.joinedAt)}` : `Joined ${ago(member.joinedAt)}`}</small></span>
               {#if member.userId === app.viewer.id}<span class="chip">You</span>{/if}
               {#if member.userId === focused.hostUserId}<span class="chip accent">Host</span>{/if}

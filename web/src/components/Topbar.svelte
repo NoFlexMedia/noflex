@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
+  import Avatar from "$components/Avatar.svelte";
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import Sparkle from "phosphor-svelte/lib/Sparkle";
   import ClockCounterClockwise from "phosphor-svelte/lib/ClockCounterClockwise";
@@ -41,7 +42,7 @@
   <Menu width={240}>
     {#snippet trigger(props)}
       <button {...props} class="account" aria-label="Account menu for {app.viewer.name}">
-        <span class="avatar">{app.viewer.name.slice(0, 2).toUpperCase()}</span>
+        <Avatar user={app.viewer} />
         <span class="name">{app.viewer.name}</span>
         <CaretDown size={15} />
       </button>

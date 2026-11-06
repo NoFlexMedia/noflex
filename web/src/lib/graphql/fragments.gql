@@ -91,6 +91,8 @@ fragment LibraryFields on Library {
 fragment UserFields on User {
   id
   name
+  username
+  avatarUrl
   isAdmin
   role
   createdAt
@@ -107,7 +109,7 @@ fragment WatchRoomFields on WatchRoom {
   createdAt
   updatedAt
   work { ...WorkCard }
-  members { userId name joinedAt }
+  members { userId name avatarUrl joinedAt }
 }
 
 fragment ExportJobFields on ExportJob {

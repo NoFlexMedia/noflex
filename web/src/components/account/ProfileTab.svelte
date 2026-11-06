@@ -1,18 +1,23 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
   import Books from "phosphor-svelte/lib/Books";
+  import Camera from "phosphor-svelte/lib/Camera";
   import CaretRight from "phosphor-svelte/lib/CaretRight";
   import Gear from "phosphor-svelte/lib/Gear";
   import Lock from "phosphor-svelte/lib/Lock";
   import PencilSimple from "phosphor-svelte/lib/PencilSimple";
   import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
   import Trash from "phosphor-svelte/lib/Trash";
+  import UserCircle from "phosphor-svelte/lib/UserCircle";
   import { untrack } from "svelte";
   import { graphql, ParentalTagsStore } from "$houdini";
   import { date, splitList } from "$lib/format.js";
   import { fetchQuery, refetch } from "$lib/graphql.js";
   import { app, SHOW_LIBRARIES_KEY } from "$lib/session.svelte.js";
   import { attempt, confirmAction } from "$lib/ui.svelte.js";
+  import { pictureForUpload } from "$lib/picture.js";
+  import Avatar from "$components/Avatar.svelte";
+  import Dialog from "$components/ui/Dialog.svelte";
   import Select from "$components/ui/Select.svelte";
 
   let { account } = $props();
@@ -46,6 +51,62 @@
     const names = new Map(($ratings.data?.tags.nodes ?? []).map((item) => [item.tag.id, item.tag.display]));
     return (limits?.allowedParentalRatingIds ?? []).map((id) => names.get(id)).filter(Boolean);
   });
+
+  // ---- Profile ----
+  const updateProfile = graphql(`
+    mutation UpdateProfile($name: String!) { updateProfile(name: $name) { ...UserFields } }
+  `);
+  const setPicture = graphql(`
+    mutation SetProfilePicture($image: String!) { setProfilePicture(image: $image) { ...UserFields } }
+  `);
+  const removePicture = graphql(`
+    mutation RemoveProfilePicture { removeProfilePicture { ...UserFields } }
+  `);
+  const changeUsername = graphql(`
+    mutation ChangeUsername($username: String!, $password: String!) { changeUsername(username: $username, currentPassword: $password) { ...UserFields } }
+  `);
+  // Blank when they have no name of their own, so the field shows what clearing it means.
+  let name = $state(app.viewer.name === app.viewer.username ? "" : app.viewer.name);
+  let savingName = $state(false);
+  let picking = $state(false);
+  let fileInput = $state();
+
+  async function saveName(event) {
+    event.preventDefault();
+    savingName = true;
+    const result = await attempt(() => updateProfile.mutate({ name }), "Name saved");
+    savingName = false;
+    if (result) app.viewer = result.data.updateProfile;
+  }
+
+  async function pick(event) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file) return;
+    picking = true;
+    const result = await attempt(async () => setPicture.mutate({ image: await pictureForUpload(file) }), "Picture saved");
+    picking = false;
+    if (result) app.viewer = result.data.setProfilePicture;
+  }
+
+  async function dropPicture() {
+    const result = await attempt(() => removePicture.mutate(null), "Picture removed");
+    if (result) app.viewer = result.data.removeProfilePicture;
+  }
+
+  let renaming = $state(false);
+  let rename = $state({ username: "", password: "" });
+  let savingUsername = $state(false);
+  function openRename() { rename = { username: app.viewer.username, password: "" }; renaming = true; }
+  async function saveUsername(event) {
+    event.preventDefault();
+    savingUsername = true;
+    const result = await attempt(() => changeUsername.mutate({ username: rename.username.trim(), password: rename.password }), "Username changed");
+    savingUsername = false;
+    if (!result) return;
+    app.viewer = result.data.changeUsername;
+    renaming = false;
+  }
 
   // ---- Password ----
   let password = $state({ current: "", next: "", confirm: "" });
@@ -142,7 +203,32 @@
   </div>
 {:else if data}
   <div class="grid stagger">
-    <section class="panel" style:--i={0}>
+    <section class="panel wide" style:--i={0}>
+      <header class="panel-head">
+        <span class="panel-icon"><UserCircle size={19} /></span>
+        <div><h2>Your profile</h2><p>How you appear to everyone on this server</p></div>
+      </header>
+      <div class="profile">
+        <div class="picture">
+          <Avatar user={app.viewer} size={96} />
+          <div class="picture-actions">
+            <input bind:this={fileInput} type="file" accept="image/*" hidden onchange={pick} />
+            <button type="button" class="btn sm" disabled={picking} onclick={() => fileInput.click()}>{#if picking}<span class="spinner sm"></span>{:else}<Camera size={15} />{/if}{app.viewer.avatarUrl ? "Change" : "Add a picture"}</button>
+            {#if app.viewer.avatarUrl}<button type="button" class="btn ghost sm" onclick={dropPicture}>Remove</button>{/if}
+          </div>
+        </div>
+        <form class="stack" onsubmit={saveName}>
+          <label class="field">Name<input bind:value={name} placeholder={app.viewer.username} maxlength="100" autocomplete="name" /><small>Leave it blank to go by your username.</small></label>
+          <div class="form-actions"><button class="btn primary sm" disabled={savingName}>{#if savingName}<span class="spinner sm"></span>{/if}Save name</button></div>
+          <div class="username">
+            <span><small>Username, for signing in</small><strong>{app.viewer.username}</strong></span>
+            <button type="button" class="btn sm" onclick={openRename}>Change</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel" style:--i={1}>
       <header class="panel-head">
         <span class="panel-icon"><ShieldCheck size={19} /></span>
         <div><h2>Playback limits</h2><p>Set by your server’s administrator</p></div>
@@ -155,7 +241,7 @@
       </dl>
     </section>
 
-    <section class="panel" style:--i={1}>
+    <section class="panel" style:--i={2}>
       <header class="panel-head">
         <span class="panel-icon"><Lock size={19} /></span>
         <div><h2>Password</h2><p>Changing it signs out every other device</p></div>
@@ -227,7 +313,26 @@
   </div>
 {/if}
 
+<Dialog bind:open={renaming} title="Change your username" description="You’ll sign in with the new one from now on. Devices already signed in stay signed in." width={440}>
+  <form id="rename-form" class="stack" onsubmit={saveUsername}>
+    <label class="field">New username<input bind:value={rename.username} autocomplete="username" autocapitalize="none" spellcheck="false" required /></label>
+    <label class="field">Current password<input type="password" bind:value={rename.password} autocomplete="current-password" /><small>Leave it blank if you only sign in through another service.</small></label>
+  </form>
+  {#snippet footer()}
+    <button class="btn ghost" onclick={() => (renaming = false)}>Cancel</button>
+    <button class="btn primary" form="rename-form" disabled={savingUsername || !rename.username.trim() || rename.username.trim() === app.viewer.username}>{#if savingUsername}<span class="spinner sm"></span>{/if}Change username</button>
+  {/snippet}
+</Dialog>
+
 <style>
+  .profile { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px 28px; align-items: start; }
+  @media (max-width: 560px) { .profile { grid-template-columns: minmax(0, 1fr); } }
+  .picture { display: grid; justify-items: center; gap: 12px; }
+  .picture-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+  .username { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .username span { display: grid; gap: 2px; min-width: 0; }
+  .username small { color: var(--text-3); font-size: 0.8rem; }
+  .username strong { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 18px; align-items: start; }
   .wide { grid-column: 1 / -1; }
   .skeleton.head { height: 38px; width: 60%; margin-bottom: 22px; border-radius: 11px; }

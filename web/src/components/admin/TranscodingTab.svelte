@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
+  import BookmarkSimple from "phosphor-svelte/lib/BookmarkSimple";
   import CaretDown from "phosphor-svelte/lib/CaretDown";
   import Check from "phosphor-svelte/lib/Check";
+  import Devices from "phosphor-svelte/lib/Devices";
   import FilmStrip from "phosphor-svelte/lib/FilmStrip";
   import Monitor from "phosphor-svelte/lib/Monitor";
   import Sparkle from "phosphor-svelte/lib/Sparkle";
@@ -13,9 +15,11 @@
   import { bytes, pixelTier, profileName } from "$lib/format.js";
   import { failure, fetchQuery, refetch, request } from "$lib/graphql.js";
   import { attempt, poll } from "$lib/ui.svelte.js";
+  import Avatar from "$components/Avatar.svelte";
   import State from "$components/State.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
   import Select from "$components/ui/Select.svelte";
+  import { deviceIcon } from "$components/account/deviceIcon.js";
   import { ago } from "$components/account/relative.js";
   import { codec } from "./status/fmt.js";
 
@@ -36,17 +40,23 @@
     query OptimizedVersionDetail($id: ID!) @cache(policy: NetworkOnly) {
       optimizedVersion(id: $id) {
         id
-        targets { userId userName reason device { id name } }
-        marks { userId userName work { id title } device { id name } }
+        unwantedSince
+        targets { user { id name username avatarUrl } reason device { id name } }
+        marks { user { id name username avatarUrl } work { id title } device { id name } }
       }
     }
   `);
   const removeVersion = graphql(`
-    mutation RemoveOptimizedVersion($id: ID!) { removeOptimizedVersion(id: $id) }
+    mutation RemoveOptimizedVersion($id: ID!) { removeOptimizedVersion(id: $id) { id } }
   `);
   const unmarkViewer = graphql(`
     mutation UnmarkViewerForSmartTranscoding($user: ID!, $work: ID!, $device: ID) {
-      unmarkViewerForSmartTranscoding(userId: $user, workId: $work, deviceId: $device)
+      unmarkViewerForSmartTranscoding(userId: $user, workId: $work, deviceId: $device) { work { id } }
+    }
+  `);
+  const turnOffDevice = graphql(`
+    mutation TurnOffViewerDevice($id: ID!) {
+      setViewerDeviceSmartTranscode(id: $id, enabled: false) { id smartTranscode smartDownloads }
     }
   `);
   // The cursor each page we've walked through starts after.
@@ -96,14 +106,23 @@
     fetchQuery(versions, { after });
   }
   async function unmark(version, mark) {
-    const done = await attempt(() => request(unmarkViewer, { user: mark.userId, work: mark.work.id, device: mark.device?.id ?? null }), `Unmarked for ${mark.userName}`);
-    if (done !== null) loadDetail(version.id);
+    const done = await attempt(() => request(unmarkViewer, { user: mark.user.id, work: mark.work.id, device: mark.device?.id ?? null }), `Unmarked for ${mark.user.name}`);
+    if (done) loadDetail(version.id);
   }
-  // Each viewer once, however many of their devices it's for.
-  const byViewer = (targets) => {
-    const groups = new Map();
-    for (const target of targets) groups.set(target.userName, [...(groups.get(target.userName) ?? []), target]);
-    return [...groups];
+  async function turnOff(version, row) {
+    const done = await attempt(() => request(turnOffDevice, { id: row.device.id }), `Smart transcoding off on ${row.device.name}`);
+    if (done) loadDetail(version.id);
+  }
+  // Each viewer once, however many of their devices and marks it's for.
+  const byViewer = (info) => {
+    const viewers = new Map();
+    const of = (user) => {
+      if (!viewers.has(user.id)) viewers.set(user.id, { user, rows: [], marks: [] });
+      return viewers.get(user.id);
+    };
+    for (const target of info.targets) of(target.user).rows.push(target);
+    for (const mark of info.marks) of(mark.user).marks.push(mark);
+    return [...viewers.values()];
   };
 
   const smart = graphql(`
@@ -186,32 +205,37 @@
 </script>
 
 {#snippet audience(version, info)}
-  {#if !info.targets.length && !info.marks.length}
-    <small>Nobody wants this any more, so it’s first to go when space runs out.</small>
+  {#if info.unwantedSince}
+    <small class="sweep">Nothing’s wanted this since {ago(info.unwantedSince)}. It’s swept up a day after that, unless someone plays it.</small>
+  {:else if !info.targets.length && !info.marks.length}
+    <small class="sweep">Nothing wants this any more.</small>
   {/if}
-  {#each byViewer(info.targets) as [viewer, rows]}
-    <div>
-      <div class="viewer">{viewer}</div>
+  {#each byViewer(info) as viewer (viewer.user.id)}
+    <div class="viewer">
+      <header>
+        <Avatar user={viewer.user} size={30} />
+        <strong>{viewer.user.name}</strong>
+        {#if viewer.user.username !== viewer.user.name}<small>{viewer.user.username}</small>{/if}
+      </header>
       <ul>
-        {#each rows as row}
-          <li><span>{row.device?.name ?? "No device to reach"}</span><small>{REASON[row.reason]}</small></li>
-        {/each}
-      </ul>
-    </div>
-  {/each}
-  {#if info.marks.length}
-    <div>
-      <div class="viewer">Marks keeping it wanted</div>
-      <ul>
-        {#each info.marks as mark}
+        {#each viewer.rows as row}
+          {@const Icon = row.device ? deviceIcon({ device: row.device.name }) : Devices}
           <li>
-            <span>{mark.userName}: {mark.work.title}, {mark.device ? `for ${mark.device.name}` : "for all their devices"}</span>
+            <span class="row-icon"><Icon size={17} /></span>
+            <span class="row-what"><span>{row.device?.name ?? "No device to reach"}</span><small>{REASON[row.reason]}</small></span>
+            {#if row.reason === "PREDICTED" && row.device}<button class="btn ghost sm" onclick={() => turnOff(version, row)}>Turn off</button>{/if}
+          </li>
+        {/each}
+        {#each viewer.marks as mark}
+          <li>
+            <span class="row-icon"><BookmarkSimple size={17} /></span>
+            <span class="row-what"><span>Marked {mark.work.title}</span><small>{mark.device ? `For ${mark.device.name}` : "For all their devices"}</small></span>
             <button class="btn ghost sm" onclick={() => unmark(version, mark)}>Unmark</button>
           </li>
         {/each}
       </ul>
     </div>
-  {/if}
+  {/each}
 {/snippet}
 
 {#if $transcoder.fetching && !info}
@@ -411,7 +435,7 @@
     {#if !detail}
       <span class="spinner sm"></span>
     {:else if detail.marks.length || detail.targets.some((target) => target.reason === "PREDICTED")}
-      <p class="remove-note">It’ll be prepared again while these still want it. Unmark anyone you don’t want it prepared for. Predicted devices have no mark to take back, so it may return for them.</p>
+      <p class="remove-note">It’ll be prepared again while these still want it. Unmark what you don’t want prepared, or turn off smart transcoding for a device the server’s predicting for.</p>
       {@render audience(removing, detail)}
     {:else}
       <p class="remove-note">Nothing wants it now, so it won’t come back unless someone asks.</p>
@@ -435,10 +459,16 @@
   .version-main { flex: 1; }
   .version-actions { display: flex; gap: 4px; }
   .audience { display: grid; gap: 10px; margin-top: 8px; padding: 12px 14px; border-radius: var(--r); background: var(--surface); font-size: 0.86rem; }
-  .audience ul { display: grid; gap: 4px; list-style: none; margin: 0; padding: 0; }
-  .audience li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
-  .audience small { color: var(--text-3); }
-  .audience .viewer { font-weight: 600; margin-bottom: 2px; }
+  .audience ul { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; }
+  .audience li { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  .audience small { color: var(--text-3); font-size: 0.8rem; }
+  .viewer { display: grid; gap: 6px; }
+  .viewer + .viewer { padding-top: 10px; border-top: 1px solid var(--line); }
+  .viewer header { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .viewer strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  /* Under the avatar's centre, so a viewer's rows read as theirs. */
+  .row-icon { display: grid; place-items: center; width: 30px; flex: none; color: var(--text-2); }
+  .row-what { display: grid; gap: 1px; flex: 1; min-width: 0; }
   .pager { display: flex; align-items: center; justify-content: flex-end; gap: 6px; font-size: 0.84rem; color: var(--text-3); }
   .pager span { margin-right: 8px; }
   .remove-note { color: var(--text-2); font-size: 0.9rem; line-height: 1.5; }

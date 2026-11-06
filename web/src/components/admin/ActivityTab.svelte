@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
+  import Avatar from "$components/Avatar.svelte";
   import BookOpen from "phosphor-svelte/lib/BookOpen";
   import CaretRight from "phosphor-svelte/lib/CaretRight";
   import Clock from "phosphor-svelte/lib/Clock";
@@ -63,7 +64,6 @@
   let filtered = $derived(Boolean(library || user));
 
   const libraryIcon = { MOVIES: FilmStrip, SHOWS: Television, MUSIC: MusicNotes, AUDIOBOOKS: BookOpen, PHOTOS: ImageIcon, MIXED: Folder };
-  const initials = (name = "") => name.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?";
   const sub = (item) => `${item.plays} ${item.plays === 1 ? "play" : "plays"} · ${item.users} ${item.users === 1 ? "viewer" : "viewers"}`;
 
   function openSessions(row, entry = null) {
@@ -122,7 +122,7 @@
             <li style:--i={index}>
               <div class="leader-head">
                 <span class="rank tabular">{index + 1}</span>
-                <span class="avatar">{initials(row.user?.name)}</span>
+                <Avatar user={row.user} />
                 <div class="who">
                   <button class="name" onclick={() => openSessions(row)}>{row.user?.name ?? "Deleted user"}</button>
                   <small>last played {ago(row.lastPlayedAt)}</small>

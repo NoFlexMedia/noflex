@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
+  import Avatar from "$components/Avatar.svelte";
   import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
   import Books from "phosphor-svelte/lib/Books";
   import Broadcast from "phosphor-svelte/lib/Broadcast";
@@ -211,7 +212,7 @@
         <ul class="list now">
           {#each active.slice(0, 5) as stream (stream.id)}
             <li>
-              <span class="avatar">{stream.user.name.slice(0, 2).toUpperCase()}</span>
+              <Avatar user={stream.user} />
               <span class="what"><strong>{stream.work?.title ?? (stream.channelId ? "Live TV" : "Unknown title")}</strong><small>{stream.user.name}{stream.device ? ` · ${stream.device}` : ""} · started {ago(stream.startedAt)}</small></span>
               {#if stream.decision.route === "DIRECT"}
                 <span class="state ok">Direct</span>

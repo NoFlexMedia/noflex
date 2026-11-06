@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
   import Books from "phosphor-svelte/lib/Books";
+  import Devices from "phosphor-svelte/lib/Devices";
   import DotsThree from "phosphor-svelte/lib/DotsThree";
   import Plus from "phosphor-svelte/lib/Plus";
   import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
@@ -13,12 +14,14 @@
   import { refetch } from "$lib/graphql.js";
   import { app } from "$lib/session.svelte.js";
   import { attempt, confirmAction } from "$lib/ui.svelte.js";
+  import Avatar from "$components/Avatar.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
   import Menu from "$components/ui/Menu.svelte";
   import MenuItem from "$components/ui/MenuItem.svelte";
   import Select from "$components/ui/Select.svelte";
   import RestrictionsSheet from "./RestrictionsSheet.svelte";
   import SessionsPanel from "./SessionsPanel.svelte";
+  import UserDevicesSheet from "./UserDevicesSheet.svelte";
 
   /** `admin` is the page's Admin store. */
   let { admin, creating = $bindable(false) } = $props();
@@ -105,6 +108,8 @@
     if (result) access.open = false;
   }
 
+  let devicesFor = $state({ open: false, user: null });
+
   // ---- Restrictions ----
   let restricting = $state({ open: false, user: null });
 
@@ -146,16 +151,17 @@
       <ul class="list">
         {#each users as user (user.id)}
           <li>
-            <span class="avatar" aria-hidden="true">{user.name.slice(0, 2).toUpperCase()}</span>
+            <Avatar {user} />
             <span class="what">
               <strong>{user.name}{#if user.id === app.viewer.id}<span class="chip outline">You</span>{/if}</strong>
-              <small>{grants(user)} · joined {date(user.createdAt)}{#if sessionCount.get(user.id)}{" · "}{sessionCount.get(user.id)} signed in{/if}</small>
+              <small>{#if user.username !== user.name}{user.username} · {/if}{grants(user)} · joined {date(user.createdAt)}{#if sessionCount.get(user.id)}{" · "}{sessionCount.get(user.id)} signed in{/if}</small>
             </span>
             <span class="chip" class:accent={user.role === "ADMIN"}>{titleCase(user.role)}</span>
             <Menu width={240}>
               {#snippet trigger(props)}<button {...props} class="icon-btn sm" aria-label="Manage {user.name}"><DotsThree size={18} weight="bold" /></button>{/snippet}
               <MenuItem icon={Books} onSelect={() => openAccess(user)}>Role & library access…</MenuItem>
               <MenuItem icon={ShieldCheck} onSelect={() => (restricting = { open: true, user })}>Restrictions…</MenuItem>
+              <MenuItem icon={Devices} onSelect={() => (devicesFor = { open: true, user })}>Devices…</MenuItem>
               <MenuItem icon={SignOut} disabled={!sessionCount.get(user.id)} onSelect={() => revokeAll(user)}>Sign out everywhere</MenuItem>
               <div class="nf-menu-sep"></div>
               <MenuItem icon={Trash} danger disabled={user.id === app.viewer.id} onSelect={() => remove(user)}>Delete user</MenuItem>
@@ -237,6 +243,7 @@
 </Dialog>
 
 <RestrictionsSheet bind:open={restricting.open} user={restricting.user} />
+<UserDevicesSheet bind:open={devicesFor.open} user={devicesFor.user} />
 
 <style>
   .layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 18px; align-items: start; }

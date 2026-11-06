@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
+  import Avatar from "$components/Avatar.svelte";
   import SignOut from "phosphor-svelte/lib/SignOut";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
@@ -46,7 +47,7 @@
 <div class="page">
   <header class="page-head">
     <div class="who">
-      <span class="avatar lg" aria-hidden="true">{app.viewer.name.slice(0, 2).toUpperCase()}</span>
+      <Avatar user={app.viewer} size={72} />
       <div>
         <p class="eyebrow">Your account</p>
         <h1>{app.viewer.name}</h1>
@@ -73,7 +74,7 @@
 
 <style>
   .who { display: flex; align-items: center; gap: 20px; }
-  .who .avatar { box-shadow: 0 18px 40px -16px rgb(212 255 90 / 0.5); }
+  .who :global(.avatar) { box-shadow: 0 18px 40px -16px rgb(212 255 90 / 0.5); }
   .page :global(.panel-body) { margin-top: 28px; animation: fade-up 360ms var(--ease-out); outline: none; }
-  @media (max-width: 520px) { .who { gap: 14px; } .who .avatar { width: 56px; height: 56px; font-size: 1.2rem; } }
+  @media (max-width: 520px) { .who { gap: 14px; } .who :global(.avatar) { width: 56px !important; height: 56px !important; font-size: 1.2rem !important; } }
 </style>

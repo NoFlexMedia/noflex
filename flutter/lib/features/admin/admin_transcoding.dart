@@ -11,7 +11,10 @@ import '../../di.dart';
 import '../../graphql/__generated__/schema.schema.gql.dart';
 import '../../graphql/queries/__generated__/admin_optimized_versions.data.gql.dart';
 import '../../graphql/queries/__generated__/admin_optimized_versions.req.gql.dart';
-import '../../graphql/queries/__generated__/admin_optimized_versions.var.gql.dart';
+import '../../graphql/queries/__generated__/optimized_version_detail.data.gql.dart';
+import '../../graphql/queries/__generated__/optimized_version_detail.req.gql.dart';
+import '../../graphql/queries/__generated__/remove_optimized_version.req.gql.dart';
+import '../../graphql/queries/__generated__/unmark_viewer_for_smart_transcoding.req.gql.dart';
 import '../../graphql/queries/__generated__/admin_smart_transcoding.data.gql.dart';
 import '../../graphql/queries/__generated__/admin_smart_transcoding.req.gql.dart';
 import '../../graphql/queries/__generated__/admin_smart_transcoding.var.gql.dart';
@@ -25,6 +28,7 @@ import '../../graphql/queries/__generated__/set_tonemap_curve.req.gql.dart';
 import '../../graphql/queries/__generated__/update_smart_transcoding.req.gql.dart';
 import '../../graphql/query.dart';
 import '../../services/graphql.dart';
+import '../../services/nav_service.dart';
 import '../../services/toast_service.dart';
 import '../../theme.dart';
 import '../../utils/format.dart';
@@ -79,8 +83,13 @@ class TranscodingSection extends StatefulWidget {
 
 class _TranscodingSectionState extends State<TranscodingSection> {
   late final Query<GAdminTranscoderData, GAdminTranscoderVars> _transcoder;
-  late final Query<GAdminOptimizedVersionsData, GAdminOptimizedVersionsVars>
-  _versions;
+  static const _pageSize = 25;
+
+  // The cursor each page walked through starts after.
+  final _cursors = signal<List<String?>>(const [null]);
+  final _page = signal<GAdminOptimizedVersionsData?>(null);
+  final _opened = signal<String?>(null);
+  final _detail = signal<GOptimizedVersionDetailData_optimizedVersion?>(null);
   late final Query<GAdminSmartTranscodingData, GAdminSmartTranscodingVars>
   _smart;
   late final Query<GAdminTonemapCurveData, GAdminTonemapCurveVars> _curve;
@@ -99,10 +108,6 @@ class _TranscodingSectionState extends State<TranscodingSection> {
     super.initState();
     final client = getIt<GraphqlService>().client;
     _transcoder = Query(client, GAdminTranscoderReq());
-    _versions = Query(
-      client,
-      GAdminOptimizedVersionsReq((b) => b..fetchPolicy = FetchPolicy.NoCache),
-    );
     _smart = Query(
       client,
       GAdminSmartTranscodingReq((b) => b..fetchPolicy = FetchPolicy.NoCache),
@@ -111,7 +116,11 @@ class _TranscodingSectionState extends State<TranscodingSection> {
       client,
       GAdminTonemapCurveReq((b) => b..fetchPolicy = FetchPolicy.NoCache),
     );
-    _versionsPoll = Poller(_versions.refetch, const Duration(seconds: 5));
+    unawaited(_loadVersions());
+    _versionsPoll = Poller(
+      () => unawaited(_loadVersions()),
+      const Duration(seconds: 5),
+    );
     _stopSeed = effect(() {
       final settings = _smart.data.value?.smartTranscoding;
       if (settings != null) untracked(() => _seed(settings));
@@ -139,7 +148,6 @@ class _TranscodingSectionState extends State<TranscodingSection> {
     _versionsPoll.cancel();
     _stopSeed();
     _transcoder.dispose();
-    _versions.dispose();
     _smart.dispose();
     _curve.dispose();
     _directory.dispose();
@@ -323,39 +331,323 @@ class _TranscodingSectionState extends State<TranscodingSection> {
     );
   }
 
+  Future<void> _loadVersions() async {
+    final cursor = _cursors.value.last;
+    try {
+      final data = await getIt<GraphqlService>().run(
+        GAdminOptimizedVersionsReq(
+          (b) => b
+            ..fetchPolicy = FetchPolicy.NetworkOnly
+            ..vars.after = cursor,
+        ),
+      );
+      if (!mounted || cursor != _cursors.value.last) return;
+      // Removing the last row of the last page leaves nothing to stand on.
+      if (data.optimizedVersions.nodes.isEmpty && _cursors.value.length > 1) {
+        _goTo(_cursors.value.sublist(0, _cursors.value.length - 1));
+        return;
+      }
+      _page.value = data;
+    } on Exception {
+      // The next tick asks again.
+    }
+  }
+
+  void _goTo(List<String?> cursors) {
+    _cursors.value = cursors;
+    _opened.value = null;
+    unawaited(_loadVersions());
+  }
+
+  Future<void> _loadDetail(String id) async {
+    try {
+      final data = await getIt<GraphqlService>().run(
+        GOptimizedVersionDetailReq(
+          (b) => b
+            ..fetchPolicy = FetchPolicy.NetworkOnly
+            ..vars.id = id,
+        ),
+      );
+      if (mounted) _detail.value = data.optimizedVersion;
+    } on Exception catch (error) {
+      getIt<ToastService>().show(error.toString(), kind: ToastKind.error);
+    }
+  }
+
+  void _toggle(String id) {
+    if (_opened.value == id) {
+      _opened.value = null;
+      return;
+    }
+    _opened.value = id;
+    _detail.value = null;
+    unawaited(_loadDetail(id));
+  }
+
+  Future<void> _unmark(
+    String version,
+    GOptimizedVersionDetailData_optimizedVersion_marks mark,
+  ) async {
+    final done = await getIt<ToastService>().attempt(
+      () => getIt<GraphqlService>().run(
+        GUnmarkViewerForSmartTranscodingReq(
+          (b) => b.vars
+            ..user = mark.userId
+            ..work = mark.work.id
+            ..device = mark.device?.id,
+        ),
+      ),
+      success: 'Unmarked for ${mark.userName}',
+    );
+    if (done != null) await _loadDetail(version);
+  }
+
+  Future<void> _remove(
+    GAdminOptimizedVersionsData_optimizedVersions_nodes version,
+  ) async {
+    _opened.value = null;
+    _detail.value = null;
+    unawaited(_loadDetail(version.id));
+    final title = version.work?.title ?? 'this title';
+    final remove = await getIt<NavService>().openSheet<bool>(
+      (context) => Padding(
+        padding: const EdgeInsets.all(22),
+        child: SingleChildScrollView(
+          child: SignalBuilder(
+            builder: (context) {
+              final detail = _detail.value;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Remove this copy of $title?',
+                    style: NfType.sectionTitle,
+                  ),
+                  const SizedBox(height: 8),
+                  if (version.sizeBytes != null)
+                    Text(
+                      'Frees ${bytes(version.sizeBytes)}.',
+                      style: NfType.bodyMuted,
+                    )
+                  else
+                    Text('Stops it being prepared.', style: NfType.bodyMuted),
+                  const SizedBox(height: 12),
+                  if (detail == null)
+                    const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else if (detail.marks.isNotEmpty ||
+                      detail.targets.any(
+                        (target) => target.reason == GOptimizedReason.PREDICTED,
+                      )) ...[
+                    Text(
+                      'It’ll be prepared again while these still want it. Unmark anyone you don’t want it prepared for. Predicted devices have no mark to take back, so it may return for them.',
+                      style: NfType.small,
+                    ),
+                    const SizedBox(height: 10),
+                    _audience(version.id, detail),
+                  ] else
+                    Text(
+                      'Nothing wants it now, so it won’t come back unless someone asks.',
+                      style: NfType.small,
+                    ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      NfButton(
+                        label: 'Cancel',
+                        style: NfButtonStyle.ghost,
+                        onPressed: () => Navigator.of(context).pop(false),
+                      ),
+                      const SizedBox(width: 10),
+                      NfButton(
+                        label: 'Remove',
+                        style: NfButtonStyle.danger,
+                        onPressed: () => Navigator.of(context).pop(true),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    if (remove != true) return;
+    await getIt<ToastService>().attempt(
+      () => getIt<GraphqlService>().run(
+        GRemoveOptimizedVersionReq((b) => b.vars.id = version.id),
+      ),
+      success: 'Removed',
+    );
+    await _loadVersions();
+  }
+
+  /// Each viewer once, however many of their devices it's for.
+  Widget _audience(
+    String version,
+    GOptimizedVersionDetailData_optimizedVersion detail,
+  ) {
+    final viewers =
+        <String, List<GOptimizedVersionDetailData_optimizedVersion_targets>>{};
+    for (final target in detail.targets) {
+      (viewers[target.userName] ??= []).add(target);
+    }
+    String reason(GOptimizedReason value) => switch (value) {
+      GOptimizedReason.MARKED => 'Marked to watch next',
+      GOptimizedReason.PREDICTED => 'Predicted, with smart transcoding on',
+      _ => 'Asked for earlier, not any more',
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      spacing: 8,
+      children: [
+        if (viewers.isEmpty && detail.marks.isEmpty)
+          Text(
+            'Nobody wants this any more, so it’s first to go when space runs out.',
+            style: NfType.small,
+          ),
+        for (final MapEntry(key: viewer, value: rows) in viewers.entries)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(viewer, style: NfType.label),
+              for (final row in rows)
+                Text(
+                  '${row.device?.name ?? 'No device to reach'} · ${reason(row.reason)}',
+                  style: NfType.small,
+                ),
+            ],
+          ),
+        if (detail.marks.isNotEmpty) ...[
+          Text('Marks keeping it wanted', style: NfType.label),
+          for (final mark in detail.marks)
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '${mark.userName}: ${mark.work.title}, ${mark.device == null ? 'for all their devices' : 'for ${mark.device!.name}'}',
+                    style: NfType.small,
+                  ),
+                ),
+                NfButton(
+                  label: 'Unmark',
+                  style: NfButtonStyle.ghost,
+                  size: NfButtonSize.small,
+                  onPressed: () => unawaited(_unmark(version, mark)),
+                ),
+              ],
+            ),
+        ],
+      ],
+    );
+  }
+
+  Widget _versionRow(
+    GAdminOptimizedVersionsData_optimizedVersions_nodes version,
+  ) {
+    final detail = _detail.value;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Wrap(
+          spacing: 14,
+          runSpacing: 4,
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  version.work?.title ?? 'A removed title',
+                  style: NfType.label,
+                ),
+                Text(version.description, style: NfType.small),
+              ],
+            ),
+            switch (version.status) {
+              GOptimizedVersionStatus.RUNNING => Text(
+                'Preparing ${(version.progress * 100).round()}%',
+                style: NfType.small,
+              ),
+              GOptimizedVersionStatus.FAILED => Text(
+                version.error ?? 'Failed',
+                style: nfText(13, color: NfColors.danger),
+              ),
+              GOptimizedVersionStatus.QUEUED => Text(
+                'In the queue',
+                style: NfType.small,
+              ),
+              _ => Text(
+                [
+                  'Ready',
+                  bytes(version.sizeBytes),
+                  if (version.lastUsedAt case final played?)
+                    'last played ${ago(played)}'
+                  else
+                    'not played yet',
+                ].join(' · '),
+                style: NfType.small,
+              ),
+            },
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                NfButton(
+                  label: 'Who it’s for',
+                  style: NfButtonStyle.ghost,
+                  size: NfButtonSize.small,
+                  onPressed: () => _toggle(version.id),
+                ),
+                NfButton(
+                  label: 'Remove',
+                  style: NfButtonStyle.ghost,
+                  size: NfButtonSize.small,
+                  onPressed: () => unawaited(_remove(version)),
+                ),
+              ],
+            ),
+          ],
+        ),
+        if (_opened.value == version.id)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: detail == null
+                ? const Align(
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : _audience(version.id, detail),
+          ),
+      ],
+    );
+  }
+
   Widget _smartPanel() {
     final settings = _smart.data.value?.smartTranscoding;
-    final versions =
-        _versions.data.value?.optimizedVersions.toList() ?? const [];
-    int count(GOptimizedVersionStatus status) =>
-        versions.where((v) => v.status == status).length;
-    final preparedBytes = versions.fold<int>(
-      0,
-      (total, v) =>
-          total +
-          (v.status == GOptimizedVersionStatus.READY ? v.sizeBytes ?? 0 : 0),
-    );
-    final preparedGb = preparedBytes / (1024 * 1024 * 1024);
-    // What needs a look first, then the newest of what's done.
-    int rank(GOptimizedVersionStatus status) => switch (status) {
-      GOptimizedVersionStatus.RUNNING => 0,
-      GOptimizedVersionStatus.FAILED => 1,
-      GOptimizedVersionStatus.QUEUED => 2,
-      _ => 3,
-    };
-    final ordered = [...versions]
-      ..sort((a, b) {
-        final byStatus = rank(a.status).compareTo(rank(b.status));
-        if (byStatus != 0) return byStatus;
-        final (first, second) = (a.finishedAt, b.finishedAt);
-        if (first == null || second == null) return 0;
-        return second.compareTo(first);
-      });
+    final page = _page.value;
+    final stats = page?.optimizedVersionStats;
+    final versions = page?.optimizedVersions.nodes.toList() ?? const [];
+    final preparedGb = (stats?.readyBytes ?? 0) / (1024 * 1024 * 1024);
+    final total = stats == null
+        ? 0
+        : stats.ready + stats.queued + stats.running + stats.failed;
+    final cursors = _cursors.value;
+    final pageStart = (cursors.length - 1) * _pageSize;
+    final hasNext = page?.optimizedVersions.pageInfo.hasNextPage ?? false;
     return AccountPanel(
       icon: PhosphorIconsRegular.stack,
       title: 'Smart transcoding',
       detail:
-          '${count(GOptimizedVersionStatus.READY)} ready · ${preparedGb.toStringAsFixed(1)}${settings == null ? '' : ' of ${settings.maxStorageGb}'} GB · ${count(GOptimizedVersionStatus.QUEUED)} queued',
+          '${stats?.ready ?? 0} ready · ${preparedGb.toStringAsFixed(1)}${settings == null ? '' : ' of ${settings.maxStorageGb}'} GB · ${stats?.queued ?? 0} queued',
       child: AdminStack(
         children: [
           if (settings != null && !settings.enabled)
@@ -424,52 +716,40 @@ class _TranscodingSectionState extends State<TranscodingSection> {
               ),
             ),
           ],
-          if (ordered.isEmpty)
+          if (page != null && versions.isEmpty)
             Text(
               'Nothing prepared yet. Versions appear here once viewers mark titles or turn smart transcoding on for a device.',
               style: NfType.small,
             ),
-          for (final version in ordered)
-            Wrap(
-              spacing: 14,
-              runSpacing: 4,
-              alignment: WrapAlignment.spaceBetween,
+          for (final version in versions) _versionRow(version),
+          if (total > _pageSize || cursors.length > 1)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      version.work?.title ?? 'A removed title',
-                      style: NfType.label,
-                    ),
-                    Text(version.description, style: NfType.small),
-                  ],
+                Text(
+                  '${pageStart + 1}–${pageStart + versions.length} of $total',
+                  style: NfType.small,
                 ),
-                switch (version.status) {
-                  GOptimizedVersionStatus.RUNNING => Text(
-                    'Preparing ${(version.progress * 100).round()}%',
-                    style: NfType.small,
-                  ),
-                  GOptimizedVersionStatus.FAILED => Text(
-                    version.error ?? 'Failed',
-                    style: nfText(13, color: NfColors.danger),
-                  ),
-                  GOptimizedVersionStatus.QUEUED => Text(
-                    'In the queue',
-                    style: NfType.small,
-                  ),
-                  _ => Text(
-                    [
-                      'Ready',
-                      bytes(version.sizeBytes),
-                      if (version.lastUsedAt case final played?)
-                        'last played ${ago(played)}'
-                      else
-                        'not played yet',
-                    ].join(' · '),
-                    style: NfType.small,
-                  ),
-                },
+                const SizedBox(width: 12),
+                NfButton(
+                  label: 'Previous',
+                  style: NfButtonStyle.ghost,
+                  size: NfButtonSize.small,
+                  onPressed: cursors.length == 1
+                      ? null
+                      : () => _goTo(cursors.sublist(0, cursors.length - 1)),
+                ),
+                NfButton(
+                  label: 'Next',
+                  style: NfButtonStyle.ghost,
+                  size: NfButtonSize.small,
+                  onPressed: hasNext
+                      ? () => _goTo([
+                          ...cursors,
+                          page!.optimizedVersions.pageInfo.endCursor,
+                        ])
+                      : null,
+                ),
               ],
             ),
         ],

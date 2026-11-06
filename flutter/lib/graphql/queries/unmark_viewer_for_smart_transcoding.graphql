@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation UnmarkViewerForSmartTranscoding($user: ID!, $work: ID!, $device: ID) {
+  unmarkViewerForSmartTranscoding(userId: $user, workId: $work, deviceId: $device)
+}

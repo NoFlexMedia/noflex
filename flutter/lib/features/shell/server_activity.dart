@@ -54,7 +54,7 @@ typedef ScanRow = ({
   ({int added, int updated, int removed})? run,
 });
 typedef StreamRow = ({String viewer, String? title, bool transcoding});
-typedef VersionRow = ({bool running, bool queued, double progress});
+typedef VersionRow = ({bool running, double progress});
 
 /// What's going on, innermost ring first.
 List<ActivityEntry> activityRings({
@@ -62,6 +62,7 @@ List<ActivityEntry> activityRings({
   required List<ScanRow> scanning,
   required List<StreamRow> streams,
   required List<VersionRow> versions,
+  int queuedVersions = 0,
 }) {
   String watchers(Iterable<StreamRow> rows) =>
       rows.map((row) => '${row.viewer} · ${row.title ?? 'Live TV'}').join(', ');
@@ -70,7 +71,7 @@ List<ActivityEntry> activityRings({
   final transcoding = streams.where((row) => row.transcoding);
   final playing = streams.where((row) => !row.transcoding);
   final optimizing = versions.where((row) => row.running);
-  final queued = versions.where((row) => row.queued).length;
+  final queued = queuedVersions;
   final run = scanning.length == 1 ? scanning.first.run : null;
   return [
     if (scanCount > 0)
@@ -226,10 +227,10 @@ class ServerActivity {
       ],
       versions: [
         if (versions != null)
-          for (final version in versions.optimizedVersions)
+          // Running ones lead the list, so the first few hold them all.
+          for (final version in versions.optimizedVersions.nodes)
             (
               running: version.status == GOptimizedVersionStatus.RUNNING,
-              queued: version.status == GOptimizedVersionStatus.QUEUED,
               progress: version.progress,
             ),
       ],

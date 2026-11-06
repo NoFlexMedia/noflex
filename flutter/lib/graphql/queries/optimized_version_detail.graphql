@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query OptimizedVersionDetail($id: ID!) {
+  optimizedVersion(id: $id) {
+    id
+    targets { userId userName reason device { id name } }
+    marks { userId userName work { id title } device { id name } }
+  }
+}

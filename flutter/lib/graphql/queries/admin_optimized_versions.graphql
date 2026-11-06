@@ -1,15 +1,19 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-query AdminOptimizedVersions {
-  optimizedVersions {
-    id
-    variantKey
-    status
-    progress
-    sizeBytes
-    error
-    description
-    lastUsedAt
-    finishedAt
-    work { id title }
+query AdminOptimizedVersions($after: String) {
+  optimizedVersionStats { ready queued running failed readyBytes }
+  optimizedVersions(first: 25, after: $after) {
+    nodes {
+      id
+      variantKey
+      status
+      progress
+      sizeBytes
+      error
+      description
+      lastUsedAt
+      finishedAt
+      work { id title }
+    }
+    pageInfo { hasNextPage endCursor }
   }
 }

@@ -30,11 +30,11 @@ void main() {
       scanning: const [],
       streams: const [],
       versions: const [
-        (running: true, queued: false, progress: 0.2),
-        (running: true, queued: false, progress: 0.6),
-        (running: false, queued: true, progress: 0),
-        (running: false, queued: false, progress: 1),
+        (running: true, progress: 0.2),
+        (running: true, progress: 0.6),
+        (running: false, progress: 1),
       ],
+      queuedVersions: 1,
     ).single;
     expect(ring.progress, closeTo(0.4, 1e-9));
     expect(ring.detail, '1 more queued');

@@ -356,6 +356,9 @@ pub trait Storage: Send + Sync + 'static {
     /// it. `None` only for an unknown hash.
     async fn api_key_by_hash(&self, key_hash: &str) -> StorageResult<Option<ApiKey>>;
 
+    /// The key with this id, active or revoked. `None` for an unknown id.
+    async fn get_api_key(&self, id: ApiKeyId) -> StorageResult<Option<ApiKey>>;
+
     /// Every key the user owns, active and revoked alike, newest
     /// `created_at` first. Callers filter on `revoked_at`.
     async fn list_api_keys(&self, user_id: UserId) -> StorageResult<Vec<ApiKey>>;

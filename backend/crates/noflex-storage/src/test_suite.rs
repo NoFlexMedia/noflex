@@ -2393,8 +2393,30 @@ async fn api_key_lifecycle<S: Storage + ?Sized>(store: &S) {
         "unknown hash resolves to None"
     );
 
+    let found = store
+        .get_api_key(key.id)
+        .await
+        .expect("get by id")
+        .expect("key resolves by id");
+    assert_eq!(found.id, key.id);
+    assert!(found.revoked_at.is_none());
+
     let revoked = store.revoke_api_key(key.id).await.expect("revoke");
     assert!(revoked, "first revoke reports it did the revoking");
+    let found = store
+        .get_api_key(key.id)
+        .await
+        .expect("get by id after revoke")
+        .expect("revoked key still resolves by id");
+    assert!(found.revoked_at.is_some());
+    assert!(
+        store
+            .get_api_key(noflex_core::ApiKeyId::new())
+            .await
+            .expect("get unknown")
+            .is_none(),
+        "unknown id resolves to None"
+    );
 
     let after = store
         .api_key_by_hash("hash-api-key-lifecycle")

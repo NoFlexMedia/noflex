@@ -614,6 +614,10 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.reader().await?;
         repo::api_keys::get_by_hash(&conn, key_hash).await
     }
+    async fn get_api_key(&self, id: ApiKeyId) -> StorageResult<Option<ApiKey>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::api_keys::get(&conn, id).await
+    }
     async fn list_api_keys(&self, user_id: UserId) -> StorageResult<Vec<ApiKey>> {
         let (_schema, conn) = self.reader().await?;
         repo::api_keys::list_for_user(&conn, user_id).await

@@ -18,6 +18,8 @@ const INSERT: &str = "INSERT INTO api_keys (id, user_id, name, key_hash, created
 const GET_BY_HASH: &str =
     "SELECT id, user_id, name, created_at, revoked_at FROM api_keys WHERE key_hash = ?1";
 
+const GET: &str = "SELECT id, user_id, name, created_at, revoked_at FROM api_keys WHERE id = ?1";
+
 const LIST_FOR_USER: &str = "SELECT id, user_id, name, created_at, revoked_at FROM api_keys WHERE user_id = ?1 \
     ORDER BY created_at DESC";
 
@@ -45,6 +47,17 @@ pub(crate) async fn create(
     ];
     conn.execute(INSERT, params).await.map_err(map_turso)?;
     Ok(key)
+}
+
+pub(crate) async fn get(conn: &Connection, id: ApiKeyId) -> StorageResult<Option<ApiKey>> {
+    let mut rows = conn
+        .query(GET, vec![Value::Blob(uuid_to_blob(id.into_uuid()))])
+        .await
+        .map_err(map_turso)?;
+    match rows.next().await.map_err(map_turso)? {
+        Some(row) => Ok(Some(row_to_api_key(&row)?)),
+        None => Ok(None),
+    }
 }
 
 pub(crate) async fn get_by_hash(

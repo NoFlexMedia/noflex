@@ -7,11 +7,17 @@ use std::sync::Arc;
 
 use async_graphql::{Json, Request};
 use noflex_auth::Principal;
-use noflex_core::{DeviceId, LibraryId, MetadataStatus, PlayTarget, UserId, WorkId, WorkKind};
+use noflex_core::{
+    DeviceId, EditionId, LibraryId, MediaFileId, MetadataStatus, OptimizedVersionId, PlayTarget,
+    UserId, WorkId, WorkKind,
+};
 use noflex_graphql::{SchemaContext, build_schema, smart::marked_works};
 use noflex_storage::{
     RequestUser, Storage,
-    domain::{Device, Library, LibraryKind, User, Work},
+    domain::{
+        Device, Edition, Library, LibraryKind, MediaFile, OptimizedVersion, OptimizedVersionStatus,
+        User, Work,
+    },
 };
 use noflex_storage_turso::TursoStore;
 use time::{Duration, OffsetDateTime};
@@ -321,4 +327,99 @@ async fn a_marked_series_moves_on_as_its_watched_and_a_season_stays_in_itself() 
             .expect("next")
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn prepared_versions_list_ready_titles_a_viewer_can_see() {
+    let fixture = fixture().await;
+    let now = OffsetDateTime::now_utc();
+    let edition = Edition {
+        id: EditionId::new(),
+        work_id: fixture.film,
+        name: "Theatrical".into(),
+        runtime_ms: None,
+        intro_start_ms: None,
+        intro_end_ms: None,
+        credits_start_ms: None,
+        chapters: vec![],
+    };
+    fixture
+        .storage
+        .upsert_edition(&edition)
+        .await
+        .expect("edition");
+    let media = MediaFile {
+        id: MediaFileId::new(),
+        edition_id: edition.id,
+        path: "/srv/films/film.mkv".into(),
+        part_index: 0,
+        size_bytes: 1_000,
+        mtime: now,
+        container: Some("matroska".into()),
+        probe: Json(serde_json::json!({})),
+        subtitle_tracks: vec![],
+    };
+    fixture
+        .storage
+        .upsert_media_file(&media)
+        .await
+        .expect("media");
+    let version = |key: &str| OptimizedVersion {
+        id: OptimizedVersionId::new(),
+        media_file_id: media.id,
+        variant_key: key.to_string(),
+        status: OptimizedVersionStatus::Queued,
+        priority: 0,
+        plan: serde_json::json!({}),
+        source_size: 1_000,
+        source_mtime: now,
+        progress: 0.0,
+        attempts: 0,
+        path: None,
+        size_bytes: None,
+        index: None,
+        probe: None,
+        error: None,
+        created_at: now,
+        finished_at: None,
+        last_used_at: None,
+    };
+    let queued = version("av1-720p-1556k-av1main/aac2");
+    let mut ready = version("copy-h264/aac2");
+    fixture
+        .storage
+        .enqueue_optimized_version(&queued)
+        .await
+        .expect("queued");
+    fixture
+        .storage
+        .enqueue_optimized_version(&ready)
+        .await
+        .expect("ready");
+    ready.status = OptimizedVersionStatus::Ready;
+    ready.size_bytes = Some(500);
+    ready.finished_at = Some(now);
+    fixture
+        .storage
+        .update_optimized_version(&ready)
+        .await
+        .expect("finish");
+
+    let query = "{ preparedVersions { description sizeBytes work { title } } }".to_string();
+    let seen = run(&fixture, &fixture.viewer, query.clone()).await;
+    assert!(seen.errors.is_empty(), "{:?}", seen.errors);
+    let seen = seen.data.into_json().expect("json");
+    assert_eq!(
+        seen["preparedVersions"],
+        serde_json::json!([{
+            "description": "Video kept, audio converted to AAC stereo",
+            "sizeBytes": 500,
+            "work": { "title": "Film" },
+        }])
+    );
+
+    let hidden = run(&fixture, &fixture.stranger, query).await;
+    assert!(hidden.errors.is_empty(), "{:?}", hidden.errors);
+    let hidden = hidden.data.into_json().expect("json");
+    assert_eq!(hidden["preparedVersions"], serde_json::json!([]));
 }

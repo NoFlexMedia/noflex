@@ -729,6 +729,7 @@ pub struct SmartTranscodeMark {
 /// A prepared copy of a media file, derived from it and never a media file
 /// itself. `plan`, `index` and `probe` are the transcoder's types, opaque here.
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
 pub struct OptimizedVersion {
     pub id: OptimizedVersionId,
     pub media_file_id: MediaFileId,
@@ -760,6 +761,101 @@ pub struct OptimizedVersion {
     pub created_at: OffsetDateTime,
     pub finished_at: Option<OffsetDateTime>,
     pub last_used_at: Option<OffsetDateTime>,
+}
+
+#[async_graphql::ComplexObject]
+impl OptimizedVersion {
+    /// The title this is a version of; null once it's gone, or for a viewer who
+    /// can't see it.
+    #[graphql(complexity = 3)]
+    async fn work(&self, ctx: &async_graphql::Context<'_>) -> async_graphql::Result<Option<Work>> {
+        let storage = complex_storage(ctx)?;
+        let user = crate::access::request_user(ctx)?;
+        let work = self
+            .source_work(storage.as_ref())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        match work {
+            Some(work)
+                if crate::access::user_can_access_work(storage.as_ref(), user, work.id)
+                    .await
+                    .map_err(|e| async_graphql::Error::new(e.to_string()))? =>
+            {
+                Ok(Some(work))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// What was done to the source, in words.
+    async fn description(&self) -> String {
+        describe_variant(&self.variant_key)
+    }
+}
+
+impl OptimizedVersion {
+    /// The title whose file this was made from.
+    pub async fn source_work(
+        &self,
+        storage: &dyn crate::Storage,
+    ) -> crate::StorageResult<Option<Work>> {
+        let Some(media) = storage.media_file_by_id(self.media_file_id).await? else {
+            return Ok(None);
+        };
+        let Some(edition) = storage.get_edition(media.edition_id).await? else {
+            return Ok(None);
+        };
+        storage.get_work(edition.work_id).await
+    }
+}
+
+/// Words for a variant key, which `OptimizeTarget::key` in `noflex-transcoder`
+/// builds: `<video>/<audio>[+<audio>…]`, as `copy-h264/aac2` or
+/// `av1-720p-1556k-av1main-tonemap/copy`.
+fn describe_variant(key: &str) -> String {
+    let (video, audio) = key.split_once('/').unwrap_or((key, ""));
+    let codec = |name: &str| match name {
+        "h264" => "H.264".to_string(),
+        "h265" => "H.265".to_string(),
+        other => other.to_uppercase(),
+    };
+    let converted_audio = audio
+        .split('+')
+        .find(|track| !matches!(*track, "" | "copy" | "none"))
+        .map(|track| {
+            let digits = track
+                .find(|c: char| c.is_ascii_digit())
+                .unwrap_or(track.len());
+            let (name, channels) = track.split_at(digits);
+            let layout = match channels {
+                "1" => "mono".to_string(),
+                "2" => "stereo".to_string(),
+                "6" => "5.1".to_string(),
+                "8" => "7.1".to_string(),
+                "" => String::new(),
+                other => format!("{other}-channel"),
+            };
+            format!("{} {layout}", codec(name)).trim().to_string()
+        });
+    let mut parts = video.split('-');
+    let first = parts.next().unwrap_or_default();
+    if first == "copy" || first == "none" {
+        return match converted_audio {
+            Some(audio) => format!("Video kept, audio converted to {audio}"),
+            None => "Repackaged, nothing re-encoded".to_string(),
+        };
+    }
+    let height = parts.next().unwrap_or_default();
+    let tonemapped = video.ends_with("-tonemap");
+    let target = format!(
+        "{} {height}{}",
+        codec(first),
+        if tonemapped { " SDR" } else { "" }
+    );
+    match converted_audio {
+        Some(audio) => format!("Converted to {target} with {audio}"),
+        None => format!("Converted to {target}, audio kept"),
+    }
 }
 
 /// The facts recommendations compare a top-level work by.
@@ -2408,4 +2504,35 @@ pub struct Recording {
     pub completed_at: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
+}
+
+#[cfg(test)]
+mod variant_tests {
+    use super::describe_variant;
+
+    #[test]
+    fn variant_keys_read_as_what_was_done() {
+        for (key, words) in [
+            (
+                "copy-h264/aac2",
+                "Video kept, audio converted to AAC stereo",
+            ),
+            ("copy-h265/copy+copy", "Repackaged, nothing re-encoded"),
+            (
+                "av1-720p-1556k-av1main/aac1",
+                "Converted to AV1 720p with AAC mono",
+            ),
+            (
+                "h264-1080p-8000k-high-tonemap/copy",
+                "Converted to H.264 1080p SDR, audio kept",
+            ),
+            (
+                "av1-2160p-9000k-av1main/copy+opus6",
+                "Converted to AV1 2160p with OPUS 5.1",
+            ),
+            ("none/aac2", "Video kept, audio converted to AAC stereo"),
+        ] {
+            assert_eq!(describe_variant(key), words);
+        }
+    }
 }

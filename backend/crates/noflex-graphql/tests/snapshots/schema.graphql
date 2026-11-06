@@ -1845,6 +1845,15 @@ type OptimizedVersion {
 	createdAt: DateTime!
 	finishedAt: DateTime
 	lastUsedAt: DateTime
+	"""
+	The title this is a version of; null once it's gone, or for a viewer who
+	can't see it.
+	"""
+	work: Work
+	"""
+	What was done to the source, in words.
+	"""
+	description: String!
 }
 
 """
@@ -2642,6 +2651,12 @@ type Query {
 	Administrator only.
 	"""
 	optimizedVersions: [OptimizedVersion!]!
+	"""
+	What's ready to play on this server of the titles the caller can see,
+	the newest first. A version serves any device that can play it, whoever
+	or whatever asked for it.
+	"""
+	preparedVersions: [OptimizedVersion!]!
 	"""
 	What the caller's device should hold, most important first and within
 	its download budget. Empty unless the device has smart downloads on.

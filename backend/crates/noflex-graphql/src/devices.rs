@@ -9,7 +9,7 @@ use noflex_core::{DeviceId, MediaFileId, TonemapCurve, VideoCodec};
 use noflex_plugin_host::PluginRegistry;
 use noflex_storage::{
     RequestUser, Storage,
-    domain::{Device, OptimizedVersion, SmartTranscodingSettings, Work},
+    domain::{Device, OptimizedVersion, OptimizedVersionStatus, SmartTranscodingSettings, Work},
     error::StorageError,
 };
 use noflex_transcoder::ClientCapabilities;
@@ -168,6 +168,38 @@ impl DevicesQuery {
             .list_optimized_versions()
             .await
             .map_err(gql_err)
+    }
+
+    /// What's ready to play on this server of the titles the caller can see,
+    /// the newest first. A version serves any device that can play it, whoever
+    /// or whatever asked for it.
+    async fn prepared_versions(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<Vec<OptimizedVersion>> {
+        let storage = storage(ctx)?;
+        let user = access::request_user(ctx)?;
+        let mut prepared = Vec::new();
+        for version in storage.list_optimized_versions().await.map_err(gql_err)? {
+            if version.status != OptimizedVersionStatus::Ready {
+                continue;
+            }
+            let Some(work) = version
+                .source_work(storage.as_ref())
+                .await
+                .map_err(gql_err)?
+            else {
+                continue;
+            };
+            if noflex_storage::access::user_can_access_work(storage.as_ref(), user, work.id)
+                .await
+                .map_err(gql_err)?
+            {
+                prepared.push(version);
+            }
+        }
+        prepared.sort_by_key(|version| std::cmp::Reverse(version.finished_at));
+        Ok(prepared)
     }
 
     /// What the caller's device should hold, most important first and within

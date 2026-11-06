@@ -54,6 +54,7 @@ mod restrictions;
 mod search;
 mod sessions;
 pub mod smart;
+mod smart_marks;
 mod stats;
 pub mod subscriptions;
 mod users;
@@ -90,6 +91,7 @@ pub struct Query(
     playback::PlaybackQuery,
     browse::BrowseQuery,
     devices::DevicesQuery,
+    smart_marks::SmartMarksQuery,
     multi_server::MultiServerQuery,
     users::UsersQuery,
     preferences::PreferencesQuery,
@@ -111,6 +113,7 @@ pub struct Mutation(
     CoreMutation,
     playback::PlaybackMutation,
     devices::DevicesMutation,
+    smart_marks::SmartMarksMutation,
     embedding::EmbeddingMutation,
     multi_server::MultiServerMutation,
     auth::AuthMutation,
@@ -723,6 +726,9 @@ pub struct SchemaContext {
     /// Absent → `smartTranscoding` errors with "smart transcoding not
     /// configured".
     pub smart_transcoding: Option<devices::SmartTranscodingDefaults>,
+    /// Woken when a viewer changes a smart transcode mark, so they don't wait
+    /// for the next planning interval. Absent → the mark waits for it.
+    pub smart_transcode_wake: Option<Arc<tokio::sync::Notify>>,
     /// The configured tone-mapping curve, until an administrator picks one.
     pub tonemap_curve: Option<noflex_core::TonemapCurve>,
 }
@@ -761,6 +767,9 @@ pub fn build_schema(ctx: SchemaContext) -> NoflexSchema {
                 tokio::spawn,
             ))
             .data(storage);
+    }
+    if let Some(wake) = ctx.smart_transcode_wake {
+        builder = builder.data(wake);
     }
     if let Some(plugins) = ctx.plugins {
         builder = builder.data(plugins);

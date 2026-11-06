@@ -1471,6 +1471,20 @@ type Mutation {
 	"""
 	removeDevice(id: ID!): Device
 	"""
+	Say the caller's going to watch `workId`, so the server prepares it next:
+	for `deviceId` alone if given, whatever its smart transcoding setting, or
+	otherwise for all their devices with it on. A series or season stands for
+	its next unwatched episodes. Lasts until it's unmarked or watched, and
+	marking again keeps its place in the queue.
+	"""
+	markForSmartTranscoding(workId: ID!, deviceId: ID): SmartTranscodeMark!
+	"""
+	Take a mark back: what's waiting leaves the queue, and what's been prepared
+	can be evicted like anything else. Returns the mark, or null when there was
+	none.
+	"""
+	unmarkForSmartTranscoding(workId: ID!, deviceId: ID): SmartTranscodeMark
+	"""
 	Use an embeddings API. Sends it a test first and saves nothing if that
 	fails. From then on every title, overview, credit and search text goes to
 	it, and changing anything but the key reindexes the library. Administrator
@@ -2624,6 +2638,11 @@ type Query {
 	"""
 	deviceDownload(deviceId: ID!, mediaFileId: ID!): SmartDownload
 	"""
+	The caller's marks, the next to be prepared first; only `workId`'s if
+	given. Titles they can no longer see are left out.
+	"""
+	mySmartTranscodeMarks(workId: ID): [SmartTranscodeMark!]!
+	"""
 	Every invite, newest first. Administrator only.
 	"""
 	invites: [Invite!]!
@@ -3068,6 +3087,58 @@ type SmartDownload {
 	"""
 	optimized: Boolean!
 	subtitles: [SubtitleDelivery!]!
+}
+
+"""
+A title the viewer marked for smart transcoding.
+"""
+type SmartTranscodeMark {
+	work: Work!
+	"""
+	The one device this is for. Null is all of the viewer's devices with
+	smart transcoding on.
+	"""
+	device: Device
+	markedAt: DateTime!
+	state: SmartTranscodeState!
+	"""
+	0.0 to 1.0 across the versions it stands for.
+	"""
+	progress: Float!
+}
+
+"""
+How far along a marked title is. The planner works these out for the devices
+the mark is for; `READY` means no device it's for still needs anything.
+"""
+enum SmartTranscodeState {
+	"""
+	In the queue. The server prepares things while nobody is watching.
+	"""
+	WAITING
+	PREPARING
+	READY
+	"""
+	The devices it's for already play the original.
+	"""
+	NOT_NEEDED
+	"""
+	Larger than the administrator allows a version to be.
+	"""
+	TOO_LARGE
+	"""
+	Marked for the viewer's devices, and none has smart transcoding on.
+	"""
+	NO_DEVICES
+	"""
+	Waiting, with the server's space for versions used up by other marks.
+	"""
+	NO_SPACE
+	FAILED
+	"""
+	Smart transcoding is off in the server's configuration.
+	"""
+	DISABLED
 }
 
 """

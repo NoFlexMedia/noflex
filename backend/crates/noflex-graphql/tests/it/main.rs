@@ -34,6 +34,7 @@ mod schema_snapshot;
 mod search;
 mod sessions;
 mod setup_wizard;
+mod smart_marks;
 mod taxonomy;
 mod ui_api;
 mod users;

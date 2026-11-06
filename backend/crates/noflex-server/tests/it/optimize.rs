@@ -18,8 +18,8 @@ use noflex_server::{
 use noflex_storage::{
     Storage,
     domain::{
-        Device, Edition, Library, MediaFile, OptimizedVersionStatus, SmartTranscodingSettings,
-        User, Work,
+        Device, Edition, Library, MediaFile, OptimizedVersionStatus, SmartTranscodeMark,
+        SmartTranscodeOutcome, SmartTranscodingSettings, User, Work,
     },
 };
 use noflex_storage_turso::TursoStore;
@@ -227,6 +227,7 @@ fn worker(fixture: &Fixture, config: OptimizeConfig) -> OptimizeWorker {
         gpu_tonemap: false,
         tonemap_curve: Default::default(),
         dir: fixture.dir.join("optimized"),
+        wake: Default::default(),
     }
 }
 
@@ -452,4 +453,334 @@ async fn nothing_runs_without_quota_or_an_opted_in_device() {
     );
 
     std::fs::remove_dir_all(dir).ok();
+}
+
+/// The fixture's device, which is the only one.
+async fn phone(fixture: &Fixture) -> Device {
+    fixture
+        .store
+        .devices_for_user(fixture.user)
+        .await
+        .expect("devices")
+        .pop()
+        .expect("device")
+}
+
+async fn turn_smart_transcoding_off(fixture: &Fixture) {
+    let mut device = phone(fixture).await;
+    device.smart_transcode = false;
+    fixture.store.upsert_device(&device).await.expect("device");
+}
+
+async fn work_of(fixture: &Fixture, media: &MediaFile) -> WorkId {
+    fixture
+        .store
+        .work_for_media_file(media.id)
+        .await
+        .expect("work")
+        .expect("work")
+        .id
+}
+
+async fn mark(fixture: &Fixture, work: WorkId, device: Option<DeviceId>) {
+    fixture
+        .store
+        .add_smart_transcode_mark(&SmartTranscodeMark {
+            user_id: fixture.user,
+            work_id: work,
+            device_id: device,
+            created_at: OffsetDateTime::now_utc(),
+            outcome: None,
+            media_file_ids: vec![],
+        })
+        .await
+        .expect("mark");
+}
+
+async fn only_mark(fixture: &Fixture) -> SmartTranscodeMark {
+    let mut marks = fixture
+        .store
+        .smart_transcode_marks_for_user(fixture.user)
+        .await
+        .expect("marks");
+    assert_eq!(marks.len(), 1, "{marks:?}");
+    marks.pop().expect("mark")
+}
+
+/// A second film from the same file, for a test that needs two titles.
+async fn another_title(fixture: &Fixture) -> MediaFile {
+    let now = OffsetDateTime::now_utc();
+    let original = fixture
+        .store
+        .work_for_media_file(fixture.media.id)
+        .await
+        .expect("work")
+        .expect("work");
+    let work = Work {
+        id: WorkId::new(),
+        title: "Another".to_string(),
+        sort_title: "another".to_string(),
+        ..original
+    };
+    fixture.store.upsert_work(&work).await.expect("work");
+    let edition = Edition {
+        id: EditionId::new(),
+        work_id: work.id,
+        name: "Default".to_string(),
+        runtime_ms: Some(10_000),
+        intro_start_ms: None,
+        intro_end_ms: None,
+        credits_start_ms: None,
+        chapters: vec![],
+    };
+    fixture
+        .store
+        .upsert_edition(&edition)
+        .await
+        .expect("edition");
+    let path = format!("{}.copy.mkv", fixture.media.path);
+    std::fs::copy(&fixture.media.path, &path).expect("copy");
+    let media = MediaFile {
+        id: MediaFileId::new(),
+        edition_id: edition.id,
+        path,
+        mtime: now,
+        ..fixture.media.clone()
+    };
+    fixture
+        .store
+        .upsert_media_file(&media)
+        .await
+        .expect("media");
+    media
+}
+
+#[tokio::test]
+async fn a_mark_is_for_the_devices_it_names_until_its_taken_back() {
+    let dir = std::env::temp_dir().join(format!("noflex-mark-scope-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("source.mkv");
+    if !make_source(&source) {
+        eprintln!("ffmpeg unavailable; skipping");
+        return;
+    }
+    let fixture = fixture(&source, dir.clone()).await;
+    turn_smart_transcoding_off(&fixture).await;
+    let worker = worker(&fixture, config());
+    let work = work_of(&fixture, &fixture.media).await;
+    let device = phone(&fixture).await.id;
+
+    // For all devices with it on, of which there are none: nothing to do, and saying so.
+    mark(&fixture, work, None).await;
+    worker.plan().await.expect("plan");
+    assert_eq!(
+        only_mark(&fixture).await.outcome,
+        Some(SmartTranscodeOutcome::NoDevices)
+    );
+    assert!(
+        fixture
+            .store
+            .list_optimized_versions()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // For this device, whatever its setting: queued, and ahead of any guess.
+    fixture
+        .store
+        .remove_smart_transcode_mark(fixture.user, work, None)
+        .await
+        .unwrap();
+    mark(&fixture, work, Some(device)).await;
+    worker.plan().await.expect("plan");
+    let planned = only_mark(&fixture).await;
+    assert_eq!(planned.outcome, Some(SmartTranscodeOutcome::Planned));
+    assert_eq!(planned.media_file_ids, [fixture.media.id]);
+    let queued = fixture.store.list_optimized_versions().await.unwrap();
+    assert_eq!(queued.len(), 1, "{queued:?}");
+    assert!(
+        queued[0].priority < 0,
+        "ahead of guesses, which count from 0"
+    );
+
+    // Unmarked, it leaves the queue.
+    fixture
+        .store
+        .remove_smart_transcode_mark(fixture.user, work, Some(device))
+        .await
+        .unwrap();
+    worker.plan().await.expect("plan");
+    assert!(
+        fixture
+            .store
+            .list_optimized_versions()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // A device that's been forgotten takes its mark with it.
+    mark(&fixture, work, Some(device)).await;
+    fixture
+        .store
+        .delete_device(fixture.user, device)
+        .await
+        .unwrap();
+    worker.plan().await.expect("plan");
+    assert!(
+        fixture
+            .store
+            .smart_transcode_marks_for_user(fixture.user)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn watching_a_marked_title_ends_the_mark_but_having_seen_it_doesnt() {
+    let dir = std::env::temp_dir().join(format!("noflex-mark-watch-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("source.mkv");
+    if !make_source(&source) {
+        eprintln!("ffmpeg unavailable; skipping");
+        return;
+    }
+    let fixture = fixture(&source, dir.clone()).await;
+    let worker = worker(&fixture, config());
+    let work = work_of(&fixture, &fixture.media).await;
+
+    // Seen before it was marked: they mean to see it again.
+    fixture
+        .store
+        .mark_played(fixture.user, PlayTarget::Work(work), true)
+        .await
+        .expect("played");
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    mark(&fixture, work, None).await;
+    worker.plan().await.expect("plan");
+    assert_eq!(
+        only_mark(&fixture).await.outcome,
+        Some(SmartTranscodeOutcome::Planned)
+    );
+
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    fixture
+        .store
+        .mark_played(fixture.user, PlayTarget::Work(work), true)
+        .await
+        .expect("played");
+    worker.plan().await.expect("plan");
+    assert!(
+        fixture
+            .store
+            .smart_transcode_marks_for_user(fixture.user)
+            .await
+            .unwrap()
+            .is_empty(),
+        "watched since it was marked"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test]
+async fn a_mark_waiting_for_space_evicts_guesses_and_is_never_evicted_itself() {
+    let dir = std::env::temp_dir().join(format!("noflex-mark-space-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("source.mkv");
+    if !make_source(&source) {
+        eprintln!("ffmpeg unavailable; skipping");
+        return;
+    }
+    let fixture = fixture(&source, dir.clone()).await;
+    let worker = worker(&fixture, config());
+    const TWO_GB: u64 = 2 * 1024 * 1024 * 1024;
+
+    // A guess, prepared, and taking up the whole of the server's space. This
+    // leaves it at the quota, not over, so nothing evicts it for its own sake.
+    worker.plan().await.expect("plan");
+    assert!(worker.run_next().await.expect("run"));
+    let mut guess = fixture
+        .store
+        .list_optimized_versions()
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        guess.status,
+        OptimizedVersionStatus::Ready,
+        "{:?}",
+        guess.error
+    );
+    guess.size_bytes = Some(TWO_GB);
+    fixture
+        .store
+        .update_optimized_version(&guess)
+        .await
+        .unwrap();
+    fixture
+        .store
+        .set_smart_transcoding_settings(&SmartTranscodingSettings {
+            max_storage_gb: Some(2),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    worker.plan().await.expect("plan");
+    assert!(
+        fixture
+            .store
+            .get_optimized_version(guess.id)
+            .await
+            .unwrap()
+            .is_some(),
+        "a guess at the quota stays until something needs the room"
+    );
+
+    let other = another_title(&fixture).await;
+    let other_work = work_of(&fixture, &other).await;
+    mark(&fixture, other_work, None).await;
+    worker.plan().await.expect("plan");
+    assert!(
+        fixture
+            .store
+            .get_optimized_version(guess.id)
+            .await
+            .unwrap()
+            .is_none(),
+        "the guess made room for what was marked"
+    );
+
+    assert!(worker.run_next().await.expect("run"), "and it runs");
+    let mut marked = fixture
+        .store
+        .optimized_versions_for_media(other.id)
+        .await
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        marked.status,
+        OptimizedVersionStatus::Ready,
+        "{:?}",
+        marked.error
+    );
+    marked.size_bytes = Some(TWO_GB * 2);
+    fixture
+        .store
+        .update_optimized_version(&marked)
+        .await
+        .unwrap();
+    worker.plan().await.expect("plan");
+    assert!(
+        fixture
+            .store
+            .get_optimized_version(marked.id)
+            .await
+            .unwrap()
+            .is_some(),
+        "over the quota, but marked"
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }

@@ -694,6 +694,38 @@ impl EmbeddingEndpoint {
     }
 }
 
+/// What the planner last made of a [`SmartTranscodeMark`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmartTranscodeOutcome {
+    /// Versions are queued, running or ready.
+    Planned,
+    /// Every device this is for already plays the original.
+    NotNeeded,
+    /// Larger than an administrator allows a version to be.
+    TooLarge,
+    /// Marked for the viewer's devices, and none has smart transcoding on.
+    NoDevices,
+}
+
+/// A viewer marking a title they're going to watch: a hard signal to prepare
+/// it, ahead of anything the planner guesses at, until they unmark it or watch
+/// it. One per user, work and scope.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SmartTranscodeMark {
+    pub user_id: UserId,
+    pub work_id: WorkId,
+    /// The one device this is for, whatever its smart transcoding setting.
+    /// `None` is all of the viewer's devices with smart transcoding on.
+    pub device_id: Option<DeviceId>,
+    /// Its place in the queue, which is first come, first served across users.
+    pub created_at: OffsetDateTime,
+    /// `None` until the planner has looked at it.
+    pub outcome: Option<SmartTranscodeOutcome>,
+    /// The files it stands for right now, set by the planner. A series moves on
+    /// to later episodes as it's watched.
+    pub media_file_ids: Vec<MediaFileId>,
+}
+
 /// A prepared copy of a media file, derived from it and never a media file
 /// itself. `plan`, `index` and `probe` are the transcoder's types, opaque here.
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]

@@ -476,6 +476,7 @@ async fn run() -> anyhow::Result<()> {
         .unwrap_or_else(|| cfg.data_dir.join("optimized"));
     std::fs::create_dir_all(&optimized_dir)
         .with_context(|| format!("create optimized dir {}", optimized_dir.display()))?;
+    let smart_transcode_wake = Arc::new(tokio::sync::Notify::new());
     let schema = build_schema(SchemaContext {
         storage: Some(storage.clone()),
         scanner: Some(scan_registry.clone()),
@@ -504,6 +505,7 @@ async fn run() -> anyhow::Result<()> {
             max_storage_gb: cfg.transcoder.optimize.max_storage_gb,
             max_version_gb: cfg.transcoder.optimize.max_version_gb,
         }),
+        smart_transcode_wake: Some(smart_transcode_wake.clone()),
     });
     let download_output_dir = if cfg.cache.transcode_dir.is_empty() {
         cfg.data_dir.join("downloads")
@@ -536,6 +538,7 @@ async fn run() -> anyhow::Result<()> {
         gpu_tonemap: hw_detect.gpu_tonemap,
         tonemap_curve: cfg.transcoder.tonemap_curve,
         dir: optimized_dir,
+        wake: smart_transcode_wake,
     })
     .spawn();
     let recordings_dir = cfg.data_dir.join("recordings");

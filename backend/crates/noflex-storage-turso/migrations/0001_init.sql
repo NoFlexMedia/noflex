@@ -766,6 +766,25 @@ CREATE TABLE IF NOT EXISTS optimized_versions (
 
 CREATE INDEX IF NOT EXISTS optimized_versions_claim ON optimized_versions(status, priority, created_at);
 
+-- A viewer marking a title they're going to watch: a hard signal to prepare it,
+-- ahead of anything the planner guesses at, until they unmark it or watch it.
+CREATE TABLE IF NOT EXISTS smart_transcode_marks (
+    user_id             BLOB NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    work_id             BLOB NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    -- The one device this is for. Empty, not null, for all of the viewer's
+    -- devices with smart transcoding on: a null would escape the primary key.
+    -- The planner drops a mark whose device has been forgotten.
+    device_id           BLOB NOT NULL,
+    created_at          TEXT NOT NULL,
+    -- What the planner last made of it, null until it has looked.
+    outcome             TEXT,            -- "planned" | "not_needed" | "too_large" | "no_devices"
+    -- The files it stands for right now; a series moves on as it's watched.
+    media_file_ids_json TEXT NOT NULL DEFAULT '[]',
+    PRIMARY KEY (user_id, work_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS smart_transcode_marks_queue ON smart_transcode_marks(created_at);
+
 -- Sharing a server by invite, and the other servers a user has linked.
 
 CREATE TABLE IF NOT EXISTS invites (

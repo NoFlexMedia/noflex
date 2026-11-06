@@ -76,6 +76,7 @@ where
     work_features_collect_comparison_facts(store).await;
     episodes_after_lists_regular_episodes_in_order(store).await;
     devices_belong_to_their_user(store).await;
+    smart_transcode_marks_queue_by_scope(store).await;
     optimized_versions_queue_by_priority(store).await;
     smart_transcoding_settings_round_trip(store).await;
     downloads_allowed_round_trip(store).await;
@@ -3223,6 +3224,142 @@ fn make_device(user: UserId, name: &str) -> crate::domain::Device {
         created_at: now,
         last_seen_at: now,
     }
+}
+
+async fn smart_transcode_marks_queue_by_scope<S: Storage + ?Sized>(store: &S) {
+    use crate::domain::{SmartTranscodeMark, SmartTranscodeOutcome};
+
+    let first_user = make_user("mark-first", false);
+    let second_user = make_user("mark-second", false);
+    store.upsert_user(&first_user).await.expect("first user");
+    store.upsert_user(&second_user).await.expect("second user");
+    let at = OffsetDateTime::now_utc()
+        .replace_nanosecond(0)
+        .expect("nanos");
+    let library = test_library("mark-library");
+    store.upsert_library(&library).await.expect("library");
+    let film = make_work(library.id, "Marked film", at);
+    let other = make_work(library.id, "Marked other", at);
+    store.upsert_work(&film).await.expect("film");
+    store.upsert_work(&other).await.expect("other");
+    let tv = noflex_core::DeviceId::new();
+
+    let mark = |user: UserId, work: WorkId, device, created_at| SmartTranscodeMark {
+        user_id: user,
+        work_id: work,
+        device_id: device,
+        created_at,
+        outcome: None,
+        media_file_ids: vec![],
+    };
+    let seconds = time::Duration::seconds;
+    let added = store
+        .add_smart_transcode_mark(&mark(first_user.id, film.id, None, at))
+        .await
+        .expect("add");
+    assert_eq!(added.outcome, None);
+    store
+        .add_smart_transcode_mark(&mark(first_user.id, film.id, Some(tv), at + seconds(1)))
+        .await
+        .expect("the same title for one device is its own mark");
+    store
+        .add_smart_transcode_mark(&mark(second_user.id, film.id, None, at + seconds(2)))
+        .await
+        .expect("another viewer");
+    store
+        .add_smart_transcode_mark(&mark(first_user.id, other.id, None, at + seconds(3)))
+        .await
+        .expect("another title");
+
+    let again = store
+        .add_smart_transcode_mark(&mark(
+            first_user.id,
+            film.id,
+            None,
+            at + time::Duration::days(1),
+        ))
+        .await
+        .expect("again");
+    assert_eq!(again.created_at, at, "marking twice keeps its place");
+
+    let queue = store.list_smart_transcode_marks().await.expect("queue");
+    let order = queue
+        .iter()
+        .filter(|entry| entry.user_id == first_user.id || entry.user_id == second_user.id)
+        .map(|entry| (entry.user_id, entry.work_id, entry.device_id))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        order,
+        [
+            (first_user.id, film.id, None),
+            (first_user.id, film.id, Some(tv)),
+            (second_user.id, film.id, None),
+            (first_user.id, other.id, None),
+        ],
+        "first come, first served across users"
+    );
+
+    let files = [MediaFileId::new()];
+    let planned = mark(first_user.id, film.id, Some(tv), at);
+    store
+        .record_smart_transcode_plan(&planned, SmartTranscodeOutcome::Planned, &files)
+        .await
+        .expect("record");
+    let mine = store
+        .smart_transcode_marks_for_user(first_user.id)
+        .await
+        .expect("mine");
+    assert_eq!(mine.len(), 3);
+    assert_eq!(mine[0].outcome, None, "only the scope recorded changes");
+    assert_eq!(mine[1].outcome, Some(SmartTranscodeOutcome::Planned));
+    assert_eq!(mine[1].media_file_ids, files);
+
+    assert!(
+        store
+            .remove_smart_transcode_mark(first_user.id, film.id, Some(tv))
+            .await
+            .expect("remove")
+    );
+    assert!(
+        !store
+            .remove_smart_transcode_mark(first_user.id, film.id, Some(tv))
+            .await
+            .expect("remove again"),
+        "nothing left to remove"
+    );
+    // Recording after it's gone, as the planner can: a no-op, not a resurrection.
+    store
+        .record_smart_transcode_plan(&planned, SmartTranscodeOutcome::Planned, &files)
+        .await
+        .expect("record after removal");
+    assert_eq!(
+        store
+            .smart_transcode_marks_for_user(first_user.id)
+            .await
+            .expect("mine")
+            .len(),
+        2,
+        "the mark for all devices stays"
+    );
+    assert_eq!(
+        store
+            .smart_transcode_marks_for_user(second_user.id)
+            .await
+            .expect("theirs")
+            .len(),
+        1,
+        "another viewer's mark is their own"
+    );
+
+    // Marks go with their work, and later tests count every work in the store.
+    store.delete_library(library.id).await.expect("delete");
+    assert!(
+        store
+            .smart_transcode_marks_for_user(second_user.id)
+            .await
+            .expect("theirs")
+            .is_empty()
+    );
 }
 
 async fn devices_belong_to_their_user<S: Storage + ?Sized>(store: &S) {

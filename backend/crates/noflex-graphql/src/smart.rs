@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use noflex_core::{WorkId, WorkKind};
+use noflex_core::{PlayTarget, UserId, WorkId, WorkKind};
 use noflex_storage::{
     RequestUser, Storage,
     domain::{MediaFile, Work},
@@ -100,6 +100,68 @@ pub async fn likely_watched(
         }
     }
     Ok(likely)
+}
+
+/// What a mark on `work` stands for now: the title itself until it's been watched
+/// since being marked, or for a series or season, the next `lookahead_episodes + 1`
+/// episodes like that. Empty once there's nothing left to prepare. Comparing with
+/// `marked_at` is what lets someone mark a title they've seen, to watch it again.
+pub async fn marked_works(
+    storage: &dyn Storage,
+    user: UserId,
+    work: &Work,
+    marked_at: OffsetDateTime,
+    lookahead_episodes: u32,
+) -> StorageResult<Vec<Work>> {
+    const PAGE: u32 = 50;
+    let unwatched = async |candidate: &Work| -> StorageResult<bool> {
+        let data = storage
+            .user_data(user, PlayTarget::Work(candidate.id))
+            .await?;
+        Ok(!data.played || data.last_played.is_none_or(|at| at < marked_at))
+    };
+    let (series, season) = match work.kind {
+        WorkKind::Series => (work.id, None),
+        WorkKind::Season => match work.parent_id {
+            Some(series) => (series, Some(work)),
+            None => return Ok(Vec::new()),
+        },
+        _ if unwatched(work).await? => return Ok(vec![work.clone()]),
+        _ => return Ok(Vec::new()),
+    };
+    let wanted = lookahead_episodes as usize + 1;
+    let mut found = Vec::new();
+    let mut after = (
+        season.map_or(0, |season| season.index_number.unwrap_or(0)),
+        0,
+    );
+    loop {
+        let page = storage
+            .episodes_after(series, after.0, after.1, PAGE)
+            .await?;
+        let Some(last) = page.last() else {
+            return Ok(found);
+        };
+        after = (
+            last.parent_index.unwrap_or(after.0),
+            last.index_end.or(last.index_number).unwrap_or(after.1),
+        );
+        let full_page = page.len() == PAGE as usize;
+        for episode in page {
+            if season.is_some_and(|season| episode.parent_id != Some(season.id)) {
+                return Ok(found);
+            }
+            if unwatched(&episode).await? {
+                found.push(episode);
+                if found.len() == wanted {
+                    return Ok(found);
+                }
+            }
+        }
+        if !full_page {
+            return Ok(found);
+        }
+    }
 }
 
 /// The `limit` episodes after `episode`; empty for anything but an episode.

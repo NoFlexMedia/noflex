@@ -21,9 +21,10 @@ use crate::{
         IntroMarkers, Invite, Library, LinkedServer, LiveTvChannel, LiveTvSource, MediaFile,
         OptimizedVersion, PlaySession, Playlist, PluginOverrideRow, PluginTaskPayload,
         PluginTaskState, Recording, RecordingSchedule, RecordingStatus, RefreshTokenLookup,
-        ScanEvent, Session, SmartTranscodingSettings, Tag, TagAssignment, TagSummary,
-        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
-        WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork, Work, WorkFeatures,
+        ScanEvent, Session, SmartTranscodeMark, SmartTranscodeOutcome, SmartTranscodingSettings,
+        Tag, TagAssignment, TagSummary, TrickplayAsset, User, UserData, UserPluginSecret,
+        UserPreference, UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork,
+        Work, WorkFeatures,
     },
     error::StorageResult,
     query::{
@@ -476,6 +477,34 @@ pub trait Storage: Send + Sync + 'static {
         number: i32,
         limit: u32,
     ) -> StorageResult<Vec<Work>>;
+
+    /// Add a mark. Marking again changes nothing, so it keeps its place in the
+    /// queue. Returns what's stored.
+    async fn add_smart_transcode_mark(
+        &self,
+        mark: &SmartTranscodeMark,
+    ) -> StorageResult<SmartTranscodeMark>;
+    /// Take a mark away. Returns whether there was one.
+    async fn remove_smart_transcode_mark(
+        &self,
+        user: UserId,
+        work: WorkId,
+        device: Option<DeviceId>,
+    ) -> StorageResult<bool>;
+    /// A user's marks, oldest first.
+    async fn smart_transcode_marks_for_user(
+        &self,
+        user: UserId,
+    ) -> StorageResult<Vec<SmartTranscodeMark>>;
+    /// Every user's marks, oldest first, which is the order they run in.
+    async fn list_smart_transcode_marks(&self) -> StorageResult<Vec<SmartTranscodeMark>>;
+    /// Record what the planner made of a mark. Does nothing if it's gone.
+    async fn record_smart_transcode_plan(
+        &self,
+        mark: &SmartTranscodeMark,
+        outcome: SmartTranscodeOutcome,
+        media_file_ids: &[MediaFileId],
+    ) -> StorageResult<()>;
 
     /// Register or refresh a device. A device id already registered to another
     /// user is [`StorageError::NotFound`][crate::error::StorageError::NotFound]

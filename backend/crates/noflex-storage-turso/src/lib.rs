@@ -817,6 +817,44 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.reader().await?;
         repo::devices::for_user(&conn, user).await
     }
+    async fn add_smart_transcode_mark(
+        &self,
+        mark: &noflex_storage::domain::SmartTranscodeMark,
+    ) -> StorageResult<noflex_storage::domain::SmartTranscodeMark> {
+        let (_schema, conn) = self.writer().await?;
+        repo::smart_transcode_marks::add(&conn, mark).await
+    }
+    async fn remove_smart_transcode_mark(
+        &self,
+        user: UserId,
+        work: WorkId,
+        device: Option<noflex_core::DeviceId>,
+    ) -> StorageResult<bool> {
+        let (_schema, conn) = self.writer().await?;
+        repo::smart_transcode_marks::remove(&conn, user, work, device).await
+    }
+    async fn smart_transcode_marks_for_user(
+        &self,
+        user: UserId,
+    ) -> StorageResult<Vec<noflex_storage::domain::SmartTranscodeMark>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::smart_transcode_marks::for_user(&conn, user).await
+    }
+    async fn list_smart_transcode_marks(
+        &self,
+    ) -> StorageResult<Vec<noflex_storage::domain::SmartTranscodeMark>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::smart_transcode_marks::list(&conn).await
+    }
+    async fn record_smart_transcode_plan(
+        &self,
+        mark: &noflex_storage::domain::SmartTranscodeMark,
+        outcome: noflex_storage::domain::SmartTranscodeOutcome,
+        media_file_ids: &[noflex_core::MediaFileId],
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::smart_transcode_marks::record_plan(&conn, mark, outcome, media_file_ids).await
+    }
     async fn devices_wanting_versions(&self) -> StorageResult<Vec<noflex_storage::domain::Device>> {
         let (_schema, conn) = self.reader().await?;
         repo::devices::smart_transcode(&conn).await

@@ -15,12 +15,15 @@ use std::{
 use noflex_core::{MediaFileId, OptimizedVersionId, UserId};
 use noflex_graphql::{
     PlaybackSessionService,
-    smart::{LikelyOptions, likely_watched, playable_sources},
+    smart::{LikelyOptions, likely_watched, marked_works, playable_sources},
 };
 use noflex_plugin_host::PluginRegistry;
 use noflex_storage::{
     RequestUser, Storage,
-    domain::{Device, MediaFile, OptimizedVersion, OptimizedVersionStatus},
+    domain::{
+        Device, MediaFile, OptimizedVersion, OptimizedVersionStatus, SmartTranscodeMark,
+        SmartTranscodeOutcome, User,
+    },
 };
 use noflex_transcoder::{
     ClientCapabilities, DecideOptions, HwBackend, TonemapOptions, VideoPlan,
@@ -48,6 +51,9 @@ const JOB_POLL: Duration = Duration::from_secs(2);
 const MAX_PAUSE: Duration = Duration::from_secs(30 * 60);
 const MAX_ATTEMPTS: u32 = 3;
 const MIB: u64 = 1024 * 1024;
+/// Where marked titles start in the queue: ahead of every guess, whose priorities
+/// count up from 0, and in the order they were marked.
+const MARKED_PRIORITY: i32 = i32::MIN / 2;
 
 /// Everything the worker depends on but doesn't own.
 pub struct OptimizeWorker {
@@ -66,6 +72,8 @@ pub struct OptimizeWorker {
     /// Finished versions live directly in here, as `{id}.mp4`, until an
     /// administrator picks somewhere else.
     pub dir: PathBuf,
+    /// Woken when a viewer changes a smart transcode mark.
+    pub wake: Arc<tokio::sync::Notify>,
 }
 
 /// The limits in force: an administrator's settings over the configuration.
@@ -78,9 +86,14 @@ struct Limits {
 /// How a job ended, when not in error.
 enum JobEnd {
     Finished,
-    /// Paused too long; back in the queue.
+    /// Paused too long, or something marked needs the encoder; back in the queue.
     Requeued,
+    /// Nobody wants it any more; gone.
+    Dropped,
 }
+
+/// The planner's verdict on one source's versions.
+type Keep = HashSet<(MediaFileId, String)>;
 
 impl OptimizeWorker {
     /// Run forever: re-plan on the configured interval, and start a queued job
@@ -101,8 +114,9 @@ impl OptimizeWorker {
             .ok();
             let mut last_plan: Option<Instant> = None;
             let plan_every = Duration::from_secs(self.config.plan_interval_secs.max(60));
+            let mut woken = false;
             loop {
-                if last_plan.is_none_or(|at| at.elapsed() >= plan_every) {
+                if woken || last_plan.is_none_or(|at| at.elapsed() >= plan_every) {
                     if let Err(error) = self.plan().await {
                         tracing::warn!(%error, "smart transcoding: planning failed");
                     }
@@ -120,7 +134,10 @@ impl OptimizeWorker {
                 {
                     tracing::warn!(%error, "smart transcoding: job failed");
                 }
-                tokio::time::sleep(TICK).await;
+                woken = tokio::select! {
+                    () = tokio::time::sleep(TICK) => false,
+                    () = self.wake.notified() => true,
+                };
             }
         })
     }
@@ -150,10 +167,11 @@ impl OptimizeWorker {
         })
     }
 
-    /// Bring the queue in line with what users are likely to watch: queue what's
-    /// missing, drop waiting jobs nobody wants now, remove versions of files that
-    /// have changed, and evict over quota. Touches no running job.
-    pub async fn plan(&self) -> anyhow::Result<()> {
+    /// Bring the queue in line with what viewers have marked and are likely to
+    /// watch: queue what's missing, drop waiting jobs nobody wants now, remove
+    /// versions of files that have changed, and evict over quota. Touches no
+    /// running job. Returns the versions wanted.
+    pub async fn plan(&self) -> anyhow::Result<Keep> {
         let limits = self.limits().await?;
         // Before queuing: a stale row would block its replacement's key.
         self.remove_stale().await?;
@@ -171,16 +189,12 @@ impl OptimizeWorker {
         }
         // The same title for two users is one plan across all their devices.
         let mut wanted: HashMap<MediaFileId, Want> = HashMap::new();
+        let mut targets_by_user: HashMap<UserId, Vec<DeviceTarget>> = HashMap::new();
         for (user, devices) in by_user {
             let Some(account) = self.storage.get_user(user).await? else {
                 continue;
             };
-            let restrictions = if account.is_admin {
-                None
-            } else {
-                self.storage.get_user_restrictions(user).await?
-            };
-            let policy_limit = restrictions.and_then(|policy| policy.max_stream_bitrate_bps);
+            let policy_limit = self.policy_limit(&account).await?;
             let targets = devices
                 .iter()
                 .filter_map(|device| device_target(device, policy_limit))
@@ -188,6 +202,7 @@ impl OptimizeWorker {
             if targets.is_empty() {
                 continue;
             }
+            targets_by_user.insert(user, targets.clone());
             let likely = likely_watched(
                 self.storage.as_ref(),
                 namespace.as_deref(),
@@ -204,19 +219,21 @@ impl OptimizeWorker {
             .await?;
             for (priority, work) in likely.iter().enumerate() {
                 for media in playable_sources(self.storage.as_ref(), work).await? {
-                    let want = wanted.entry(media.id).or_insert_with(|| Want {
-                        media,
-                        priority: i32::MAX,
-                        targets: Vec::new(),
-                    });
-                    want.priority = want.priority.min(priority as i32);
-                    want.targets.extend(targets.iter().cloned());
+                    wanted
+                        .entry(media.id)
+                        .or_insert_with(|| Want::new(media))
+                        .add(priority as i32, &targets);
                 }
             }
         }
 
         let opts = self.decide_options();
-        let mut keep: HashSet<(MediaFileId, String)> = HashSet::new();
+        let marks = self
+            .plan_marks(&targets_by_user, &opts, &mut wanted)
+            .await?;
+
+        let mut keep: Keep = HashSet::new();
+        let mut prepared: HashSet<MediaFileId> = HashSet::new();
         for want in wanted.values() {
             let Ok(probe) = serde_json::from_value::<ProbeReport>(want.media.probe.0.clone())
             else {
@@ -232,6 +249,7 @@ impl OptimizeWorker {
                 }
                 let key = target.key();
                 keep.insert((want.media.id, key.clone()));
+                prepared.insert(want.media.id);
                 self.storage
                     .enqueue_optimized_version(&OptimizedVersion {
                         id: OptimizedVersionId::new(),
@@ -256,7 +274,138 @@ impl OptimizeWorker {
                     .await?;
             }
         }
-        self.prune(&keep, &limits).await
+
+        let mut marked_media: HashSet<MediaFileId> = HashSet::new();
+        for (mark, needed) in &marks {
+            marked_media.extend(needed.iter().copied());
+            let reached = needed
+                .iter()
+                .copied()
+                .filter(|media| prepared.contains(media))
+                .collect::<Vec<_>>();
+            let outcome = match (needed.is_empty(), reached.is_empty()) {
+                (true, _) => SmartTranscodeOutcome::NotNeeded,
+                (false, true) => SmartTranscodeOutcome::TooLarge,
+                (false, false) => SmartTranscodeOutcome::Planned,
+            };
+            self.storage
+                .record_smart_transcode_plan(mark, outcome, &reached)
+                .await?;
+        }
+        self.prune(&keep, &marked_media, &limits).await?;
+        Ok(keep)
+    }
+
+    async fn policy_limit(&self, account: &User) -> anyhow::Result<Option<u64>> {
+        Ok(if account.is_admin {
+            None
+        } else {
+            self.storage
+                .get_user_restrictions(account.id)
+                .await?
+                .and_then(|policy| policy.max_stream_bitrate_bps)
+        })
+    }
+
+    /// Add what viewers have marked to `wanted`, ahead of any guess, dropping marks
+    /// with nothing left to do. Returns each remaining mark with the sources that
+    /// need a version for the devices it's for. A mark with no devices is recorded
+    /// here and isn't returned, as there's nothing further to find out about it.
+    async fn plan_marks(
+        &self,
+        targets_by_user: &HashMap<UserId, Vec<DeviceTarget>>,
+        opts: &DecideOptions,
+        wanted: &mut HashMap<MediaFileId, Want>,
+    ) -> anyhow::Result<Vec<(SmartTranscodeMark, Vec<MediaFileId>)>> {
+        let mut planned = Vec::new();
+        for (position, mark) in self
+            .storage
+            .list_smart_transcode_marks()
+            .await?
+            .into_iter()
+            .enumerate()
+        {
+            let remove = async |mark: &SmartTranscodeMark| {
+                self.storage
+                    .remove_smart_transcode_mark(mark.user_id, mark.work_id, mark.device_id)
+                    .await
+            };
+            let (Some(account), Some(work)) = (
+                self.storage.get_user(mark.user_id).await?,
+                self.storage.get_work(mark.work_id).await?,
+            ) else {
+                continue;
+            };
+            let user = RequestUser {
+                user_id: mark.user_id,
+                is_admin: account.is_admin,
+            };
+            if !noflex_storage::access::user_can_access_work(
+                self.storage.as_ref(),
+                user,
+                mark.work_id,
+            )
+            .await?
+            {
+                remove(&mark).await?;
+                continue;
+            }
+            let targets = match mark.device_id {
+                None => targets_by_user
+                    .get(&mark.user_id)
+                    .cloned()
+                    .unwrap_or_default(),
+                Some(id) => match self.storage.get_device(id).await? {
+                    Some(device) if device.user_id == mark.user_id => {
+                        let limit = self.policy_limit(&account).await?;
+                        device_target(&device, limit).into_iter().collect()
+                    }
+                    _ => {
+                        remove(&mark).await?;
+                        continue;
+                    }
+                },
+            };
+            let works = marked_works(
+                self.storage.as_ref(),
+                mark.user_id,
+                &work,
+                mark.created_at,
+                self.config.lookahead_episodes,
+            )
+            .await?;
+            if works.is_empty() {
+                remove(&mark).await?;
+                continue;
+            }
+            if targets.is_empty() {
+                self.storage
+                    .record_smart_transcode_plan(&mark, SmartTranscodeOutcome::NoDevices, &[])
+                    .await?;
+                continue;
+            }
+            let mut needed = Vec::new();
+            for work in &works {
+                for media in playable_sources(self.storage.as_ref(), work).await? {
+                    let id = media.id;
+                    // Alone, because another viewer's device could need a version
+                    // of a file that plays as it is on the ones this mark is for.
+                    let needs_one = serde_json::from_value::<ProbeReport>(media.probe.0.clone())
+                        .is_ok_and(|probe| {
+                            !plan_versions(&probe, &targets, opts, &self.ladder).is_empty()
+                        });
+                    if needs_one {
+                        needed.push(id);
+                    }
+                    wanted
+                        .entry(id)
+                        .or_insert_with(|| Want::new(media))
+                        .add(MARKED_PRIORITY.saturating_add(position as i32), &targets);
+                }
+            }
+            planned.push((mark, needed));
+        }
+        Ok(planned)
     }
 
     fn decide_options(&self) -> DecideOptions {
@@ -288,16 +437,23 @@ impl OptimizeWorker {
         Ok(())
     }
 
+    /// Remove what nobody wants and make room. Versions of `marked` files are
+    /// never evicted while wanted. A marked job waiting on space can evict what's
+    /// only a guess, which a later plan queues again behind it.
     async fn prune(
         &self,
-        keep: &HashSet<(MediaFileId, String)>,
+        keep: &Keep,
+        marked: &HashSet<MediaFileId>,
         limits: &Limits,
     ) -> anyhow::Result<()> {
         let mut known = HashSet::new();
         let mut evictable = Vec::new();
+        let mut guesses = Vec::new();
+        let mut marked_waiting = false;
         let mut used = 0_u64;
         for version in self.storage.list_optimized_versions().await? {
             let wanted = keep.contains(&(version.media_file_id, version.variant_key.clone()));
+            let is_marked = wanted && marked.contains(&version.media_file_id);
             // A failed version remembers not to retry only while it's still
             // wanted; dropping it lets a later plan try again.
             let unwanted_job = matches!(
@@ -309,17 +465,26 @@ impl OptimizeWorker {
                 continue;
             }
             known.insert(version.id);
+            marked_waiting |= is_marked && version.status == OptimizedVersionStatus::Queued;
             if version.status == OptimizedVersionStatus::Ready {
                 used += version.size_bytes.unwrap_or(0);
                 if !wanted {
                     evictable.push(version);
+                } else if !is_marked {
+                    guesses.push(version);
                 }
             }
         }
 
         evictable.sort_by_key(|version| version.last_used_at.or(version.finished_at));
+        if marked_waiting {
+            guesses.sort_by_key(|version| version.last_used_at.or(version.finished_at));
+            evictable.append(&mut guesses);
+        }
         for version in evictable {
-            if used <= limits.quota_bytes {
+            // A job can't start at the quota, so one waiting needs it under.
+            let over = used > limits.quota_bytes || (marked_waiting && used >= limits.quota_bytes);
+            if !over {
                 break;
             }
             used = used.saturating_sub(version.size_bytes.unwrap_or(0));
@@ -406,7 +571,7 @@ impl OptimizeWorker {
             return Ok(false);
         };
         match self.run_job(&mut version, &limits.dir).await {
-            Ok(JobEnd::Finished | JobEnd::Requeued) => {}
+            Ok(JobEnd::Finished | JobEnd::Requeued | JobEnd::Dropped) => {}
             Err(error) => {
                 // The detail stays in the log: it can carry paths, and this
                 // field reaches admins' browsers.
@@ -465,8 +630,9 @@ impl OptimizeWorker {
             .kill_on_drop(true)
             .spawn()?;
         tracing::info!(version = %version.id, key = %version.variant_key, "preparing optimized version");
-        if let JobEnd::Requeued = self.supervise(&mut child, version, &probe, &raw).await? {
-            return Ok(JobEnd::Requeued);
+        match self.supervise(&mut child, version, &probe, &raw).await? {
+            JobEnd::Finished => {}
+            end => return Ok(end),
         }
         self.publish(version, &raw, dir).await?;
         tracing::info!(version = %version.id, bytes = version.size_bytes, "optimized version ready");
@@ -514,6 +680,35 @@ impl OptimizeWorker {
                     _ => output_open = false,
                 },
                 status = child.wait() => break status?,
+                () = self.wake.notified() => {
+                    // A mark changed. The plan touches no running job, so that's
+                    // for here to act on.
+                    let keep = match Box::pin(self.plan()).await {
+                        Ok(keep) => keep,
+                        Err(error) => {
+                            tracing::warn!(%error, "smart transcoding: planning failed");
+                            continue;
+                        }
+                    };
+                    if !keep.contains(&(version.media_file_id, version.variant_key.clone())) {
+                        child.kill().await?;
+                        tokio::fs::remove_file(raw).await.ok();
+                        self.remove(version).await?;
+                        return Ok(JobEnd::Dropped);
+                    }
+                    let outranked = self
+                        .storage
+                        .list_optimized_versions()
+                        .await?
+                        .iter()
+                        .any(|other| {
+                            other.status == OptimizedVersionStatus::Queued
+                                && other.priority < version.priority
+                        });
+                    if outranked {
+                        return self.requeue(child, version, raw).await;
+                    }
+                },
                 _ = poll.tick() => {
                     let idle = self.playback_idle().await;
                     match (idle, paused_since) {
@@ -528,15 +723,7 @@ impl OptimizeWorker {
                             tracing::debug!(version = %version.id, "resumed");
                         }
                         (false, Some(since)) if since.elapsed() >= MAX_PAUSE => {
-                            // SIGKILL reaches a stopped process.
-                            child.kill().await?;
-                            version.status = OptimizedVersionStatus::Queued;
-                            version.progress = 0.0;
-                            // Giving way to viewers isn't a failed attempt.
-                            version.attempts = version.attempts.saturating_sub(1);
-                            self.storage.update_optimized_version(version).await?;
-                            tokio::fs::remove_file(raw).await.ok();
-                            return Ok(JobEnd::Requeued);
+                            return self.requeue(child, version, raw).await;
                         }
                         _ => {}
                     }
@@ -552,6 +739,23 @@ impl OptimizeWorker {
             anyhow::bail!("ffmpeg exited with {status}: {}", detail.trim());
         }
         Ok(JobEnd::Finished)
+    }
+
+    /// Stop a job and put it back in the queue, which isn't a failed attempt.
+    async fn requeue(
+        &self,
+        child: &mut Child,
+        version: &mut OptimizedVersion,
+        raw: &Path,
+    ) -> anyhow::Result<JobEnd> {
+        // SIGKILL reaches a stopped process.
+        child.kill().await?;
+        version.status = OptimizedVersionStatus::Queued;
+        version.progress = 0.0;
+        version.attempts = version.attempts.saturating_sub(1);
+        self.storage.update_optimized_version(version).await?;
+        tokio::fs::remove_file(raw).await.ok();
+        Ok(JobEnd::Requeued)
     }
 
     /// Turn ffmpeg's output into a finished version. The final name appears
@@ -593,6 +797,27 @@ struct Want {
     media: MediaFile,
     priority: i32,
     targets: Vec<DeviceTarget>,
+}
+
+impl Want {
+    fn new(media: MediaFile) -> Self {
+        Self {
+            media,
+            priority: i32::MAX,
+            targets: Vec::new(),
+        }
+    }
+
+    /// Keep the most urgent priority, and each device once: one viewer's guess and
+    /// mark can both name a device.
+    fn add(&mut self, priority: i32, targets: &[DeviceTarget]) {
+        self.priority = self.priority.min(priority);
+        for target in targets {
+            if !self.targets.iter().any(|known| known.id == target.id) {
+                self.targets.push(target.clone());
+            }
+        }
+    }
 }
 
 /// `device` as the planner sees it, with its limits and the user's policy

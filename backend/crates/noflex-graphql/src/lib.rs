@@ -73,7 +73,7 @@ pub use watch::{WatchRoomAction, WatchRoomBus, WatchRoomEvent};
 pub type NoflexSchema = Schema<Query, Mutation, Subscription>;
 
 /// Per-operation complexity ceiling.
-const MAX_COMPLEXITY: usize = 2000;
+const MAX_COMPLEXITY: usize = 4000;
 /// Cost of one credential-checking field: two fit in an operation.
 const CREDENTIAL_COMPLEXITY: usize = MAX_COMPLEXITY / 2;
 

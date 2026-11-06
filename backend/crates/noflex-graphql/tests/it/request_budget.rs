@@ -27,7 +27,7 @@ async fn rejects_queries_over_depth_limit() {
 #[tokio::test]
 async fn rejects_queries_over_complexity_limit() {
     let schema = build_schema(SchemaContext::default());
-    let fields = (0..1001)
+    let fields = (0..2001)
         .map(|index| format!("field{index}: serverInfo {{ name }}"))
         .collect::<Vec<_>>()
         .join(" ");

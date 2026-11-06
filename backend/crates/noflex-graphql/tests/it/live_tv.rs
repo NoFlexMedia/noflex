@@ -441,7 +441,7 @@ async fn live_tv_surfaces_reject_anonymous_and_non_admin_source_mutations() {
         format!(
             r#"mutation {{ updateLiveTvSource(id: "{source_id}", input: {{ name: "Nope" }}) {{ id }} }}"#
         ),
-        format!(r#"mutation {{ deleteLiveTvSource(id: "{source_id}") }}"#),
+        format!(r#"mutation {{ deleteLiveTvSource(id: "{source_id}") {{ id }} }}"#),
         format!(r#"mutation {{ refreshLiveTvSource(id: "{source_id}") {{ id }} }}"#),
         format!(r#"mutation {{ startLiveTvChannel(channelId: "{channel_id}") {{ jobId }} }}"#),
         format!(
@@ -470,7 +470,7 @@ async fn live_tv_surfaces_reject_anonymous_and_non_admin_source_mutations() {
         format!(
             r#"mutation {{ updateLiveTvSource(id: "{source_id}", input: {{ name: "Nope" }}) {{ id }} }}"#
         ),
-        format!(r#"mutation {{ deleteLiveTvSource(id: "{source_id}") }}"#),
+        format!(r#"mutation {{ deleteLiveTvSource(id: "{source_id}") {{ id }} }}"#),
         format!(r#"mutation {{ refreshLiveTvSource(id: "{source_id}") {{ id }} }}"#),
     ];
     for query in non_admin {
@@ -575,7 +575,7 @@ async fn admin_can_crud_sources_refresh_and_schema_hides_private_fields() {
         vec![created_id]
     );
 
-    let delete = format!(r#"mutation {{ deleteLiveTvSource(id: "{created_id}") }}"#);
+    let delete = format!(r#"mutation {{ deleteLiveTvSource(id: "{created_id}") {{ id }} }}"#);
     let data = json(
         fixture
             .schema
@@ -583,12 +583,12 @@ async fn admin_can_crud_sources_refresh_and_schema_hides_private_fields() {
             .await,
         "delete source",
     );
-    assert_eq!(data["deleteLiveTvSource"], true);
+    assert!(data["deleteLiveTvSource"].is_object());
     let data = json(
         fixture.schema.execute(request(delete, fixture.admin)).await,
         "delete missing source",
     );
-    assert_eq!(data["deleteLiveTvSource"], false);
+    assert!(data["deleteLiveTvSource"].is_null());
 
     for (type_name, hidden_field) in [
         ("LiveTvSource", "playlistUrl"),

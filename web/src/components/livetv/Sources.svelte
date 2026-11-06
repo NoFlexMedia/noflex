@@ -4,7 +4,7 @@
   import Broadcast from "phosphor-svelte/lib/Broadcast";
   import Plus from "phosphor-svelte/lib/Plus";
   import Trash from "phosphor-svelte/lib/Trash";
-  import { cache, graphql, LiveTvSourcesStore } from "$houdini";
+  import { graphql, LiveTvSourcesStore } from "$houdini";
   import { date } from "$lib/format.js";
   import { failure, fetchQuery, refetch } from "$lib/graphql.js";
   import { attempt, confirmAction } from "$lib/ui.svelte.js";
@@ -33,7 +33,7 @@
     mutation RefreshLiveTvSource($id: ID!) { refreshLiveTvSource(id: $id) { ...LiveTvSourceFields } }
   `);
   const deleteSource = graphql(`
-    mutation DeleteLiveTvSource($id: ID!) { deleteLiveTvSource(id: $id) }
+    mutation DeleteLiveTvSource($id: ID!) { deleteLiveTvSource(id: $id) { id @LiveTvSource_delete } }
   `);
 
   async function refresh(source) {
@@ -54,7 +54,6 @@
   async function remove(source) {
     if (!(await confirmAction({ title: `Delete “${source.name}”?`, message: "Its channels, guide data and schedules on those channels go with it.", confirmLabel: "Delete source", danger: true }))) return;
     if (!(await attempt(() => deleteSource.mutate({ id: source.id }), `${source.name} deleted`))) return;
-    cache.get("LiveTvSource", { id: source.id }).delete();
     onchanged();
   }
 

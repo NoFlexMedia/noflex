@@ -965,22 +965,29 @@ impl CoreMutation {
         Ok(current)
     }
 
+    /// Delete a library and everything in it. Returns the deleted library.
+    /// Admin only.
     async fn delete_library(
         &self,
         ctx: &Context<'_>,
         id: LibraryId,
-    ) -> async_graphql::Result<bool> {
+    ) -> async_graphql::Result<Library> {
         let storage = ctx
             .data::<Arc<dyn Storage>>()
             .map_err(|_| async_graphql::Error::new("storage not configured"))?;
         access::require_admin(ctx)?;
         let lib_id = id;
+        let library = storage
+            .get_library(lib_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .ok_or_else(|| async_graphql::Error::new("library not found"))?;
         storage
             .delete_library(lib_id)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
         notify_library_changed(ctx, lib_id).await;
-        Ok(true)
+        Ok(library)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1203,11 +1210,12 @@ impl CoreMutation {
 
     /// Say the caller no longer needs this copy. The file goes once nobody else's
     /// job shares it. One still queued or running has to be cancelled first.
+    /// Returns the removed job.
     async fn delete_export_job(
         &self,
         ctx: &Context<'_>,
         id: ExportJobId,
-    ) -> async_graphql::Result<bool> {
+    ) -> async_graphql::Result<ExportJob> {
         let storage = ctx
             .data::<Arc<dyn Storage>>()
             .map_err(|_| async_graphql::Error::new("storage not configured"))?;
@@ -1239,7 +1247,7 @@ impl CoreMutation {
         {
             tracing::warn!(%error, output, "unused export not removed");
         }
-        Ok(true)
+        Ok(job)
     }
 }
 

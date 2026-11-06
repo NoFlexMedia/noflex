@@ -276,18 +276,21 @@ impl CollectionsMutation {
         Ok(collection)
     }
 
-    /// Delete a collection and its membership list. False when the id
-    /// didn't exist. Admin only.
+    /// Delete a collection and its membership list. Returns it, or null
+    /// when the id didn't exist. Admin only.
     async fn delete_collection(
         &self,
         ctx: &Context<'_>,
         id: CollectionId,
-    ) -> async_graphql::Result<bool> {
+    ) -> async_graphql::Result<Option<Collection>> {
         access::require_admin(ctx)?;
         let storage = storage(ctx)?;
+        let Some(collection) = storage.get_collection(id).await.map_err(gql_err)? else {
+            return Ok(None);
+        };
         match storage.delete_collection(id).await {
-            Ok(()) => Ok(true),
-            Err(StorageError::NotFound) => Ok(false),
+            Ok(()) => Ok(Some(collection)),
+            Err(StorageError::NotFound) => Ok(None),
             Err(e) => Err(gql_err(e)),
         }
     }
@@ -381,18 +384,18 @@ impl CollectionsMutation {
         Ok(playlist)
     }
 
-    /// Delete a playlist and its entries. False when the id didn't
-    /// exist. Owner or admin only.
+    /// Delete a playlist and its entries. Returns it, or null when the id
+    /// didn't exist. Owner or admin only.
     async fn delete_playlist(
         &self,
         ctx: &Context<'_>,
         id: PlaylistId,
-    ) -> async_graphql::Result<bool> {
+    ) -> async_graphql::Result<Option<Playlist>> {
         let principal = authed_principal(ctx)?;
         let storage = storage(ctx)?;
         let playlist_id = id;
         let Some(playlist) = storage.get_playlist(playlist_id).await.map_err(gql_err)? else {
-            return Ok(false);
+            return Ok(None);
         };
         if !principal.is_admin && playlist.owner_id != principal.user_id {
             return Err(async_graphql::Error::new("playlist not found"));
@@ -401,7 +404,7 @@ impl CollectionsMutation {
             .delete_playlist(playlist_id)
             .await
             .map_err(gql_err)?;
-        Ok(true)
+        Ok(Some(playlist))
     }
 
     /// Replace a playlist's entries wholesale. Every target must

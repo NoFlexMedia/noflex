@@ -113,7 +113,7 @@ async fn admin_surfaces_reject_anonymous() {
         r#"{ users { id } }"#.to_string(),
         r#"mutation { createUser(username: "x", password: "y", role: USER) { id } }"#.to_string(),
         format!(r#"mutation {{ updateUser(id: "{bogus}", role: USER) {{ id }} }}"#),
-        format!(r#"mutation {{ deleteUser(id: "{bogus}") }}"#),
+        format!(r#"mutation {{ deleteUser(id: "{bogus}") {{ user {{ id }} }} }}"#),
         format!(r#"{{ userLibraryAccess(userId: "{bogus}") {{ id }} }}"#),
         r#"mutation { changePassword(currentPassword: "a", newPassword: "b") }"#.to_string(),
     ];
@@ -144,7 +144,10 @@ async fn admin_surfaces_reject_non_admin() {
             r#"mutation {{ updateUser(id: "{}", role: ADMIN) {{ id }} }}"#,
             bob.user_id
         ),
-        format!(r#"mutation {{ deleteUser(id: "{}") }}"#, admin.user_id),
+        format!(
+            r#"mutation {{ deleteUser(id: "{}") {{ user {{ id }} }} }}"#,
+            admin.user_id
+        ),
         format!(
             r#"{{ userLibraryAccess(userId: "{}") {{ id }} }}"#,
             bob.user_id
@@ -305,7 +308,10 @@ async fn delete_user_refuses_self_and_last_admin() {
     let (schema, jwt, _store) = authed_schema().await;
     let admin = setup_admin(&schema, &jwt).await;
 
-    let q = format!(r#"mutation {{ deleteUser(id: "{}") }}"#, admin.user_id);
+    let q = format!(
+        r#"mutation {{ deleteUser(id: "{}") {{ user {{ id }} }} }}"#,
+        admin.user_id
+    );
     let resp = schema
         .execute(
             Request::new(q.as_str())
@@ -351,7 +357,9 @@ async fn delete_user_kills_sessions_and_login() {
     let bob_id = create_user(&schema, admin, "bob", "pw1", "USER").await;
     let (_, bob_refresh) = login(&schema, "bob", "pw1").await;
 
-    let q = format!(r#"mutation {{ deleteUser(id: "{bob_id}") }}"#);
+    let q = format!(
+        r#"mutation {{ deleteUser(id: "{bob_id}") {{ user {{ id }} sessions {{ userId }} }} }}"#
+    );
     let resp = schema
         .execute(
             Request::new(q.as_str())
@@ -360,7 +368,12 @@ async fn delete_user_kills_sessions_and_login() {
         )
         .await;
     assert!(resp.errors.is_empty(), "deleteUser: {:?}", resp.errors);
-    assert_eq!(resp.data.into_json().unwrap()["deleteUser"], true);
+    let deleted = resp.data.into_json().unwrap();
+    assert_eq!(deleted["deleteUser"]["user"]["id"], bob_id);
+    assert_eq!(
+        deleted["deleteUser"]["sessions"],
+        serde_json::json!([{ "userId": bob_id }])
+    );
 
     let q = format!(r#"mutation {{ refreshSession(refreshToken: "{bob_refresh}") {{ token }} }}"#);
     let resp = schema.execute(q.as_str()).await;

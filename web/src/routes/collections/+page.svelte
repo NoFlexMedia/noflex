@@ -55,7 +55,7 @@
     }
   `);
   const deleteCollection = graphql(`
-    mutation DeleteCollection($id: ID!) { deleteCollection(id: $id) }
+    mutation DeleteCollection($id: ID!) { deleteCollection(id: $id) { id @Collection_delete } }
   `);
   const createPlaylist = graphql(`
     mutation CreatePlaylist($title: String!, $overview: String) {
@@ -68,7 +68,7 @@
     }
   `);
   const deletePlaylist = graphql(`
-    mutation DeletePlaylist($id: ID!) { deletePlaylist(id: $id) }
+    mutation DeletePlaylist($id: ID!) { deletePlaylist(id: $id) { id @Playlist_delete } }
   `);
 
   const shelf = (node, entries) => ({ ...node, more: node.items.pageInfo.hasNextPage, entries });
@@ -108,9 +108,7 @@
   async function remove(item) {
     if (!(await confirmAction({ title: `Delete “${item.title}”?`, message: "The titles inside stay in your library.", confirmLabel: "Delete", danger: true }))) return;
     const isCollection = tab === "collections";
-    if (await attempt(() => (isCollection ? deleteCollection : deletePlaylist).mutate({ id: item.id }), "Deleted")) {
-      cache.get(isCollection ? "Collection" : "Playlist", { id: item.id }).delete();
-    }
+    await attempt(() => (isCollection ? deleteCollection : deletePlaylist).mutate({ id: item.id }), "Deleted");
   }
 
   async function removeEntry(item, index) {

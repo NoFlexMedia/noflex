@@ -337,11 +337,14 @@ async fn collection_lifecycle_with_ordering() {
         "Renamed"
     );
 
-    let delete = format!(r#"mutation {{ deleteCollection(id: "{collection_id}") }}"#);
+    let delete = format!(r#"mutation {{ deleteCollection(id: "{collection_id}") {{ id }} }}"#);
     for expected in [true, false] {
         let resp = schema.execute(authed_request(delete.as_str(), admin)).await;
         assert!(resp.errors.is_empty(), "delete: {:?}", resp.errors);
-        assert_eq!(resp.data.into_json().unwrap()["deleteCollection"], expected);
+        assert_eq!(
+            resp.data.into_json().unwrap()["deleteCollection"].is_object(),
+            expected
+        );
     }
 
     let single = format!(r#"{{ collection(id: "{collection_id}") {{ id }} }}"#);
@@ -553,7 +556,7 @@ async fn playlists_are_isolated_per_user() {
         format!(
             r#"mutation {{ updatePlaylist(id: "{playlist_id}", title: "Hijacked") {{ id }} }}"#
         ),
-        format!(r#"mutation {{ deletePlaylist(id: "{playlist_id}") }}"#),
+        format!(r#"mutation {{ deletePlaylist(id: "{playlist_id}") {{ id }} }}"#),
         format!(r#"mutation {{ setPlaylistItems(id: "{playlist_id}", items: []) {{ id }} }}"#),
     ] {
         let resp = schema
@@ -675,11 +678,14 @@ async fn playlist_mixed_items_round_trip() {
         "Renamed Mix"
     );
 
-    let delete = format!(r#"mutation {{ deletePlaylist(id: "{playlist_id}") }}"#);
+    let delete = format!(r#"mutation {{ deletePlaylist(id: "{playlist_id}") {{ id }} }}"#);
     for expected in [true, false] {
         let resp = schema.execute(authed_request(delete.as_str(), admin)).await;
         assert!(resp.errors.is_empty(), "delete: {:?}", resp.errors);
-        assert_eq!(resp.data.into_json().unwrap()["deletePlaylist"], expected);
+        assert_eq!(
+            resp.data.into_json().unwrap()["deletePlaylist"].is_object(),
+            expected
+        );
     }
 }
 

@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 mutation DeleteUser($id: ID!) {
-  deleteUser(id: $id)
+  deleteUser(id: $id) { user { id } }
 }

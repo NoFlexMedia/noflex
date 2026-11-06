@@ -106,7 +106,7 @@
 
   let schedules = $derived($live.data?.recordingSchedules.nodes ?? []);
   let scheduled = $derived(new Set(schedules.filter((item) => item.status === "SCHEDULED" && item.programId).map((item) => item.programId)));
-  let recordingCount = $derived(($live.data?.recordings.nodes ?? []).filter((item) => item.status === "RUNNING").length);
+  let recordingCount = $derived(($live.data?.recordings.edges ?? []).filter((edge) => edge.node.status === "RUNNING").length);
 </script>
 
 <svelte:head><title>Live TV · NoFlex</title></svelte:head>

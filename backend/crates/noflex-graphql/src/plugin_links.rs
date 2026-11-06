@@ -14,7 +14,7 @@ use std::sync::Arc;
 use async_graphql::{Context, Object, SimpleObject};
 use noflex_core::UserId;
 use noflex_plugin_host::PluginRegistry;
-use noflex_storage::Storage;
+use noflex_storage::{Storage, domain::UserPluginSecret};
 use time::OffsetDateTime;
 
 use crate::users::authed_principal;
@@ -53,6 +53,19 @@ pub struct PluginLink {
     pub updated_at: OffsetDateTime,
 }
 
+impl PluginLink {
+    /// The link these secrets make up; `None` for no secrets, as nothing is
+    /// linked then.
+    fn from_secrets(plugin_id: String, secrets: Vec<UserPluginSecret>) -> Option<Self> {
+        let updated_at = secrets.iter().map(|secret| secret.updated_at).max()?;
+        Some(Self {
+            plugin_id,
+            keys: secrets.into_iter().map(|secret| secret.key).collect(),
+            updated_at,
+        })
+    }
+}
+
 /// Server-side link-flow driver, implemented by `noflex-server` and
 /// wired into [`crate::SchemaContext`]. Behind a trait so the schema
 /// crate never touches the plugin registry's dispatch internals — and
@@ -87,14 +100,7 @@ impl PluginLinksQuery {
                 .list_user_plugin_secrets(principal.user_id, &plugin.id)
                 .await
                 .map_err(gql_err)?;
-            let Some(updated_at) = secrets.iter().map(|s| s.updated_at).max() else {
-                continue;
-            };
-            links.push(PluginLink {
-                plugin_id: plugin.id,
-                keys: secrets.into_iter().map(|s| s.key).collect(),
-                updated_at,
-            });
+            links.extend(PluginLink::from_secrets(plugin.id, secrets));
         }
         Ok(links)
     }
@@ -127,18 +133,23 @@ impl PluginLinksMutation {
     /// Unlink the calling user's account from a plugin by dropping
     /// every stored credential. Silent: the plugin is not called — it
     /// finds out on its next `read-for-user`, which starts missing.
-    /// `false` when nothing was linked.
+    /// Returns the link, or null when nothing was linked.
     async fn unlink_plugin_account(
         &self,
         ctx: &Context<'_>,
         plugin_id: String,
-    ) -> async_graphql::Result<bool> {
+    ) -> async_graphql::Result<Option<PluginLink>> {
         let principal = authed_principal(ctx)?;
-        let removed = storage(ctx)?
+        let storage = storage(ctx)?;
+        let secrets = storage
+            .list_user_plugin_secrets(principal.user_id, &plugin_id)
+            .await
+            .map_err(gql_err)?;
+        storage
             .delete_user_plugin_secrets(principal.user_id, &plugin_id)
             .await
             .map_err(gql_err)?;
-        Ok(removed > 0)
+        Ok(PluginLink::from_secrets(plugin_id, secrets))
     }
 
     /// Enqueue a dynamic payload for one of a plugin's

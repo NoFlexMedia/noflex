@@ -127,24 +127,28 @@ impl CredentialsMutation {
         Ok(CreatedApiKey { key, api_key })
     }
 
-    /// Revoke an API key. `false` when the id was unknown or already
-    /// revoked. Non-admins can only reach their own keys and get a
-    /// uniform "not found" otherwise, so keys aren't enumerable;
-    /// admins revoke by id directly.
-    async fn revoke_api_key(&self, ctx: &Context<'_>, id: ApiKeyId) -> async_graphql::Result<bool> {
+    /// Revoke an API key. Returns it, stamped with `revokedAt`, or null
+    /// when the id was unknown or already revoked. Non-admins can only
+    /// reach their own keys and get a uniform "not found" otherwise, so
+    /// keys aren't enumerable; admins revoke by id directly.
+    async fn revoke_api_key(
+        &self,
+        ctx: &Context<'_>,
+        id: ApiKeyId,
+    ) -> async_graphql::Result<Option<ApiKey>> {
         let principal = authed_principal(ctx)?;
         let storage = storage(ctx)?;
-        let key_id = id;
-        let owns = storage
-            .list_api_keys(principal.user_id)
-            .await
-            .map_err(gql_err)?
-            .iter()
-            .any(|k| k.id == key_id);
+        let key = storage.get_api_key(id).await.map_err(gql_err)?;
+        let owns = key
+            .as_ref()
+            .is_some_and(|key| key.user_id == principal.user_id);
         if !owns && !principal.is_admin {
             return Err(async_graphql::Error::new("api key not found"));
         }
-        storage.revoke_api_key(key_id).await.map_err(gql_err)
+        if !storage.revoke_api_key(id).await.map_err(gql_err)? {
+            return Ok(None);
+        }
+        storage.get_api_key(id).await.map_err(gql_err)
     }
 
     /// Begin the device-link flow: an unauthenticated device (a TV

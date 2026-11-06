@@ -7,7 +7,7 @@
   import Key from "phosphor-svelte/lib/Key";
   import Plus from "phosphor-svelte/lib/Plus";
   import Television from "phosphor-svelte/lib/Television";
-  import { cache, graphql } from "$houdini";
+  import { graphql } from "$houdini";
   import { accessClaims, deviceName } from "$lib/api.js";
   import { deviceId } from "$lib/device.js";
   import { date } from "$lib/format.js";
@@ -27,7 +27,7 @@
     }
   `);
   const removeDevice = graphql(`
-    mutation RemoveDevice($id: ID!) { removeDevice(id: $id) }
+    mutation RemoveDevice($id: ID!) { removeDevice(id: $id) { id @Device_delete } }
   `);
   const QUALITY = [
     { value: "", label: "Best it can play" },
@@ -41,11 +41,11 @@
   const setLimit = (device, value) => attempt(() => updateDevice.mutate(value ? { id: device.id, limit: Number(value) } : { id: device.id, clear: true }), "Quality limit saved");
   async function forget(device) {
     if (!(await confirmAction({ title: `Forget “${device.name}”?`, message: "The server stops preparing titles for it. It registers again the next time it signs in.", confirmLabel: "Forget device", danger: true }))) return;
-    if (await attempt(() => removeDevice.mutate({ id: device.id }), "Device forgotten")) { cache.get("Device", { id: device.id }).delete(); refetch(account); }
+    await attempt(() => removeDevice.mutate({ id: device.id }), "Device forgotten");
   }
 
   const revokeSession = graphql(`
-    mutation RevokeSession($id: ID!) { revokeSession(id: $id) }
+    mutation RevokeSession($id: ID!) { revokeSession(id: $id) { id @Session_delete } }
   `);
   const createApiKey = graphql(`
     mutation CreateApiKey($name: String!) {
@@ -53,7 +53,7 @@
     }
   `);
   const revokeApiKey = graphql(`
-    mutation RevokeApiKey($id: ID!) { revokeApiKey(id: $id) }
+    mutation RevokeApiKey($id: ID!) { revokeApiKey(id: $id) { id revokedAt } }
   `);
   const authorizeDevicePin = graphql(`
     mutation AuthorizeDevicePin($pin: String!) { authorizeDevicePin(pin: $pin) }
@@ -64,7 +64,6 @@
   const pollDevicePin = graphql(`
     mutation PollDevicePin($pin: String!) { pollDevicePin(pin: $pin) { token } }
   `);
-  const dropSession = (id) => cache.get("Session", { id }).delete();
 
   let data = $derived($account.data);
   let currentId = accessClaims().sid ?? null;
@@ -75,12 +74,12 @@
 
   async function revoke(session) {
     if (!(await confirmAction({ title: `Sign out “${session.device || "this device"}”?`, message: "It will need to sign in again to keep using NoFlex.", confirmLabel: "Sign out device", danger: true }))) return;
-    if (await attempt(() => revokeSession.mutate({ id: session.id }), "Device signed out")) dropSession(session.id);
+    await attempt(() => revokeSession.mutate({ id: session.id }), "Device signed out");
   }
 
   async function revokeOthers() {
     if (!(await confirmAction({ title: `Sign out ${others.length} other ${others.length === 1 ? "device" : "devices"}?`, message: "Only this browser stays signed in.", confirmLabel: "Sign out others", danger: true }))) return;
-    const results = await Promise.allSettled(others.map((session) => revokeSession.mutate({ id: session.id }).then(() => dropSession(session.id))));
+    const results = await Promise.allSettled(others.map((session) => revokeSession.mutate({ id: session.id })));
     const failed = results.filter((result) => result.status === "rejected").length;
     toast(failed ? `${failed} ${failed === 1 ? "device" : "devices"} couldn’t be signed out` : "Other devices signed out", failed ? "error" : "success");
   }
@@ -110,7 +109,7 @@
 
   async function revokeKey(key) {
     if (!(await confirmAction({ title: `Revoke “${key.name}”?`, message: "Anything using this key stops working immediately.", confirmLabel: "Revoke key", danger: true }))) return;
-    if (await attempt(() => revokeApiKey.mutate({ id: key.id }), "API key revoked")) refetch(account);
+    await attempt(() => revokeApiKey.mutate({ id: key.id }), "API key revoked");
   }
 
   // ---- Device PINs ----

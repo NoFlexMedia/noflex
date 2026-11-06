@@ -507,13 +507,28 @@ impl DevicesMutation {
         store_device(storage, device).await
     }
 
-    /// Forget one of the caller's devices. Returns whether there was one.
-    async fn remove_device(&self, ctx: &Context<'_>, id: DeviceId) -> async_graphql::Result<bool> {
+    /// Forget one of the caller's devices. Returns it, or null when they had
+    /// no such device.
+    async fn remove_device(
+        &self,
+        ctx: &Context<'_>,
+        id: DeviceId,
+    ) -> async_graphql::Result<Option<Device>> {
         let principal = authed_principal(ctx)?;
-        storage(ctx)?
+        let storage = storage(ctx)?;
+        let device = storage
+            .get_device(id)
+            .await
+            .map_err(gql_err)?
+            .filter(|device| device.user_id == principal.user_id);
+        let Some(device) = device else {
+            return Ok(None);
+        };
+        let removed = storage
             .delete_device(principal.user_id, id)
             .await
-            .map_err(gql_err)
+            .map_err(gql_err)?;
+        Ok(removed.then_some(device))
     }
 }
 

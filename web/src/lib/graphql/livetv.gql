@@ -3,7 +3,7 @@
 query LiveTv {
   liveTvChannels(first: 100) { nodes { id sourceId externalId name number logoUrl group enabled } }
   recordingSchedules(first: 40) { nodes { id ownerId channelId programId startAt endAt paddingBeforeSecs paddingAfterSecs status } }
-  recordings(first: 40) { nodes { id scheduleId ownerId channelId status error sizeBytes startedAt completedAt createdAt } }
+  recordings(first: 40) @list(name: "Recordings") { edges { node { id scheduleId ownerId channelId status error sizeBytes startedAt completedAt createdAt } } }
 }
 
 # A 12-hour grid across 100 channels runs past one page; the guide loads them all.

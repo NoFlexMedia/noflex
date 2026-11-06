@@ -28,13 +28,13 @@
     }
   `);
   const revokeIdentityMutation = graphql(`
-    mutation RevokeExternalIdentity($provider: String!) { revokeExternalIdentity(provider: $provider) }
+    mutation RevokeExternalIdentity($provider: String!) { revokeExternalIdentity(provider: $provider) { ...MyExternalIdentities_remove } }
   `);
   const startPluginLink = graphql(`
     mutation StartPluginLink($plugin: String!) { startPluginLink(pluginId: $plugin) { authUrl state } }
   `);
   const unlinkPlugin = graphql(`
-    mutation UnlinkPluginAccount($plugin: String!) { unlinkPluginAccount(pluginId: $plugin) }
+    mutation UnlinkPluginAccount($plugin: String!) { unlinkPluginAccount(pluginId: $plugin) { ...MyPluginLinks_remove } }
   `);
 
   let data = $derived($account.data);
@@ -64,7 +64,7 @@
   async function revokeIdentity(identity) {
     const name = providerName(identity.pluginId);
     if (!(await confirmAction({ title: `Disconnect ${name}?`, message: "You won’t be able to sign in with it until you link it again. Your password still works.", confirmLabel: "Disconnect", danger: true }))) return;
-    if (await attempt(() => revokeIdentityMutation.mutate({ provider: identity.pluginId }), `${name} disconnected`)) refetch(account);
+    await attempt(() => revokeIdentityMutation.mutate({ provider: identity.pluginId }), `${name} disconnected`);
   }
 
   async function connect(row) {
@@ -80,7 +80,7 @@
 
   async function unlink(row) {
     if (!(await confirmAction({ title: `Unlink ${row.name}?`, message: "NoFlex forgets the credentials it stored for this service.", confirmLabel: "Unlink", danger: true }))) return;
-    if (await attempt(() => unlinkPlugin.mutate({ plugin: row.id }), `${row.name} unlinked`)) refetch(account);
+    await attempt(() => unlinkPlugin.mutate({ plugin: row.id }), `${row.name} unlinked`);
   }
 </script>
 

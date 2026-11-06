@@ -22,7 +22,7 @@
   let { data: route } = $props();
   let account = $derived(route.account);
   let data = $derived($account.data);
-  let activeJobs = $derived((data?.exportJobs.nodes ?? []).filter((job) => ["QUEUED", "RUNNING", "CANCEL_REQUESTED"].includes(job.status)).length);
+  let activeJobs = $derived((data?.exportJobs.edges ?? []).filter(({ node: job }) => ["QUEUED", "RUNNING", "CANCEL_REQUESTED"].includes(job.status)).length);
   let items = $derived([
     { value: "profile", label: "Profile" },
     { value: "devices", label: "Devices & keys", count: data ? data.mySessions.length : null },

@@ -424,6 +424,14 @@ format, but it is always normalized to the UTC (Z) offset, e.g.
 scalar DateTime
 
 """
+What `deleteUser` removed: the account and the sessions that went with it.
+"""
+type DeletedUser {
+	user: User!
+	sessions: [Session!]!
+}
+
+"""
 A client registered for smart transcoding and downloads. `id` is chosen by
 the client, so it survives signing out.
 """
@@ -1354,7 +1362,11 @@ type Mutation {
 	completeSetupWizard(username: String!, password: String!): SetupResult!
 	createLibrary(name: String!, kind: LibraryKind!, paths: [String!]!): Library!
 	updateLibrary(id: ID!, name: String, kind: LibraryKind, paths: [String!]): Library!
-	deleteLibrary(id: ID!): Boolean!
+	"""
+	Delete a library and everything in it. Returns the deleted library.
+	Admin only.
+	"""
+	deleteLibrary(id: ID!): Library!
 	updateLibraryConfig(id: ID!, preferredLanguages: [String!], preferredProviders: [String!], excludedFolders: [String!], watchEnabled: Boolean, scanSchedule: ScanSchedule, artworkPreference: ArtworkPreference, contentCategory: LibraryCategory): Library!
 	"""
 	Persist a per-(plugin, hook, work_kind) priority override
@@ -1382,8 +1394,9 @@ type Mutation {
 	"""
 	Say the caller no longer needs this copy. The file goes once nobody else's
 	job shares it. One still queued or running has to be cancelled first.
+	Returns the removed job.
 	"""
-	deleteExportJob(id: ID!): Boolean!
+	deleteExportJob(id: ID!): ExportJob!
 	"""
 	Report the current playback position for a work or edition.
 	`state: STOPPED` additionally logs a `play.progress` activity
@@ -1453,9 +1466,10 @@ type Mutation {
 	"""
 	updateDevice(id: ID!, smartTranscode: Boolean, maxBitrateBps: Int, clearMaxBitrate: Boolean, allowedVideoCodecs: [VideoCodec!], smartDownloads: Boolean, downloadBudgetBytes: Int, clearDownloadBudget: Boolean, downloadsWifiOnly: Boolean): Device!
 	"""
-	Forget one of the caller's devices. Returns whether there was one.
+	Forget one of the caller's devices. Returns it, or null when they had
+	no such device.
 	"""
-	removeDevice(id: ID!): Boolean!
+	removeDevice(id: ID!): Device
 	"""
 	Use an embeddings API. Sends it a test first and saves nothing if that
 	fails. From then on every title, overview, credit and search text goes to
@@ -1547,7 +1561,7 @@ type Mutation {
 	Delete a user. Refuses the caller's own account and the last
 	administrator; sessions cascade away with the row. Admin only.
 	"""
-	deleteUser(id: ID!): Boolean!
+	deleteUser(id: ID!): DeletedUser!
 	"""
 	Change the caller's own password. Revokes every session except
 	the caller's current one, signing other devices out on their next
@@ -1555,7 +1569,11 @@ type Mutation {
 	"""
 	changePassword(currentPassword: String!, newPassword: String!): Boolean!
 	setPreference(key: String!, value: JSON!): UserPreference!
-	deletePreference(key: String!): Boolean!
+	"""
+	Delete one of the caller's preferences. Returns it, or null when they
+	hadn't set it.
+	"""
+	deletePreference(key: String!): UserPreference
 	"""
 	Create a collection in a library. `sortTitle` defaults to
 	`title`. Admin only.
@@ -1567,10 +1585,10 @@ type Mutation {
 	"""
 	updateCollection(id: ID!, title: String, sortTitle: String, overview: String): Collection!
 	"""
-	Delete a collection and its membership list. False when the id
-	didn't exist. Admin only.
+	Delete a collection and its membership list. Returns it, or null
+	when the id didn't exist. Admin only.
 	"""
-	deleteCollection(id: ID!): Boolean!
+	deleteCollection(id: ID!): Collection
 	"""
 	Replace a collection's membership wholesale. Every id must
 	resolve and belong to the collection's library; the error
@@ -1586,10 +1604,10 @@ type Mutation {
 	"""
 	updatePlaylist(id: ID!, title: String, overview: String): Playlist!
 	"""
-	Delete a playlist and its entries. False when the id didn't
-	exist. Owner or admin only.
+	Delete a playlist and its entries. Returns it, or null when the id
+	didn't exist. Owner or admin only.
 	"""
-	deletePlaylist(id: ID!): Boolean!
+	deletePlaylist(id: ID!): Playlist
 	"""
 	Replace a playlist's entries wholesale. Every target must
 	resolve; the error names the first id that doesn't. Owner or
@@ -1607,12 +1625,12 @@ type Mutation {
 	"""
 	createApiKey(name: String!): CreatedApiKey!
 	"""
-	Revoke an API key. `false` when the id was unknown or already
-	revoked. Non-admins can only reach their own keys and get a
-	uniform "not found" otherwise, so keys aren't enumerable;
-	admins revoke by id directly.
+	Revoke an API key. Returns it, stamped with `revokedAt`, or null
+	when the id was unknown or already revoked. Non-admins can only
+	reach their own keys and get a uniform "not found" otherwise, so
+	keys aren't enumerable; admins revoke by id directly.
 	"""
-	revokeApiKey(id: ID!): Boolean!
+	revokeApiKey(id: ID!): ApiKey
 	"""
 	Begin the device-link flow: an unauthenticated device (a TV
 	with no credentials yet) asks for a PIN to show on screen.
@@ -1694,7 +1712,11 @@ type Mutation {
 	"""
 	startExternalIdentityLink(provider: String!, clientNonce: String!): ExternalAuthStart!
 	completeExternalIdentityLink(code: String!, clientNonce: String!): ExternalIdentity!
-	revokeExternalIdentity(provider: String!): Boolean!
+	"""
+	Unlink the caller's identity with a provider. Returns it, or null when
+	they had none.
+	"""
+	revokeExternalIdentity(provider: String!): ExternalIdentity
 	"""
 	Begin linking the calling user's account with a plugin
 	(Trakt-style OAuth). Returns the provider auth URL to open; the
@@ -1706,9 +1728,9 @@ type Mutation {
 	Unlink the calling user's account from a plugin by dropping
 	every stored credential. Silent: the plugin is not called — it
 	finds out on its next `read-for-user`, which starts missing.
-	`false` when nothing was linked.
+	Returns the link, or null when nothing was linked.
 	"""
-	unlinkPluginAccount(pluginId: String!): Boolean!
+	unlinkPluginAccount(pluginId: String!): PluginLink
 	"""
 	Enqueue a dynamic payload for one of a plugin's
 	manifest-registered background tasks. Admin only. User-initiated
@@ -1720,13 +1742,14 @@ type Mutation {
 	Revoke one session: the caller's own, or anyone's as admin. Its
 	refresh token and every access token minted from it stop working
 	on their next request, since each request re-checks the session.
+	Returns the revoked session.
 	"""
-	revokeSession(id: ID!): Boolean!
+	revokeSession(id: ID!): Session!
 	"""
-	Revoke every session a user holds; returns the revoked count.
+	Revoke every session a user holds; returns the revoked sessions.
 	Admin only.
 	"""
-	revokeUserSessions(userId: ID!): Int!
+	revokeUserSessions(userId: ID!): [Session!]!
 	setUserRestrictions(userId: ID!, input: UserRestrictionsInput!): UserRestrictions!
 	createWatchRoom(mediaFileId: ID!): WatchRoom!
 	joinWatchRoom(roomId: ID!): WatchRoom!
@@ -1734,7 +1757,11 @@ type Mutation {
 	controlWatchRoom(roomId: ID!, action: WatchRoomAction!, positionMs: Int): WatchRoom!
 	createLiveTvSource(input: CreateLiveTvSourceInput!): LiveTvSource!
 	updateLiveTvSource(id: ID!, input: UpdateLiveTvSourceInput!): LiveTvSource!
-	deleteLiveTvSource(id: ID!): Boolean!
+	"""
+	Delete a source with its channels and guide. Returns it, or null when
+	the id didn't exist. Admin only.
+	"""
+	deleteLiveTvSource(id: ID!): LiveTvSource
 	refreshLiveTvSource(id: ID!): LiveTvSource!
 	startLiveTvChannel(channelId: ID!): PlaybackSession!
 	scheduleRecording(channelId: ID!, programId: ID, startAt: DateTime!, endAt: DateTime!, paddingBeforeSecs: Int! = 0, paddingAfterSecs: Int! = 0): RecordingSchedule!

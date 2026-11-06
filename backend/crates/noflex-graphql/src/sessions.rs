@@ -61,11 +61,12 @@ impl SessionsMutation {
     /// Revoke one session: the caller's own, or anyone's as admin. Its
     /// refresh token and every access token minted from it stop working
     /// on their next request, since each request re-checks the session.
+    /// Returns the revoked session.
     async fn revoke_session(
         &self,
         ctx: &Context<'_>,
         id: SessionId,
-    ) -> async_graphql::Result<bool> {
+    ) -> async_graphql::Result<Session> {
         let principal = authed_principal(ctx)?;
         let storage = storage(ctx)?;
         let session_id = id;
@@ -76,22 +77,26 @@ impl SessionsMutation {
             .filter(|s| principal.is_admin || s.user_id == principal.user_id)
             .ok_or_else(|| async_graphql::Error::new("session not found"))?;
         storage.revoke_session(session.id).await.map_err(gql_err)?;
-        Ok(true)
+        Ok(session)
     }
 
-    /// Revoke every session a user holds; returns the revoked count.
+    /// Revoke every session a user holds; returns the revoked sessions.
     /// Admin only.
     async fn revoke_user_sessions(
         &self,
         ctx: &Context<'_>,
         user_id: UserId,
-    ) -> async_graphql::Result<i32> {
+    ) -> async_graphql::Result<Vec<Session>> {
         crate::access::require_admin(ctx)?;
-        let uid = user_id;
-        let revoked = storage(ctx)?
-            .revoke_user_sessions(uid)
+        let storage = storage(ctx)?;
+        let sessions = storage
+            .list_sessions_for_user(user_id)
             .await
             .map_err(gql_err)?;
-        Ok(i32::try_from(revoked).unwrap_or(i32::MAX))
+        storage
+            .revoke_user_sessions(user_id)
+            .await
+            .map_err(gql_err)?;
+        Ok(sessions)
     }
 }

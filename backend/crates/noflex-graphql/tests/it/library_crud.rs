@@ -84,10 +84,10 @@ async fn admin_library_crud_and_config_round_trip() {
     assert_eq!(config["watchEnabled"], false);
     assert_eq!(config["scanSchedule"], "DAILY");
 
-    let delete = format!(r#"mutation {{ deleteLibrary(id: "{id}") }}"#);
+    let delete = format!(r#"mutation {{ deleteLibrary(id: "{id}") {{ id }} }}"#);
     let response = schema.execute(request(delete, &admin)).await;
     assert!(response.errors.is_empty(), "delete: {:?}", response.errors);
-    assert_eq!(response.data.into_json().unwrap()["deleteLibrary"], true);
+    assert!(response.data.into_json().unwrap()["deleteLibrary"].is_object());
 }
 
 #[tokio::test]
@@ -108,7 +108,7 @@ async fn anonymous_and_non_admin_library_administration_is_denied() {
     for mutation in [
         format!(r#"mutation {{ updateLibrary(id: "{id}", name: "No") {{ id }} }}"#),
         format!(r#"mutation {{ updateLibraryConfig(id: "{id}", watchEnabled: false) {{ id }} }}"#),
-        format!(r#"mutation {{ deleteLibrary(id: "{id}") }}"#),
+        format!(r#"mutation {{ deleteLibrary(id: "{id}") {{ id }} }}"#),
     ] {
         let response = schema.execute(mutation.clone()).await;
         assert_eq!(response.errors[0].message, "authentication required");

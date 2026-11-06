@@ -60,18 +60,31 @@ impl PreferencesMutation {
         Ok(preference)
     }
 
+    /// Delete one of the caller's preferences. Returns it, or null when they
+    /// hadn't set it.
     async fn delete_preference(
         &self,
         ctx: &Context<'_>,
         key: String,
-    ) -> async_graphql::Result<bool> {
+    ) -> async_graphql::Result<Option<UserPreference>> {
         let principal = authed_principal(ctx)?;
         if key.is_empty() {
             return Err(async_graphql::Error::new("preference key is required"));
         }
-        storage(ctx)?
+        let storage = storage(ctx)?;
+        let preference = storage
+            .list_user_preferences(principal.user_id)
+            .await
+            .map_err(gql_err)?
+            .into_iter()
+            .find(|preference| preference.key == key);
+        let Some(preference) = preference else {
+            return Ok(None);
+        };
+        let removed = storage
             .delete_user_preference(principal.user_id, &key)
             .await
-            .map_err(gql_err)
+            .map_err(gql_err)?;
+        Ok(removed.then_some(preference))
     }
 }

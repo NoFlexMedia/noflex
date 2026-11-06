@@ -199,18 +199,19 @@ async fn revoke_session_self_and_cross_user_protection() {
     assert_eq!(bobs.len(), 2);
     let current = bob.session_id.expect("login session").to_string();
     let other = bobs.iter().find(|id| **id != current).unwrap().clone();
-    let mutation = format!(r#"mutation {{ revokeSession(id: "{other}") }}"#);
+    let mutation = format!(r#"mutation {{ revokeSession(id: "{other}") {{ id }} }}"#);
     let resp = schema
         .execute(Request::new(mutation).data(bob).data(as_request_user(bob)))
         .await;
     assert!(resp.errors.is_empty(), "revokeSession: {:?}", resp.errors);
+    assert_eq!(resp.data.into_json().unwrap()["revokeSession"]["id"], other);
     assert_eq!(my_session_ids(&schema, bob).await, vec![current]);
 
     // Bob probing an admin session gets the same "session not found"
     // as a missing row, and the victim session survives.
     let admin_sessions = my_session_ids(&schema, admin).await;
     let mutation = format!(
-        r#"mutation {{ revokeSession(id: "{}") }}"#,
+        r#"mutation {{ revokeSession(id: "{}") {{ id }} }}"#,
         admin_sessions[0]
     );
     let resp = schema
@@ -242,9 +243,10 @@ async fn revoke_user_sessions_is_admin_only_and_counts() {
     create_user(&schema, admin, "bob").await;
     let bob = login(&schema, &jwt, "bob", "pw1").await;
     login(&schema, &jwt, "bob", "pw1").await;
+    let mut bobs = my_session_ids(&schema, bob).await;
 
     let mutation = format!(
-        r#"mutation {{ revokeUserSessions(userId: "{}") }}"#,
+        r#"mutation {{ revokeUserSessions(userId: "{}") {{ id }} }}"#,
         admin.user_id
     );
     let resp = schema
@@ -259,7 +261,7 @@ async fn revoke_user_sessions_is_admin_only_and_counts() {
     );
 
     let mutation = format!(
-        r#"mutation {{ revokeUserSessions(userId: "{}") }}"#,
+        r#"mutation {{ revokeUserSessions(userId: "{}") {{ id }} }}"#,
         bob.user_id
     );
     let resp = schema
@@ -274,12 +276,15 @@ async fn revoke_user_sessions_is_admin_only_and_counts() {
         "revokeUserSessions: {:?}",
         resp.errors
     );
-    assert_eq!(
-        resp.data.into_json().unwrap()["revokeUserSessions"]
-            .as_i64()
-            .unwrap(),
-        2
-    );
+    let mut revoked: Vec<String> = resp.data.into_json().unwrap()["revokeUserSessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|session| session["id"].as_str().unwrap().to_owned())
+        .collect();
+    revoked.sort();
+    bobs.sort();
+    assert_eq!(revoked, bobs);
     let resp = schema
         .execute(
             Request::new("{ sessions { id } }")

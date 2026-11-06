@@ -86,6 +86,7 @@ Don't break these without an architecture discussion in the PR description.
 ### GraphQL
 
 - Domain logic lives behind services and traits, never in HTTP handlers.
+- A mutation that removes something returns what it removed, never a `Boolean`, so clients can drop it from their caches by id. Make it nullable where removing nothing isn't an error.
 - Schema changes regenerate `noflex-graphql/tests/snapshots/schema.graphql` (`NOFLEX_UPDATE_SNAPSHOTS=1 cargo test -p noflex-graphql --test it schema_snapshot`); the drift test fails otherwise, and the web and Flutter clients validate against it.
 
 ### Search

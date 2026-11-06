@@ -225,17 +225,29 @@ impl ExternalAuthMutation {
             .map_err(gql_error)
     }
 
+    /// Unlink the caller's identity with a provider. Returns it, or null when
+    /// they had none.
     async fn revoke_external_identity(
         &self,
         ctx: &Context<'_>,
         provider: String,
-    ) -> async_graphql::Result<bool> {
+    ) -> async_graphql::Result<Option<ExternalIdentity>> {
         let user_id = authenticated(ctx)?;
         let storage = ctx.data::<Arc<dyn Storage>>()?;
-        storage
+        let identity = storage
+            .list_external_identities(user_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .into_iter()
+            .find(|identity| identity.plugin_id == provider);
+        let Some(identity) = identity else {
+            return Ok(None);
+        };
+        let removed = storage
             .unlink_external_identity(user_id, &provider)
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        Ok(removed.then_some(identity))
     }
 }
 

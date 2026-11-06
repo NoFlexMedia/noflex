@@ -112,7 +112,7 @@ async fn link_surfaces_reject_anonymous() {
     for query in [
         r#"{ myPluginLinks { pluginId } }"#,
         r#"mutation { startPluginLink(pluginId: "trakt") { authUrl } }"#,
-        r#"mutation { unlinkPluginAccount(pluginId: "trakt") }"#,
+        r#"mutation { unlinkPluginAccount(pluginId: "trakt") { pluginId } }"#,
         r#"mutation { enqueuePluginTask(pluginId: "trakt", task: "sync") }"#,
     ] {
         let resp = schema.execute(query).await;
@@ -230,13 +230,16 @@ async fn unlink_drops_stored_secrets() {
 
     let resp = schema
         .execute(
-            Request::new(r#"mutation { unlinkPluginAccount(pluginId: "trakt") }"#)
+            Request::new(r#"mutation { unlinkPluginAccount(pluginId: "trakt") { pluginId } }"#)
                 .data(admin)
                 .data(as_request_user(admin)),
         )
         .await;
     assert!(resp.errors.is_empty(), "unlink: {:?}", resp.errors);
-    assert_eq!(resp.data.into_json().unwrap()["unlinkPluginAccount"], true);
+    assert_eq!(
+        resp.data.into_json().unwrap()["unlinkPluginAccount"]["pluginId"],
+        "trakt"
+    );
     assert!(
         store
             .list_user_plugin_secrets(admin.user_id, "trakt")
@@ -245,15 +248,15 @@ async fn unlink_drops_stored_secrets() {
             .is_empty()
     );
 
-    // A replay reports false — nothing left to drop.
+    // A replay reports null — nothing left to drop.
     let resp = schema
         .execute(
-            Request::new(r#"mutation { unlinkPluginAccount(pluginId: "trakt") }"#)
+            Request::new(r#"mutation { unlinkPluginAccount(pluginId: "trakt") { pluginId } }"#)
                 .data(admin)
                 .data(as_request_user(admin)),
         )
         .await;
-    assert_eq!(resp.data.into_json().unwrap()["unlinkPluginAccount"], false);
+    assert!(resp.data.into_json().unwrap()["unlinkPluginAccount"].is_null());
 }
 
 #[tokio::test]

@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 mutation RevokeSession($id: ID!) {
-  revokeSession(id: $id)
+  revokeSession(id: $id) { id }
 }

@@ -210,12 +210,12 @@ async fn client_flow_setup_wizard_then_library_browse() {
         assert!(resp.errors.is_empty(), "{query}: {:?}", resp.errors);
     }
 
-    let del = format!(r#"mutation {{ deleteLibrary(id: "{lib_id}") }}"#);
+    let del = format!(r#"mutation {{ deleteLibrary(id: "{lib_id}") {{ id }} }}"#);
     let resp = schema
         .execute(authed_request(del.as_str(), principal))
         .await;
     assert!(resp.errors.is_empty(), "deleteLibrary: {:?}", resp.errors);
-    assert_eq!(resp.data.into_json().unwrap()["deleteLibrary"], true);
+    assert!(resp.data.into_json().unwrap()["deleteLibrary"].is_object());
 }
 
 #[tokio::test]
@@ -897,7 +897,7 @@ async fn api_key_create_list_revoke() {
         is_admin: false,
         session_id: None,
     };
-    let revoke = format!(r#"mutation {{ revokeApiKey(id: "{key_id}") }}"#);
+    let revoke = format!(r#"mutation {{ revokeApiKey(id: "{key_id}") {{ revokedAt }} }}"#);
     let resp = schema
         .execute(
             async_graphql::Request::new(revoke.as_str())
@@ -911,7 +911,7 @@ async fn api_key_create_list_revoke() {
         resp.errors
     );
 
-    // The owner revokes; a replay reports false.
+    // The owner revokes; a replay reports null.
     let resp = schema
         .execute(
             async_graphql::Request::new(revoke.as_str())
@@ -920,7 +920,7 @@ async fn api_key_create_list_revoke() {
         )
         .await;
     assert!(resp.errors.is_empty(), "revoke: {:?}", resp.errors);
-    assert_eq!(resp.data.into_json().unwrap()["revokeApiKey"], true);
+    assert!(resp.data.into_json().unwrap()["revokeApiKey"]["revokedAt"].is_string());
     let resp = schema
         .execute(
             async_graphql::Request::new(revoke.as_str())
@@ -928,7 +928,7 @@ async fn api_key_create_list_revoke() {
                 .data(request_user(admin)),
         )
         .await;
-    assert_eq!(resp.data.into_json().unwrap()["revokeApiKey"], false);
+    assert!(resp.data.into_json().unwrap()["revokeApiKey"].is_null());
 
     // The revoked row stays listed, now stamped.
     let resp = schema

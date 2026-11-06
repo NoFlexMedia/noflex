@@ -94,6 +94,9 @@ async fn watcher_follows_library_mutations() {
     .await;
     assert_eq!(state(id), WatcherState::Active, "re-enabled restarts it");
 
-    run(format!(r#"mutation {{ deleteLibrary(id: "{id}") }}"#)).await;
+    run(format!(
+        r#"mutation {{ deleteLibrary(id: "{id}") {{ id }} }}"#
+    ))
+    .await;
     assert_eq!(state(id), WatcherState::NotStarted, "deleted stops it");
 }

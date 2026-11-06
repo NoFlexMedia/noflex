@@ -8,14 +8,21 @@
 
 use std::sync::Arc;
 
-use async_graphql::{Context, Object};
+use async_graphql::{Context, Object, SimpleObject};
 use noflex_auth::Principal;
 use noflex_core::{LibraryId, UserId, UserRole};
 use noflex_storage::{
     Storage, StorageError,
-    domain::{Library, User},
+    domain::{Library, Session, User},
 };
 use time::OffsetDateTime;
+
+/// What `deleteUser` removed: the account and the sessions that went with it.
+#[derive(SimpleObject)]
+pub struct DeletedUser {
+    pub user: User,
+    pub sessions: Vec<Session>,
+}
 
 /// The calling principal, or "authentication required" when the
 /// request carries no authenticated user.
@@ -202,7 +209,11 @@ impl UsersMutation {
 
     /// Delete a user. Refuses the caller's own account and the last
     /// administrator; sessions cascade away with the row. Admin only.
-    async fn delete_user(&self, ctx: &Context<'_>, id: UserId) -> async_graphql::Result<bool> {
+    async fn delete_user(
+        &self,
+        ctx: &Context<'_>,
+        id: UserId,
+    ) -> async_graphql::Result<DeletedUser> {
         let principal = crate::access::require_admin(ctx)?;
         let storage = storage(ctx)?;
         let uid = id;
@@ -219,8 +230,9 @@ impl UsersMutation {
                 "cannot delete the last administrator",
             ));
         }
+        let sessions = storage.list_sessions_for_user(uid).await.map_err(gql_err)?;
         storage.delete_user(uid).await.map_err(gql_err)?;
-        Ok(true)
+        Ok(DeletedUser { user, sessions })
     }
 
     /// Change the caller's own password. Revokes every session except

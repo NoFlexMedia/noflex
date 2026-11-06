@@ -23,7 +23,7 @@
     mutation CancelRecordingSchedule($id: ID!) { cancelRecordingSchedule(id: $id) { id status } }
   `);
   const deleteRecording = graphql(`
-    mutation DeleteRecording($id: ID!, $files: Boolean!) { deleteRecording(id: $id, deleteFile: $files) { id status } }
+    mutation DeleteRecording($id: ID!, $files: Boolean!) { deleteRecording(id: $id, deleteFile: $files) { id @Recording_delete } }
   `);
   const scheduleRecording = new ScheduleRecordingStore();
 
@@ -35,7 +35,7 @@
   let programById = $derived(new Map(programs.map((program) => [program.id, program])));
   let schedules = $derived([...($live.data?.recordingSchedules.nodes ?? [])].sort((a, b) => Number(b.status === "SCHEDULED") - Number(a.status === "SCHEDULED") || Date.parse(a.startAt) - Date.parse(b.startAt)));
   let scheduleById = $derived(new Map(schedules.map((schedule) => [schedule.id, schedule])));
-  let recordings = $derived([...($live.data?.recordings.nodes ?? [])].sort((a, b) => Date.parse(b.startedAt ?? b.createdAt) - Date.parse(a.startedAt ?? a.createdAt)));
+  let recordings = $derived(($live.data?.recordings.edges ?? []).map((edge) => edge.node).sort((a, b) => Date.parse(b.startedAt ?? b.createdAt) - Date.parse(a.startedAt ?? a.createdAt)));
   let upcoming = $derived(schedules.filter((item) => item.status === "SCHEDULED"));
   let past = $derived(schedules.filter((item) => item.status !== "SCHEDULED"));
 
@@ -65,7 +65,7 @@
   async function remove(recording) {
     const answer = await ask({ title: "Remove this recording?", message: "It disappears from your DVR list.", option: recording.sizeBytes ? `Also delete the file from disk (${bytes(recording.sizeBytes)})` : "Also delete the file from disk", confirmLabel: "Remove", danger: true });
     if (!answer.confirmed) return;
-    if (await attempt(() => deleteRecording.mutate({ id: recording.id, files: answer.option }), answer.option ? "Recording and file deleted" : "Recording removed")) refetch(live);
+    await attempt(() => deleteRecording.mutate({ id: recording.id, files: answer.option }), answer.option ? "Recording and file deleted" : "Recording removed");
   }
 
   // ---- Manual slot ----

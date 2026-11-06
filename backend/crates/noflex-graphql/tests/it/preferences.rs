@@ -91,7 +91,7 @@ async fn preference_surfaces_reject_anonymous() {
     for query in [
         r#"{ preferences { key } }"#,
         r#"mutation { setPreference(key: "theme", value: "dark") { key } }"#,
-        r#"mutation { deletePreference(key: "theme") }"#,
+        r#"mutation { deletePreference(key: "theme") { key } }"#,
     ] {
         let resp = schema.execute(query).await;
         assert!(
@@ -178,7 +178,7 @@ async fn delete_preference_returns_true_then_false() {
     for expected in [true, false] {
         let resp = schema
             .execute(
-                Request::new(r#"mutation { deletePreference(key: "theme") }"#)
+                Request::new(r#"mutation { deletePreference(key: "theme") { key } }"#)
                     .data(admin)
                     .data(as_request_user(admin)),
             )
@@ -188,7 +188,10 @@ async fn delete_preference_returns_true_then_false() {
             "deletePreference: {:?}",
             resp.errors
         );
-        assert_eq!(resp.data.into_json().unwrap()["deletePreference"], expected);
+        assert_eq!(
+            resp.data.into_json().unwrap()["deletePreference"].is_object(),
+            expected
+        );
     }
 }
 

@@ -226,7 +226,7 @@ async fn removing_a_shared_copy_keeps_the_file_until_the_last_one_goes() {
     let theirs = finished(&f.other);
     f.storage.create_export_job(&mine).await.expect("mine");
     f.storage.create_export_job(&theirs).await.expect("theirs");
-    let remove = |id| format!(r#"mutation {{ deleteExportJob(id: "{id}") }}"#);
+    let remove = |id| format!(r#"mutation {{ deleteExportJob(id: "{id}") {{ id }} }}"#);
 
     let refused = f.schema.execute(request(remove(theirs.id), &f.owner)).await;
     assert_eq!(refused.errors[0].message, "export job not found");
@@ -251,7 +251,7 @@ async fn asking_twice_is_one_export_and_one_in_progress_cannot_be_removed() {
     let response = f
         .schema
         .execute(request(
-            format!(r#"mutation {{ deleteExportJob(id: "{id}") }}"#),
+            format!(r#"mutation {{ deleteExportJob(id: "{id}") {{ id }} }}"#),
             &f.owner,
         ))
         .await;

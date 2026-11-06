@@ -8,7 +8,7 @@
   import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
   import Trash from "phosphor-svelte/lib/Trash";
   import { untrack } from "svelte";
-  import { cache, graphql, ParentalTagsStore } from "$houdini";
+  import { graphql, ParentalTagsStore } from "$houdini";
   import { date, splitList } from "$lib/format.js";
   import { fetchQuery, refetch } from "$lib/graphql.js";
   import { app, SHOW_LIBRARIES_KEY } from "$lib/session.svelte.js";
@@ -37,7 +37,7 @@
     }
   `);
   const deletePreference = graphql(`
-    mutation DeletePreference($key: String!) { deletePreference(key: $key) }
+    mutation DeletePreference($key: String!) { deletePreference(key: $key) { ...Preferences_remove } }
   `);
   let data = $derived($account.data);
   let limits = $derived(data?.myRestrictions);
@@ -128,7 +128,7 @@
 
   async function removeRaw(preference) {
     if (!(await confirmAction({ title: `Delete “${preference.key}”?`, message: "Clients fall back to their defaults for this setting.", confirmLabel: "Delete", danger: true }))) return;
-    if (await attempt(() => deletePreference.mutate({ key: preference.key }), "Preference deleted")) cache.get("UserPreference", { userId: preference.userId, key: preference.key }).delete();
+    await attempt(() => deletePreference.mutate({ key: preference.key }), "Preference deleted");
   }
 
   const preview = (value) => { const text = JSON.stringify(value); return text.length > 80 ? `${text.slice(0, 80)}…` : text; };

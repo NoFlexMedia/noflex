@@ -38,7 +38,7 @@
     mutation TriggerLibraryScan($id: ID!) { triggerLibraryScan(id: $id) { ...ScanStatusFields } }
   `);
   const deleteLibrary = graphql(`
-    mutation DeleteLibrary($id: ID!) { deleteLibrary(id: $id) }
+    mutation DeleteLibrary($id: ID!) { deleteLibrary(id: $id) { id @Library_delete } }
   `);
   const updateConfig = new UpdateLibraryConfigStore();
 
@@ -110,7 +110,6 @@
     const answer = await ask({ title: `Delete “${library.name}”?`, message: "Its titles, artwork and everyone’s watch history for it leave NoFlex. Media files stay on disk.", confirmLabel: "Delete library", danger: true });
     if (!answer.confirmed) return;
     if (!(await attempt(() => deleteLibrary.mutate({ id: library.id }), `${library.name} deleted`))) return;
-    cache.get("Library", { id: library.id }).delete();
     cache.markStale();
   }
 

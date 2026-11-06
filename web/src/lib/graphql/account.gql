@@ -3,13 +3,13 @@
 query Account {
   preferences @list(name: "Preferences") { userId key value updatedAt }
   apiKeys @list(name: "ApiKeys") { id userId name createdAt revokedAt }
-  myDevices { id name smartTranscode maxBitrateBps lastSeenAt }
-  mySessions { id userId client device deviceId appVersion remoteAddr createdAt lastSeenAt expiresAt }
+  myDevices @list(name: "MyDevices") { id name smartTranscode maxBitrateBps lastSeenAt }
+  mySessions @list(name: "MySessions") { id userId client device deviceId appVersion remoteAddr createdAt lastSeenAt expiresAt }
   myRestrictions { userId allowedParentalRatingIds allowUnrated maxStreamBitrateBps maxConcurrentTranscodes }
-  myExternalIdentities { pluginId issuer subject userId username displayName email linkedAt }
+  myExternalIdentities @list(name: "MyExternalIdentities") { pluginId issuer subject userId username displayName email linkedAt }
   externalAuthProviders { id displayName }
-  myPluginLinks { pluginId keys updatedAt }
-  exportJobs(first: 100) { nodes { ...ExportJobFields } }
+  myPluginLinks @list(name: "MyPluginLinks") { pluginId keys updatedAt }
+  exportJobs(first: 100) @list(name: "ExportJobs") { edges { node { ...ExportJobFields } } }
 }
 
 query ParentalTags @cache(policy: CacheOrNetwork) {

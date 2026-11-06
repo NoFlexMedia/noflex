@@ -8,7 +8,7 @@
   import Trash from "phosphor-svelte/lib/Trash";
   import Users from "phosphor-svelte/lib/Users";
   import { untrack } from "svelte";
-  import { cache, graphql } from "$houdini";
+  import { graphql } from "$houdini";
   import { date, titleCase } from "$lib/format.js";
   import { refetch } from "$lib/graphql.js";
   import { app } from "$lib/session.svelte.js";
@@ -54,13 +54,13 @@
     }
   `);
   const revokeUserSessions = graphql(`
-    mutation RevokeUserSessions($user: ID!) { revokeUserSessions(userId: $user) }
+    mutation RevokeUserSessions($user: ID!) { revokeUserSessions(userId: $user) { id @Session_delete } }
   `);
   const deleteUser = graphql(`
-    mutation DeleteUser($id: ID!) { deleteUser(id: $id) }
+    mutation DeleteUser($id: ID!) { deleteUser(id: $id) { user { id @User_delete } sessions { id @Session_delete } } }
   `);
   const revokeSessionMutation = graphql(`
-    mutation RevokeUserSession($id: ID!) { revokeSession(id: $id) }
+    mutation RevokeUserSession($id: ID!) { revokeSession(id: $id) { id @Session_delete } }
   `);
 
   const ROLES = [
@@ -111,20 +111,18 @@
   // ---- Destructive ----
   async function revokeAll(user) {
     if (!(await confirmAction({ title: `Sign ${user.name} out everywhere?`, message: "Every device they’re using will need to sign in again.", confirmLabel: "Sign out everywhere", danger: true }))) return;
-    if (await attempt(() => revokeUserSessions.mutate({ user: user.id }), `${user.name} signed out everywhere`)) refetch(admin);
+    await attempt(() => revokeUserSessions.mutate({ user: user.id }), `${user.name} signed out everywhere`);
   }
 
   async function remove(user) {
     if (!(await confirmAction({ title: `Delete ${user.name}?`, message: "Their account, sessions, playlists and watch history are removed. This can’t be undone.", confirmLabel: "Delete user", danger: true }))) return;
-    if (!(await attempt(() => deleteUser.mutate({ id: user.id }), `${user.name} deleted`))) return;
-    for (const session of sessions) if (session.userId === user.id) cache.get("Session", { id: session.id }).delete();
-    cache.get("User", { id: user.id }).delete();
+    await attempt(() => deleteUser.mutate({ id: user.id }), `${user.name} deleted`);
   }
 
   async function revokeSession(session) {
     const who = names.get(session.userId) ?? "this user";
     if (!(await confirmAction({ title: `Sign out ${session.device || "this device"}?`, message: `${who} will need to sign in again on it.`, confirmLabel: "Sign out device", danger: true }))) return;
-    if (await attempt(() => revokeSessionMutation.mutate({ id: session.id }), "Session revoked")) cache.get("Session", { id: session.id }).delete();
+    await attempt(() => revokeSessionMutation.mutate({ id: session.id }), "Session revoked");
   }
 
   const grants = (user) => (user.role === "ADMIN" ? "All libraries" : `${user.libraryAccess.length} of ${libraries.length} ${libraries.length === 1 ? "library" : "libraries"}`);

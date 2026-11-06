@@ -274,18 +274,20 @@ impl LiveTvMutation {
         store.upsert_live_tv_source(&source).await.map_err(gql)?;
         Ok(source)
     }
+    /// Delete a source with its channels and guide. Returns it, or null when
+    /// the id didn't exist. Admin only.
     async fn delete_live_tv_source(
         &self,
         ctx: &Context<'_>,
         id: LiveTvSourceId,
-    ) -> async_graphql::Result<bool> {
+    ) -> async_graphql::Result<Option<LiveTvSource>> {
         crate::access::require_admin(ctx)?;
         let store = storage(ctx)?;
-        if store.get_live_tv_source(id).await.map_err(gql)?.is_none() {
-            return Ok(false);
-        }
+        let Some(source) = store.get_live_tv_source(id).await.map_err(gql)? else {
+            return Ok(None);
+        };
         store.delete_live_tv_source(id).await.map_err(gql)?;
-        Ok(true)
+        Ok(Some(source))
     }
     async fn refresh_live_tv_source(
         &self,

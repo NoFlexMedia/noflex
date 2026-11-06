@@ -203,7 +203,7 @@ async fn identity_queries_link_and_revoke_require_authentication() {
         "{ myExternalIdentities { pluginId } }".to_owned(),
         start_link.clone(),
         complete_link.clone(),
-        r#"mutation { revokeExternalIdentity(provider: "oidc") }"#.to_owned(),
+        r#"mutation { revokeExternalIdentity(provider: "oidc") { pluginId } }"#.to_owned(),
     ] {
         let response = schema.execute(query.as_str()).await;
         assert!(
@@ -259,12 +259,13 @@ async fn identity_queries_link_and_revoke_require_authentication() {
         .expect("seed identity");
     let response = schema
         .execute(
-            Request::new(r#"mutation { revokeExternalIdentity(provider: "oidc") }"#).data(admin),
+            Request::new(r#"mutation { revokeExternalIdentity(provider: "oidc") { pluginId } }"#)
+                .data(admin),
         )
         .await;
     assert!(response.errors.is_empty(), "revoke: {:?}", response.errors);
     assert_eq!(
-        response.data.into_json().expect("revoke JSON")["revokeExternalIdentity"],
-        true
+        response.data.into_json().expect("revoke JSON")["revokeExternalIdentity"]["pluginId"],
+        "oidc"
     );
 }

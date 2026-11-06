@@ -18,7 +18,7 @@
     mutation CancelExportJob($id: ID!) { cancelExportJob(id: $id) { ...ExportJobFields } }
   `);
   const deleteExport = graphql(`
-    mutation DeleteExportJob($id: ID!) { deleteExportJob(id: $id) }
+    mutation DeleteExportJob($id: ID!) { deleteExportJob(id: $id) { id @ExportJob_delete } }
   `);
 
   const ACTIVE = ["QUEUED", "RUNNING", "CANCEL_REQUESTED"];
@@ -45,7 +45,7 @@
   }
   $effect(() => { loadLinked(); });
 
-  let jobs = $derived([...($account.data?.exportJobs.nodes ?? []), ...linkedJobs].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)));
+  let jobs = $derived([...($account.data?.exportJobs.edges ?? []).map((edge) => edge.node), ...linkedJobs].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)));
   let anyActive = $derived(jobs.some((job) => ACTIVE.includes(job.status)));
   let downloading = $state("");
 
@@ -66,11 +66,11 @@
   async function remove(job) {
     if (!(await confirmAction({ title: "Remove this offline copy?", message: "The server deletes its file once nobody else needs it. You can always make another.", confirmLabel: "Remove", danger: true }))) return;
     if (job.server) {
-      await attempt(() => serverRequest(job.server, "mutation($id: ID!) { deleteExportJob(id: $id) }", { id: job.id }), "Offline copy removed");
+      await attempt(() => serverRequest(job.server, "mutation($id: ID!) { deleteExportJob(id: $id) { id } }", { id: job.id }), "Offline copy removed");
       await loadLinked();
       return;
     }
-    if (await attempt(() => deleteExport.mutate({ id: job.id }), "Offline copy removed")) refetch(account);
+    await attempt(() => deleteExport.mutate({ id: job.id }), "Offline copy removed");
   }
 
   async function cancel(job) {

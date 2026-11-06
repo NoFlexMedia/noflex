@@ -1,5 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
+  import { untrack } from "svelte";
   import Plus from "phosphor-svelte/lib/Plus";
   import ArrowRight from "phosphor-svelte/lib/ArrowRight";
   import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
@@ -10,6 +11,7 @@
   import { mergeContinueWatching, mergeRanked } from "$lib/merge.js";
   import { askServersForLists, connectedServers } from "$lib/servers.svelte.js";
   import { failure, fetchQuery, refetch } from "$lib/graphql.js";
+  import { player } from "$lib/playback.svelte.js";
   import { app } from "$lib/session.svelte.js";
   import { date, titleCase } from "$lib/format.js";
   import { pickImage } from "$lib/images.js";
@@ -27,6 +29,13 @@
     }
   `);
   $effect(() => { if (app.viewer.isAdmin) fetchQuery(activity); });
+  // The player closes over this page without a navigation, so `load` won't run again.
+  let wasPlaying = false;
+  $effect(() => {
+    const playing = !!player.current;
+    if (wasPlaying && !playing) untrack(() => { refetch(home); if (connectedServers().length) askAllShelves(); });
+    wasPlaying = playing;
+  });
   const TOP_LEVEL = new Set(["MOVIE", "SERIES", "ALBUM", "AUDIO_BOOK"]);
 
   // Every shelf is a connection; the rails only need its nodes.

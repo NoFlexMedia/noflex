@@ -67,7 +67,7 @@
     grid-auto-flow: column;
     grid-auto-columns: clamp(132px, 14vw, 184px);
     gap: clamp(12px, 1.3vw, 18px);
-    overflow-x: auto;
+    overflow-x: auto; overflow-anchor: none;
     overscroll-behavior-x: contain;
     scroll-snap-type: x mandatory;
     scroll-padding-inline: var(--gutter);

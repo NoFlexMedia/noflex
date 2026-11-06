@@ -17,8 +17,8 @@ import '../../services/nav_service.dart';
 import '../../theme.dart';
 import '../../utils/format.dart';
 import '../../widgets/nf_state.dart';
+import '../../widgets/user_avatar.dart';
 import '../detail/work_detail_screen.dart';
-import 'admin_activity.dart';
 import 'admin_format.dart';
 import 'admin_widgets.dart';
 
@@ -167,11 +167,7 @@ class _StreamCard extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              AdminAvatar(
-                name.length > 2
-                    ? name.substring(0, 2).toUpperCase()
-                    : name.toUpperCase(),
-              ),
+              UserAvatar(name: name, avatarUrl: stream.user.avatarUrl),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(

@@ -7,6 +7,8 @@ import 'package:phosphor_icons/phosphor_icons.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
 import '../../di.dart';
+import '../../layout/window.dart';
+import '../../services/nav_service.dart';
 import '../../services/session.dart';
 import '../../theme.dart';
 import '../../utils/format.dart';
@@ -14,6 +16,7 @@ import '../../utils/tracks.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_field.dart';
 import '../../widgets/nf_overlays.dart';
+import '../../widgets/user_avatar.dart';
 import '../player/decoder_probe.dart';
 import '../player/decoders.dart';
 import '../player/playback_service.dart';
@@ -27,11 +30,256 @@ class ProfileSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) => AccountColumn(
     children: [
+      _ProfilePanel(controller: controller),
       _BrowsingPanel(controller: controller),
       _PlaybackPanel(controller: controller),
       _ThisDevicePanel(controller: controller),
       _PasswordPanel(controller: controller),
     ],
+  );
+}
+
+class _ProfilePanel extends StatefulWidget {
+  const _ProfilePanel({required this.controller});
+  final AccountController controller;
+
+  @override
+  State<_ProfilePanel> createState() => _ProfilePanelState();
+}
+
+class _ProfilePanelState extends State<_ProfilePanel> {
+  final _name = TextEditingController();
+  final _saving = signal(false);
+  final _picking = signal(false);
+
+  @override
+  void initState() {
+    super.initState();
+    final viewer = getIt<SessionService>().viewer.value;
+    // Blank when they have no name of their own, so the field shows what clearing
+    // it means.
+    if (viewer != null && viewer.name != viewer.username) {
+      _name.text = viewer.name;
+    }
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    _saving.value = true;
+    await widget.controller.saveName(_name.text);
+    if (mounted) _saving.value = false;
+  }
+
+  Future<void> _pick() async {
+    _picking.value = true;
+    await widget.controller.choosePicture();
+    if (mounted) _picking.value = false;
+  }
+
+  @override
+  Widget build(BuildContext context) => AccountPanel(
+    icon: PhosphorIconsRegular.userCircle,
+    title: 'Your profile',
+    detail: 'How you appear to everyone on this server',
+    child: SignalBuilder(
+      builder: (context) {
+        final viewer = getIt<SessionService>().viewer.value;
+        if (viewer == null) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              spacing: 14,
+              children: [
+                UserAvatar(
+                  name: viewer.name,
+                  avatarUrl: viewer.avatarUrl,
+                  size: 72,
+                ),
+                Expanded(
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      NfButton(
+                        label: viewer.avatarUrl == null
+                            ? 'Add a picture'
+                            : 'Change',
+                        size: NfButtonSize.small,
+                        icon: const Icon(PhosphorIconsRegular.camera),
+                        busy: _picking.value,
+                        onPressed: () => unawaited(_pick()),
+                      ),
+                      if (viewer.avatarUrl != null)
+                        NfButton(
+                          label: 'Remove',
+                          style: NfButtonStyle.ghost,
+                          size: NfButtonSize.small,
+                          onPressed: () =>
+                              unawaited(widget.controller.removePicture()),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            NfField(
+              controller: _name,
+              label: 'Name',
+              hint: viewer.username,
+              autofillHints: const [AutofillHints.name],
+              textInputAction: TextInputAction.done,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Leave it blank to go by your username.',
+              style: NfType.caption,
+            ),
+            const SizedBox(height: 14),
+            Align(
+              alignment: Alignment.centerRight,
+              child: NfButton(
+                label: 'Save name',
+                style: NfButtonStyle.primary,
+                size: NfButtonSize.small,
+                busy: _saving.value,
+                onPressed: () => unawaited(_save()),
+              ),
+            ),
+            const Divider(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Username, for signing in', style: NfType.caption),
+                      Text(viewer.username, style: nfText(14.5, weight: 600)),
+                    ],
+                  ),
+                ),
+                NfButton(
+                  label: 'Change',
+                  size: NfButtonSize.small,
+                  onPressed: () => unawaited(
+                    getIt<NavService>().openSheet<void>(
+                      (context) => _UsernameSheet(
+                        controller: widget.controller,
+                        current: viewer.username,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+class _UsernameSheet extends StatefulWidget {
+  const _UsernameSheet({required this.controller, required this.current});
+  final AccountController controller;
+  final String current;
+
+  @override
+  State<_UsernameSheet> createState() => _UsernameSheetState();
+}
+
+class _UsernameSheetState extends State<_UsernameSheet> {
+  late final _username = TextEditingController(text: widget.current);
+  final _password = TextEditingController();
+  final _busy = signal(false);
+
+  @override
+  void dispose() {
+    _username.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final username = _username.text.trim();
+    if (username.isEmpty || username == widget.current) return;
+    _busy.value = true;
+    final changed = await widget.controller.changeUsername(
+      username,
+      _password.text,
+    );
+    if (!mounted) return;
+    _busy.value = false;
+    if (changed) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    // A dialog already lifts itself above the keyboard; a sheet has to ask.
+    padding: EdgeInsets.fromLTRB(
+      20,
+      20,
+      20,
+      20 +
+          (context.windowClass.isCompact
+              ? MediaQuery.viewInsetsOf(context).bottom
+              : 0),
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Change your username', style: nfText(18, weight: 650)),
+        const SizedBox(height: 4),
+        Text(
+          'You’ll sign in with the new one from now on. Devices already signed '
+          'in stay signed in.',
+          style: NfType.small,
+        ),
+        const SizedBox(height: 14),
+        NfField(
+          controller: _username,
+          label: 'New username',
+          autocorrect: false,
+          autofillHints: const [AutofillHints.newUsername],
+          textInputAction: TextInputAction.next,
+        ),
+        const SizedBox(height: 12),
+        NfField(
+          controller: _password,
+          label: 'Current password',
+          obscure: true,
+          autocorrect: false,
+          autofillHints: const [AutofillHints.password],
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => unawaited(_save()),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Leave it blank if you only sign in through another service.',
+          style: NfType.caption,
+        ),
+        const SizedBox(height: 14),
+        Align(
+          alignment: Alignment.centerRight,
+          child: SignalBuilder(
+            builder: (context) => NfButton(
+              label: 'Change username',
+              style: NfButtonStyle.primary,
+              size: NfButtonSize.small,
+              busy: _busy.value,
+              onPressed: () => unawaited(_save()),
+            ),
+          ),
+        ),
+      ],
+    ),
   );
 }
 

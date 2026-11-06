@@ -4,7 +4,7 @@ query AdminTopUsers($range: StatsRange!, $offset: Int) {
     plays
     watchedMs
     lastPlayedAt
-    user { id name isAdmin }
+    user { id name isAdmin avatarUrl }
     libraries { plays watchedMs library { id name kind } }
   }
 }

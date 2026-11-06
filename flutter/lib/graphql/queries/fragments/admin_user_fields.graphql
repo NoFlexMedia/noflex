@@ -2,6 +2,8 @@
 fragment AdminUserFields on User {
   id
   name
+  username
+  avatarUrl
   isAdmin
   role
   createdAt

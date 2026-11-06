@@ -4,7 +4,7 @@
 query AdminActiveStreams {
   activeStreams {
     id
-    user { id name }
+    user { id name avatarUrl }
     work { id title kind year runtimeMs parentId }
     mediaFileId
     channelId

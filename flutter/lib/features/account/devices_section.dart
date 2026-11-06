@@ -17,62 +17,8 @@ import '../../widgets/nf_field.dart';
 import '../../widgets/nf_overlays.dart';
 import '../downloads/leave_account.dart';
 import 'account_controller.dart';
+import '../../utils/device_icon.dart';
 import 'account_widgets.dart';
-
-/// Sessions only record free text, so this reads it for the likeliest match.
-/// First match wins, so a TV running Android reads as a TV and an iPad as a
-/// tablet.
-final _deviceIcons = <(RegExp, IconData)>[
-  (
-    RegExp(
-      r'\b(tv|roku|fire ?stick|chromecast|shield)\b|tvos|webos|tizen',
-      caseSensitive: false,
-    ),
-    PhosphorIconsRegular.television,
-  ),
-  (
-    RegExp(r'playstation|xbox|nintendo|steam deck', caseSensitive: false),
-    PhosphorIconsRegular.gameController,
-  ),
-  (
-    RegExp('chrome', caseSensitive: false),
-    PhosphorIconsRegular.googleChromeLogo,
-  ),
-  // Phosphor has no Firefox logo; its flame is the closest thing.
-  (RegExp('firefox', caseSensitive: false), PhosphorIconsRegular.fire),
-  (RegExp('safari', caseSensitive: false), PhosphorIconsRegular.compass),
-  (
-    RegExp(r'\bedge\b|browser', caseSensitive: false),
-    PhosphorIconsRegular.browser,
-  ),
-  (
-    RegExp('ipad|tablet', caseSensitive: false),
-    PhosphorIconsRegular.deviceTablet,
-  ),
-  (
-    RegExp(r'iphone|\bios\b|phone|mobile', caseSensitive: false),
-    PhosphorIconsRegular.deviceMobile,
-  ),
-  (RegExp('android', caseSensitive: false), PhosphorIconsRegular.androidLogo),
-  (
-    RegExp('mac ?book|laptop', caseSensitive: false),
-    PhosphorIconsRegular.laptop,
-  ),
-  (
-    RegExp(r'\b(macos|mac)\b', caseSensitive: false),
-    PhosphorIconsRegular.appleLogo,
-  ),
-  (RegExp('windows', caseSensitive: false), PhosphorIconsRegular.windowsLogo),
-  (RegExp('linux', caseSensitive: false), PhosphorIconsRegular.linuxLogo),
-];
-
-IconData _iconFor(String? device, String? client) {
-  final text = '${device ?? ''} ${client ?? ''}';
-  for (final (pattern, icon) in _deviceIcons) {
-    if (pattern.hasMatch(text)) return icon;
-  }
-  return PhosphorIconsRegular.desktop;
-}
 
 /// Other clients may send a blank device name rather than none.
 String? _deviceName(AccountSession session) =>
@@ -496,7 +442,7 @@ class _SessionRow extends StatelessWidget {
       if (session.appVersion != null) 'v${session.appVersion}',
     ].join(' ');
     return AccountRow(
-      icon: _iconFor(session.device, session.client),
+      icon: deviceIconFor(session.device, session.client),
       title: _deviceName(session) ?? 'Unknown device',
       isCurrent: isCurrent,
       currentLabel: 'This device',

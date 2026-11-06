@@ -31,6 +31,7 @@ import '../../widgets/artwork.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_overlays.dart';
 import '../../widgets/nf_state.dart';
+import '../../widgets/user_avatar.dart';
 import '../account/account_widgets.dart';
 import '../detail/work_detail_screen.dart';
 import 'admin_controller.dart';
@@ -376,36 +377,6 @@ class _ChartPanel extends SignalWidget {
   }
 }
 
-String _initials(String? name) {
-  final parts = (name ?? '')
-      .split(RegExp(r'[\s._-]+'))
-      .where((part) => part.isNotEmpty)
-      .take(2);
-  final letters = parts.map((part) => part[0].toUpperCase()).join();
-  return letters.isEmpty ? '?' : letters;
-}
-
-class AdminAvatar extends StatelessWidget {
-  const AdminAvatar(this.text, {super.key, this.size = 32});
-  final String text;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: size,
-    height: size,
-    alignment: Alignment.center,
-    decoration: const BoxDecoration(
-      color: NfColors.surface3,
-      shape: BoxShape.circle,
-    ),
-    child: Text(
-      text,
-      style: nfText(size * 0.36, weight: 700, color: NfColors.text2),
-    ),
-  );
-}
-
 class _TopUsers extends SignalWidget {
   const _TopUsers({
     required this.query,
@@ -468,7 +439,10 @@ class _TopUsers extends SignalWidget {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      AdminAvatar(_initials(row.user?.name)),
+                      UserAvatar(
+                        name: row.user?.name,
+                        avatarUrl: row.user?.avatarUrl,
+                      ),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Column(

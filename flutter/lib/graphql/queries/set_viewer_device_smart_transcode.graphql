@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation SetViewerDeviceSmartTranscode($id: ID!, $enabled: Boolean!) {
+  setViewerDeviceSmartTranscode(id: $id, enabled: $enabled) { id smartTranscode smartDownloads }
+}

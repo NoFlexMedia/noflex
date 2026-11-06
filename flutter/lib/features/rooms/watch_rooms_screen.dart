@@ -37,6 +37,7 @@ import '../../widgets/nf_button.dart';
 import '../../widgets/nf_field.dart';
 import '../../widgets/nf_overlays.dart';
 import '../../widgets/nf_state.dart';
+import '../../widgets/user_avatar.dart';
 import '../browse/work_browser.dart';
 import '../player/playback_service.dart';
 
@@ -663,7 +664,11 @@ class _People extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 5),
               child: Row(
                 children: [
-                  _Avatar(name: member.name ?? 'Someone'),
+                  UserAvatar(
+                    name: member.name ?? 'Someone',
+                    avatarUrl: member.avatarUrl,
+                    size: 34,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -719,30 +724,6 @@ class _People extends StatelessWidget {
       ),
     );
   }
-}
-
-class _Avatar extends StatelessWidget {
-  const _Avatar({required this.name});
-  final String name;
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: 34,
-    height: 34,
-    alignment: Alignment.center,
-    decoration: const BoxDecoration(
-      shape: BoxShape.circle,
-      gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [NfColors.accent, Color(0xFF8DE2C5)],
-      ),
-    ),
-    child: Text(
-      (name.length > 2 ? name.substring(0, 2) : name).toUpperCase(),
-      style: nfText(12, weight: 700, color: NfColors.accentInk),
-    ),
-  );
 }
 
 class _RoomCard extends StatelessWidget {

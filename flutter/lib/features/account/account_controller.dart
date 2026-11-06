@@ -9,6 +9,7 @@ import 'dart:convert';
 
 import 'package:built_value/json_object.dart';
 import 'package:ferry/ferry.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/widgets.dart';
 import 'package:phosphor_icons/phosphor_icons.dart';
 import 'package:signals_flutter/signals_flutter.dart';
@@ -21,6 +22,10 @@ import '../../graphql/queries/__generated__/account.var.gql.dart';
 import '../../graphql/queries/__generated__/authorize_device_pin.req.gql.dart';
 import '../../graphql/queries/__generated__/cancel_export_job.req.gql.dart';
 import '../../graphql/queries/__generated__/change_password.req.gql.dart';
+import '../../graphql/queries/__generated__/change_username.req.gql.dart';
+import '../../graphql/queries/__generated__/remove_profile_picture.req.gql.dart';
+import '../../graphql/queries/__generated__/set_profile_picture.req.gql.dart';
+import '../../graphql/queries/__generated__/update_profile.req.gql.dart';
 import '../../graphql/queries/__generated__/create_api_key.req.gql.dart';
 import '../../graphql/queries/__generated__/create_device_pin.req.gql.dart';
 import '../../graphql/queries/__generated__/delete_export_job.req.gql.dart';
@@ -51,6 +56,7 @@ import '../../services/session.dart';
 import '../../services/toast_service.dart';
 import '../../services/tokens.dart';
 import '../../utils/tracks.dart';
+import '../../utils/picture.dart';
 import '../home/home_service.dart';
 import '../player/decoder_probe.dart';
 import '../player/decoders.dart';
@@ -400,6 +406,55 @@ class AccountController {
   }
 
   // ---- profile ----------------------------------------------------------
+
+  Future<bool> saveName(String name) async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(GUpdateProfileReq((b) => b.vars.name = name)),
+      success: 'Name saved',
+    );
+    if (data == null) return false;
+    getIt<SessionService>().viewer.value = data.updateProfile;
+    return true;
+  }
+
+  /// Ask for a picture and set it; nothing happens if they back out.
+  Future<void> choosePicture() async {
+    final picked = await FilePicker.pickFile(type: FileType.image);
+    if (picked == null) return;
+    final data = await _toasts.attempt(() async {
+      final image = await pictureForUpload(await picked.readAsBytes());
+      return _graphql.run(GSetProfilePictureReq((b) => b.vars.image = image));
+    }, success: 'Picture saved');
+    if (data != null) {
+      getIt<SessionService>().viewer.value = data.setProfilePicture;
+    }
+  }
+
+  Future<void> removePicture() async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(GRemoveProfilePictureReq()),
+      success: 'Picture removed',
+    );
+    if (data != null) {
+      getIt<SessionService>().viewer.value = data.removeProfilePicture;
+    }
+  }
+
+  Future<bool> changeUsername(String username, String password) async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(
+        GChangeUsernameReq(
+          (b) => b.vars
+            ..username = username
+            ..password = password,
+        ),
+      ),
+      success: 'Username changed',
+    );
+    if (data == null) return false;
+    getIt<SessionService>().viewer.value = data.changeUsername;
+    return true;
+  }
 
   Future<bool> changePassword(String current, String next) async {
     final data = await _toasts.attempt(

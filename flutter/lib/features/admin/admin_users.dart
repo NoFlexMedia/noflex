@@ -19,7 +19,10 @@ import '../../graphql/queries/__generated__/parental_tags.req.gql.dart';
 import '../../graphql/queries/__generated__/revoke_session.req.gql.dart';
 import '../../graphql/queries/__generated__/revoke_user_sessions.req.gql.dart';
 import '../../graphql/queries/__generated__/set_user_restrictions.req.gql.dart';
+import '../../graphql/queries/__generated__/set_viewer_device_smart_transcode.req.gql.dart';
 import '../../graphql/queries/__generated__/update_user.req.gql.dart';
+import '../../graphql/queries/__generated__/user_devices.data.gql.dart';
+import '../../graphql/queries/__generated__/user_devices.req.gql.dart';
 import '../../graphql/queries/__generated__/user_restrictions.req.gql.dart';
 import '../../graphql/queries/fragments/__generated__/admin_library_fields.data.gql.dart';
 import '../../graphql/queries/fragments/__generated__/admin_user_fields.data.gql.dart';
@@ -29,13 +32,14 @@ import '../../services/session.dart';
 import '../../services/toast_service.dart';
 import '../../services/tokens.dart';
 import '../../theme.dart';
+import '../../utils/device_icon.dart';
 import '../../utils/format.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_field.dart';
 import '../../widgets/nf_overlays.dart';
 import '../../widgets/nf_state.dart';
+import '../../widgets/user_avatar.dart';
 import '../account/account_widgets.dart';
-import 'admin_activity.dart';
 import 'admin_controller.dart';
 import 'admin_format.dart';
 import 'admin_widgets.dart';
@@ -63,9 +67,6 @@ bool _isActive(_Session session) =>
 
 String _device(_Session session) =>
     (session.device?.isEmpty ?? true) ? 'Unknown device' : session.device!;
-
-String _shortName(String name) =>
-    (name.length > 2 ? name.substring(0, 2) : name).toUpperCase();
 
 class UsersSection extends StatelessWidget {
   const UsersSection({super.key, required this.controller});
@@ -160,6 +161,11 @@ class UsersSection extends StatelessWidget {
           'Restrictions…',
           leading: Icon(PhosphorIconsRegular.shieldCheck, size: 18),
         ),
+        const NfOption(
+          'devices',
+          'Devices…',
+          leading: Icon(PhosphorIconsRegular.devices, size: 18),
+        ),
         if (signedIn)
           const NfOption(
             'signout',
@@ -184,6 +190,10 @@ class UsersSection extends StatelessWidget {
       case 'restrict':
         await getIt<NavService>().openSheet<void>(
           (context) => _RestrictionsSheet(user: user),
+        );
+      case 'devices':
+        await getIt<NavService>().openSheet<void>(
+          (context) => _DevicesSheet(user: user),
         );
       case 'signout':
         await _revokeAll(user.id, user.name);
@@ -262,7 +272,11 @@ class UsersSection extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Row(
                       children: [
-                        AdminAvatar(_shortName(user.name), size: 36),
+                        UserAvatar(
+                          name: user.name,
+                          avatarUrl: user.avatarUrl,
+                          size: 36,
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(
@@ -281,6 +295,7 @@ class UsersSection extends StatelessWidget {
                               ),
                               Text(
                                 [
+                                  if (user.username != user.name) user.username,
                                   grants(user),
                                   'joined ${formatDate(user.createdAt)}',
                                   if (signedIn[user.id] != null)
@@ -1278,6 +1293,103 @@ class _RestrictionsSheetState extends State<_RestrictionsSheet> {
               hint: 'Server default',
               keyboardType: TextInputType.number,
             ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+class _DevicesSheet extends StatefulWidget {
+  const _DevicesSheet({required this.user});
+  final _User user;
+
+  @override
+  State<_DevicesSheet> createState() => _DevicesSheetState();
+}
+
+class _DevicesSheetState extends State<_DevicesSheet> {
+  final _devices = signal<List<GUserDevicesData_userDevices>?>(null);
+  final _error = signal<String?>(null);
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await getIt<GraphqlService>().run(
+        GUserDevicesReq((b) => b.vars.user = widget.user.id),
+      );
+      if (mounted) _devices.value = data.userDevices.toList();
+    } catch (error) {
+      if (mounted) _error.value = '$error';
+    }
+  }
+
+  Future<void> _set(GUserDevicesData_userDevices device, bool enabled) async {
+    final done = await getIt<ToastService>().attempt(
+      () => getIt<GraphqlService>().run(
+        GSetViewerDeviceSmartTranscodeReq(
+          (b) => b.vars
+            ..id = device.id
+            ..enabled = enabled,
+        ),
+      ),
+    );
+    if (done != null) await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) => AdminSheet(
+    title: '${widget.user.name}’s devices',
+    description:
+        'Turning smart transcoding off stops the server preparing what it '
+        'predicts a device will watch. They can turn it back on, and anything '
+        'they’ve marked for the device stays marked.',
+    footer: [
+      NfButton(
+        label: 'Done',
+        style: NfButtonStyle.ghost,
+        onPressed: () => Navigator.of(context).pop(),
+      ),
+    ],
+    child: SignalBuilder(
+      builder: (context) {
+        final error = _error.value;
+        if (error != null) return Notice(error);
+        final devices = _devices.value;
+        if (devices == null) return const NfSkeletonRows();
+        if (devices.isEmpty) {
+          return Text(
+            'No devices have registered with this account yet.',
+            style: NfType.small,
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final device in devices)
+              Row(
+                children: [
+                  Icon(
+                    deviceIconFor(device.name),
+                    size: 20,
+                    color: NfColors.text2,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: AccountToggle(
+                      title: device.name,
+                      detail: 'Smart transcoding',
+                      value: device.smartTranscode || device.smartDownloads,
+                      onChanged: (enabled) => unawaited(_set(device, enabled)),
+                    ),
+                  ),
+                ],
+              ),
           ],
         );
       },

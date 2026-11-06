@@ -14,6 +14,7 @@ import '../../graphql/queries/__generated__/admin_optimized_versions.req.gql.dar
 import '../../graphql/queries/__generated__/optimized_version_detail.data.gql.dart';
 import '../../graphql/queries/__generated__/optimized_version_detail.req.gql.dart';
 import '../../graphql/queries/__generated__/remove_optimized_version.req.gql.dart';
+import '../../graphql/queries/__generated__/set_viewer_device_smart_transcode.req.gql.dart';
 import '../../graphql/queries/__generated__/unmark_viewer_for_smart_transcoding.req.gql.dart';
 import '../../graphql/queries/__generated__/admin_smart_transcoding.data.gql.dart';
 import '../../graphql/queries/__generated__/admin_smart_transcoding.req.gql.dart';
@@ -31,11 +32,13 @@ import '../../services/graphql.dart';
 import '../../services/nav_service.dart';
 import '../../services/toast_service.dart';
 import '../../theme.dart';
+import '../../utils/device_icon.dart';
 import '../../utils/format.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_field.dart';
 import '../../widgets/nf_overlays.dart';
 import '../../widgets/nf_state.dart';
+import '../../widgets/user_avatar.dart';
 import '../account/account_widgets.dart';
 import '../player/decoder_probe.dart';
 import '../player/decoders.dart';
@@ -392,12 +395,12 @@ class _TranscodingSectionState extends State<TranscodingSection> {
       () => getIt<GraphqlService>().run(
         GUnmarkViewerForSmartTranscodingReq(
           (b) => b.vars
-            ..user = mark.userId
+            ..user = mark.user.id
             ..work = mark.work.id
             ..device = mark.device?.id,
         ),
       ),
-      success: 'Unmarked for ${mark.userName}',
+      success: 'Unmarked for ${mark.user.name}',
     );
     if (done != null) await _loadDetail(version);
   }
@@ -487,65 +490,150 @@ class _TranscodingSectionState extends State<TranscodingSection> {
     await _loadVersions();
   }
 
-  /// Each viewer once, however many of their devices it's for.
+  Future<void> _turnOff(String version, String device, String name) async {
+    final done = await getIt<ToastService>().attempt(
+      () => getIt<GraphqlService>().run(
+        GSetViewerDeviceSmartTranscodeReq(
+          (b) => b.vars
+            ..id = device
+            ..enabled = false,
+        ),
+      ),
+      success: 'Smart transcoding off on $name',
+    );
+    if (done != null) await _loadDetail(version);
+  }
+
+  /// Each viewer once, however many of their devices and marks it's for.
   Widget _audience(
     String version,
     GOptimizedVersionDetailData_optimizedVersion detail,
   ) {
-    final viewers =
-        <String, List<GOptimizedVersionDetailData_optimizedVersion_targets>>{};
+    final viewers = <String, _Viewer>{};
     for (final target in detail.targets) {
-      (viewers[target.userName] ??= []).add(target);
+      final user = target.user;
+      (viewers[user.id] ??= _Viewer(
+        user.name,
+        user.username,
+        user.avatarUrl,
+      )).targets.add(target);
+    }
+    for (final mark in detail.marks) {
+      final user = mark.user;
+      (viewers[user.id] ??= _Viewer(
+        user.name,
+        user.username,
+        user.avatarUrl,
+      )).marks.add(mark);
     }
     String reason(GOptimizedReason value) => switch (value) {
       GOptimizedReason.MARKED => 'Marked to watch next',
       GOptimizedReason.PREDICTED => 'Predicted, with smart transcoding on',
       _ => 'Asked for earlier, not any more',
     };
+    final since = detail.unwantedSince;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      spacing: 8,
+      spacing: 10,
       children: [
-        if (viewers.isEmpty && detail.marks.isEmpty)
+        if (since != null)
           Text(
-            'Nobody wants this any more, so it’s first to go when space runs out.',
+            'Nothing’s wanted this since ${ago(since)}. It’s swept up '
+            'a day after that, unless someone plays it.',
             style: NfType.small,
-          ),
-        for (final MapEntry(key: viewer, value: rows) in viewers.entries)
+          )
+        else if (viewers.isEmpty)
+          Text('Nothing wants this any more.', style: NfType.small),
+        for (final viewer in viewers.values)
           Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            spacing: 4,
             children: [
-              Text(viewer, style: NfType.label),
-              for (final row in rows)
-                Text(
-                  '${row.device?.name ?? 'No device to reach'} · ${reason(row.reason)}',
-                  style: NfType.small,
+              Row(
+                spacing: 10,
+                children: [
+                  UserAvatar(name: viewer.name, avatarUrl: viewer.avatarUrl),
+                  Flexible(
+                    child: Text(
+                      viewer.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: NfType.label,
+                    ),
+                  ),
+                  if (viewer.username != viewer.name)
+                    Flexible(
+                      child: Text(
+                        viewer.username,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: NfType.caption,
+                      ),
+                    ),
+                ],
+              ),
+              for (final row in viewer.targets)
+                _audienceRow(
+                  icon: row.device == null
+                      ? PhosphorIconsRegular.devices
+                      : deviceIconFor(row.device!.name),
+                  title: row.device?.name ?? 'No device to reach',
+                  detail: reason(row.reason),
+                  action:
+                      row.reason == GOptimizedReason.PREDICTED &&
+                          row.device != null
+                      ? NfButton(
+                          label: 'Turn off',
+                          style: NfButtonStyle.ghost,
+                          size: NfButtonSize.small,
+                          onPressed: () => unawaited(
+                            _turnOff(version, row.device!.id, row.device!.name),
+                          ),
+                        )
+                      : null,
+                ),
+              for (final mark in viewer.marks)
+                _audienceRow(
+                  icon: PhosphorIconsRegular.bookmarkSimple,
+                  title: 'Marked ${mark.work.title}',
+                  detail: mark.device == null
+                      ? 'For all their devices'
+                      : 'For ${mark.device!.name}',
+                  action: NfButton(
+                    label: 'Unmark',
+                    style: NfButtonStyle.ghost,
+                    size: NfButtonSize.small,
+                    onPressed: () => unawaited(_unmark(version, mark)),
+                  ),
                 ),
             ],
           ),
-        if (detail.marks.isNotEmpty) ...[
-          Text('Marks keeping it wanted', style: NfType.label),
-          for (final mark in detail.marks)
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${mark.userName}: ${mark.work.title}, ${mark.device == null ? 'for all their devices' : 'for ${mark.device!.name}'}',
-                    style: NfType.small,
-                  ),
-                ),
-                NfButton(
-                  label: 'Unmark',
-                  style: NfButtonStyle.ghost,
-                  size: NfButtonSize.small,
-                  onPressed: () => unawaited(_unmark(version, mark)),
-                ),
-              ],
-            ),
-        ],
       ],
     );
   }
+
+  Widget _audienceRow({
+    required IconData icon,
+    required String title,
+    required String detail,
+    Widget? action,
+  }) => Row(
+    spacing: 10,
+    children: [
+      // Under the avatar's centre, so a viewer's rows read as theirs.
+      SizedBox(width: 32, child: Icon(icon, size: 17, color: NfColors.text2)),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: nfText(13.5, weight: 500)),
+            Text(detail, style: NfType.caption),
+          ],
+        ),
+      ),
+      ?action,
+    ],
+  );
 
   Widget _versionRow(
     GAdminOptimizedVersionsData_optimizedVersions_nodes version,
@@ -919,4 +1007,14 @@ class _TranscodingSectionState extends State<TranscodingSection> {
             ),
     );
   }
+}
+
+/// One viewer's share of what wants a version.
+class _Viewer {
+  _Viewer(this.name, this.username, this.avatarUrl);
+  final String name;
+  final String username;
+  final String? avatarUrl;
+  final targets = <GOptimizedVersionDetailData_optimizedVersion_targets>[];
+  final marks = <GOptimizedVersionDetailData_optimizedVersion_marks>[];
 }

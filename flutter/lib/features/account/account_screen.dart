@@ -16,6 +16,7 @@ import '../../services/session.dart';
 import '../../theme.dart';
 import '../../utils/format.dart';
 import '../../widgets/nf_button.dart';
+import '../../widgets/user_avatar.dart';
 import '../../widgets/nf_state.dart';
 import '../admin/admin_screen.dart';
 import '../downloads/leave_account.dart';
@@ -360,7 +361,6 @@ class _Header extends SignalWidget {
     final viewer = session.viewer.value;
     if (viewer == null) return const SizedBox.shrink();
     final name = viewer.name;
-    final initials = name.length > 2 ? name.substring(0, 2) : name;
     final signOutButton = NfButton(
       label: 'Sign out',
       style: NfButtonStyle.ghost,
@@ -370,19 +370,7 @@ class _Header extends SignalWidget {
     );
     final identity = Row(
       children: [
-        Container(
-          width: 52,
-          height: 52,
-          alignment: Alignment.center,
-          decoration: const BoxDecoration(
-            color: NfColors.accent,
-            shape: BoxShape.circle,
-          ),
-          child: Text(
-            initials.toUpperCase(),
-            style: nfText(19, weight: 700, color: NfColors.accentInk),
-          ),
-        ),
+        UserAvatar(name: name, avatarUrl: viewer.avatarUrl, size: 52),
         const SizedBox(width: 14),
         Expanded(
           child: Column(

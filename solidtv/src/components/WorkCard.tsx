@@ -4,8 +4,9 @@
 // card lifts on a spring, so the answer to a key press is immediate.
 
 import { useNavigate } from "@solidjs/router";
+import { scrollRow } from "@solidtv/solid/primitives";
 import { createSignal, onCleanup, Show } from "solid-js";
-import type { NodeProps } from "@solidtv/solid";
+import type { ElementNode, NodeProps } from "@solidtv/solid";
 import { titleCase } from "$lib/format.js";
 import { WORK_DETAIL } from "$lib/graphql/documents.js";
 import { preload } from "$lib/graphql.js";
@@ -25,6 +26,20 @@ export const WIDE = { width: 448, height: 252, total: 252 } as const;
 const INTENT_MS = 500;
 const RING = 6;
 
+// A pointer focuses a card directly, which the row's scroller never hears about, so a
+// card hovered under the nav would stay there. Step the row as the keys would.
+function reveal(card: ElementNode): void {
+  const row = card.parent;
+  if (!row || row.scroll !== "auto") return;
+  const index = row.children.indexOf(card);
+  for (let step = 0; step < row.children.length; step++) {
+    const left = (row.x ?? 0) + (card.x ?? 0);
+    if (left < 0) scrollRow(index, row, card, index + 1);
+    else if (left + (card.width ?? 0) > (row.width ?? 0)) scrollRow(index, row, card, index - 1);
+    else return;
+  }
+}
+
 export default function WorkCard(props: NodeProps & { work: Work; wide?: boolean; onChosen?: (work: Work) => void }) {
   const navigate = useNavigate();
   const [focused, setFocused] = createSignal(false);
@@ -43,12 +58,17 @@ export default function WorkCard(props: NodeProps & { work: Work; wide?: boolean
     return [subtitleFor(work), episodeTitle, work.kind !== "EPISODE" ? titleCase(work.kind) : ""].filter(Boolean).join(" · ");
   };
 
+  let node: ElementNode | undefined;
   let intent: ReturnType<typeof setTimeout> | undefined;
-  onCleanup(() => clearTimeout(intent));
+  let revealing: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => { clearTimeout(intent); clearTimeout(revealing); });
   function onFocusChanged(has: boolean) {
     setFocused(has);
     clearTimeout(intent);
+    clearTimeout(revealing);
     if (!has) return;
+    // After this tick, when a key press has already had the row scroll.
+    revealing = setTimeout(() => { if (node) reveal(node); }, 0);
     intent = setTimeout(() => {
       preload(WORK_DETAIL, { id: props.work.id });
       ui.backdrop = pickImage(props.work.images, "backdrop");
@@ -58,6 +78,7 @@ export default function WorkCard(props: NodeProps & { work: Work; wide?: boolean
   return (
     <view
       {...props}
+      ref={(element: ElementNode) => { node = element; }}
       width={size().width}
       height={size().total}
       scale={focused() ? 1.07 : 1}

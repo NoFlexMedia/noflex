@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { createSignal, Show } from "solid-js";
-import type { NodeProps } from "@solidtv/solid";
+import { createEffect, createSignal, on, Show } from "solid-js";
+import type { ElementNode, NodeProps } from "@solidtv/solid";
 import type { IconName } from "$lib/icons.generated.js";
 import { color, motion, type, weight } from "../theme.js";
 import Icon from "$components/Icon.js";
@@ -43,9 +43,14 @@ export default function Button(props: ButtonProps) {
   const ink = () => (focused() ? (kind() === "primary" ? color.accentInk : color.lightInk) : FILL[kind()][1]);
   const iconX = () => (hasLabel() ? pad() : (height() - iconSize()) / 2);
 
+  // A flex row lays out when its children change, not when one changes width.
+  let node: ElementNode | undefined;
+  createEffect(on(width, () => { node?.parent?.updateLayout(); }, { defer: true }));
+
   return (
     <view
       {...props}
+      ref={(element: ElementNode) => { node = element; (props.ref as ((element: ElementNode) => void) | undefined)?.(element); }}
       width={width()}
       height={height()}
       color={fill()}

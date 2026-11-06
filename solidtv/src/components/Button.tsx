@@ -6,7 +6,7 @@ import type { IconName } from "$lib/icons.generated.js";
 import { color, motion, type, weight } from "../theme.js";
 import Icon from "$components/Icon.js";
 
-export type ButtonKind = "primary" | "light" | "glass" | "danger";
+export type ButtonKind = "primary" | "glass" | "danger";
 
 interface ButtonProps extends NodeProps {
   label?: string;
@@ -14,18 +14,17 @@ interface ButtonProps extends NodeProps {
   kind?: ButtonKind;
   size?: "md" | "lg";
   busy?: boolean;
-  /** Width isn't measured from text ahead of the font loading, so a button states its own. */
+  /** Fixes the width, and ellipsizes a label that won't fit. Otherwise the button fits its label. */
   width?: number;
 }
 
 const FILL: Record<ButtonKind, [number, number]> = {
   primary: [color.accent, color.accentInk],
-  light: [color.light, color.lightInk],
   glass: [0xffffff24, color.text],
   danger: [color.dangerSoft, color.danger],
 };
 
-/** Roughly what a label needs at Inter's average advance; good enough for a pill with padding. */
+/** Roughly what a label needs at Inter's average advance, until the text has measured itself. */
 export const labelWidth = (label: string, fontSize: number) => Math.ceil(label.length * fontSize * 0.56);
 
 export default function Button(props: ButtonProps) {
@@ -36,11 +35,13 @@ export default function Button(props: ButtonProps) {
   const iconSize = () => (props.size === "lg" ? 34 : 30);
   const pad = () => (props.size === "lg" ? 34 : 26);
   const hasLabel = () => !!props.label;
+  const [measured, setMeasured] = createSignal(0);
   const width = () => props.width ?? (hasLabel()
-    ? pad() * 2 + labelWidth(props.label!, fontSize()) + (props.icon ? iconSize() + 14 : 0)
+    ? pad() * 2 + (measured() || labelWidth(props.label!, fontSize())) + (props.icon ? iconSize() + 14 : 0)
     : height());
-  const fill = () => (focused() ? (kind() === "primary" ? color.accent : color.light) : FILL[kind()][0]);
-  const ink = () => (focused() ? (kind() === "primary" ? color.accentInk : color.lightInk) : FILL[kind()][1]);
+  // White means focused, and nothing else: anything at rest wearing it reads as where you are.
+  const fill = () => (focused() ? color.light : FILL[kind()][0]);
+  const ink = () => (focused() ? color.lightInk : FILL[kind()][1]);
   const iconX = () => (hasLabel() ? pad() : (height() - iconSize()) / 2);
 
   // A flex row lays out when its children change, not when one changes width.
@@ -64,18 +65,19 @@ export default function Button(props: ButtonProps) {
       </Show>
       <Show when={hasLabel()}>
         <text
-          x={props.icon ? pad() + iconSize() + 14 : 0}
+          x={props.icon ? pad() + iconSize() + 14 : props.width ? 0 : pad()}
           y={0}
-          width={props.icon ? width() - pad() - iconSize() - 14 : width()}
+          width={props.width ? (props.icon ? props.width - pad() - iconSize() - 14 : props.width) : undefined}
           height={height()}
           lineHeight={height()}
-          contain="both"
-          maxLines={1}
-          textAlign={props.icon ? "left" : "center"}
+          contain={props.width ? "both" : undefined}
+          maxLines={props.width ? 1 : undefined}
+          textAlign={props.width && !props.icon ? "center" : undefined}
           verticalAlign="middle"
           fontSize={fontSize()}
           fontWeight={weight.semibold}
           color={ink()}
+          onEvent={{ loaded: (_node, event) => { if (event) setMeasured(event.dimensions.w); } }}
         >
           {props.label}
         </text>

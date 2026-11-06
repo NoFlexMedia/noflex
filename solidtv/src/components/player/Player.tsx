@@ -464,7 +464,7 @@ export default function Player(props: { playback: Playback }) {
           onLeft={() => { showChrome(); return false; }}
           onRight={() => { showChrome(); return false; }}
         >
-          <Button icon={paused() ? "play" : "pause"} kind="light" size="lg" onEnter={() => { toggle(); return true; }} />
+          <Button icon={paused() ? "play" : "pause"} kind="primary" size="lg" onEnter={() => { toggle(); return true; }} />
           <Show when={!live()}>
             <Button icon="arrow-counter-clockwise" size="lg" onEnter={() => { seekTo(position() - SKIP); showChrome(); return true; }} />
             <Button icon="arrow-clockwise" size="lg" onEnter={() => { seekTo(position() + SKIP); showChrome(); return true; }} />

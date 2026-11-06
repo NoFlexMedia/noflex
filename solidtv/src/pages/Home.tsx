@@ -61,7 +61,7 @@ function Hero(props: { items: Work[] }) {
       <Row y={596} width={1000} height={80} gap={20} scroll="none">
         <Button
           size="lg"
-          kind="light"
+          kind="primary"
           icon="play"
           busy={player.preparing === current().id}
           label={resumeLabel(current())}

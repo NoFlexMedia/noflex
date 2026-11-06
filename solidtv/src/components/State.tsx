@@ -34,7 +34,7 @@ export default function State(props: StateProps) {
       <text y={140} width={WIDTH} contain="width" textAlign="center" fontSize={type.title} fontWeight={weight.semibold}>{props.title}</text>
       <text y={204} width={WIDTH} contain="width" textAlign="center" maxLines={3} lineHeight={42} fontSize={type.body} color={color.text2}>{props.message ?? ""}</text>
       <Show when={props.action} fallback={<view skipFocus />}>
-        <Button y={340} x={(WIDTH - 280) / 2} width={280} label={actionLabel()} kind="light" onEnter={() => { props.action?.(); return true; }} />
+        <Button y={340} x={(WIDTH - 280) / 2} width={280} label={actionLabel()} kind="primary" onEnter={() => { props.action?.(); return true; }} />
       </Show>
     </view>
   );

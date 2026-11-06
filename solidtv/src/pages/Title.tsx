@@ -180,7 +180,7 @@ export default function Title() {
                   <Show when={canPlay()}>
                     <Button
                       size="lg"
-                      kind="light"
+                      kind="primary"
                       icon="play"
                       busy={player.preparing === current.id}
                       label={resumeMs() > 60_000 ? `Resume · ${runtime((edition()?.runtimeMs ?? current.runtimeMs ?? 0) - resumeMs())} left` : "Play"}
@@ -194,9 +194,8 @@ export default function Title() {
                   <Show when={current.kind === "SERIES" || current.kind === "SEASON"}>
                     <Button
                       size="lg"
-                      kind="light"
+                      kind="primary"
                       icon="play"
-                      width={340}
                       busy={!upNext()}
                       label={upNext() ? `${upNext()!.resume ? "Resume" : upNext()!.rewatch ? "Watch again" : "Play"} ${subtitleFor(upNext()!.work)}` : "Play"}
                       onEnter={() => { const next = upNext(); if (next) void playWork(next.work); return true; }}

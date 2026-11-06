@@ -29,7 +29,7 @@ function ShelvesView(props: { slug: string; category: string; label: string }) {
       </Show>
     }>
       <Column autofocus width={PAGE_WIDTH} height={SCREEN.height * 2} scroll="always" gap={8}>
-        <Button width={220} label={`All ${props.label}`} icon="caret-right" height={64} onEnter={() => { navigate(`/browse/${props.slug}/all`); return true; }} />
+        <Button label={`All ${props.label}`} icon="caret-right" onEnter={() => { navigate(`/browse/${props.slug}/all`); return true; }} />
         <Show when={data()!.recommendations.nodes.length}><Rail title="Recommended" items={data()!.recommendations.nodes} height={railHeight()} /></Show>
         <Show when={data()!.newlyReleased.nodes.length}><Rail title="Newly released" items={data()!.newlyReleased.nodes} height={railHeight()} /></Show>
         <Show when={data()!.recentlyAdded.nodes.length}><Rail title="Recently added" items={data()!.recentlyAdded.nodes} height={railHeight()} /></Show>

@@ -22,11 +22,13 @@ async fn seed_with_real_file(
 
     let user = noflex_storage::domain::User {
         id: noflex_core::UserId::new(),
-        name: "downloader".to_string(),
+        username: "downloader".to_string(),
+        display_name: None,
         password_hash: "argon2id$placeholder".to_string(),
         is_admin: false,
         role: noflex_core::UserRole::User,
         created_at: now,
+        avatar_updated_at: None,
     };
     store.upsert_user(&user).await.expect("upsert user");
 
@@ -288,11 +290,13 @@ async fn worker_marks_missing_media_file_as_failed() {
     let now = OffsetDateTime::now_utc();
     let user = noflex_storage::domain::User {
         id: noflex_core::UserId::new(),
-        name: "x".to_string(),
+        username: "x".to_string(),
+        display_name: None,
         password_hash: "argon2id$placeholder".to_string(),
         is_admin: false,
         role: noflex_core::UserRole::User,
         created_at: now,
+        avatar_updated_at: None,
     };
     store.upsert_user(&user).await.expect("user");
 
@@ -481,11 +485,13 @@ async fn a_second_export_of_the_same_edition_shares_the_first_ones_file() {
 
     let second = noflex_storage::domain::User {
         id: noflex_core::UserId::new(),
-        name: "second".to_string(),
+        username: "second".to_string(),
+        display_name: None,
         password_hash: "argon2id$placeholder".to_string(),
         is_admin: false,
         role: noflex_core::UserRole::User,
         created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
     };
     store.upsert_user(&second).await.expect("second user");
     let job = noflex_storage::domain::ExportJob {

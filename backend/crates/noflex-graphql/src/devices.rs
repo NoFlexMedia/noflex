@@ -143,6 +143,19 @@ impl DevicesQuery {
             .map_err(gql_err)
     }
 
+    /// A viewer's registered devices. Administrator only.
+    async fn user_devices(
+        &self,
+        ctx: &Context<'_>,
+        user_id: noflex_core::UserId,
+    ) -> async_graphql::Result<Vec<Device>> {
+        access::require_admin(ctx)?;
+        storage(ctx)?
+            .devices_for_user(user_id)
+            .await
+            .map_err(gql_err)
+    }
+
     /// The curve HDR is tone-mapped with, for streams starting from now.
     /// Administrator only.
     async fn tonemap_curve(&self, ctx: &Context<'_>) -> async_graphql::Result<TonemapCurve> {
@@ -498,11 +511,11 @@ impl DevicesMutation {
         &self,
         ctx: &Context<'_>,
         id: OptimizedVersionId,
-    ) -> async_graphql::Result<bool> {
+    ) -> async_graphql::Result<Option<OptimizedVersion>> {
         access::require_admin(ctx)?;
         let storage = storage(ctx)?;
         let Some(version) = storage.get_optimized_version(id).await.map_err(gql_err)? else {
-            return Ok(false);
+            return Ok(None);
         };
         // Here and not left to the worker's orphan sweep, which only looks in the
         // current folder: a version can outlive a change of folder.
@@ -520,27 +533,35 @@ impl DevicesMutation {
         if let Some(wake) = ctx.data_opt::<Arc<tokio::sync::Notify>>() {
             wake.notify_one();
         }
-        Ok(true)
+        Ok(Some(version))
     }
 
-    /// Take back a viewer's mark, for an administrator clearing what keeps a
-    /// version wanted. `deviceId` names the mark as it was made. Administrator only.
-    async fn unmark_viewer_for_smart_transcoding(
+    /// Whether the server prepares things for a viewer's device on its own, for an
+    /// administrator clearing what keeps a version wanted. Off also ends smart
+    /// downloads, which ask for the same predictions; a viewer can turn either back
+    /// on, and marks naming the device stand. Administrator only.
+    async fn set_viewer_device_smart_transcode(
         &self,
         ctx: &Context<'_>,
-        user_id: noflex_core::UserId,
-        work_id: noflex_core::WorkId,
-        device_id: Option<DeviceId>,
-    ) -> async_graphql::Result<bool> {
+        id: DeviceId,
+        enabled: bool,
+    ) -> async_graphql::Result<Device> {
         access::require_admin(ctx)?;
-        storage(ctx)?
-            .remove_smart_transcode_mark(user_id, work_id, device_id)
+        let storage = storage(ctx)?;
+        let mut device = storage
+            .get_device(id)
             .await
-            .map_err(gql_err)?;
+            .map_err(gql_err)?
+            .ok_or_else(|| async_graphql::Error::new("device not found"))?;
+        device.smart_transcode = enabled;
+        if !enabled {
+            device.smart_downloads = false;
+        }
+        let device = store_device(storage, device).await?;
         if let Some(wake) = ctx.data_opt::<Arc<tokio::sync::Notify>>() {
             wake.notify_one();
         }
-        Ok(true)
+        Ok(device)
     }
 
     /// Set where smart transcoding writes and how much it may use. Null leaves

@@ -209,7 +209,7 @@ impl AuthMutation {
             .check(&username, client_addr)
             .map_err(too_many_attempts)?;
         let user = storage
-            .get_user_by_name(&username)
+            .get_user_by_username(&username)
             .await
             .map_err(|_| async_graphql::Error::new("authentication failed"))?;
         let Some(user) = user else {

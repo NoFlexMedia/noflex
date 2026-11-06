@@ -1467,12 +1467,14 @@ type Mutation {
 	prepared again if something still wants it: its `marks` can be taken back
 	first with `unmarkViewerForSmartTranscoding`. Administrator only.
 	"""
-	removeOptimizedVersion(id: ID!): Boolean!
+	removeOptimizedVersion(id: ID!): OptimizedVersion
 	"""
-	Take back a viewer's mark, for an administrator clearing what keeps a
-	version wanted. `deviceId` names the mark as it was made. Administrator only.
+	Whether the server prepares things for a viewer's device on its own, for an
+	administrator clearing what keeps a version wanted. Off also ends smart
+	downloads, which ask for the same predictions; a viewer can turn either back
+	on, and marks naming the device stand. Administrator only.
 	"""
-	unmarkViewerForSmartTranscoding(userId: ID!, workId: ID!, deviceId: ID): Boolean!
+	setViewerDeviceSmartTranscode(id: ID!, enabled: Boolean!): Device!
 	"""
 	Set where smart transcoding writes and how much it may use. Null leaves
 	a setting to the server's configuration. Versions already prepared stay
@@ -1509,6 +1511,11 @@ type Mutation {
 	none.
 	"""
 	unmarkForSmartTranscoding(workId: ID!, deviceId: ID): SmartTranscodeMark
+	"""
+	Take back a viewer's mark, for an administrator clearing what keeps a
+	version wanted. `deviceId` names the mark as it was made. Administrator only.
+	"""
+	unmarkViewerForSmartTranscoding(userId: ID!, workId: ID!, deviceId: ID): SmartTranscodeMark
 	"""
 	Use an embeddings API. Sends it a test first and saves nothing if that
 	fails. From then on every title, overview, credit and search text goes to
@@ -1607,6 +1614,25 @@ type Mutation {
 	request. API keys are not revoked.
 	"""
 	changePassword(currentPassword: String!, newPassword: String!): Boolean!
+	"""
+	Set what the caller is called. Blank goes back to their username.
+	"""
+	updateProfile(name: String!): User!
+	"""
+	Change what the caller signs in with. Takes their password, as whoever holds
+	a session shouldn't be able to lock them out; an account that only signs in
+	through a provider has none, and passes an empty one. Sessions stay signed in.
+	"""
+	changeUsername(username: String!, currentPassword: String!): User!
+	"""
+	Set the caller's picture from a base64 JPEG, PNG or WebP. It's cropped to a
+	centred square and everything but its pixels is dropped.
+	"""
+	setProfilePicture(image: String!): User!
+	"""
+	Remove the caller's picture, leaving their initials.
+	"""
+	removeProfilePicture: User!
 	setPreference(key: String!, value: JSON!): UserPreference!
 	"""
 	Delete one of the caller's preferences. Returns it, or null when they
@@ -1853,8 +1879,7 @@ enum OptimizedReason {
 One device a version was prepared for.
 """
 type OptimizedTarget {
-	userId: ID!
-	userName: String!
+	user: User!
 	"""
 	Null for a viewer who marked it with no device to reach.
 	"""
@@ -1947,8 +1972,7 @@ A viewer's mark that's keeping a version wanted. A mark on a series or season
 names that, not the episode the version is of.
 """
 type OptimizedVersionMark {
-	userId: ID!
-	userName: String!
+	user: User!
 	work: Work!
 	"""
 	The one device it's for. Null is all of the viewer's with it on.
@@ -2751,6 +2775,10 @@ type Query {
 	The caller's registered devices.
 	"""
 	myDevices: [Device!]!
+	"""
+	A viewer's registered devices. Administrator only.
+	"""
+	userDevices(userId: ID!): [Device!]!
 	"""
 	The curve HDR is tone-mapped with, for streams starting from now.
 	Administrator only.
@@ -3813,10 +3841,23 @@ input UpdateLiveTvSourceInput {
 
 type User {
 	id: ID!
-	name: String!
+	"""
+	What they sign in with. Unique, and changeable, so nothing else keys on it.
+	"""
+	username: String!
 	isAdmin: Boolean!
 	role: UserRole!
 	createdAt: DateTime!
+	"""
+	What to call them: the name they've chosen, or their username.
+	"""
+	name: String!
+	"""
+	Their picture, 512 pixels square, relative to this server, and a new URL
+	when it changes. Carries a token as [`Image`]'s does, so `<img src>` works.
+	Null without one, for clients to fall back to `name`'s initials.
+	"""
+	avatarUrl: String
 	"""
 	Libraries this user has been explicitly granted, by id.
 	Self-serve via `viewer { libraryAccess }`; admins get the same
@@ -4028,6 +4069,10 @@ type WatchRoomMember {
 	Null if the account is gone.
 	"""
 	name: String
+	"""
+	Their picture, as on [`User`]. Null without one, or if the account is gone.
+	"""
+	avatarUrl: String
 }
 
 enum WatchRoomState {

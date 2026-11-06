@@ -137,13 +137,22 @@ CREATE INDEX IF NOT EXISTS scan_events_library_started ON scan_events(library_id
 -- Jellyfin-SHA1 at the auth-provider layer); OIDC/LDAP-only users
 -- write the empty string. `is_admin` stays for backward compat; the
 -- `role` column is canonical for the role middleware.
+-- `username` is what they sign in with, `display_name` what they're called.
 CREATE TABLE IF NOT EXISTS users (
     id            BLOB PRIMARY KEY,
-    name          TEXT NOT NULL UNIQUE,
+    username      TEXT NOT NULL UNIQUE,
+    display_name  TEXT,
     password_hash TEXT NOT NULL,
     is_admin      INTEGER NOT NULL,
     role          TEXT NOT NULL DEFAULT 'user',
     created_at    TEXT NOT NULL
+);
+
+-- Apart from `users`, which every request reads and has no use for the bytes.
+CREATE TABLE IF NOT EXISTS user_avatars (
+    user_id    BLOB PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    image      BLOB NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 -- Sessions FK CASCADE on user delete, so revoking a user also revokes

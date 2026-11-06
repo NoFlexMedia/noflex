@@ -49,6 +49,7 @@ mod playback;
 mod playback_session;
 mod plugin_links;
 mod preferences;
+mod profile;
 mod recommend;
 mod restrictions;
 mod search;
@@ -118,6 +119,7 @@ pub struct Mutation(
     multi_server::MultiServerMutation,
     auth::AuthMutation,
     users::UsersMutation,
+    profile::ProfileMutation,
     preferences::PreferencesMutation,
     collections::CollectionsMutation,
     credentials::CredentialsMutation,
@@ -879,11 +881,13 @@ impl CoreMutation {
             .map_err(|_| async_graphql::Error::new("password processing failed"))?;
         let user = noflex_storage::domain::User {
             id: UserId::new(),
-            name: username,
+            username,
+            display_name: None,
             password_hash: hash,
             is_admin: true,
             role: noflex_core::UserRole::Admin,
             created_at: OffsetDateTime::now_utc(),
+            avatar_updated_at: None,
         };
         let created = storage
             .create_initial_admin(&user)

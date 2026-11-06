@@ -47,11 +47,13 @@ async fn seed_store() -> (
     store.upsert_library(&library).await.expect("library");
     let user = User {
         id: noflex_core::UserId::new(),
-        name: "stream-user".to_string(),
+        username: "stream-user".to_string(),
+        display_name: None,
         password_hash: "argon2id$placeholder".to_string(),
         is_admin: false,
         role: noflex_core::UserRole::User,
         created_at: now,
+        avatar_updated_at: None,
     };
     store.upsert_user(&user).await.expect("user");
     store

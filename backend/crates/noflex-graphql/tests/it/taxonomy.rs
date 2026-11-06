@@ -85,11 +85,13 @@ async fn seeded() -> Seeded {
     });
     let user = User {
         id: UserId::new(),
-        name: "taxonomy-admin".to_string(),
+        username: "taxonomy-admin".to_string(),
+        display_name: None,
         password_hash: "argon2id$placeholder".to_string(),
         is_admin: true,
         role: noflex_core::UserRole::Admin,
         created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
     };
     store.upsert_user(&user).await.expect("user");
 

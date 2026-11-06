@@ -111,7 +111,8 @@ async fn fixture() -> Fixture {
 fn user(name: &str, is_admin: bool, created_at: OffsetDateTime) -> User {
     User {
         id: UserId::new(),
-        name: name.into(),
+        username: name.into(),
+        display_name: None,
         password_hash: "argon2id$placeholder".into(),
         is_admin,
         role: if is_admin {
@@ -120,6 +121,7 @@ fn user(name: &str, is_admin: bool, created_at: OffsetDateTime) -> User {
             noflex_core::UserRole::User
         },
         created_at,
+        avatar_updated_at: None,
     }
 }
 

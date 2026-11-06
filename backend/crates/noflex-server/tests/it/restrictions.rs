@@ -171,7 +171,8 @@ async fn fixture() -> Fixture {
 fn user(name: &str, admin: bool, now: OffsetDateTime) -> User {
     User {
         id: noflex_core::UserId::new(),
-        name: name.into(),
+        username: name.into(),
+        display_name: None,
         password_hash: String::new(),
         is_admin: admin,
         role: if admin {
@@ -180,6 +181,7 @@ fn user(name: &str, admin: bool, now: OffsetDateTime) -> User {
             UserRole::User
         },
         created_at: now,
+        avatar_updated_at: None,
     }
 }
 
@@ -533,6 +535,47 @@ async fn hls_routes_enforce_owner_admin_policy_and_exact_scoped_token() {
         StatusCode::UNAUTHORIZED,
     )
     .await;
+}
+
+#[tokio::test]
+async fn a_picture_is_for_those_signed_in_with_a_token_for_that_picture() {
+    let f = fixture().await;
+    let manager = Arc::new(FfmpegJobManager::new(
+        f.root.path().join("ffmpeg"),
+        f.root.path().join("jobs"),
+    ));
+    let app = router(&f, manager.clone(), service(&f.store, &manager));
+    let signer = noflex_server::stream::JwtMediaUrlSigner::new(jwt());
+    let token = |of: &User| {
+        noflex_storage::MediaUrlSigner::sign_avatar_token(&signer, f.foreign.id, None, of.id)
+            .expect("token")
+    };
+    let picture = format!("/avatars/{}", f.owner.id);
+
+    assert_status(&app, &picture, Some(&f.foreign), StatusCode::NOT_FOUND).await;
+    f.store
+        .set_user_avatar(f.owner.id, b"jpeg", OffsetDateTime::now_utc())
+        .await
+        .expect("avatar");
+
+    assert_status(&app, &picture, None, StatusCode::UNAUTHORIZED).await;
+    assert_status(
+        &app,
+        &format!("{picture}?token={}", token(&f.foreign)),
+        None,
+        StatusCode::UNAUTHORIZED,
+    )
+    .await;
+    let response = app
+        .clone()
+        .oneshot(request(
+            &format!("{picture}?v=1&token={}", token(&f.owner)),
+            None,
+        ))
+        .await
+        .expect("route");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "image/jpeg");
 }
 
 #[tokio::test]

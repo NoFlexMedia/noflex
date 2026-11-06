@@ -58,11 +58,13 @@ async fn seeded() -> Seeded {
     let schema = build_schema(SchemaContext::new(store.clone()));
     let user = User {
         id: UserId::new(),
-        name: "search-admin".to_string(),
+        username: "search-admin".to_string(),
+        display_name: None,
         password_hash: "argon2id$placeholder".to_string(),
         is_admin: true,
         role: noflex_core::UserRole::Admin,
         created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
     };
     store.upsert_user(&user).await.expect("user");
 
@@ -194,11 +196,13 @@ async fn forbidden_search_hydration_stays_hidden() {
     store.migrate().await.expect("migrate");
     let user = User {
         id: UserId::new(),
-        name: "restricted-search".to_string(),
+        username: "restricted-search".to_string(),
+        display_name: None,
         password_hash: "argon2id$placeholder".to_string(),
         is_admin: false,
         role: noflex_core::UserRole::User,
         created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
     };
     store.upsert_user(&user).await.expect("user");
     let allowed = Library {

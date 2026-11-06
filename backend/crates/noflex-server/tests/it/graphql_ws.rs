@@ -35,11 +35,13 @@ async fn server() -> Server {
     let jwt = Arc::new(JwtConfig::dev(JWT_SECRET).expect("jwt"));
     let user = User {
         id: UserId::new(),
-        name: "viewer".into(),
+        username: "viewer".into(),
+        display_name: None,
         password_hash: String::new(),
         is_admin: false,
         role: UserRole::User,
         created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
     };
     store.upsert_user(&user).await.expect("user");
     let now = OffsetDateTime::now_utc();

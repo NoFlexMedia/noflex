@@ -36,11 +36,13 @@ async fn seed_user(storage: &Arc<TursoStore>) -> UserId {
     storage
         .upsert_user(&User {
             id: user,
-            name: "linker".to_string(),
+            username: "linker".to_string(),
+            display_name: None,
             password_hash: String::new(),
             is_admin: false,
             role: noflex_core::UserRole::User,
             created_at: time::OffsetDateTime::now_utc(),
+            avatar_updated_at: None,
         })
         .await
         .expect("seed user");

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use async_graphql::{Context, Enum, Object, SimpleObject};
-use noflex_core::{DeviceId, WorkId, WorkKind};
+use noflex_core::{DeviceId, UserId, WorkId, WorkKind};
 use noflex_storage::{
     RequestUser, Storage,
     domain::{Device, OptimizedVersionStatus, SmartTranscodeMark, SmartTranscodeOutcome, Work},
@@ -300,27 +300,49 @@ impl SmartMarksMutation {
         device_id: Option<DeviceId>,
     ) -> async_graphql::Result<Option<SmartMark>> {
         let principal = authed_principal(ctx)?;
-        let storage = storage(ctx)?;
-        let marks = storage
-            .smart_transcode_marks_for_user(principal.user_id)
-            .await
-            .map_err(gql_err)?;
-        let Some(mark) = marks
-            .into_iter()
-            .find(|mark| mark.work_id == work_id && mark.device_id == device_id)
-        else {
-            return Ok(None);
-        };
-        let work = storage.get_work(work_id).await.map_err(gql_err)?;
-        let described = match work {
-            Some(work) => Some(describe(ctx, storage, mark, work).await?),
-            None => None,
-        };
-        storage
-            .remove_smart_transcode_mark(principal.user_id, work_id, device_id)
-            .await
-            .map_err(gql_err)?;
-        wake(ctx);
-        Ok(described)
+        unmark(ctx, principal.user_id, work_id, device_id).await
     }
+
+    /// Take back a viewer's mark, for an administrator clearing what keeps a
+    /// version wanted. `deviceId` names the mark as it was made. Administrator only.
+    async fn unmark_viewer_for_smart_transcoding(
+        &self,
+        ctx: &Context<'_>,
+        user_id: UserId,
+        work_id: WorkId,
+        device_id: Option<DeviceId>,
+    ) -> async_graphql::Result<Option<SmartMark>> {
+        crate::access::require_admin(ctx)?;
+        unmark(ctx, user_id, work_id, device_id).await
+    }
+}
+
+async fn unmark(
+    ctx: &Context<'_>,
+    user: UserId,
+    work_id: WorkId,
+    device_id: Option<DeviceId>,
+) -> async_graphql::Result<Option<SmartMark>> {
+    let storage = storage(ctx)?;
+    let marks = storage
+        .smart_transcode_marks_for_user(user)
+        .await
+        .map_err(gql_err)?;
+    let Some(mark) = marks
+        .into_iter()
+        .find(|mark| mark.work_id == work_id && mark.device_id == device_id)
+    else {
+        return Ok(None);
+    };
+    let work = storage.get_work(work_id).await.map_err(gql_err)?;
+    let described = match work {
+        Some(work) => Some(describe(ctx, storage, mark, work).await?),
+        None => None,
+    };
+    storage
+        .remove_smart_transcode_mark(user, work_id, device_id)
+        .await
+        .map_err(gql_err)?;
+    wake(ctx);
+    Ok(described)
 }

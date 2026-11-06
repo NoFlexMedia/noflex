@@ -150,11 +150,13 @@ async fn seed_user(storage: &Arc<dyn Storage>, name: &str) -> UserId {
     storage
         .upsert_user(&User {
             id: user,
-            name: name.to_string(),
+            username: name.to_string(),
+            display_name: None,
             password_hash: String::new(),
             is_admin: false,
             role: noflex_core::UserRole::User,
             created_at: OffsetDateTime::now_utc(),
+            avatar_updated_at: None,
         })
         .await
         .expect("seed user");

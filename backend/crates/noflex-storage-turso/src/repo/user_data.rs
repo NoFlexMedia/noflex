@@ -459,11 +459,13 @@ mod tests {
         store.migrate().await.unwrap();
         let user = User {
             id: UserId::new(),
-            name: "ties".into(),
+            username: "ties".into(),
+            display_name: None,
             password_hash: String::new(),
             is_admin: false,
             role: UserRole::User,
             created_at: OffsetDateTime::now_utc(),
+            avatar_updated_at: None,
         };
         store.upsert_user(&user).await.unwrap();
         let tie = dt_to_text(datetime!(2030-01-01 00:00 UTC)).unwrap();

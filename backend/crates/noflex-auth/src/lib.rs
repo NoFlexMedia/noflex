@@ -118,7 +118,7 @@ impl<S: Storage + Send + Sync + ?Sized> AuthProvider for LocalAuthProvider<S> {
         }
         let user = self
             .storage
-            .get_user_by_name(&creds.username)
+            .get_user_by_username(&creds.username)
             .await
             .map_err(|e| noflex_core::error::PluginError::Internal(e.to_string()))?;
         let Some(user) = user else {
@@ -129,7 +129,7 @@ impl<S: Storage + Send + Sync + ?Sized> AuthProvider for LocalAuthProvider<S> {
                 upgrade_legacy_hash(self.storage.as_ref(), &user, &creds.password).await;
                 Ok(AuthVerdict::Authenticated {
                     user_id: user.id,
-                    display_name: user.name.clone(),
+                    display_name: user.shown_name().to_string(),
                     is_admin: user.is_admin,
                 })
             }
@@ -847,7 +847,8 @@ mod tests {
     fn test_user(name: &str, is_admin: bool) -> User {
         User {
             id: UserId::new(),
-            name: name.to_string(),
+            username: name.to_string(),
+            display_name: None,
             password_hash: String::new(),
             is_admin,
             role: if is_admin {
@@ -856,6 +857,7 @@ mod tests {
                 UserRole::User
             },
             created_at: OffsetDateTime::now_utc(),
+            avatar_updated_at: None,
         }
     }
 

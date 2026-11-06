@@ -4,7 +4,8 @@
 // `updateUser`, `deleteUser`, `userLibraryAccess`) gates on the
 // per-request `Principal`; `changePassword` is self-service — it
 // rehashes and revokes every session except the caller's, signing other
-// devices out on their next request.
+// devices out on their next request. The rest of what a viewer changes about
+// themselves is in `profile`.
 
 use std::sync::Arc;
 
@@ -130,11 +131,13 @@ impl UsersMutation {
             .map_err(|_| async_graphql::Error::new("password processing failed"))?;
         let user = User {
             id: UserId::new(),
-            name: username,
+            username,
+            display_name: None,
             password_hash: hash,
             is_admin: role == UserRole::Admin,
             role,
             created_at: OffsetDateTime::now_utc(),
+            avatar_updated_at: None,
         };
         storage.upsert_user(&user).await.map_err(|e| match e {
             StorageError::Constraint(_) => async_graphql::Error::new("username already taken"),
@@ -265,16 +268,16 @@ impl UsersMutation {
         let throttle = crate::auth::login_throttle(ctx)?;
         let client_addr = ctx.data_opt::<noflex_auth::ClientAddr>().copied();
         throttle
-            .check(&user.name, client_addr)
+            .check(&user.username, client_addr)
             .map_err(crate::auth::too_many_attempts)?;
         if noflex_auth::verify_password(&current_password, &user.password_hash)
             .await
             .is_err()
         {
-            throttle.record_failure(&user.name, client_addr);
+            throttle.record_failure(&user.username, client_addr);
             return Err(async_graphql::Error::new("incorrect current password"));
         }
-        throttle.record_success(&user.name);
+        throttle.record_success(&user.username);
         user.password_hash = noflex_auth::hash_password(&new_password)
             .await
             .map_err(|_| async_graphql::Error::new("password processing failed"))?;

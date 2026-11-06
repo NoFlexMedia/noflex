@@ -42,7 +42,8 @@ async fn auth_fixture(
 async fn seed_user(store: &TursoStore, name: &str, is_admin: bool) -> UserId {
     let user = User {
         id: UserId::new(),
-        name: name.into(),
+        username: name.into(),
+        display_name: None,
         password_hash: String::new(),
         is_admin,
         role: if is_admin {
@@ -51,6 +52,7 @@ async fn seed_user(store: &TursoStore, name: &str, is_admin: bool) -> UserId {
             UserRole::User
         },
         created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
     };
     store.upsert_user(&user).await.expect("seed user");
     user.id

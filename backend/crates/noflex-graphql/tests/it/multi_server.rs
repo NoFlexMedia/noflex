@@ -587,11 +587,13 @@ async fn linked_servers_are_private_and_their_origins_validated() {
 
     let stranger = noflex_storage::domain::User {
         id: UserId::new(),
-        name: "stranger".to_string(),
+        username: "stranger".to_string(),
+        display_name: None,
         password_hash: "argon2id$placeholder".to_string(),
         is_admin: false,
         role: noflex_core::UserRole::User,
         created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
     };
     server.store.upsert_user(&stranger).await.expect("user");
     assert_eq!(

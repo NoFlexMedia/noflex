@@ -312,7 +312,7 @@ impl MultiServerMutation {
             .map_err(too_many_attempts)?;
         // Before spending a use, so a taken name doesn't burn the invite.
         if storage
-            .get_user_by_name(&username)
+            .get_user_by_username(&username)
             .await
             .map_err(gql_err)?
             .is_some()
@@ -336,11 +336,13 @@ impl MultiServerMutation {
         throttle.record_success("invite");
         let user = User {
             id: UserId::new(),
-            name: username,
+            username,
+            display_name: None,
             password_hash: hash,
             is_admin: false,
             role: UserRole::User,
             created_at: now,
+            avatar_updated_at: None,
         };
         if storage.upsert_user(&user).await.is_err() {
             // Lost a race for the name; the use wasn't really spent.

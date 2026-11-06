@@ -201,7 +201,8 @@ fn request(query: impl Into<String>, principal: Principal) -> Request {
 fn user(name: &str, is_admin: bool) -> User {
     User {
         id: UserId::new(),
-        name: name.to_string(),
+        username: name.to_string(),
+        display_name: None,
         password_hash: "argon2id$placeholder".to_string(),
         is_admin,
         role: if is_admin {
@@ -210,6 +211,7 @@ fn user(name: &str, is_admin: bool) -> User {
             noflex_core::UserRole::User
         },
         created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
     }
 }
 

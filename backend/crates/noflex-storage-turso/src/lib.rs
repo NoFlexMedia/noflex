@@ -394,9 +394,9 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.reader().await?;
         repo::users::get(&conn, id).await
     }
-    async fn get_user_by_name(&self, name: &str) -> StorageResult<Option<User>> {
+    async fn get_user_by_username(&self, username: &str) -> StorageResult<Option<User>> {
         let (_schema, conn) = self.reader().await?;
-        repo::users::get_by_name(&conn, name).await
+        repo::users::get_by_username(&conn, username).await
     }
     async fn upsert_user(&self, user: &User) -> StorageResult<()> {
         let (_schema, conn) = self.writer().await?;
@@ -405,6 +405,23 @@ impl Storage for TursoStore {
     async fn create_initial_admin(&self, user: &User) -> StorageResult<bool> {
         let (_schema, conn) = self.writer().await?;
         repo::users::create_initial_admin(&conn, user).await
+    }
+    async fn set_user_avatar(
+        &self,
+        user: UserId,
+        image: &[u8],
+        at: OffsetDateTime,
+    ) -> StorageResult<()> {
+        let (_schema, conn) = self.writer().await?;
+        repo::users::set_avatar(&conn, user, image, at).await
+    }
+    async fn user_avatar(&self, user: UserId) -> StorageResult<Option<Vec<u8>>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::users::avatar(&conn, user).await
+    }
+    async fn delete_user_avatar(&self, user: UserId) -> StorageResult<bool> {
+        let (_schema, conn) = self.writer().await?;
+        repo::users::delete_avatar(&conn, user).await
     }
     async fn delete_user(&self, id: UserId) -> StorageResult<()> {
         let (_schema, conn) = self.writer().await?;

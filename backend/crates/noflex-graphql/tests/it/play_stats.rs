@@ -31,7 +31,8 @@ async fn schema() -> (NoflexSchema, Arc<TursoStore>) {
 async fn user(store: &TursoStore, name: &str, admin: bool) -> User {
     let user = User {
         id: UserId::new(),
-        name: name.into(),
+        username: name.into(),
+        display_name: None,
         password_hash: String::new(),
         is_admin: admin,
         role: if admin {
@@ -40,6 +41,7 @@ async fn user(store: &TursoStore, name: &str, admin: bool) -> User {
             UserRole::User
         },
         created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
     };
     store.upsert_user(&user).await.expect("user");
     user

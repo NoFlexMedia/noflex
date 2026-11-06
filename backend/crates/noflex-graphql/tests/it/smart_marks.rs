@@ -35,11 +35,13 @@ struct Fixture {
 fn user(name: &str, now: OffsetDateTime) -> User {
     User {
         id: UserId::new(),
-        name: name.into(),
+        username: name.into(),
+        display_name: None,
         password_hash: "argon2id$placeholder".into(),
         is_admin: false,
         role: noflex_core::UserRole::User,
         created_at: now,
+        avatar_updated_at: None,
     }
 }
 
@@ -546,8 +548,8 @@ async fn an_administrator_sees_who_a_version_is_for_and_can_clear_it() {
 
     let detail = format!(
         r#"{{ optimizedVersion(id: "{}") {{
-            targets {{ userName reason device {{ id }} }}
-            marks {{ userName device {{ id }} work {{ title }} }}
+            targets {{ user {{ name }} reason device {{ id }} }}
+            marks {{ user {{ name }} device {{ id }} work {{ title }} }}
         }} }}"#,
         version.id
     );
@@ -564,7 +566,7 @@ async fn an_administrator_sees_who_a_version_is_for_and_can_clear_it() {
             .expect("targets")
             .iter()
             .find(|target| target["device"]["id"] == device.to_string())
-            .map(|target| (target["userName"].clone(), target["reason"].clone()))
+            .map(|target| (target["user"]["name"].clone(), target["reason"].clone()))
             .expect("target")
     };
     assert_eq!(
@@ -582,14 +584,17 @@ async fn an_administrator_sees_who_a_version_is_for_and_can_clear_it() {
             serde_json::json!("PREDICTED")
         )
     );
-    assert_eq!(seen["optimizedVersion"]["marks"][0]["userName"], "viewer");
+    assert_eq!(
+        seen["optimizedVersion"]["marks"][0]["user"]["name"],
+        "viewer"
+    );
     assert_eq!(
         seen["optimizedVersion"]["marks"][0]["work"]["title"],
         "Film"
     );
 
     let unmark = format!(
-        r#"mutation {{ unmarkViewerForSmartTranscoding(userId: "{}", workId: "{}", deviceId: "{tv}") }}"#,
+        r#"mutation {{ unmarkViewerForSmartTranscoding(userId: "{}", workId: "{}", deviceId: "{tv}") {{ work {{ title }} }} }}"#,
         fixture.viewer.id, fixture.film
     );
     assert!(
@@ -600,6 +605,10 @@ async fn an_administrator_sees_who_a_version_is_for_and_can_clear_it() {
     );
     let unmarked = run_as_admin(&fixture, unmark).await;
     assert!(unmarked.errors.is_empty(), "{:?}", unmarked.errors);
+    assert_eq!(
+        unmarked.data.into_json().expect("json")["unmarkViewerForSmartTranscoding"]["work"]["title"],
+        "Film"
+    );
     assert!(
         fixture
             .storage
@@ -610,7 +619,7 @@ async fn an_administrator_sees_who_a_version_is_for_and_can_clear_it() {
     );
 
     let remove = format!(
-        r#"mutation {{ removeOptimizedVersion(id: "{}") }}"#,
+        r#"mutation {{ removeOptimizedVersion(id: "{}") {{ id }} }}"#,
         version.id
     );
     assert!(
@@ -629,4 +638,76 @@ async fn an_administrator_sees_who_a_version_is_for_and_can_clear_it() {
             .expect("get")
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn an_administrator_can_stop_what_a_viewers_device_has_predicted_for_it() {
+    let fixture = fixture().await;
+    let phone = device_of(&fixture, &fixture.viewer).await;
+    let mut wanting = fixture
+        .storage
+        .get_device(phone)
+        .await
+        .expect("get")
+        .expect("device");
+    wanting.smart_transcode = true;
+    wanting.smart_downloads = true;
+    fixture
+        .storage
+        .upsert_device(&wanting)
+        .await
+        .expect("device");
+    let turn = |enabled: bool| {
+        format!(
+            r#"mutation {{ setViewerDeviceSmartTranscode(id: "{phone}", enabled: {enabled}) {{ smartTranscode smartDownloads }} }}"#
+        )
+    };
+    let list = format!(
+        r#"{{ userDevices(userId: "{}") {{ id name smartTranscode }} }}"#,
+        fixture.viewer.id
+    );
+
+    assert!(
+        !run(&fixture, &fixture.stranger, list.clone())
+            .await
+            .errors
+            .is_empty()
+    );
+    assert!(
+        !run(&fixture, &fixture.stranger, turn(false))
+            .await
+            .errors
+            .is_empty(),
+        "nor can anyone else reach into an account"
+    );
+
+    let listed = run_as_admin(&fixture, list).await;
+    assert!(listed.errors.is_empty(), "{:?}", listed.errors);
+    assert_eq!(
+        listed.data.into_json().expect("json")["userDevices"][0]["id"],
+        phone.to_string()
+    );
+
+    let off = run_as_admin(&fixture, turn(false)).await;
+    assert!(off.errors.is_empty(), "{:?}", off.errors);
+    assert!(
+        fixture
+            .storage
+            .devices_wanting_versions()
+            .await
+            .expect("devices")
+            .is_empty(),
+        "smart downloads ask for the same predictions, so they end too"
+    );
+
+    let on = run_as_admin(&fixture, turn(true)).await;
+    assert!(on.errors.is_empty(), "{:?}", on.errors);
+    let stored = fixture
+        .storage
+        .get_device(phone)
+        .await
+        .expect("get")
+        .expect("device");
+    assert!(stored.smart_transcode);
+    assert_eq!(stored.user_id, fixture.viewer.id, "still the viewer's");
 }

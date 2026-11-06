@@ -33,11 +33,13 @@ fn executable(path: &std::path::Path, body: &str) {
 async fn seed_user(storage: &dyn Storage) -> UserId {
     let user = User {
         id: UserId::new(),
-        name: format!("viewer-{}", UserId::new()),
+        username: format!("viewer-{}", UserId::new()),
+        display_name: None,
         password_hash: String::new(),
         is_admin: false,
         role: UserRole::User,
         created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
     };
     storage.upsert_user(&user).await.expect("user");
     user.id

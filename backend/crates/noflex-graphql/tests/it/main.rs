@@ -29,6 +29,7 @@ mod playback_events;
 mod plugin_lifecycle;
 mod plugin_links;
 mod preferences;
+mod profile;
 mod request_budget;
 mod scan_jobs;
 mod schema_snapshot;

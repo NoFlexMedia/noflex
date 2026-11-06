@@ -98,6 +98,7 @@ libc = "0.2"
 sysinfo = { version = "0.40", default-features = false, features = ["system", "network"] }
 
 # Media processing
+base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 
 # WASM plugin runtime (host side). Pins to WASIp3-capable wasmtime — the

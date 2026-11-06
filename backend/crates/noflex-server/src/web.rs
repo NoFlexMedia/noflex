@@ -412,11 +412,13 @@ mod tests {
         store
             .upsert_user(&User {
                 id: noflex_core::UserId::new(),
-                name: "admin".to_string(),
+                username: "admin".to_string(),
+                display_name: None,
                 password_hash: "argon2id$placeholder".to_string(),
                 is_admin: true,
                 role: noflex_core::UserRole::Admin,
                 created_at: time::OffsetDateTime::now_utc(),
+                avatar_updated_at: None,
             })
             .await
             .expect("user");

@@ -43,6 +43,7 @@ pub fn routes(state: RestrictedRouteState) -> Router {
     };
     Router::new()
         .route("/live-tv/channels/{channel_id}/logo", get(channel_logo))
+        .route("/avatars/{user_id}", get(avatar))
         .route("/stream/{media_file_id}/file", get(stream_file))
         .route("/recordings/{recording_id}/file", get(recording_file))
         .route(
@@ -90,6 +91,49 @@ async fn channel_logo(
     match logos {
         Some(logos) => logos.serve(channel).await,
         None => axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// A user's picture, to anyone signed in. It's JPEG by way of `setProfilePicture`,
+/// and `?v=` in its URL changes with it.
+async fn avatar(
+    State(state): State<RestrictedRouteState>,
+    axum::Extension(principal): axum::Extension<Principal>,
+    Path(user_id): Path<String>,
+    Query(query): Query<stream::TokenQuery>,
+) -> Response {
+    if let Err(status) = stream::byte_route_principal(
+        state.storage.as_ref(),
+        &principal,
+        &state.jwt,
+        query.token.as_deref(),
+        &stream::avatar_token_target(&user_id),
+    )
+    .await
+    {
+        return status.into_response();
+    }
+    let Some(user) = parse_path_id(&user_id, noflex_core::UserId::from_uuid) else {
+        return invalid_id_response(&user_id);
+    };
+    match state.storage.user_avatar(user).await {
+        Ok(Some(image)) => (
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (
+                    header::CACHE_CONTROL,
+                    "private, max-age=31536000, immutable",
+                ),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            ],
+            image,
+        )
+            .into_response(),
+        Ok(None) => axum::http::StatusCode::NOT_FOUND.into_response(),
+        Err(error) => {
+            tracing::error!(%error, "avatar not read");
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
 }
 

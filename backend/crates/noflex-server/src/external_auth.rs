@@ -269,7 +269,7 @@ impl ServerExternalAuth {
         );
         let suffix = deterministic_suffix(plugin_id, &verified.issuer, &verified.subject);
         for attempt in 0..16u8 {
-            let name = if attempt == 0 {
+            let username = if attempt == 0 {
                 base.clone()
             } else if attempt == 1 {
                 format!("{base}-{suffix}")
@@ -278,11 +278,13 @@ impl ServerExternalAuth {
             };
             let user = User {
                 id: UserId::new(),
-                name,
+                username,
+                display_name: verified.display_name.clone(),
                 password_hash: String::new(),
                 is_admin: false,
                 role: UserRole::User,
                 created_at: OffsetDateTime::now_utc(),
+                avatar_updated_at: None,
             };
             match self.storage.upsert_user(&user).await {
                 Ok(()) => match self

@@ -651,11 +651,13 @@ async fn browse_filters_cannot_read_another_users_state() {
     let (_admin_id, admin) = run_setup_wizard(&schema).await;
     let viewer = User {
         id: UserId::new(),
-        name: "viewer".to_string(),
+        username: "viewer".to_string(),
+        display_name: None,
         password_hash: "unused".to_string(),
         is_admin: false,
         role: noflex_core::UserRole::User,
         created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
     };
     store.upsert_user(&viewer).await.expect("viewer");
     let library = seed_library();

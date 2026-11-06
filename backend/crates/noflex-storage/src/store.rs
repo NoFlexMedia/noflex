@@ -214,7 +214,7 @@ pub trait Storage: Send + Sync + 'static {
 
     // ---- Users / sessions ----------------------------------------------
     async fn get_user(&self, id: UserId) -> StorageResult<Option<User>>;
-    async fn get_user_by_name(&self, name: &str) -> StorageResult<Option<User>>;
+    async fn get_user_by_username(&self, username: &str) -> StorageResult<Option<User>>;
     async fn upsert_user(&self, user: &User) -> StorageResult<()>;
     /// Inserts `user` only if no user row exists, atomically with that
     /// check, so concurrent first-run setups admit exactly one
@@ -223,6 +223,18 @@ pub trait Storage: Send + Sync + 'static {
     /// role, else [`StorageError::InvalidInput`]; a duplicate name or id
     /// cannot occur on an empty table.
     async fn create_initial_admin(&self, user: &User) -> StorageResult<bool>;
+    /// Replaces the user's picture, a JPEG, and sets their
+    /// [`User::avatar_updated_at`] to `at`. [`Self::upsert_user`] leaves both alone.
+    async fn set_user_avatar(
+        &self,
+        user: UserId,
+        image: &[u8],
+        at: OffsetDateTime,
+    ) -> StorageResult<()>;
+    /// The bytes given to [`Self::set_user_avatar`]; `None` without a picture.
+    async fn user_avatar(&self, user: UserId) -> StorageResult<Option<Vec<u8>>>;
+    /// Whether there was a picture to remove.
+    async fn delete_user_avatar(&self, user: UserId) -> StorageResult<bool>;
     async fn delete_user(&self, id: UserId) -> StorageResult<()>;
     async fn list_users(&self) -> StorageResult<Vec<User>>;
 

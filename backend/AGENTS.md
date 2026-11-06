@@ -98,6 +98,11 @@ Don't break these without an architecture discussion in the PR description.
 - **Unwanted copies are swept up, not just evicted.** A finished copy no plan has wanted for a day (`SWEEP_AFTER`, `unwanted_since`) and nobody's played in that time goes at the next plan, whatever room is left. Being planned clears the clock, so a prediction flickering doesn't remake a title.
 - A vector index belongs to one model. Anything that changes a model's output changes its namespace, and the sweep reindexes; old vectors are pruned only once the new index is complete.
 
+### Users
+
+- **`User.name` is for showing, `User.username` for signing in.** `name` falls back to `username`, so show `name` everywhere except where someone needs the credential or has to tell two people apart: admin lists show both, as anyone can choose any name. Key on `id`; a username can change.
+- **`setProfilePicture` re-encodes to a 512 px JPEG**, for size and so nothing but pixels survives. The bytes live in `user_avatars`, apart from `users`, which every request reads.
+
 ### Plugins
 
 - **Plugins are WASM components.** First-party providers (TMDb, TVDB, MusicBrainz) ship as `.wasm` too; the server has no native `MetadataProvider`, so first-party code exercises the plugin ABI on every startup.

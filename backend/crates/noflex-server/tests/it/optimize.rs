@@ -120,11 +120,13 @@ async fn fixture(source: &Path, dir: std::path::PathBuf) -> Fixture {
     let now = OffsetDateTime::now_utc();
     let user = User {
         id: UserId::new(),
-        name: "viewer".to_string(),
+        username: "viewer".to_string(),
+        display_name: None,
         password_hash: "argon2id$placeholder".to_string(),
         is_admin: true,
         role: noflex_core::UserRole::Admin,
         created_at: now,
+        avatar_updated_at: None,
     };
     store.upsert_user(&user).await.expect("user");
     let library = Library {

@@ -1239,11 +1239,13 @@ fn make_user(name: &str, is_admin: bool) -> User {
     };
     User {
         id: UserId::new(),
-        name: name.to_string(),
+        username: name.to_string(),
+        display_name: None,
         password_hash: "argon2id$placeholder".to_string(),
         is_admin,
         role,
         created_at: now,
+        avatar_updated_at: None,
     }
 }
 
@@ -1278,12 +1280,12 @@ async fn user_round_trip<S: Storage + ?Sized>(store: &S) {
         .await
         .expect("get by id")
         .expect("user present");
-    assert_eq!(by_id.name, "alice");
+    assert_eq!(by_id.username, "alice");
     assert!(by_id.is_admin);
     assert_eq!(by_id.password_hash, u.password_hash);
 
     let by_name = store
-        .get_user_by_name("alice")
+        .get_user_by_username("alice")
         .await
         .expect("get by name")
         .expect("named user present");
@@ -1294,6 +1296,52 @@ async fn user_round_trip<S: Storage + ?Sized>(store: &S) {
         all.iter().any(|x| x.id == u.id),
         "user must appear in list_users"
     );
+
+    let mut named = by_id.clone();
+    named.display_name = Some("Alice A".into());
+    store.upsert_user(&named).await.expect("name");
+    let renamed = store.get_user(u.id).await.expect("get").expect("user");
+    assert_eq!(renamed.username, "alice");
+    assert_eq!(renamed.shown_name(), "Alice A");
+
+    // A picture is apart from the row, so saving a copy read earlier keeps it.
+    let at = OffsetDateTime::now_utc();
+    assert_eq!(store.user_avatar(u.id).await.expect("none"), None);
+    store
+        .set_user_avatar(u.id, b"first", at)
+        .await
+        .expect("avatar");
+    store
+        .set_user_avatar(u.id, b"second", at)
+        .await
+        .expect("replace");
+    store.upsert_user(&named).await.expect("upsert");
+    let pictured = store.get_user(u.id).await.expect("get").expect("user");
+    assert_eq!(
+        pictured
+            .avatar_updated_at
+            .map(OffsetDateTime::unix_timestamp),
+        Some(at.unix_timestamp())
+    );
+    assert_eq!(
+        store.user_avatar(u.id).await.expect("avatar").as_deref(),
+        Some(&b"second"[..])
+    );
+    assert!(store.delete_user_avatar(u.id).await.expect("remove"));
+    assert!(!store.delete_user_avatar(u.id).await.expect("again"));
+    assert!(
+        store
+            .get_user(u.id)
+            .await
+            .expect("get")
+            .expect("user")
+            .avatar_updated_at
+            .is_none()
+    );
+    store
+        .set_user_avatar(u.id, b"third", at)
+        .await
+        .expect("avatar");
 
     // Non-admin variant to ensure the boolean is preserved.
     let bob = make_user("bob", false);
@@ -1307,9 +1355,10 @@ async fn user_round_trip<S: Storage + ?Sized>(store: &S) {
 
     store.delete_user(u.id).await.ok();
     store.delete_user(bob.id).await.ok();
+    assert_eq!(store.user_avatar(u.id).await.expect("gone"), None);
 }
 
-/// The `users.name` UNIQUE constraint is the only thing preventing two
+/// The `users.username` UNIQUE constraint is the only thing preventing two
 /// admins from existing under the same login. Re-upserting under the
 /// SAME id is allowed (UPSERT path); creating a SECOND user with a
 /// colliding name must fail.

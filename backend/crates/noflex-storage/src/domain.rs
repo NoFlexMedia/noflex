@@ -130,6 +130,14 @@ pub trait MediaUrlSigner: Send + Sync {
         session: Option<SessionId>,
         channel: ChannelId,
     ) -> Result<String, String>;
+    /// Token for a user's picture, deterministic like
+    /// [`MediaUrlSigner::sign_image_token`].
+    fn sign_avatar_token(
+        &self,
+        user: UserId,
+        session: Option<SessionId>,
+        avatar_of: UserId,
+    ) -> Result<String, String>;
 }
 
 fn percent_encode(value: &str) -> String {
@@ -321,7 +329,11 @@ pub struct MediaFile {
 #[graphql(complex)]
 pub struct User {
     pub id: UserId,
-    pub name: String,
+    /// What they sign in with. Unique, and changeable, so nothing else keys on it.
+    pub username: String,
+    /// The name they've chosen. Read through `name`, which covers not having one.
+    #[graphql(skip)]
+    pub display_name: Option<String>,
     /// Argon2id-hashed password. Empty string for OIDC/LDAP-only users.
     /// Never leaves the server — skipped on the GQL surface.
     #[graphql(skip)]
@@ -329,9 +341,39 @@ pub struct User {
     pub is_admin: bool,
     pub role: noflex_core::UserRole,
     pub created_at: OffsetDateTime,
+    /// When their picture last changed; `None` without one. Written only through
+    /// [`Storage::set_user_avatar`](crate::Storage::set_user_avatar).
+    #[graphql(skip)]
+    pub avatar_updated_at: Option<OffsetDateTime>,
 }
 
 impl User {
+    /// What to call them: their chosen name, or their username without one.
+    pub fn shown_name(&self) -> &str {
+        self.display_name.as_deref().unwrap_or(&self.username)
+    }
+
+    fn signed_avatar_url(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Option<String>> {
+        let Some(at) = self.avatar_updated_at else {
+            return Ok(None);
+        };
+        let path = format!("/avatars/{}?v={}", self.id, at.unix_timestamp());
+        let Some(signer) = ctx.data_opt::<std::sync::Arc<dyn MediaUrlSigner>>() else {
+            return Ok(Some(path));
+        };
+        let token = signer
+            .sign_avatar_token(
+                crate::access::request_user(ctx)?.user_id,
+                crate::access::caller_session(ctx),
+                self.id,
+            )
+            .map_err(async_graphql::Error::new)?;
+        Ok(Some(format!("{path}&token={}", percent_encode(&token))))
+    }
+
     pub fn has_role(&self, role: noflex_core::UserRole) -> bool {
         self.role == role
     }
@@ -829,8 +871,7 @@ impl OptimizedVersion {
 /// names that, not the episode the version is of.
 #[derive(Debug, Clone, SimpleObject)]
 pub struct OptimizedVersionMark {
-    pub user_id: UserId,
-    pub user_name: String,
+    pub user: User,
     pub work: Work,
     /// The one device it's for. Null is all of the viewer's with it on.
     pub device: Option<Device>,
@@ -852,8 +893,7 @@ pub enum OptimizedReason {
 /// One device a version was prepared for.
 #[derive(Debug, Clone, SimpleObject)]
 pub struct OptimizedTarget {
-    pub user_id: UserId,
-    pub user_name: String,
+    pub user: User,
     /// Null for a viewer who marked it with no device to reach.
     pub device: Option<Device>,
     pub reason: OptimizedReason,
@@ -900,22 +940,20 @@ impl OptimizedVersion {
                 OptimizedReason::Earlier
             };
             targets.push(OptimizedTarget {
-                user_id: user.id,
-                user_name: user.name,
+                user,
                 device: Some(device),
                 reason,
             });
         }
         for mark in &marks {
             if targets.iter().any(|target| {
-                target.user_id == mark.user_id && target.reason == OptimizedReason::Marked
+                target.user.id == mark.user_id && target.reason == OptimizedReason::Marked
             }) {
                 continue;
             }
             if let Some(user) = storage.get_user(mark.user_id).await? {
                 targets.push(OptimizedTarget {
-                    user_id: user.id,
-                    user_name: user.name,
+                    user,
                     device: None,
                     reason: OptimizedReason::Marked,
                 });
@@ -924,8 +962,9 @@ impl OptimizedVersion {
         targets.sort_by(|a, b| {
             let device =
                 |target: &OptimizedTarget| target.device.as_ref().map(|device| device.name.clone());
-            a.user_name
-                .cmp(&b.user_name)
+            a.user
+                .shown_name()
+                .cmp(b.user.shown_name())
                 .then_with(|| device(a).cmp(&device(b)))
         });
         Ok(targets)
@@ -951,8 +990,7 @@ impl OptimizedVersion {
                 None => None,
             };
             marks.push(OptimizedVersionMark {
-                user_id: user.id,
-                user_name: user.name,
+                user,
                 work,
                 device,
                 marked_at: mark.created_at,
@@ -2320,7 +2358,23 @@ impl WatchRoomMember {
             .get_user(self.user_id)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?
-            .map(|user| user.name))
+            .map(|user| user.shown_name().to_string()))
+    }
+
+    /// Their picture, as on [`User`]. Null without one, or if the account is gone.
+    async fn avatar_url(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Option<String>> {
+        crate::access::request_user(ctx)?;
+        let user = complex_storage(ctx)?
+            .get_user(self.user_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        match user {
+            Some(user) => user.signed_avatar_url(ctx),
+            None => Ok(None),
+        }
     }
 }
 
@@ -2353,6 +2407,21 @@ impl ExportJob {
 
 #[async_graphql::ComplexObject]
 impl User {
+    /// What to call them: the name they've chosen, or their username.
+    async fn name(&self) -> &str {
+        self.shown_name()
+    }
+
+    /// Their picture, 512 pixels square, relative to this server, and a new URL
+    /// when it changes. Carries a token as [`Image`]'s does, so `<img src>` works.
+    /// Null without one, for clients to fall back to `name`'s initials.
+    async fn avatar_url(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Option<String>> {
+        self.signed_avatar_url(ctx)
+    }
+
     /// Libraries this user has been explicitly granted, by id.
     /// Self-serve via `viewer { libraryAccess }`; admins get the same
     /// grants joined to full rows through `userLibraryAccess`.

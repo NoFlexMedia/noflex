@@ -279,9 +279,9 @@ async fn refresh_session_rejects_expired_token() {
     setup_admin(&schema).await;
 
     let admin = store
-        .get_user_by_name("admin")
+        .get_user_by_username("admin")
         .await
-        .expect("get_user_by_name")
+        .expect("get_user_by_username")
         .expect("admin present");
     let now = time::OffsetDateTime::now_utc();
     let session = noflex_storage::domain::Session {
@@ -429,7 +429,7 @@ async fn replayed_refresh_token_revokes_the_session() {
     let entry = &activity.items[0];
     assert_eq!(entry.subject.as_deref(), Some(sid.to_string().as_str()));
     let admin = store
-        .get_user_by_name("admin")
+        .get_user_by_username("admin")
         .await
         .expect("get admin")
         .expect("admin");
@@ -509,7 +509,7 @@ async fn refresh_fails_after_the_absolute_session_lifetime() {
     let (schema, jwt, store) = authed_schema().await;
     setup_admin(&schema).await;
     let admin = store
-        .get_user_by_name("admin")
+        .get_user_by_username("admin")
         .await
         .expect("get admin")
         .expect("admin");
@@ -548,7 +548,7 @@ async fn rotation_never_extends_past_the_absolute_lifetime() {
     let (schema, jwt, store) = authed_schema().await;
     setup_admin(&schema).await;
     let admin = store
-        .get_user_by_name("admin")
+        .get_user_by_username("admin")
         .await
         .expect("get admin")
         .expect("admin");

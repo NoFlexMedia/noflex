@@ -131,11 +131,13 @@ async fn read_for_user_paths() {
     storage
         .upsert_user(&noflex_storage::domain::User {
             id: user,
-            name: "linker".to_string(),
+            username: "linker".to_string(),
+            display_name: None,
             password_hash: String::new(),
             is_admin: false,
             role: noflex_core::UserRole::User,
             created_at: time::OffsetDateTime::now_utc(),
+            avatar_updated_at: None,
         })
         .await
         .expect("seed user");
@@ -147,11 +149,13 @@ async fn read_for_user_paths() {
     storage
         .upsert_user(&noflex_storage::domain::User {
             id: foreign_user,
-            name: "foreign".to_string(),
+            username: "foreign".to_string(),
+            display_name: None,
             password_hash: String::new(),
             is_admin: false,
             role: noflex_core::UserRole::User,
             created_at: time::OffsetDateTime::now_utc(),
+            avatar_updated_at: None,
         })
         .await
         .expect("seed foreign user");
@@ -217,11 +221,13 @@ async fn seeded_store(dir: &std::path::Path, users: &[UserId]) -> Arc<dyn Storag
         storage
             .upsert_user(&noflex_storage::domain::User {
                 id: *user,
-                name: format!("user-{i}"),
+                username: format!("user-{i}"),
+                display_name: None,
                 password_hash: String::new(),
                 is_admin: false,
                 role: noflex_core::UserRole::User,
                 created_at: time::OffsetDateTime::now_utc(),
+                avatar_updated_at: None,
             })
             .await
             .expect("seed user");

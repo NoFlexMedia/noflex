@@ -74,11 +74,13 @@ struct Fixture {
 fn user(name: &str, now: OffsetDateTime) -> User {
     User {
         id: UserId::new(),
-        name: name.into(),
+        username: name.into(),
+        display_name: None,
         password_hash: String::new(),
         is_admin: false,
         role: noflex_core::UserRole::User,
         created_at: now,
+        avatar_updated_at: None,
     }
 }
 

@@ -53,6 +53,11 @@ const _roles = [
 const _sessionPreview = 5;
 const _sessionPageSize = 20;
 
+/// Most recently seen first.
+List<_Session> _sessionsOf(GAdminData? data) =>
+    (data?.sessions.toList() ?? <_Session>[])
+      ..sort((a, b) => b.lastSeenAt.compareTo(a.lastSeenAt));
+
 bool _isActive(_Session session) =>
     DateTime.now().difference(session.lastSeenAt) < sessionActiveWindow;
 
@@ -84,23 +89,21 @@ class UsersSection extends StatelessWidget {
     if (saved == true) controller.admin.refetch();
   }
 
-  Future<bool> _revokeAll(String id, String name) async {
+  Future<void> _revokeAll(String id, String name) async {
     final confirmed = await confirmAction(
       title: 'Sign $name out everywhere?',
       message: 'Every device they’re using will need to sign in again.',
       confirmLabel: 'Sign out everywhere',
       danger: true,
     );
-    if (!confirmed) return false;
+    if (!confirmed) return;
     final done = await getIt<ToastService>().attempt(
       () => getIt<GraphqlService>().run(
         GRevokeUserSessionsReq((b) => b.vars.user = id),
       ),
       success: '$name signed out everywhere',
     );
-    if (done == null) return false;
-    controller.admin.refetch();
-    return true;
+    if (done != null) controller.admin.refetch();
   }
 
   Future<void> _remove(_User user) async {
@@ -120,7 +123,7 @@ class UsersSection extends StatelessWidget {
     if (done != null) controller.admin.refetch();
   }
 
-  Future<bool> _revokeSession(_Session session, String who) async {
+  Future<void> _revokeSession(_Session session, String who) async {
     final confirmed = await confirmAction(
       title:
           'Sign out ${(session.device?.isEmpty ?? true) ? 'this device' : session.device}?',
@@ -128,16 +131,14 @@ class UsersSection extends StatelessWidget {
       confirmLabel: 'Sign out device',
       danger: true,
     );
-    if (!confirmed) return false;
+    if (!confirmed) return;
     final done = await getIt<ToastService>().attempt(
       () => getIt<GraphqlService>().run(
         GRevokeSessionReq((b) => b.vars.id = session.id),
       ),
       success: 'Session revoked',
     );
-    if (done == null) return false;
-    controller.admin.refetch();
-    return true;
+    if (done != null) controller.admin.refetch();
   }
 
   Future<void> _menu(
@@ -214,8 +215,7 @@ class UsersSection extends StatelessWidget {
           }
           return a.name.compareTo(b.name);
         });
-      final sessions = data.sessions.toList()
-        ..sort((a, b) => b.lastSeenAt.compareTo(a.lastSeenAt));
+      final sessions = _sessionsOf(data);
       final names = {for (final user in users) user.id: user.name};
       final signedIn = <String, int>{};
       for (final session in sessions) {
@@ -319,6 +319,7 @@ class UsersSection extends StatelessWidget {
             ),
           ),
           _SessionsPanel(
+            controller: controller,
             sessions: sessions,
             names: names,
             onRefresh: controller.admin.refetch,
@@ -425,6 +426,7 @@ class _SessionRow extends StatelessWidget {
 
 class _SessionsPanel extends StatelessWidget {
   const _SessionsPanel({
+    required this.controller,
     required this.sessions,
     required this.names,
     required this.onRefresh,
@@ -432,11 +434,12 @@ class _SessionsPanel extends StatelessWidget {
     required this.onRevokeAll,
   });
 
+  final AdminController controller;
   final List<_Session> sessions;
   final Map<String, String> names;
   final VoidCallback onRefresh;
-  final Future<bool> Function(_Session, String) onRevoke;
-  final Future<bool> Function(String, String) onRevokeAll;
+  final Future<void> Function(_Session, String) onRevoke;
+  final Future<void> Function(String, String) onRevokeAll;
 
   String _owner(_Session session) => names[session.userId] ?? 'Deleted user';
 
@@ -481,8 +484,7 @@ class _SessionsPanel extends StatelessWidget {
                       onPressed: () => unawaited(
                         getIt<NavService>().openSheet<void>(
                           (context) => _AllSessionsSheet(
-                            sessions: sessions,
-                            names: names,
+                            controller: controller,
                             onRevoke: onRevoke,
                             onRevokeAll: onRevokeAll,
                           ),
@@ -501,16 +503,14 @@ enum _SessionFilter { all, active, idle }
 
 class _AllSessionsSheet extends StatefulWidget {
   const _AllSessionsSheet({
-    required this.sessions,
-    required this.names,
+    required this.controller,
     required this.onRevoke,
     required this.onRevokeAll,
   });
 
-  final List<_Session> sessions;
-  final Map<String, String> names;
-  final Future<bool> Function(_Session, String) onRevoke;
-  final Future<bool> Function(String, String) onRevokeAll;
+  final AdminController controller;
+  final Future<void> Function(_Session, String) onRevoke;
+  final Future<void> Function(String, String) onRevokeAll;
 
   @override
   State<_AllSessionsSheet> createState() => _AllSessionsSheetState();
@@ -522,8 +522,17 @@ class _AllSessionsSheetState extends State<_AllSessionsSheet> {
   final _show = signal(_SessionFilter.all);
   final _page = signal(0);
 
-  /// Signed out from here, so they leave the list without closing the sheet.
-  final _gone = signal<Set<String>>(const {});
+  // Read from the admin query, so a device signed out here leaves the list.
+  late final _sessions = computed(
+    () => _sessionsOf(widget.controller.admin.data.value),
+  );
+  late final _names = computed(() {
+    final data = widget.controller.admin.data.value;
+    return {
+      if (data != null)
+        for (final user in data.users) user.id: user.name,
+    };
+  });
 
   @override
   void dispose() {
@@ -532,7 +541,7 @@ class _AllSessionsSheetState extends State<_AllSessionsSheet> {
   }
 
   String _owner(_Session session) =>
-      widget.names[session.userId] ?? 'Deleted user';
+      _names.value[session.userId] ?? 'Deleted user';
 
   @override
   Widget build(BuildContext context) {
@@ -591,14 +600,12 @@ class _AllSessionsSheetState extends State<_AllSessionsSheet> {
             page: page,
             pageSize: _sessionPageSize,
           );
-          final remaining = widget.sessions
-              .where((session) => !_gone.value.contains(session.id))
-              .toList();
+          final sessions = _sessions.value;
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                '${remaining.length} signed in · ${remaining.where(_isActive).length} active now',
+                '${sessions.length} signed in · ${sessions.where(_isActive).length} active now',
                 style: NfType.small,
               ),
               const SizedBox(height: 12),
@@ -646,7 +653,7 @@ class _AllSessionsSheetState extends State<_AllSessionsSheet> {
                                 children: [
                                   TextSpan(
                                     text:
-                                        '${widget.names[group.userId] ?? 'Deleted user'}  ',
+                                        '${_names.value[group.userId] ?? 'Deleted user'}  ',
                                     style: nfText(14.5, weight: 650),
                                   ),
                                   TextSpan(
@@ -657,7 +664,7 @@ class _AllSessionsSheetState extends State<_AllSessionsSheet> {
                               ),
                             ),
                           ),
-                          if (widget.names.containsKey(group.userId))
+                          if (_names.value.containsKey(group.userId))
                             NfButton(
                               label: 'Sign out everywhere',
                               style: NfButtonStyle.ghost,
@@ -698,11 +705,9 @@ class _AllSessionsSheetState extends State<_AllSessionsSheet> {
         .where((word) => word.isNotEmpty)
         .toList();
     final show = _show.value;
-    final gone = _gone.value;
     return [
-      for (final session in widget.sessions)
-        if (!gone.contains(session.id) &&
-            (show == _SessionFilter.all ||
+      for (final session in _sessions.value)
+        if ((show == _SessionFilter.all ||
                 _isActive(session) == (show == _SessionFilter.active)) &&
             words.every(
               '${_owner(session)} ${_device(session)} ${session.client ?? ''} ${session.remoteAddr ?? ''}'
@@ -713,24 +718,11 @@ class _AllSessionsSheetState extends State<_AllSessionsSheet> {
     ];
   }
 
-  Future<void> _revoke(_Session session) async {
-    final done = await widget.onRevoke(session, _owner(session));
-    if (done && mounted) _gone.value = {..._gone.value, session.id};
-  }
+  Future<void> _revoke(_Session session) =>
+      widget.onRevoke(session, _owner(session));
 
-  Future<void> _revokeAll(String userId) async {
-    final done = await widget.onRevokeAll(
-      userId,
-      widget.names[userId] ?? 'Deleted user',
-    );
-    if (done && mounted) {
-      _gone.value = {
-        ..._gone.value,
-        for (final session in widget.sessions)
-          if (session.userId == userId) session.id,
-      };
-    }
-  }
+  Future<void> _revokeAll(String userId) =>
+      widget.onRevokeAll(userId, _names.value[userId] ?? 'Deleted user');
 }
 
 class _NewUserSheet extends StatefulWidget {

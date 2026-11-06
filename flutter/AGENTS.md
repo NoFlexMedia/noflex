@@ -87,6 +87,7 @@ Ferry, against `lib/graphql/schema.graphql`, a symlink to `backend/crates/noflex
 
 - **One operation per file, one fragment per file.** Ferry sends the whole generated document with every request, so a file holding several operations gets refused as too complex, and imported fragments the operation doesn't use fail validation. Import with `#import 'fragments/work_card.graphql'`.
 - Reads that drive a screen use `Query` (signals, cache then network). One-shot reads and mutations use `GraphqlService.run`, which throws `ApiError`, `ServerUnreachable` or `SessionExpired`. Requests that must not answer from cache set `FetchPolicy.NetworkOnly`.
+- Ferry has nothing like Houdini's `@Type_delete`, so a removal ends in `Query.refetch`. A sheet draws from the `Query` rather than a copy of its rows, so it follows along.
 - Ferry calls a response carrying only GraphQL errors "loading". `run` and `Query` account for that; anything new reading a response directly must too.
 - A server refusing a non-null field leaves it out of the data, and Ferry would turn that into a deserialization failure. `refusalOf`, in a link outside auth, raises the real error first, so "invalid username or password" doesn't read as an unreachable server.
 - Map generated types to `WorkSummary` where they arrive. Generated classes differ per operation and can't hold a linked server or sit in the offline manifest.

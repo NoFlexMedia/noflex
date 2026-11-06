@@ -20,6 +20,10 @@ interface Entry { href: string; label: string; icon: IconName }
 const LIBRARY_ICON: Record<string, IconName> = Object.fromEntries(CATEGORIES.map((category) => [category.value, category.icon]));
 
 const ITEM = 72;
+const SOLID = NAV_WIDTH / (NAV_WIDTH + NAV_FADE);
+// Eased at both ends: a straight ramp from solid draws a line where it starts.
+const FADE_COLORS = [color.bg, color.bg, 0x07080bb8, 0x07080b48, 0x07080b00];
+const FADE_STOPS = [0, SOLID, SOLID + (1 - SOLID) * 0.3, SOLID + (1 - SOLID) * 0.7, 1];
 
 function isActive(pathname: string, href: string): boolean {
   return href === "/" ? pathname === "/" : pathname.indexOf(href) === 0;
@@ -76,7 +80,7 @@ export default function Nav(props: NodeProps & { onPicked: () => void }) {
       forwardFocus={0}
       transition={{ width: motion.out }}
       onFocusChanged={setOpen}
-      linearGradient={gradient(open() ? [0x0c0e12ff, 0x0c0e12ff] : [0x07080bff, 0x07080bf2, 0x07080b00], toward.right, open() ? [0, 1] : [0, 0.78, 1])}
+      linearGradient={open() ? gradient([color.bgRaised, color.bgRaised], toward.right) : gradient(FADE_COLORS, toward.right, FADE_STOPS)}
     >
       <Column x={20} y={132} width={NAV_OPEN_WIDTH - 40} height={SCREEN.height - 240} gap={6} scroll="none">
         <For each={entries()}>

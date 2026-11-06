@@ -42,7 +42,7 @@ export default function Search() {
   }, { defer: true }));
 
   return (
-    <view x={PAGE_X} width={PAGE_WIDTH} height={SCREEN.height} clipping forwardFocus={2}>
+    <view x={PAGE_X} width={PAGE_WIDTH} height={SCREEN.height} forwardFocus={2}>
       <view y={56} width={KEYBOARD_WIDTH} height={88} borderRadius={radius.m} color={color.surface2} skipFocus>
         <Icon name="magnifying-glass" size={36} x={26} y={26} color={color.text3} />
         <text x={80} width={KEYBOARD_WIDTH - 104} height={88} lineHeight={88} contain="both" maxLines={1} fontSize={type.lead} color={text() ? color.text : color.text3}>{text() || "Search titles, people, moods"}</text>

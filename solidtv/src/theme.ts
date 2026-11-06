@@ -59,12 +59,12 @@ export const NAV_OPEN_WIDTH = 400;
 export const GUTTER = 64;
 /** The nav's fade past its own width, so what scrolls under it dissolves rather than cuts off. */
 export const NAV_FADE = 28;
-/** Clear of the fade by more than a focused card grows. */
-export const PAGE_X = NAV_WIDTH + NAV_FADE + 20;
+/** Clear of the fade by more than a focused wide card reaches: its ring, grown, at the spring's peak (24). */
+export const PAGE_X = NAV_WIDTH + NAV_FADE + 28;
 export const PAGE_WIDTH = SCREEN.width - PAGE_X;
 
 /** Which way a gradient's colors run, first to last. */
-export const toward = { down: 0, up: Math.PI, right: Math.PI / 2 } as const;
+export const toward = { down: 0, up: Math.PI, right: -Math.PI / 2 } as const;
 
 /** A linear gradient's shader props, its colors evenly spread unless given stops. */
 export function gradient(colors: number[], angle: number, stops?: number[]) {

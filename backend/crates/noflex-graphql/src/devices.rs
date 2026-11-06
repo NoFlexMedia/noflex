@@ -4,12 +4,15 @@
 
 use std::sync::Arc;
 
-use async_graphql::{Context, ErrorExtensions, Json, Object, SimpleObject};
-use noflex_core::{DeviceId, MediaFileId, TonemapCurve, VideoCodec};
+use async_graphql::{Context, ErrorExtensions, Json, Object, SimpleObject, connection::Connection};
+use noflex_core::{DeviceId, MediaFileId, OptimizedVersionId, TonemapCurve, VideoCodec};
 use noflex_plugin_host::PluginRegistry;
 use noflex_storage::{
     RequestUser, Storage,
-    domain::{Device, OptimizedVersion, OptimizedVersionStatus, SmartTranscodingSettings, Work},
+    domain::{
+        Device, OptimizedVersion, OptimizedVersionStats, OptimizedVersionStatus,
+        SmartTranscodingSettings, Work,
+    },
     error::StorageError,
 };
 use noflex_transcoder::ClientCapabilities;
@@ -157,49 +160,91 @@ impl DevicesQuery {
         smart_transcoding(ctx).await
     }
 
-    /// Every optimized version the server knows about, in or out of the queue.
-    /// Administrator only.
+    /// Optimized versions, what needs a look first and then the newest. `first`
+    /// defaults to 25, max 100. Administrator only.
+    #[graphql(complexity = "crate::paging::cost(first, 25, 100, child_complexity)")]
     async fn optimized_versions(
         &self,
         ctx: &Context<'_>,
-    ) -> async_graphql::Result<Vec<OptimizedVersion>> {
+        first: Option<i32>,
+        after: Option<String>,
+    ) -> async_graphql::Result<Connection<String, OptimizedVersion>> {
+        access::require_admin(ctx)?;
+        let window = crate::paging::Window::new(first, after, 25, 100)?;
+        let resumed = window.after.is_some();
+        let page = storage(ctx)?
+            .optimized_versions_page(None, window.first, window.after)
+            .await
+            .map_err(gql_err)?;
+        Ok(crate::paging::from_item_page(page, resumed))
+    }
+
+    /// One version, for looking closer. Administrator only.
+    async fn optimized_version(
+        &self,
+        ctx: &Context<'_>,
+        id: OptimizedVersionId,
+    ) -> async_graphql::Result<Option<OptimizedVersion>> {
         access::require_admin(ctx)?;
         storage(ctx)?
-            .list_optimized_versions()
+            .get_optimized_version(id)
+            .await
+            .map_err(gql_err)
+    }
+
+    /// How many versions there are of each kind. Administrator only.
+    async fn optimized_version_stats(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<OptimizedVersionStats> {
+        access::require_admin(ctx)?;
+        storage(ctx)?
+            .optimized_version_stats()
             .await
             .map_err(gql_err)
     }
 
     /// What's ready to play on this server of the titles the caller can see,
-    /// the newest first. A version serves any device that can play it, whoever
-    /// or whatever asked for it.
+    /// the newest 50. A version serves any device that can play it, whoever or
+    /// whatever asked for it.
     async fn prepared_versions(
         &self,
         ctx: &Context<'_>,
     ) -> async_graphql::Result<Vec<OptimizedVersion>> {
+        const SHOWN: usize = 50;
+        const WALK: u32 = 100;
         let storage = storage(ctx)?;
         let user = access::request_user(ctx)?;
         let mut prepared = Vec::new();
-        for version in storage.list_optimized_versions().await.map_err(gql_err)? {
-            if version.status != OptimizedVersionStatus::Ready {
-                continue;
-            }
-            let Some(work) = version
-                .source_work(storage.as_ref())
+        let mut after = None;
+        loop {
+            let page = storage
+                .optimized_versions_page(Some(OptimizedVersionStatus::Ready), WALK, after)
                 .await
-                .map_err(gql_err)?
-            else {
-                continue;
-            };
-            if noflex_storage::access::user_can_access_work(storage.as_ref(), user, work.id)
-                .await
-                .map_err(gql_err)?
-            {
-                prepared.push(version);
+                .map_err(gql_err)?;
+            for version in page.items {
+                let Some(work) = version
+                    .source_work(storage.as_ref())
+                    .await
+                    .map_err(gql_err)?
+                else {
+                    continue;
+                };
+                if noflex_storage::access::user_can_access_work(storage.as_ref(), user, work.id)
+                    .await
+                    .map_err(gql_err)?
+                {
+                    prepared.push(version);
+                    if prepared.len() == SHOWN {
+                        return Ok(prepared);
+                    }
+                }
             }
+            if !page.has_next {
+                return Ok(prepared);
+            }
+            after = page.end_cursor;
         }
-        prepared.sort_by_key(|version| std::cmp::Reverse(version.finished_at));
-        Ok(prepared)
     }
 
     /// What the caller's device should hold, most important first and within
@@ -444,6 +489,58 @@ impl DevicesMutation {
             .await
             .map_err(gql_err)?;
         tonemap_curve(ctx).await
+    }
+
+    /// Remove a prepared copy, or stop one being prepared, and free its disk. It's
+    /// prepared again if something still wants it: its `marks` can be taken back
+    /// first with `unmarkViewerForSmartTranscoding`. Administrator only.
+    async fn remove_optimized_version(
+        &self,
+        ctx: &Context<'_>,
+        id: OptimizedVersionId,
+    ) -> async_graphql::Result<bool> {
+        access::require_admin(ctx)?;
+        let storage = storage(ctx)?;
+        let Some(version) = storage.get_optimized_version(id).await.map_err(gql_err)? else {
+            return Ok(false);
+        };
+        // Here and not left to the worker's orphan sweep, which only looks in the
+        // current folder: a version can outlive a change of folder.
+        if let Some(path) = &version.path
+            && let Err(error) = tokio::fs::remove_file(path).await
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(%error, version = %id, "optimized file not removed");
+        }
+        storage
+            .delete_optimized_version(id)
+            .await
+            .map_err(gql_err)?;
+        // A running job finds its row gone and stops.
+        if let Some(wake) = ctx.data_opt::<Arc<tokio::sync::Notify>>() {
+            wake.notify_one();
+        }
+        Ok(true)
+    }
+
+    /// Take back a viewer's mark, for an administrator clearing what keeps a
+    /// version wanted. `deviceId` names the mark as it was made. Administrator only.
+    async fn unmark_viewer_for_smart_transcoding(
+        &self,
+        ctx: &Context<'_>,
+        user_id: noflex_core::UserId,
+        work_id: noflex_core::WorkId,
+        device_id: Option<DeviceId>,
+    ) -> async_graphql::Result<bool> {
+        access::require_admin(ctx)?;
+        storage(ctx)?
+            .remove_smart_transcode_mark(user_id, work_id, device_id)
+            .await
+            .map_err(gql_err)?;
+        if let Some(wake) = ctx.data_opt::<Arc<tokio::sync::Notify>>() {
+            wake.notify_one();
+        }
+        Ok(true)
     }
 
     /// Set where smart transcoding writes and how much it may use. Null leaves

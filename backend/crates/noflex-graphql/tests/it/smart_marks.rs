@@ -16,7 +16,7 @@ use noflex_storage::{
     RequestUser, Storage,
     domain::{
         Device, Edition, Library, LibraryKind, MediaFile, OptimizedVersion, OptimizedVersionStatus,
-        User, Work,
+        SmartTranscodeMark, SmartTranscodeOutcome, User, Work,
     },
 };
 use noflex_storage_turso::TursoStore;
@@ -142,6 +142,28 @@ async fn run(fixture: &Fixture, as_user: &User, query: String) -> async_graphql:
             .data(RequestUser {
                 user_id: as_user.id,
                 is_admin: false,
+            }),
+    )
+    .await
+}
+
+async fn run_as_admin(fixture: &Fixture, query: String) -> async_graphql::Response {
+    let admin = fixture.viewer.id;
+    build_schema(SchemaContext {
+        storage: Some(fixture.storage.clone()),
+        smart_transcode_wake: Some(fixture.wake.clone()),
+        ..Default::default()
+    })
+    .execute(
+        Request::new(query)
+            .data(Principal {
+                user_id: admin,
+                is_admin: true,
+                session_id: None,
+            })
+            .data(RequestUser {
+                user_id: admin,
+                is_admin: true,
             }),
     )
     .await
@@ -422,4 +444,187 @@ async fn prepared_versions_list_ready_titles_a_viewer_can_see() {
     assert!(hidden.errors.is_empty(), "{:?}", hidden.errors);
     let hidden = hidden.data.into_json().expect("json");
     assert_eq!(hidden["preparedVersions"], serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn an_administrator_sees_who_a_version_is_for_and_can_clear_it() {
+    let fixture = fixture().await;
+    let now = OffsetDateTime::now_utc();
+    let edition = Edition {
+        id: EditionId::new(),
+        work_id: fixture.film,
+        name: "Theatrical".into(),
+        runtime_ms: None,
+        intro_start_ms: None,
+        intro_end_ms: None,
+        credits_start_ms: None,
+        chapters: vec![],
+    };
+    fixture
+        .storage
+        .upsert_edition(&edition)
+        .await
+        .expect("edition");
+    let media = MediaFile {
+        id: MediaFileId::new(),
+        edition_id: edition.id,
+        path: "/srv/films/film.mkv".into(),
+        part_index: 0,
+        size_bytes: 1_000,
+        mtime: now,
+        container: Some("matroska".into()),
+        probe: Json(serde_json::json!({})),
+        subtitle_tracks: vec![],
+    };
+    fixture
+        .storage
+        .upsert_media_file(&media)
+        .await
+        .expect("media");
+    // Two viewers: one has marked it for one of two devices, the other's is predicted.
+    let (tv, phone) = (
+        device_of(&fixture, &fixture.viewer).await,
+        device_of(&fixture, &fixture.viewer).await,
+    );
+    let other = device_of(&fixture, &fixture.stranger).await;
+    let mut predicted = fixture
+        .storage
+        .get_device(other)
+        .await
+        .expect("get")
+        .expect("device");
+    predicted.smart_transcode = true;
+    fixture
+        .storage
+        .upsert_device(&predicted)
+        .await
+        .expect("device");
+    let version = OptimizedVersion {
+        id: OptimizedVersionId::new(),
+        media_file_id: media.id,
+        variant_key: "copy-h264/aac2".into(),
+        status: OptimizedVersionStatus::Queued,
+        priority: 0,
+        plan: serde_json::json!({ "devices": [tv, phone, other] }),
+        source_size: 1_000,
+        source_mtime: now,
+        progress: 0.0,
+        attempts: 0,
+        path: None,
+        size_bytes: None,
+        index: None,
+        probe: None,
+        error: None,
+        created_at: now,
+        finished_at: None,
+        last_used_at: None,
+    };
+    fixture
+        .storage
+        .enqueue_optimized_version(&version)
+        .await
+        .expect("enqueue");
+    let mark = fixture
+        .storage
+        .add_smart_transcode_mark(&SmartTranscodeMark {
+            user_id: fixture.viewer.id,
+            work_id: fixture.film,
+            device_id: Some(tv),
+            created_at: now,
+            outcome: None,
+            media_file_ids: vec![],
+        })
+        .await
+        .expect("mark");
+    fixture
+        .storage
+        .record_smart_transcode_plan(&mark, SmartTranscodeOutcome::Planned, &[media.id])
+        .await
+        .expect("plan");
+
+    let detail = format!(
+        r#"{{ optimizedVersion(id: "{}") {{
+            targets {{ userName reason device {{ id }} }}
+            marks {{ userName device {{ id }} work {{ title }} }}
+        }} }}"#,
+        version.id
+    );
+    let denied = run(&fixture, &fixture.viewer, detail.clone()).await;
+    assert!(!denied.errors.is_empty(), "administrators only");
+
+    let seen = run_as_admin(&fixture, detail).await;
+    assert!(seen.errors.is_empty(), "{:?}", seen.errors);
+    let seen = seen.data.into_json().expect("json");
+    let targets = &seen["optimizedVersion"]["targets"];
+    let reason_of = |device: DeviceId| {
+        targets
+            .as_array()
+            .expect("targets")
+            .iter()
+            .find(|target| target["device"]["id"] == device.to_string())
+            .map(|target| (target["userName"].clone(), target["reason"].clone()))
+            .expect("target")
+    };
+    assert_eq!(
+        reason_of(tv),
+        (serde_json::json!("viewer"), serde_json::json!("MARKED"))
+    );
+    assert_eq!(
+        reason_of(phone),
+        (serde_json::json!("viewer"), serde_json::json!("EARLIER"))
+    );
+    assert_eq!(
+        reason_of(other),
+        (
+            serde_json::json!("stranger"),
+            serde_json::json!("PREDICTED")
+        )
+    );
+    assert_eq!(seen["optimizedVersion"]["marks"][0]["userName"], "viewer");
+    assert_eq!(
+        seen["optimizedVersion"]["marks"][0]["work"]["title"],
+        "Film"
+    );
+
+    let unmark = format!(
+        r#"mutation {{ unmarkViewerForSmartTranscoding(userId: "{}", workId: "{}", deviceId: "{tv}") }}"#,
+        fixture.viewer.id, fixture.film
+    );
+    assert!(
+        !run(&fixture, &fixture.stranger, unmark.clone())
+            .await
+            .errors
+            .is_empty()
+    );
+    let unmarked = run_as_admin(&fixture, unmark).await;
+    assert!(unmarked.errors.is_empty(), "{:?}", unmarked.errors);
+    assert!(
+        fixture
+            .storage
+            .list_smart_transcode_marks()
+            .await
+            .expect("marks")
+            .is_empty()
+    );
+
+    let remove = format!(
+        r#"mutation {{ removeOptimizedVersion(id: "{}") }}"#,
+        version.id
+    );
+    assert!(
+        !run(&fixture, &fixture.viewer, remove.clone())
+            .await
+            .errors
+            .is_empty()
+    );
+    let removed = run_as_admin(&fixture, remove).await;
+    assert!(removed.errors.is_empty(), "{:?}", removed.errors);
+    assert!(
+        fixture
+            .storage
+            .get_optimized_version(version.id)
+            .await
+            .expect("get")
+            .is_none()
+    );
 }

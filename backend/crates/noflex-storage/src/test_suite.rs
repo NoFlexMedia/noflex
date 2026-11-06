@@ -3598,6 +3598,47 @@ async fn optimized_versions_queue_by_priority<S: Storage + ?Sized>(store: &S) {
         .expect("version");
     assert_eq!(found.status, OptimizedVersionStatus::Ready);
     assert_eq!(found.priority, 0);
+
+    // Re-planning a finished version still says who it's for now.
+    let mut replanned = version("later", 5);
+    replanned.plan = serde_json::json!({"key": "later", "devices": ["someone"]});
+    store
+        .enqueue_optimized_version(&replanned)
+        .await
+        .expect("re-plan");
+    let found = store
+        .get_optimized_version(finished.id)
+        .await
+        .expect("get")
+        .expect("version");
+    assert_eq!(found.plan["devices"][0], "someone");
+
+    // Paged for showing: what needs a look first, and counted without reading them.
+    let first = store
+        .optimized_versions_page(None, 1, None)
+        .await
+        .expect("first page");
+    assert_eq!(
+        first.items[0].variant_key, "sooner",
+        "queued ahead of ready"
+    );
+    assert!(first.has_next);
+    let rest = store
+        .optimized_versions_page(None, 1, first.end_cursor)
+        .await
+        .expect("next page");
+    assert_eq!(rest.items[0].variant_key, "later");
+    assert!(!rest.has_next);
+    let ready = store
+        .optimized_versions_page(Some(OptimizedVersionStatus::Ready), 10, None)
+        .await
+        .expect("ready");
+    assert_eq!(ready.items.len(), 1);
+    let stats = store.optimized_version_stats().await.expect("stats");
+    assert_eq!(
+        (stats.ready, stats.queued, stats.ready_bytes),
+        (1, 1, 5_000_000_000)
+    );
     assert_eq!(found.size_bytes, Some(5_000_000_000));
     assert_eq!(found.index, Some(serde_json::json!({"tracks": []})));
     assert!(found.finished_at.is_some());

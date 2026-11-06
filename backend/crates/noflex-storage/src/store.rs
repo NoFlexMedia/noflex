@@ -19,12 +19,12 @@ use crate::{
         Edition, EmbeddingEndpoint, EmbeddingModel, EpgProgram, ExportFormat, ExportJob,
         ExportJobStatus, ExternalIdentity, HistoryPage, Image, ImageSource, ImageTarget,
         IntroMarkers, Invite, Library, LinkedServer, LiveTvChannel, LiveTvSource, MediaFile,
-        OptimizedVersion, PlaySession, Playlist, PluginOverrideRow, PluginTaskPayload,
-        PluginTaskState, Recording, RecordingSchedule, RecordingStatus, RefreshTokenLookup,
-        ScanEvent, Session, SmartTranscodeMark, SmartTranscodeOutcome, SmartTranscodingSettings,
-        Tag, TagAssignment, TagSummary, TrickplayAsset, User, UserData, UserPluginSecret,
-        UserPreference, UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork,
-        Work, WorkFeatures,
+        OptimizedVersion, OptimizedVersionStats, OptimizedVersionStatus, PlaySession, Playlist,
+        PluginOverrideRow, PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule,
+        RecordingStatus, RefreshTokenLookup, ScanEvent, Session, SmartTranscodeMark,
+        SmartTranscodeOutcome, SmartTranscodingSettings, Tag, TagAssignment, TagSummary,
+        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
+        WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork, Work, WorkFeatures,
     },
     error::StorageResult,
     query::{
@@ -529,6 +529,16 @@ pub trait Storage: Send + Sync + 'static {
         media: MediaFileId,
     ) -> StorageResult<Vec<OptimizedVersion>>;
     async fn list_optimized_versions(&self) -> StorageResult<Vec<OptimizedVersion>>;
+    /// One page for showing: what needs a look first (running, failed, queued,
+    /// ready), then the newest. Rows change places
+    /// as jobs finish, so a cursor is a position, not a keyset.
+    async fn optimized_versions_page(
+        &self,
+        status: Option<OptimizedVersionStatus>,
+        limit: u32,
+        after: Option<PageCursor>,
+    ) -> StorageResult<ItemPage<OptimizedVersion>>;
+    async fn optimized_version_stats(&self) -> StorageResult<OptimizedVersionStats>;
     /// Move the most urgent queued version to running and return it, counting
     /// the attempt. `None` when nothing is queued.
     async fn claim_optimized_version(&self) -> StorageResult<Option<OptimizedVersion>>;

@@ -1463,6 +1463,17 @@ type Mutation {
 	"""
 	setTonemapCurve(curve: TonemapCurve): TonemapCurve!
 	"""
+	Remove a prepared copy, or stop one being prepared, and free its disk. It's
+	prepared again if something still wants it: its `marks` can be taken back
+	first with `unmarkViewerForSmartTranscoding`. Administrator only.
+	"""
+	removeOptimizedVersion(id: ID!): Boolean!
+	"""
+	Take back a viewer's mark, for an administrator clearing what keeps a
+	version wanted. `deviceId` names the mark as it was made. Administrator only.
+	"""
+	unmarkViewerForSmartTranscoding(userId: ID!, workId: ID!, deviceId: ID): Boolean!
+	"""
 	Set where smart transcoding writes and how much it may use. Null leaves
 	a setting to the server's configuration. Versions already prepared stay
 	where they are and keep playing. Administrator only.
@@ -1820,6 +1831,38 @@ type NetworkTotals {
 }
 
 """
+Why a version exists for a device.
+"""
+enum OptimizedReason {
+	"""
+	The viewer marked the title, for this device or all of theirs.
+	"""
+	MARKED
+	"""
+	The device has smart transcoding or smart downloads on, and the server
+	expects it to be watched there.
+	"""
+	PREDICTED
+	"""
+	It was wanted when planned, and neither is true any more.
+	"""
+	EARLIER
+}
+
+"""
+One device a version was prepared for.
+"""
+type OptimizedTarget {
+	userId: ID!
+	userName: String!
+	"""
+	Null for a viewer who marked it with no device to reach.
+	"""
+	device: Device
+	reason: OptimizedReason!
+}
+
+"""
 A prepared copy of a media file, derived from it and never a media file
 itself. `plan`, `index` and `probe` are the transcoder's types, opaque here.
 """
@@ -1854,6 +1897,73 @@ type OptimizedVersion {
 	What was done to the source, in words.
 	"""
 	description: String!
+	"""
+	Who and which devices this was prepared for, and why. Administrator only.
+	"""
+	targets: [OptimizedTarget!]!
+	"""
+	Viewers' marks wanting this, which an administrator can take back.
+	Administrator only.
+	"""
+	marks: [OptimizedVersionMark!]!
+}
+
+type OptimizedVersionConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [OptimizedVersionEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [OptimizedVersion!]!
+}
+
+"""
+An edge in a connection.
+"""
+type OptimizedVersionEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: OptimizedVersion!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
+"""
+A viewer's mark that's keeping a version wanted. A mark on a series or season
+names that, not the episode the version is of.
+"""
+type OptimizedVersionMark {
+	userId: ID!
+	userName: String!
+	work: Work!
+	"""
+	The one device it's for. Null is all of the viewer's with it on.
+	"""
+	device: Device
+	markedAt: DateTime!
+}
+
+"""
+How many versions there are of each kind, without reading any of them.
+"""
+type OptimizedVersionStats {
+	ready: Int!
+	queued: Int!
+	running: Int!
+	failed: Int!
+	"""
+	Disk the ready ones use.
+	"""
+	readyBytes: Int!
 }
 
 """
@@ -2647,14 +2757,22 @@ type Query {
 	"""
 	smartTranscoding: SmartTranscoding!
 	"""
-	Every optimized version the server knows about, in or out of the queue.
-	Administrator only.
+	Optimized versions, what needs a look first and then the newest. `first`
+	defaults to 25, max 100. Administrator only.
 	"""
-	optimizedVersions: [OptimizedVersion!]!
+	optimizedVersions(first: Int, after: String): OptimizedVersionConnection!
+	"""
+	One version, for looking closer. Administrator only.
+	"""
+	optimizedVersion(id: ID!): OptimizedVersion
+	"""
+	How many versions there are of each kind. Administrator only.
+	"""
+	optimizedVersionStats: OptimizedVersionStats!
 	"""
 	What's ready to play on this server of the titles the caller can see,
-	the newest first. A version serves any device that can play it, whoever
-	or whatever asked for it.
+	the newest 50. A version serves any device that can play it, whoever or
+	whatever asked for it.
 	"""
 	preparedVersions: [OptimizedVersion!]!
 	"""

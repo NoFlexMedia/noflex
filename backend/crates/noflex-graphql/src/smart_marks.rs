@@ -86,13 +86,10 @@ async fn out_of_space(
         .unwrap_or(defaults.max_storage_gb)
         .saturating_mul(GIB);
     let used = storage
-        .list_optimized_versions()
+        .optimized_version_stats()
         .await
         .map_err(gql_err)?
-        .iter()
-        .filter(|version| version.status == OptimizedVersionStatus::Ready)
-        .map(|version| version.size_bytes.unwrap_or(0))
-        .sum::<u64>();
+        .ready_bytes;
     Ok(used >= quota)
 }
 

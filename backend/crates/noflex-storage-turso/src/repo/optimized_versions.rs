@@ -2,7 +2,10 @@
 
 use noflex_core::{MediaFileId, OptimizedVersionId, TonemapCurve};
 use noflex_storage::{
-    domain::{OptimizedVersion, OptimizedVersionStatus, SmartTranscodingSettings},
+    ItemPage, PageCursor,
+    domain::{
+        OptimizedVersion, OptimizedVersionStats, OptimizedVersionStatus, SmartTranscodingSettings,
+    },
     error::StorageResult,
 };
 use time::OffsetDateTime;
@@ -90,13 +93,16 @@ async fn select(
 }
 
 pub(crate) async fn enqueue(conn: &Connection, version: &OptimizedVersion) -> StorageResult<()> {
-    // Re-planning only moves a waiting job up or down the queue.
+    // Re-planning only moves a waiting job up or down the queue, but always says
+    // who it's for now. The key fixes the contents, so the rest of the plan can't
+    // differ from what a finished version was made from.
     conn.execute(
         "INSERT INTO optimized_versions (id, media_file_id, variant_key, status, priority, \
             plan_json, source_size, source_mtime, created_at) \
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) \
-         ON CONFLICT(media_file_id, variant_key) DO UPDATE SET priority = excluded.priority \
-         WHERE optimized_versions.status = 'queued'",
+         ON CONFLICT(media_file_id, variant_key) DO UPDATE SET plan_json = excluded.plan_json, \
+            priority = CASE WHEN optimized_versions.status = 'queued' \
+                THEN excluded.priority ELSE optimized_versions.priority END",
         vec![
             Value::Blob(uuid_to_blob(version.id.into_uuid())),
             Value::Blob(uuid_to_blob(version.media_file_id.into_uuid())),
@@ -142,6 +148,79 @@ pub(crate) async fn for_media(
 
 pub(crate) async fn list(conn: &Connection) -> StorageResult<Vec<OptimizedVersion>> {
     select(conn, "ORDER BY status, priority, created_at, id", vec![]).await
+}
+
+pub(crate) async fn page(
+    conn: &Connection,
+    status: Option<OptimizedVersionStatus>,
+    limit: u32,
+    after: Option<PageCursor>,
+) -> StorageResult<ItemPage<OptimizedVersion>> {
+    let offset = match &after {
+        None => 0,
+        Some(PageCursor(cursor)) => cursor
+            .parse::<u64>()
+            .map_err(|_| backend_msg("invalid cursor"))?,
+    };
+    let mut params = vec![
+        Value::Integer(i64::from(limit) + 1),
+        Value::Integer(offset as i64),
+    ];
+    let only = match status {
+        Some(status) => {
+            params.push(Value::Text(status_to_text(status).to_string()));
+            "AND status = ?3"
+        }
+        None => "",
+    };
+    let mut items = select(
+        conn,
+        &format!(
+            "WHERE TRUE {only} \
+             ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'failed' THEN 1 \
+                WHEN 'queued' THEN 2 ELSE 3 END, \
+                COALESCE(finished_at, created_at) DESC, id \
+             LIMIT ?1 OFFSET ?2"
+        ),
+        params,
+    )
+    .await?;
+    let has_next = items.len() > limit as usize;
+    items.truncate(limit as usize);
+    let item_cursors = (0..items.len() as u64)
+        .map(|index| PageCursor((offset + index + 1).to_string()))
+        .collect::<Vec<_>>();
+    Ok(ItemPage {
+        end_cursor: item_cursors.last().cloned(),
+        item_cursors,
+        items,
+        has_next,
+    })
+}
+
+pub(crate) async fn stats(conn: &Connection) -> StorageResult<OptimizedVersionStats> {
+    let mut rows = conn
+        .query(
+            "SELECT status, COUNT(*), COALESCE(SUM(size_bytes), 0) FROM optimized_versions \
+             GROUP BY status",
+            (),
+        )
+        .await
+        .map_err(map_turso)?;
+    let mut stats = OptimizedVersionStats::default();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        let count = col_int(&row.get_value(1).map_err(map_turso)?)? as u32;
+        match text_to_status(col_text(&row.get_value(0).map_err(map_turso)?)?)? {
+            OptimizedVersionStatus::Ready => {
+                stats.ready = count;
+                stats.ready_bytes = col_int(&row.get_value(2).map_err(map_turso)?)? as u64;
+            }
+            OptimizedVersionStatus::Queued => stats.queued = count,
+            OptimizedVersionStatus::Running => stats.running = count,
+            OptimizedVersionStatus::Failed => stats.failed = count,
+        }
+    }
+    Ok(stats)
 }
 
 pub(crate) async fn claim(conn: &Connection) -> StorageResult<Option<OptimizedVersion>> {

@@ -494,6 +494,15 @@ impl OptimizeWorker {
         self.remove_orphan_files(&known, &limits.dir).await
     }
 
+    /// Whether an administrator has removed this since it was claimed.
+    async fn removed(&self, version: &OptimizedVersion) -> anyhow::Result<bool> {
+        Ok(self
+            .storage
+            .get_optimized_version(version.id)
+            .await?
+            .is_none())
+    }
+
     async fn remove(&self, version: &OptimizedVersion) -> anyhow::Result<()> {
         if let Some(path) = &version.path
             && let Err(error) = tokio::fs::remove_file(path).await
@@ -556,14 +565,7 @@ impl OptimizeWorker {
     /// Returns whether there was one to run.
     pub async fn run_next(&self) -> anyhow::Result<bool> {
         let limits = self.limits().await?;
-        let used = self
-            .storage
-            .list_optimized_versions()
-            .await?
-            .iter()
-            .filter(|version| version.status == OptimizedVersionStatus::Ready)
-            .map(|version| version.size_bytes.unwrap_or(0))
-            .sum::<u64>();
+        let used = self.storage.optimized_version_stats().await?.ready_bytes;
         if used >= limits.quota_bytes {
             return Ok(false);
         }
@@ -681,6 +683,12 @@ impl OptimizeWorker {
                 },
                 status = child.wait() => break status?,
                 () = self.wake.notified() => {
+                    if self.removed(version).await? {
+                        child.kill().await?;
+                        tokio::fs::remove_file(raw).await.ok();
+                        self.wake.notify_one();
+                        return Ok(JobEnd::Dropped);
+                    }
                     // A mark changed. The plan touches no running job, so that's
                     // for here to act on.
                     let keep = match Box::pin(self.plan()).await {
@@ -787,6 +795,10 @@ impl OptimizeWorker {
         version.error = None;
         version.finished_at = Some(OffsetDateTime::now_utc());
         self.storage.update_optimized_version(version).await?;
+        // Removed in the moment it finished, so nothing else knows about this file.
+        if self.removed(version).await? {
+            tokio::fs::remove_file(&final_path).await.ok();
+        }
         Ok(())
     }
 }

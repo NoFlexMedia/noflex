@@ -791,9 +791,173 @@ impl OptimizedVersion {
     async fn description(&self) -> String {
         describe_variant(&self.variant_key)
     }
+
+    /// Who and which devices this was prepared for, and why. Administrator only.
+    #[graphql(complexity = 20)]
+    async fn targets(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Vec<OptimizedTarget>> {
+        if !crate::access::request_user(ctx)?.is_admin {
+            return Err(async_graphql::Error::new("administrator only"));
+        }
+        self.resolve_targets(complex_storage(ctx)?.as_ref())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))
+    }
+
+    /// Viewers' marks wanting this, which an administrator can take back.
+    /// Administrator only.
+    #[graphql(complexity = 20)]
+    async fn marks(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Vec<OptimizedVersionMark>> {
+        if !crate::access::request_user(ctx)?.is_admin {
+            return Err(async_graphql::Error::new("administrator only"));
+        }
+        self.resolve_marks(complex_storage(ctx)?.as_ref())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))
+    }
+}
+
+/// A viewer's mark that's keeping a version wanted. A mark on a series or season
+/// names that, not the episode the version is of.
+#[derive(Debug, Clone, SimpleObject)]
+pub struct OptimizedVersionMark {
+    pub user_id: UserId,
+    pub user_name: String,
+    pub work: Work,
+    /// The one device it's for. Null is all of the viewer's with it on.
+    pub device: Option<Device>,
+    pub marked_at: OffsetDateTime,
+}
+
+/// Why a version exists for a device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
+pub enum OptimizedReason {
+    /// The viewer marked the title, for this device or all of theirs.
+    Marked,
+    /// The device has smart transcoding or smart downloads on, and the server
+    /// expects it to be watched there.
+    Predicted,
+    /// It was wanted when planned, and neither is true any more.
+    Earlier,
+}
+
+/// One device a version was prepared for.
+#[derive(Debug, Clone, SimpleObject)]
+pub struct OptimizedTarget {
+    pub user_id: UserId,
+    pub user_name: String,
+    /// Null for a viewer who marked it with no device to reach.
+    pub device: Option<Device>,
+    pub reason: OptimizedReason,
 }
 
 impl OptimizedVersion {
+    /// The devices the plan names, each with why, and any viewer who marked it
+    /// without one. The plan is the transcoder's, so only its device ids are read.
+    async fn resolve_targets(
+        &self,
+        storage: &dyn crate::Storage,
+    ) -> crate::StorageResult<Vec<OptimizedTarget>> {
+        let marks = storage
+            .list_smart_transcode_marks()
+            .await?
+            .into_iter()
+            .filter(|mark| mark.media_file_ids.contains(&self.media_file_id))
+            .collect::<Vec<_>>();
+        let planned = self.plan["devices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|id| serde_json::from_value::<DeviceId>(id.clone()).ok());
+        let mut seen = std::collections::HashSet::new();
+        let mut targets = Vec::new();
+        for id in planned {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(device) = storage.get_device(id).await? else {
+                continue;
+            };
+            let Some(user) = storage.get_user(device.user_id).await? else {
+                continue;
+            };
+            let marked = marks.iter().any(|mark| {
+                mark.user_id == device.user_id && mark.device_id.is_none_or(|one| one == id)
+            });
+            let reason = if marked {
+                OptimizedReason::Marked
+            } else if device.smart_transcode || device.smart_downloads {
+                OptimizedReason::Predicted
+            } else {
+                OptimizedReason::Earlier
+            };
+            targets.push(OptimizedTarget {
+                user_id: user.id,
+                user_name: user.name,
+                device: Some(device),
+                reason,
+            });
+        }
+        for mark in &marks {
+            if targets.iter().any(|target| {
+                target.user_id == mark.user_id && target.reason == OptimizedReason::Marked
+            }) {
+                continue;
+            }
+            if let Some(user) = storage.get_user(mark.user_id).await? {
+                targets.push(OptimizedTarget {
+                    user_id: user.id,
+                    user_name: user.name,
+                    device: None,
+                    reason: OptimizedReason::Marked,
+                });
+            }
+        }
+        targets.sort_by(|a, b| {
+            let device =
+                |target: &OptimizedTarget| target.device.as_ref().map(|device| device.name.clone());
+            a.user_name
+                .cmp(&b.user_name)
+                .then_with(|| device(a).cmp(&device(b)))
+        });
+        Ok(targets)
+    }
+
+    async fn resolve_marks(
+        &self,
+        storage: &dyn crate::Storage,
+    ) -> crate::StorageResult<Vec<OptimizedVersionMark>> {
+        let mut marks = Vec::new();
+        for mark in storage.list_smart_transcode_marks().await? {
+            if !mark.media_file_ids.contains(&self.media_file_id) {
+                continue;
+            }
+            let (Some(user), Some(work)) = (
+                storage.get_user(mark.user_id).await?,
+                storage.get_work(mark.work_id).await?,
+            ) else {
+                continue;
+            };
+            let device = match mark.device_id {
+                Some(id) => storage.get_device(id).await?,
+                None => None,
+            };
+            marks.push(OptimizedVersionMark {
+                user_id: user.id,
+                user_name: user.name,
+                work,
+                device,
+                marked_at: mark.created_at,
+            });
+        }
+        Ok(marks)
+    }
+
     /// The title whose file this was made from.
     pub async fn source_work(
         &self,
@@ -856,6 +1020,17 @@ fn describe_variant(key: &str) -> String {
         Some(audio) => format!("Converted to {target} with {audio}"),
         None => format!("Converted to {target}, audio kept"),
     }
+}
+
+/// How many versions there are of each kind, without reading any of them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, SimpleObject)]
+pub struct OptimizedVersionStats {
+    pub ready: u32,
+    pub queued: u32,
+    pub running: u32,
+    pub failed: u32,
+    /// Disk the ready ones use.
+    pub ready_bytes: u64,
 }
 
 /// The facts recommendations compare a top-level work by.

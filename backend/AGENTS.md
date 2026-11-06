@@ -94,6 +94,7 @@ Don't break these without an architecture discussion in the PR description.
 - Modes are lexical, vector, and hybrid (default). Hybrid fuses both with reciprocal rank fusion.
 - Embeddings are computed locally unless an administrator configures an OpenAI-compatible endpoint, which is never a default. Every backend implements `upsert_embedding` and `search_vector`.
 - **"Is it still indexing" is `Work.indexing`, never `metadataStatus`.** A work with no match stays `Unconfirmed` for good. `IndexingProgress` is in memory, fed by scan events and the metadata worker, and a rescan or a retry doesn't count as new work. Zero complexity, so cards can afford it.
+- **Removing an optimized version doesn't stop the planner wanting it.** It's remade if a mark or a prediction still wants it; that's deliberate, and the admin dialog shows who and takes back marks. `enqueue_optimized_version` refreshes `plan_json` on every plan, so `targets` says who it's for now. Read counts through `optimized_version_stats`: `list_optimized_versions` carries every row's index and probe.
 - A vector index belongs to one model. Anything that changes a model's output changes its namespace, and the sweep reindexes; old vectors are pruned only once the new index is complete.
 
 ### Plugins

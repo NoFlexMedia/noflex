@@ -890,6 +890,21 @@ impl Storage for TursoStore {
         let (_schema, conn) = self.reader().await?;
         repo::optimized_versions::list(&conn).await
     }
+    async fn optimized_versions_page(
+        &self,
+        status: Option<noflex_storage::domain::OptimizedVersionStatus>,
+        limit: u32,
+        after: Option<noflex_storage::PageCursor>,
+    ) -> StorageResult<noflex_storage::ItemPage<noflex_storage::domain::OptimizedVersion>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::optimized_versions::page(&conn, status, limit, after).await
+    }
+    async fn optimized_version_stats(
+        &self,
+    ) -> StorageResult<noflex_storage::domain::OptimizedVersionStats> {
+        let (_schema, conn) = self.reader().await?;
+        repo::optimized_versions::stats(&conn).await
+    }
     async fn claim_optimized_version(
         &self,
     ) -> StorageResult<Option<noflex_storage::domain::OptimizedVersion>> {

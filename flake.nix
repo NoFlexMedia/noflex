@@ -303,7 +303,8 @@
           GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${root}/build-tools/${androidBuildTools}/aapt2";
         };
 
-        flutterPkgs = flutterBasePkgs ++ [jdk androidSdk];
+        # The TV app's Android host has no Flutter to generate it a Gradle wrapper.
+        flutterPkgs = flutterBasePkgs ++ [jdk androidSdk pkgsFlutter.gradle];
         flutterAndroidEnv = flutterEnv // androidEnvFor androidSdk;
 
         flutterShellHook = ''
@@ -367,7 +368,7 @@
 
           # Enough to build for Android, without a device to run it on.
           flutter-android = pkgsFlutter.mkShell ({
-              packages = flutterBasePkgs ++ [jdk androidBuildSdk];
+              packages = flutterBasePkgs ++ [jdk androidBuildSdk pkgsFlutter.gradle];
               shellHook = flutterShellHook;
             }
             // flutterEnv

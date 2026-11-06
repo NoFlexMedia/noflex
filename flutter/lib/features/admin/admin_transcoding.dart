@@ -576,7 +576,7 @@ class _TranscodingSectionState extends State<TranscodingSection> {
                 _audienceRow(
                   icon: row.device == null
                       ? PhosphorIconsRegular.devices
-                      : deviceIconFor(row.device!.name),
+                      : deviceIconFor(row.device!.name, row.device!.client),
                   title: row.device?.name ?? 'No device to reach',
                   detail: reason(row.reason),
                   action:

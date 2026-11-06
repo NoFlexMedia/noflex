@@ -57,6 +57,8 @@ dependencies:
   # Icons: Phosphor, as on the web. A fork, as upstream's phosphor_flutter
   # doesn't compile against a final IconData.
   phosphor_icons: ^3.0.1
+  # Device brands Phosphor doesn't draw; see utils/device_icon.dart.
+  simple_icons: ^16.23.0
   cached_network_image: ^4.0.6
 
   device_info_plus: ^13.3.0

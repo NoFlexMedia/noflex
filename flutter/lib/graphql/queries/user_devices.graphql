@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 query UserDevices($user: ID!) {
-  userDevices(userId: $user) { id name smartTranscode smartDownloads lastSeenAt }
+  userDevices(userId: $user) { id name client smartTranscode smartDownloads lastSeenAt }
 }

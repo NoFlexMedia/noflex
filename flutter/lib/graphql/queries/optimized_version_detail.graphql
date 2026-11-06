@@ -3,7 +3,7 @@ query OptimizedVersionDetail($id: ID!) {
   optimizedVersion(id: $id) {
     id
     unwantedSince
-    targets { user { id name username avatarUrl } reason device { id name } }
+    targets { user { id name username avatarUrl } reason device { id name client } }
     marks { user { id name username avatarUrl } work { id title } device { id name } }
   }
 }

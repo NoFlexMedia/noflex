@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Profile pictures. Decoding here takes whatever the platform can show, which is
-// more than the server can (HEIC on an iPhone), and sends a square small enough not
-// to matter on a phone connection. The server re-encodes it anyway.
+// Profile pictures. This sends a square small enough not to matter on a phone
+// connection, or the file as it is when the platform can't read it (AVIF, on most),
+// which the server can. The server re-encodes it either way.
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -10,9 +10,17 @@ import 'dart:ui' as ui;
 
 const _side = 1024;
 
-/// A centred square of the picture in `bytes`, as the base64 `setProfilePicture`
-/// takes. Throws if the platform can't read it.
+/// `bytes` as the base64 `setProfilePicture` takes.
 Future<String> pictureForUpload(Uint8List bytes) async {
+  try {
+    return await _square(bytes);
+  } catch (_) {
+    return base64Encode(bytes);
+  }
+}
+
+/// A centred square of the picture in `bytes`. Throws if the platform can't read it.
+Future<String> _square(Uint8List bytes) async {
   final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
   final descriptor = await ui.ImageDescriptor.encoded(buffer);
   final short = descriptor.width < descriptor.height

@@ -196,6 +196,7 @@ The root `AGENTS.md`'s design language, in this app's pieces.
 
 - Build UI from `widgets/` and the tokens in `theme.dart`; don't hard-code colors or radii.
 - Icons are Phosphor (`package:phosphor_icons`, a maintained fork of `phosphor_flutter`, which doesn't compile on current Flutter), never Material `Icons.*`. `actionIconTheme` covers the back and close arrows the framework draws itself.
+- Device brands Phosphor lacks come from `package:simple_icons`, through `utils/device_icon.dart`, a port of `lib/ts/device.ts`. Nowhere else: see the design language in the root `AGENTS.md`.
 - Draw SVGs with `jovial_svg`, not `flutter_svg`: flutter_svg ignores `<style>`, which draws most exported logos solid black.
 - Fonts are bundled, as there's no fetching them from a CDN in a self-hosted app.
 - Inter is a variable font: set weight through `nfText`, since `fontWeight` alone leaves the glyphs at the file's default.

@@ -202,6 +202,7 @@ class SessionService {
           (b) => b.vars
             ..id = identity.id
             ..name = identity.name
+            ..client = identity.clientName
             ..capabilities.replace(buildCapabilities(profile)),
         ),
       );

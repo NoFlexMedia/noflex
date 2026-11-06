@@ -1375,7 +1375,7 @@ class _DevicesSheetState extends State<_DevicesSheet> {
               Row(
                 children: [
                   Icon(
-                    deviceIconFor(device.name),
+                    deviceIconFor(device.name, device.client),
                     size: 20,
                     color: NfColors.text2,
                   ),

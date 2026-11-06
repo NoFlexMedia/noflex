@@ -42,7 +42,12 @@ class DeviceIdentity {
     try {
       if (Platform.isAndroid) {
         final android = await info.androidInfo;
-        return android.model;
+        // A model alone is often a code like SM-S918B.
+        return android.model.toLowerCase().startsWith(
+              android.manufacturer.toLowerCase(),
+            )
+            ? android.model
+            : '${android.manufacturer} ${android.model}';
       }
       if (Platform.isIOS) return (await info.iosInfo).name;
       if (Platform.isMacOS) return (await info.macOsInfo).computerName;

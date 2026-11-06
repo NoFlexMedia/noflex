@@ -95,12 +95,18 @@ export default function Home(props: { isAlive?: () => boolean }) {
   const home = createQuery<HomeData>(HOME);
   const data = home.data;
 
-  // Back from the player: Continue watching has moved on.
+  // Back from the player: Continue watching has moved on. Kept alive, so a title played
+  // from its own page has to wait for Home to show again.
   let wasPlaying = false;
+  let stale = false;
   createEffect(() => {
     const playing = !!player.current;
-    if (wasPlaying && !playing && props.isAlive?.() !== false) void home.refetch();
+    if (wasPlaying && !playing) stale = true;
     wasPlaying = playing;
+    if (stale && !playing && props.isAlive?.() !== false) {
+      stale = false;
+      void home.refetch();
+    }
   });
 
   createEffect(() => { const rows = data()?.contentCategories; if (rows) app.categories = rows; });

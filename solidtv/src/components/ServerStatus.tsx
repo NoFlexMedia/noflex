@@ -22,7 +22,7 @@ const RING_STEP = 12;
 interface Status {
   systemStatus: { activeScans: number; plugins: { circuitOpen: number }; server: { database: { healthy: boolean } } };
   activeStreams: { id: string; transcode?: { status: string } | null }[];
-  optimizedVersions: { id: string; status: string }[];
+  optimizedVersionStats: { running: number };
 }
 
 export default function ServerStatus(props: NodeProps & { open: Accessor<boolean> }) {
@@ -43,7 +43,7 @@ export default function ServerStatus(props: NodeProps & { open: Accessor<boolean
   const transcoding = () => status()?.activeStreams.filter((stream) => stream.transcode?.status === "running").length ?? 0;
   const playing = () => status()?.activeStreams.filter((stream) => stream.transcode?.status !== "running").length ?? 0;
   const scans = () => status()?.systemStatus.activeScans ?? 0;
-  const optimizing = () => status()?.optimizedVersions.filter((version) => version.status === "RUNNING").length ?? 0;
+  const optimizing = () => status()?.optimizedVersionStats.running ?? 0;
   const rings = () => {
     const active: { tone: number; label: string }[] = [];
     if (scans() > 0) active.push({ tone: color.focus, label: "Scanning" });

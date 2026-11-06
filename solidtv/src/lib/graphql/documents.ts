@@ -255,5 +255,5 @@ export const SERVER_ACTIVITY = `
 query ServerActivity {
   systemStatus { activeScans plugins { circuitOpen } server { database { healthy } } }
   activeStreams { id transcode { status } }
-  optimizedVersions { id status }
+  optimizedVersionStats { running }
 }`;

@@ -57,6 +57,8 @@ interface KeyboardProps extends NodeProps {
   /** What the last key says, and does. */
   submitLabel?: string;
   onSubmit?: () => void;
+  /** A real keyboard's Tab: the next field along, or the last one with Shift. */
+  onTab?: (back: boolean) => void;
 }
 
 export default function Keyboard(props: KeyboardProps) {
@@ -67,10 +69,28 @@ export default function Keyboard(props: KeyboardProps) {
   };
   const erase = () => props.onChange(props.value.slice(0, -1));
 
+  // A real keyboard, on a computer or plugged into a TV. In the capture phase, so its
+  // keys are spoken for before focus treats Backspace as Back or Enter as this key press.
+  let typing = false;
+  const claim = (event: KeyboardEvent) => { event.preventDefault(); event.stopPropagation(); };
   makeEventListener(document as unknown as EventTarget, "keydown", ((event: KeyboardEvent) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key?.length === 1) { props.onChange(props.value + event.key); event.preventDefault(); }
-  }) as EventListener);
+    const key = event.key;
+    if (key === "Tab") {
+      if (props.onTab) { props.onTab(event.shiftKey); claim(event); }
+    } else if (key === "Backspace" || key === "Delete") {
+      // The Siri Remote's Menu arrives as Backspace. An empty field lets it be Back.
+      if (__TARGET__ !== "nativescript" && props.value) { typing = true; erase(); claim(event); }
+    } else if (key === "Enter") {
+      if (typing && props.onSubmit) { props.onSubmit(); claim(event); }
+    } else if (key?.length === 1) {
+      typing = true;
+      props.onChange(props.value + key);
+      claim(event);
+    } else {
+      typing = false;
+    }
+  }) as EventListener, { capture: true });
 
   return (
     <Column
@@ -79,12 +99,6 @@ export default function Keyboard(props: KeyboardProps) {
       height={KEYBOARD_HEIGHT}
       gap={GAP}
       scroll="none"
-      // Only in a browser is Backspace a keyboard's: the Siri Remote's Menu arrives under that name too.
-      onBack={(event: KeyboardEvent) => {
-        if (__TARGET__ !== "browser" || event?.key !== "Backspace" || !props.value) return false;
-        erase();
-        return true;
-      }}
     >
       <For each={LAYERS[layer()]}>
         {(row) => (

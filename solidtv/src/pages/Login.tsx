@@ -6,23 +6,20 @@ import type { ElementNode, NodeProps } from "@solidtv/solid";
 import { app, changeServer, signIn } from "$lib/session.js";
 import { serverOrigin } from "$lib/tokens.js";
 import { attempt } from "$lib/ui.js";
-import { color, motion, radius, SCREEN, type, weight } from "../theme.js";
+import { color, SCREEN, type, weight } from "../theme.js";
 import BrandMark from "$components/BrandMark.js";
 import Button from "$components/Button.js";
 import Keyboard, { KEYBOARD_HEIGHT, KEYBOARD_WIDTH } from "$components/Keyboard.js";
+import TextField from "$components/TextField.js";
 
 const LEFT = 140;
 const FIELD = 720;
 
 function Field(props: NodeProps & { label: string; value: string; secret?: boolean; active: boolean }) {
-  const [focused, setFocused] = createSignal(false);
-  const shown = () => (props.secret ? "•".repeat(props.value.length) : props.value);
   return (
-    <view {...props} width={FIELD} height={112} onFocusChanged={setFocused}>
+    <view {...props} width={FIELD} height={112}>
       <text fontSize={type.caption} fontWeight={weight.semibold} color={color.text2}>{props.label}</text>
-      <view y={36} width={FIELD} height={76} borderRadius={radius.m} color={color.surface2} border={{ width: 3, color: focused() || props.active ? color.focus : color.line }} transition={{ color: motion.fast }}>
-        <text x={24} width={FIELD - 48} height={76} lineHeight={76} contain="both" maxLines={1} fontSize={type.body}>{shown()}</text>
-      </view>
+      <TextField y={36} width={FIELD} height={76} value={props.value} secret={props.secret} active={props.active} skipFocus />
     </view>
   );
 }
@@ -66,6 +63,7 @@ export default function Login() {
         onChange={(value) => (active() === "username" ? setUsername(value) : setPassword(value))}
         submitLabel={busy() ? "Signing in…" : active() === "username" ? "Next" : "Sign in"}
         onSubmit={submit}
+        onTab={() => setActive(active() === "username" ? "password" : "username")}
       />
     </view>
   );

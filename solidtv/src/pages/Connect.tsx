@@ -5,9 +5,10 @@
 import { createSignal } from "solid-js";
 import { connect } from "$lib/session.js";
 import { attempt } from "$lib/ui.js";
-import { color, radius, SCREEN, type, weight } from "../theme.js";
+import { color, SCREEN, type, weight } from "../theme.js";
 import BrandMark from "$components/BrandMark.js";
 import Keyboard, { KEYBOARD_HEIGHT, KEYBOARD_WIDTH } from "$components/Keyboard.js";
+import TextField from "$components/TextField.js";
 
 const LEFT = 140;
 const FIELD = 720;
@@ -28,9 +29,7 @@ export default function Connect() {
       <BrandMark x={LEFT} y={200} size={96} />
       <text x={LEFT} y={330} fontSize={type.heading} fontWeight={weight.bold}>Find your server</text>
       <text x={LEFT} y={416} width={FIELD} contain="width" lineHeight={42} fontSize={type.body} color={color.text2}>The address you use to reach NoFlex from a browser. The port is 8096 unless you say otherwise.</text>
-      <view x={LEFT} y={540} width={FIELD} height={88} borderRadius={radius.m} color={color.surface2} border={{ width: 3, color: color.focus }}>
-        <text x={28} width={FIELD - 56} height={88} lineHeight={88} contain="both" maxLines={1} fontSize={type.lead} color={address() ? color.text : color.text3}>{busy() ? "Looking…" : address() || "192.168.1.20 or noflex.example.com"}</text>
-      </view>
+      <TextField x={LEFT} y={540} width={FIELD} height={88} fontSize={type.lead} value={address()} placeholder={busy() ? "Looking…" : "192.168.1.20 or noflex.example.com"} active skipFocus />
       <Keyboard autofocus x={SCREEN.width - KEYBOARD_WIDTH - 120} y={(SCREEN.height - KEYBOARD_HEIGHT) / 2} value={address()} onChange={setAddress} submitLabel="Connect" onSubmit={submit} />
     </view>
   );

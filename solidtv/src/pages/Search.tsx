@@ -5,10 +5,10 @@ import { createEffect, createSignal, on, Show } from "solid-js";
 import { SEARCH } from "$lib/graphql/documents.js";
 import { request } from "$lib/graphql.js";
 import type { Work } from "$lib/types.js";
-import { color, PAGE_WIDTH, PAGE_X, radius, SCREEN, type, weight } from "../theme.js";
-import Icon from "$components/Icon.js";
+import { color, PAGE_WIDTH, PAGE_X, SCREEN, type, weight } from "../theme.js";
 import Keyboard, { KEYBOARD_WIDTH } from "$components/Keyboard.js";
 import State from "$components/State.js";
+import TextField from "$components/TextField.js";
 import { POSTER } from "$components/WorkCard.js";
 import WorkGrid from "$components/WorkGrid.js";
 
@@ -43,10 +43,7 @@ export default function Search() {
 
   return (
     <view x={PAGE_X} width={PAGE_WIDTH} height={SCREEN.height} forwardFocus={2}>
-      <view y={56} width={KEYBOARD_WIDTH} height={88} borderRadius={radius.m} color={color.surface2} skipFocus>
-        <Icon name="magnifying-glass" size={36} x={26} y={26} color={color.text3} />
-        <text x={80} width={KEYBOARD_WIDTH - 104} height={88} lineHeight={88} contain="both" maxLines={1} fontSize={type.lead} color={text() ? color.text : color.text3}>{text() || "Search titles, people, moods"}</text>
-      </view>
+      <TextField y={56} width={KEYBOARD_WIDTH} height={88} fontSize={type.lead} icon="magnifying-glass" value={text()} placeholder="Search titles, people, moods" active skipFocus />
       <Show when={text() && searched() && !results().length}>
         <view x={RESULTS_X} width={RESULTS_WIDTH} height={SCREEN.height} skipFocus>
           <State areaWidth={RESULTS_WIDTH} kind={error() ? "error" : "empty"} icon="magnifying-glass" title={error() ? "Search is out of reach" : "Nothing matched"} message={error() || `No titles match “${text()}”.`} />

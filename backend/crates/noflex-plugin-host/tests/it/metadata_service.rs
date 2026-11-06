@@ -14,18 +14,19 @@ use std::sync::Arc;
 
 use noflex_core::{
     ExternalId, ExternalIdKind, ImageKind, LibraryId, MetadataStatus, WorkField, WorkId, WorkKind,
+    events::{DomainEvent, DomainEventBus},
 };
 use noflex_plugin_host::{
     AutoIdentify, EngineConfig, HookKind, MetadataService, MetadataWorker, Overrides, PluginId,
-    PluginRegistry, PriorityTable, build_engine,
+    PluginRegistry, PriorityTable, build_engine, spawn_metadata_worker,
 };
 use noflex_storage::{
-    Storage,
+    IndexingStage, Storage,
     domain::{Image, ImageSource, ImageTarget, Library, LibraryConfig, LibraryKind, Work},
 };
 use noflex_storage_turso::TursoStore;
 use time::OffsetDateTime;
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, time::Duration};
 
 const ART: &str = "artwork-fixture";
 const CONCURRENCY: &str = "concurrency-fixture";
@@ -521,4 +522,55 @@ async fn worker_sweep_identifies_parents_first_then_backfills_art() {
         Default::default(),
         "matched works are done; misses are parked"
     );
+}
+
+#[tokio::test]
+async fn indexing_follows_a_scan_into_the_sweep_and_ends_with_its_answer() {
+    let h = harness!(ART);
+    let library = h.library(&[ART], &[]).await;
+    let service = Arc::new(h.service());
+    let indexing = service.indexing().clone();
+    let bus = DomainEventBus::new(8);
+    let worker = spawn_metadata_worker(service, &bus);
+    // The sweep at startup has nothing to do yet, and has to be out of the way.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    bus.emit(DomainEvent::ScanStarted {
+        library: library.id,
+        library_name: library.name.clone(),
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let matched = h.work(&library, WorkKind::Movie, "Sweep Movie").await;
+    let unmatched = h.work(&library, WorkKind::Movie, "Ambiguous").await;
+    assert_eq!(indexing.stage(&matched), Some(IndexingStage::Adding));
+
+    bus.emit(DomainEvent::ScanCompleted {
+        library: library.id,
+        library_name: library.name.clone(),
+        added: 2,
+        updated: 0,
+        removed: 0,
+        added_works: vec![matched.id, unmatched.id],
+        updated_works: vec![],
+        removed_works: vec![],
+    });
+    let settled = async {
+        loop {
+            let fresh = h
+                .storage
+                .get_work(matched.id)
+                .await
+                .expect("get")
+                .expect("work");
+            if indexing.stage(&fresh).is_none() && indexing.stage(&unmatched).is_none() {
+                break fresh;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    let fresh = tokio::time::timeout(Duration::from_secs(10), settled)
+        .await
+        .expect("indexing ends");
+    assert_eq!(fresh.metadata_status, MetadataStatus::Confirmed);
+    worker.abort();
 }

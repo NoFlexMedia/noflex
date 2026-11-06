@@ -1906,9 +1906,41 @@ impl Work {
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
         Ok(series.map(|series| series.title))
     }
+
+    /// What the server is still doing to this newly found work; null once
+    /// it has done what it can, whether or not it found a match. Read from
+    /// memory, so it costs a list of cards nothing.
+    #[graphql(complexity = 0)]
+    async fn indexing(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> Option<crate::indexing::IndexingStage> {
+        ctx.data_opt::<std::sync::Arc<crate::indexing::IndexingProgress>>()?
+            .stage(self)
+    }
 }
 
 impl Work {
+    /// Unconfirmed, of a kind providers match automatically, and without
+    /// provider ids: what the metadata sweep looks for.
+    pub fn awaits_identification(&self) -> bool {
+        self.metadata_status == MetadataStatus::Unconfirmed
+            && matches!(
+                self.kind,
+                WorkKind::Movie
+                    | WorkKind::Series
+                    | WorkKind::Season
+                    | WorkKind::Episode
+                    | WorkKind::Artist
+                    | WorkKind::Album
+                    | WorkKind::AudioBook
+            )
+            && self
+                .external_ids
+                .iter()
+                .all(|id| id.kind == ExternalIdKind::Custom)
+    }
+
     /// External IDs that mean the same title on any server.
     pub fn provider_ids(&self) -> Vec<ExternalId> {
         self.external_ids

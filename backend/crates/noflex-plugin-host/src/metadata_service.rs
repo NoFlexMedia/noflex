@@ -25,7 +25,7 @@ use noflex_core::{
 };
 use noflex_metadata::{TagDraft, apply_payload, merge_external_id};
 use noflex_storage::{
-    Storage, StorageError,
+    IndexingProgress, Storage, StorageError,
     domain::{Image, ImageSource, ImageTarget, Library, Tag, Work},
 };
 use time::OffsetDateTime;
@@ -92,6 +92,7 @@ pub struct MetadataService {
     storage: Arc<dyn Storage>,
     priority: Option<Arc<RwLock<PriorityTable>>>,
     image_dir: Option<PathBuf>,
+    indexing: Arc<IndexingProgress>,
 }
 
 impl MetadataService {
@@ -103,6 +104,7 @@ impl MetadataService {
             storage,
             priority: None,
             image_dir: None,
+            indexing: Arc::default(),
         }
     }
 
@@ -117,6 +119,11 @@ impl MetadataService {
     pub fn with_image_dir(mut self, dir: PathBuf) -> Self {
         self.image_dir = Some(dir);
         self
+    }
+
+    /// What the worker is getting through, for `Work.indexing`.
+    pub fn indexing(&self) -> &Arc<IndexingProgress> {
+        &self.indexing
     }
 
     /// The store this service reads and writes.
@@ -452,7 +459,7 @@ impl MetadataService {
     /// via search hints. Locked fields stay locked.
     pub async fn auto_identify(&self, id: WorkId) -> Result<AutoIdentify, MetadataError> {
         let (work, library) = self.load(id).await?;
-        if !auto_eligible(&work) {
+        if !work.awaits_identification() {
             return Ok(AutoIdentify::Skipped);
         }
         let Some(query) = self.search_query(&work).await? else {
@@ -488,7 +495,7 @@ impl MetadataService {
             };
             // A user may have edited or identified the work meanwhile.
             let (mut fresh, library) = self.load(id).await?;
-            if !auto_eligible(&fresh) {
+            if !fresh.awaits_identification() {
                 return Ok(AutoIdentify::Skipped);
             }
             merge_external_id(&mut fresh, best);
@@ -577,26 +584,6 @@ pub fn default_art_kinds(kind: WorkKind) -> &'static [ImageKind] {
 
 /// Kinds automatic matching runs for. Tracks and photos are left to
 /// their albums or to manual identification.
-fn auto_kind(kind: WorkKind) -> bool {
-    matches!(
-        kind,
-        WorkKind::Movie
-            | WorkKind::Series
-            | WorkKind::Season
-            | WorkKind::Episode
-            | WorkKind::Artist
-            | WorkKind::Album
-            | WorkKind::AudioBook
-    )
-}
-
-/// Unconfirmed, of an auto-matched kind, and without provider ids.
-pub fn auto_eligible(work: &Work) -> bool {
-    work.metadata_status == MetadataStatus::Unconfirmed
-        && auto_kind(work.kind)
-        && provider_ids(work).next().is_none()
-}
-
 /// The work's external ids a provider could know — every kind but the
 /// scanner's `Custom` scan keys.
 pub fn provider_ids(work: &Work) -> impl Iterator<Item = &ExternalId> {

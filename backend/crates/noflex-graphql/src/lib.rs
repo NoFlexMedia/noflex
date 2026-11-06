@@ -814,6 +814,7 @@ pub fn build_schema(ctx: SchemaContext) -> NoflexSchema {
         builder = builder.data(admin_status);
     }
     if let Some(metadata_service) = ctx.metadata_service {
+        builder = builder.data(metadata_service.indexing().clone());
         builder = builder.data(metadata_service);
     }
     if let Some(smart_transcoding) = ctx.smart_transcoding {

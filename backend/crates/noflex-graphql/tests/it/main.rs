@@ -18,6 +18,7 @@ mod deletion;
 mod device_download;
 mod export_jobs;
 mod external_auth;
+mod indexing;
 mod library_crud;
 mod live_tv;
 mod metadata_manage;

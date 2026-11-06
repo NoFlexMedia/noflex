@@ -13,6 +13,7 @@ pub mod canonical;
 pub mod connection;
 pub mod domain;
 pub mod error;
+pub mod indexing;
 pub mod query;
 pub mod search;
 pub mod store;
@@ -29,6 +30,7 @@ pub use domain::{
     User, UserData, Work,
 };
 pub use error::{StorageError, StorageResult};
+pub use indexing::{IndexingProgress, IndexingStage};
 pub use query::{
     HybridQuery, ItemPage, ListTagsQuery, ListWorksQuery, MatchMode, Page, PageCursor, SearchMode,
     SortOrder, TagQuery, WatchedFilter, WorkFacet, WorkFacetValue, WorkFacetValues,

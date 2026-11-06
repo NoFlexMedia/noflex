@@ -18,6 +18,7 @@ use noflex_storage::{
     ListWorksQuery, SortOrder,
     domain::{ImageSource, Work},
 };
+use time::OffsetDateTime;
 use tokio::{
     sync::{broadcast::error::RecvError, mpsc},
     task::JoinHandle,
@@ -26,7 +27,7 @@ use tokio::{
 
 use crate::{
     HookKind,
-    metadata_service::{AutoIdentify, MetadataService, auto_eligible},
+    metadata_service::{AutoIdentify, MetadataService},
 };
 
 const SWEEP_PAGE: u32 = 200;
@@ -56,21 +57,33 @@ pub fn spawn_metadata_worker(
     events: &DomainEventBus,
 ) -> JoinHandle<()> {
     let (tx, rx) = mpsc::channel::<()>(8);
-    tokio::spawn(forward_events(events.clone(), tx.clone()));
+    tokio::spawn(forward_events(events.clone(), service.clone(), tx.clone()));
     tokio::spawn(worker(MetadataWorker::new(service), rx, tx))
 }
 
-async fn forward_events(bus: DomainEventBus, tx: mpsc::Sender<()>) {
+async fn forward_events(bus: DomainEventBus, service: Arc<MetadataService>, tx: mpsc::Sender<()>) {
     let mut rx = bus.subscribe();
+    let indexing = service.indexing();
     loop {
         match rx.recv().await {
-            Ok(DomainEvent::ScanCompleted { .. }) => {
+            Ok(DomainEvent::ScanStarted { library, .. }) => {
+                indexing.scan_started(library, OffsetDateTime::now_utc());
+            }
+            Ok(DomainEvent::ScanCompleted { library, .. }) => {
+                // Ahead of the scan ending, so nothing goes quiet between the two.
+                if service.has_exporters(HookKind::Metadata) {
+                    indexing.sweep_begun();
+                }
+                indexing.scan_finished(library);
                 // A full channel already holds a pending sweep.
-                let _ = tx.try_send(());
+                if tx.try_send(()).is_err() {
+                    indexing.sweep_ended();
+                }
             }
             Ok(_) => {}
             Err(RecvError::Lagged(missed)) => {
                 tracing::warn!(missed, "metadata worker lagged; events dropped");
+                indexing.forget_scans();
             }
             Err(RecvError::Closed) => break,
         }
@@ -90,6 +103,7 @@ async fn worker(
             message = rx.recv() => match message {
                 Some(()) => {
                     worker.run_sweep().await;
+                    worker.service.indexing().sweep_ended();
                 }
                 None => break,
             },
@@ -133,7 +147,9 @@ impl MetadataWorker {
     pub async fn run_sweep(&self) -> SweepReport {
         let mut report = SweepReport::default();
         if self.service.has_exporters(HookKind::Metadata) {
+            self.service.indexing().sweep_begun();
             self.identify_pass(&mut report).await;
+            self.service.indexing().sweep_ended();
         }
         if self.service.has_exporters(HookKind::Image) {
             self.artwork_pass(&mut report).await;
@@ -180,7 +196,7 @@ impl MetadataWorker {
                             break;
                         }
                     };
-                    for work in page.items.iter().filter(|w| auto_eligible(w)) {
+                    for work in page.items.iter().filter(|w| w.awaits_identification()) {
                         self.identify_one(work, report).await;
                     }
                     cursor = page.next_cursor();
@@ -196,7 +212,8 @@ impl MetadataWorker {
         if backed_off(&self.identify_backoff, work.id) {
             return;
         }
-        match self.service.auto_identify(work.id).await {
+        let answer = self.service.auto_identify(work.id).await;
+        match &answer {
             Ok(AutoIdentify::Matched { provider, .. }) => {
                 tracing::debug!(work = %work.id, provider = %provider.0, "auto-identified");
                 report.identified += 1;
@@ -211,6 +228,9 @@ impl MetadataWorker {
                 tracing::warn!(work = %work.id, %error, "auto-identify failed");
                 park(&self.identify_backoff, work.id);
             }
+        }
+        if !matches!(answer, Ok(AutoIdentify::Matched { .. })) {
+            self.service.indexing().asked(work.id);
         }
     }
 

@@ -19,6 +19,8 @@ use time::OffsetDateTime;
 
 use crate::{access, paging, parse_id};
 
+const MAX_WORKS_BY_ID: usize = 60;
+
 #[derive(InputObject, Default)]
 pub struct WorkFilterInput {
     /// Restrict to children of this work (e.g. episodes of a season).
@@ -236,6 +238,29 @@ impl BrowseQuery {
             return Ok(None);
         };
         access::visible_work(storage, request_user, work).await
+    }
+
+    /// The given works the caller can see, in the order asked, for keeping
+    /// cards already on screen up to date. At most 60 ids.
+    #[graphql(complexity = "ids.len() * child_complexity + 1")]
+    async fn works_by_id(
+        &self,
+        ctx: &Context<'_>,
+        ids: Vec<WorkId>,
+    ) -> async_graphql::Result<Vec<Work>> {
+        if ids.len() > MAX_WORKS_BY_ID {
+            return Err(async_graphql::Error::new(format!(
+                "at most {MAX_WORKS_BY_ID} ids"
+            )));
+        }
+        let storage = ctx
+            .data::<Arc<dyn Storage>>()
+            .map_err(|_| async_graphql::Error::new("storage not configured"))?;
+        let works = storage
+            .get_works(&ids)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        crate::visible_works(storage, access::request_user(ctx)?, works, MAX_WORKS_BY_ID).await
     }
 
     /// Tags across the given namespaces (empty = all), each with its

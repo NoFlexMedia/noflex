@@ -930,6 +930,20 @@ type IndexScanRun {
 }
 
 """
+How far along a newly found work is.
+"""
+enum IndexingStage {
+	"""
+	Its library's scan, which found it, is still running.
+	"""
+	ADDING
+	"""
+	Waiting for, or in, the metadata sweep's search for a match.
+	"""
+	FINDING_DETAILS
+}
+
+"""
 An invitation to create an ordinary account on this server.
 """
 type Invite {
@@ -2579,6 +2593,11 @@ type Query {
 	"""
 	work(id: ID!): Work
 	"""
+	The given works the caller can see, in the order asked, for keeping
+	cards already on screen up to date. At most 60 ids.
+	"""
+	worksById(ids: [ID!]!): [Work!]!
+	"""
 	Tags across the given namespaces (empty = all), each with its
 	work count, ordered by display name. `first` defaults to 50, max
 	200.
@@ -4026,6 +4045,12 @@ type Work {
 	away from its series. Null for anything but an episode.
 	"""
 	seriesTitle: String
+	"""
+	What the server is still doing to this newly found work; null once
+	it has done what it can, whether or not it found a match. Read from
+	memory, so it costs a list of cards nothing.
+	"""
+	indexing: IndexingStage
 }
 
 type WorkConnection {

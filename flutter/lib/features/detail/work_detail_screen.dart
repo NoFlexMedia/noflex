@@ -1403,6 +1403,29 @@ class _MoreMenu extends SignalWidget {
               (mark) => mark.device?.id == thisDevice,
             ) ??
             false;
+        String? markState(bool Function(String? device) forThis) {
+          for (final mark
+              in marks?.mySmartTranscodeMarks.toList() ??
+                  const <GSmartMarksForWorkData_mySmartTranscodeMarks>[]) {
+            if (forThis(mark.device?.id)) {
+              return switch (mark.state) {
+                GSmartTranscodeState.WAITING => 'In the queue',
+                GSmartTranscodeState.PREPARING =>
+                  'Preparing ${(mark.progress * 100).round()}%',
+                GSmartTranscodeState.READY => 'Ready',
+                GSmartTranscodeState.NOT_NEEDED => 'Plays as it is',
+                GSmartTranscodeState.TOO_LARGE => 'Too large',
+                GSmartTranscodeState.NO_DEVICES => 'No devices',
+                GSmartTranscodeState.NO_SPACE => 'Waiting for space',
+                GSmartTranscodeState.FAILED => 'Failed',
+                GSmartTranscodeState.DISABLED => 'Off on this server',
+                _ => null,
+              };
+            }
+          }
+          return null;
+        }
+
         final choice = await pickOption<String>(
           title: work.title,
           options: [
@@ -1410,6 +1433,7 @@ class _MoreMenu extends SignalWidget {
               NfOption(
                 markDevices,
                 'Mark for smart transcoding',
+                detail: markState((device) => device == null),
                 leading: Icon(
                   markedForDevices
                       ? PhosphorIconsBold.check
@@ -1421,6 +1445,7 @@ class _MoreMenu extends SignalWidget {
                 NfOption(
                   markHere,
                   'Smart transcode for this device',
+                  detail: markState((device) => device == thisDevice),
                   leading: Icon(
                     markedForHere
                         ? PhosphorIconsBold.check

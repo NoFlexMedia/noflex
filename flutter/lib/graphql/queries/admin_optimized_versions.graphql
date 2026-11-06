@@ -1,4 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 query AdminOptimizedVersions {
-  optimizedVersions { id variantKey status progress sizeBytes error }
+  optimizedVersions {
+    id
+    variantKey
+    status
+    progress
+    sizeBytes
+    error
+    description
+    lastUsedAt
+    finishedAt
+    work { id title }
+  }
 }

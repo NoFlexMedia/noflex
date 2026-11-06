@@ -2,6 +2,6 @@
 
 # A title's own marks, and whether marking it for "my devices" would reach any.
 query SmartMarksForWork($work: ID!) {
-  mySmartTranscodeMarks(workId: $work) { device { id } }
+  mySmartTranscodeMarks(workId: $work) { device { id } state progress }
   myDevices { smartTranscode }
 }

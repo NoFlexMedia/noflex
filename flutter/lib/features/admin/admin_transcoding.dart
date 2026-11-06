@@ -336,11 +336,21 @@ class _TranscodingSectionState extends State<TranscodingSection> {
           (v.status == GOptimizedVersionStatus.READY ? v.sizeBytes ?? 0 : 0),
     );
     final preparedGb = preparedBytes / (1024 * 1024 * 1024);
-    final active = versions.where(
-      (v) =>
-          v.status == GOptimizedVersionStatus.RUNNING ||
-          v.status == GOptimizedVersionStatus.FAILED,
-    );
+    // What needs a look first, then the newest of what's done.
+    int rank(GOptimizedVersionStatus status) => switch (status) {
+      GOptimizedVersionStatus.RUNNING => 0,
+      GOptimizedVersionStatus.FAILED => 1,
+      GOptimizedVersionStatus.QUEUED => 2,
+      _ => 3,
+    };
+    final ordered = [...versions]
+      ..sort((a, b) {
+        final byStatus = rank(a.status).compareTo(rank(b.status));
+        if (byStatus != 0) return byStatus;
+        final (first, second) = (a.finishedAt, b.finishedAt);
+        if (first == null || second == null) return 0;
+        return second.compareTo(first);
+      });
     return AccountPanel(
       icon: PhosphorIconsRegular.stack,
       title: 'Smart transcoding',
@@ -414,23 +424,52 @@ class _TranscodingSectionState extends State<TranscodingSection> {
               ),
             ),
           ],
-          for (final version in active)
+          if (ordered.isEmpty)
+            Text(
+              'Nothing prepared yet. Versions appear here once viewers mark titles or turn smart transcoding on for a device.',
+              style: NfType.small,
+            ),
+          for (final version in ordered)
             Wrap(
               spacing: 14,
               runSpacing: 4,
               alignment: WrapAlignment.spaceBetween,
               children: [
-                Text(version.variantKey, style: NfType.mono),
-                if (version.status == GOptimizedVersionStatus.RUNNING)
-                  Text(
-                    '${(version.progress * 100).round()}%',
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      version.work?.title ?? 'A removed title',
+                      style: NfType.label,
+                    ),
+                    Text(version.description, style: NfType.small),
+                  ],
+                ),
+                switch (version.status) {
+                  GOptimizedVersionStatus.RUNNING => Text(
+                    'Preparing ${(version.progress * 100).round()}%',
                     style: NfType.small,
-                  )
-                else
-                  Text(
+                  ),
+                  GOptimizedVersionStatus.FAILED => Text(
                     version.error ?? 'Failed',
                     style: nfText(13, color: NfColors.danger),
                   ),
+                  GOptimizedVersionStatus.QUEUED => Text(
+                    'In the queue',
+                    style: NfType.small,
+                  ),
+                  _ => Text(
+                    [
+                      'Ready',
+                      bytes(version.sizeBytes),
+                      if (version.lastUsedAt case final played?)
+                        'last played ${ago(played)}'
+                      else
+                        'not played yet',
+                    ].join(' · '),
+                    style: NfType.small,
+                  ),
+                },
               ],
             ),
         ],

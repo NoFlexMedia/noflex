@@ -34,6 +34,8 @@ import '../../graphql/queries/__generated__/remove_linked_server.req.gql.dart';
 import '../../graphql/queries/__generated__/revoke_api_key.req.gql.dart';
 import '../../graphql/queries/__generated__/revoke_session.req.gql.dart';
 import '../../graphql/queries/__generated__/my_smart_marks.req.gql.dart';
+import '../../graphql/queries/__generated__/prepared_versions.data.gql.dart';
+import '../../graphql/queries/__generated__/prepared_versions.req.gql.dart';
 import '../../graphql/queries/__generated__/set_preference.req.gql.dart';
 import '../../graphql/queries/__generated__/unmark_for_smart_transcoding.req.gql.dart';
 import '../../graphql/queries/fragments/__generated__/smart_mark_fields.data.gql.dart';
@@ -278,11 +280,21 @@ class AccountController {
   /// What the viewer has marked, the next to be prepared first.
   final smartMarks = signal<List<GSmartMarkFields>>(const []);
 
+  final preparedVersions = signal<List<GPreparedVersionsData_preparedVersions>>(
+    const [],
+  );
+
   Future<void> loadSmartMarks() async {
     final data = await _graphql.run(
       GMySmartMarksReq((b) => b..fetchPolicy = FetchPolicy.NetworkOnly),
     );
-    smartMarks.value = data.mySmartTranscodeMarks.toList();
+    final prepared = await _graphql.run(
+      GPreparedVersionsReq((b) => b..fetchPolicy = FetchPolicy.NetworkOnly),
+    );
+    batch(() {
+      smartMarks.value = data.mySmartTranscodeMarks.toList();
+      preparedVersions.value = prepared.preparedVersions.toList();
+    });
   }
 
   Future<void> unmark(GSmartMarkFields mark) async {

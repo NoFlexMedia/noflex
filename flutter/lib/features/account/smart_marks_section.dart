@@ -12,6 +12,7 @@ import 'package:signals_flutter/signals_flutter.dart';
 import '../../graphql/__generated__/schema.schema.gql.dart';
 import '../../graphql/queries/fragments/__generated__/smart_mark_fields.data.gql.dart';
 import '../../theme.dart';
+import '../../utils/format.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_state.dart';
 import 'account_controller.dart';
@@ -36,7 +37,8 @@ class _SmartMarksSectionState extends State<SmartMarksSection> {
   Widget build(BuildContext context) => SignalBuilder(
     builder: (context) {
       final marks = widget.controller.smartMarks.value;
-      if (marks.isEmpty) {
+      final prepared = widget.controller.preparedVersions.value;
+      if (marks.isEmpty && prepared.isEmpty) {
         return const AccountColumn(
           children: [
             NfState(
@@ -49,21 +51,46 @@ class _SmartMarksSectionState extends State<SmartMarksSection> {
       }
       return AccountColumn(
         children: [
-          AccountPanel(
-            icon: PhosphorIconsRegular.sparkle,
-            title: 'Marked to watch next',
-            detail: 'Prepared in this order, ahead of anything the server guesses at. Each stays until you watch it or unmark it.',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final mark in marks)
-                  _MarkRow(
-                    mark: mark,
-                    onUnmark: () => unawaited(widget.controller.unmark(mark)),
-                  ),
-              ],
+          if (marks.isNotEmpty)
+            AccountPanel(
+              icon: PhosphorIconsRegular.sparkle,
+              title: 'Marked to watch next',
+              detail: 'Prepared in this order, ahead of anything the server guesses at. Each stays until you watch it or unmark it.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final mark in marks)
+                    _MarkRow(
+                      mark: mark,
+                      onUnmark: () => unawaited(widget.controller.unmark(mark)),
+                    ),
+                ],
+              ),
             ),
-          ),
+          if (prepared.isNotEmpty)
+            AccountPanel(
+              icon: PhosphorIconsRegular.checkCircle,
+              title: 'Ready to play',
+              detail: 'Already prepared on this server, and used by any device it suits. Unmarking a title doesn’t remove it. The least recently played make room when space runs out.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final version in prepared)
+                    AccountRow(
+                      icon: PhosphorIconsRegular.checkCircle,
+                      title: version.work?.title ?? 'A removed title',
+                      detail: [
+                        version.description,
+                        bytes(version.sizeBytes),
+                        if (version.lastUsedAt case final played?)
+                          'last played ${ago(played)}'
+                        else
+                          'not played yet',
+                      ].join(' · '),
+                    ),
+                ],
+              ),
+            ),
         ],
       );
     },

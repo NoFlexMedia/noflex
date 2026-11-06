@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+query PreparedVersions {
+  preparedVersions {
+    id
+    description
+    sizeBytes
+    lastUsedAt
+    work { id title }
+  }
+}

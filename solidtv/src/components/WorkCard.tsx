@@ -4,7 +4,6 @@
 // card lifts on a spring, so the answer to a key press is immediate.
 
 import { useNavigate } from "@solidjs/router";
-import { scrollRow } from "@solidtv/solid/primitives";
 import { createSignal, onCleanup, Show } from "solid-js";
 import type { ElementNode, NodeProps } from "@solidtv/solid";
 import { titleCase } from "$lib/format.js";
@@ -14,6 +13,7 @@ import { subtitleFor } from "$lib/playback.js";
 import type { Work } from "$lib/types.js";
 import { ui } from "$lib/ui.js";
 import { pickImage } from "$lib/images.js";
+import { revealInRow } from "$lib/rows.js";
 import { userDataOf } from "$lib/watch.js";
 import { color, gradient, motion, radius, toward, type, weight } from "../theme.js";
 import Artwork from "$components/Artwork.js";
@@ -25,20 +25,6 @@ export const WIDE = { width: 448, height: 252, total: 252 } as const;
 // Long enough to not fire on every card a held key passes.
 const INTENT_MS = 500;
 const RING = 6;
-
-// A pointer focuses a card directly, which the row's scroller never hears about, so a
-// card hovered under the nav would stay there. Step the row as the keys would.
-function reveal(card: ElementNode): void {
-  const row = card.parent;
-  if (!row || row.scroll !== "auto") return;
-  const index = row.children.indexOf(card);
-  for (let step = 0; step < row.children.length; step++) {
-    const left = (row.x ?? 0) + (card.x ?? 0);
-    if (left < 0) scrollRow(index, row, card, index + 1);
-    else if (left + (card.width ?? 0) > (row.width ?? 0)) scrollRow(index, row, card, index - 1);
-    else return;
-  }
-}
 
 export default function WorkCard(props: NodeProps & { work: Work; wide?: boolean; onChosen?: (work: Work) => void }) {
   const navigate = useNavigate();
@@ -67,8 +53,7 @@ export default function WorkCard(props: NodeProps & { work: Work; wide?: boolean
     clearTimeout(intent);
     clearTimeout(revealing);
     if (!has) return;
-    // After this tick, when a key press has already had the row scroll.
-    revealing = setTimeout(() => { if (node) reveal(node); }, 0);
+    revealing = setTimeout(() => { if (node) revealInRow(node); }, 0);
     intent = setTimeout(() => {
       preload(WORK_DETAIL, { id: props.work.id });
       ui.backdrop = pickImage(props.work.images, "backdrop");

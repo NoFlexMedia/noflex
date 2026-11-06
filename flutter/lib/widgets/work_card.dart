@@ -9,6 +9,7 @@ import '../features/detail/work_detail_screen.dart';
 import '../features/player/playback_service.dart';
 import '../layout/window.dart';
 import '../models/work.dart';
+import '../services/indexing_service.dart';
 import '../services/nav_service.dart';
 import '../services/watch_state.dart';
 import '../theme.dart';
@@ -57,7 +58,16 @@ class _WorkCardState extends State<WorkCard> {
 
   @override
   Widget build(BuildContext context) {
-    final WorkCard(:work, :wide, :meta) = widget;
+    if (widget.work.indexing == null) return _card(context, widget.work);
+    // A match brings its title and year along with the art.
+    return SignalBuilder(
+      builder: (context) =>
+          _card(context, getIt<IndexingService>().latest(widget.work)),
+    );
+  }
+
+  Widget _card(BuildContext context, WorkSummary work) {
+    final WorkCard(:wide, :meta) = widget;
     final line =
         meta ??
         [

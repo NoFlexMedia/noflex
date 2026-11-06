@@ -84,6 +84,7 @@ class WorkSummary {
     this.seriesTitle,
     this.overview,
     this.server,
+    this.indexing,
   });
 
   factory WorkSummary.fromCard(
@@ -122,6 +123,7 @@ class WorkSummary {
     seriesTitle: seriesTitle,
     overview: overview,
     server: server,
+    indexing: card.indexing?.name,
   );
 
   factory WorkSummary.fromJson(Map<String, dynamic> json) => WorkSummary(
@@ -169,6 +171,34 @@ class WorkSummary {
 
   /// Null on the home server.
   final ServerRef? server;
+
+  /// The `IndexingStage` name while the server is still working on this title.
+  /// Left out of the offline manifest: it's only true of the moment it was read.
+  final String? indexing;
+
+  /// This work as [answer] has it now, keeping what only its list knew. Null
+  /// means it's gone or out of reach, so nothing more is coming.
+  WorkSummary updatedBy(WorkSummary? answer) => WorkSummary(
+    id: id,
+    kind: answer?.kind ?? kind,
+    libraryId: libraryId,
+    title: answer?.title ?? title,
+    parentId: parentId,
+    year: answer?.year ?? year,
+    communityRating: answer?.communityRating ?? communityRating,
+    indexNumber: indexNumber,
+    indexEnd: indexEnd,
+    parentIndex: parentIndex,
+    runtimeMs: answer?.runtimeMs ?? runtimeMs,
+    externalIds: answer?.externalIds ?? externalIds,
+    seriesExternalIds: seriesExternalIds,
+    images: answer?.images ?? images,
+    userData: userData,
+    seriesTitle: seriesTitle,
+    overview: overview,
+    server: server,
+    indexing: answer?.indexing,
+  );
 
   bool get isContainer => _containerKinds.contains(kind);
   bool get isEpisode => kind == GWorkKind.EPISODE.name;

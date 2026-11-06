@@ -31,6 +31,7 @@ import '../models/work.dart';
 import '../utils/tracks.dart';
 import 'device_identity.dart';
 import 'graphql.dart';
+import 'indexing_service.dart';
 import 'nav_service.dart';
 import 'tokens.dart';
 import 'watch_state.dart';
@@ -302,6 +303,7 @@ class SessionService {
     graphql.reset();
     watchState.clear();
     getIt.resetLazySingleton<HomeService>();
+    getIt.resetLazySingleton<IndexingService>();
   }
 
   void _signedOut(String message) {

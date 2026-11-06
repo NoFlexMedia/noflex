@@ -421,7 +421,8 @@ class _Eyebrow extends SignalWidget {
   Widget build(BuildContext context) {
     final unconfirmed =
         controller.query.data.value?.work?.metadataStatus ==
-        GMetadataStatus.UNCONFIRMED;
+            GMetadataStatus.UNCONFIRMED &&
+        work.indexing == null;
     return Text.rich(
       TextSpan(
         text: titleCase(work.kind).toUpperCase(),

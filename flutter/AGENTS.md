@@ -189,6 +189,7 @@ The root `AGENTS.md`'s design language, in this app's pieces.
 - Material's ripple (`InkSparkle`) stays alongside the sink, and is enough on its own for a plain `InkWell` row. Route transitions stay native too (`pageTransitionsTheme`).
 - A card's picture flies into the page it opens with `PosterHero`. Tags are per card, since a title can be in several rails on one page, and only fly when both ends draw the same shape.
 - `AmbientGlow` goes inside a page, behind its content. Routes are opaque, so a tint under the shell would never show. Home has none: its hero covers the part of the screen the tint reaches.
+- A title still indexing (`WorkSummary.indexing`) gets `IndexingOverlay` from `Artwork`. `IndexingService.latest` is how cards read a title that may have moved on since its list was fetched, and one `worksById` every 4 s covers everything on screen. Not persisted to the offline manifest, and not followed on a linked server.
 - Loads draw in the content's shape with `NfSkeleton` and `NfSkeletonRows`. `CircularProgressIndicator` is for something underway rather than arriving: a busy button, a channel starting, buffering, the next page of a list.
 
 ## Conventions

@@ -5,12 +5,15 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:phosphor_icons/phosphor_icons.dart';
+import 'package:signals_flutter/signals_flutter.dart';
 
 import '../di.dart';
 import '../models/work.dart';
+import '../services/indexing_service.dart';
 import '../services/tokens.dart';
 import '../theme.dart';
 import '../utils/images.dart';
+import 'indexing_overlay.dart';
 
 /// A work's art at the size it's drawn, asking the server to resize it. Falls
 /// back to the kind's icon so an unmatched title still reads as something.
@@ -39,6 +42,35 @@ class Artwork extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Backdrops and logos sit behind or beside a poster that already says so.
+    if (work.indexing == null ||
+        work.server != null ||
+        (kind != ArtKind.poster && kind != ArtKind.thumb)) {
+      return _picture(work, fallbackIcon: true);
+    }
+    return SignalBuilder(
+      builder: (context) {
+        final current = getIt<IndexingService>().latest(work);
+        final stage = current.indexing;
+        if (stage == null) return _picture(current, fallbackIcon: true);
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            _picture(current, fallbackIcon: false),
+            IndexingOverlay(
+              workId: work.id,
+              stage: stage,
+              hasArt:
+                  localPath != null || pickImage(current.images, kind) != null,
+              wide: kind == ArtKind.thumb,
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _picture(WorkSummary work, {required bool fallbackIcon}) {
     final url = pickImage(work.images, kind);
     final local = localPath;
     return ClipRRect(
@@ -47,7 +79,7 @@ class Artwork extends StatelessWidget {
         color: NfColors.surface2,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final fallback = kind == ArtKind.logo
+            final fallback = kind == ArtKind.logo || !fallbackIcon
                 ? const SizedBox.shrink()
                 : Center(
                     child: Icon(

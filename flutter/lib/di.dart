@@ -4,6 +4,7 @@ import 'package:get_it/get_it.dart';
 
 import 'features/downloads/downloads_service.dart';
 import 'features/home/home_service.dart';
+import 'services/indexing_service.dart';
 import 'features/player/decoder_probe.dart';
 import 'features/player/playback_service.dart';
 import 'services/device_identity.dart';
@@ -40,5 +41,9 @@ void configureDependencies() {
     )
     ..registerSingleton(DownloadsService())
     ..registerLazySingleton(HomeService.new)
+    ..registerLazySingleton(
+      IndexingService.new,
+      dispose: (service) => service.dispose(),
+    )
     ..registerSingleton(PlaybackService());
 }

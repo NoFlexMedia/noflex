@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Cards still indexing, kept fresh without refetching the lists that hold them.
+#import 'fragments/work_card.graphql'
+query WorksById($ids: [ID!]!) {
+  worksById(ids: $ids) {
+    ...WorkCard
+  }
+}

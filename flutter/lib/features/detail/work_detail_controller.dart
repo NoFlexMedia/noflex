@@ -23,6 +23,7 @@ import '../../graphql/queries/fragments/__generated__/media_file_full.data.gql.d
 import '../../graphql/query.dart';
 import '../../models/media_probe.dart';
 import '../../models/work.dart';
+import '../../services/indexing_service.dart';
 import '../../services/graphql.dart';
 import '../../services/session.dart';
 import '../../services/toast_service.dart';
@@ -56,6 +57,18 @@ class WorkDetailController {
         final data = query.data.value;
         if (data != null) untracked(() => _onDetail(data));
       }),
+      // A match brings cast and tags as well as the card's fields.
+      effect(() {
+        final card = query.data.value?.work;
+        if (card == null) return;
+        final indexing = getIt<IndexingService>()
+            .latest(WorkSummary.fromCard(card, server: server))
+            .indexing;
+        if (_wasIndexing && indexing == null) {
+          untracked(query.refetch);
+        }
+        _wasIndexing = indexing != null;
+      }),
     ];
     unawaited(_loadDownloadsAllowed());
   }
@@ -81,6 +94,7 @@ class WorkDetailController {
   late final Query<GWorkDetailData, GWorkDetailVars> query;
   late final List<void Function()> _stop;
   bool _loadedChildren = false;
+  bool _wasIndexing = false;
   bool _disposed = false;
 
   final editionId = signal<String?>(null);

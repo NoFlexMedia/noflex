@@ -694,6 +694,8 @@ impl OptimizeWorker {
                         child.kill().await?;
                         tokio::fs::remove_file(raw).await.ok();
                         self.remove(version).await?;
+                        // The encoder's free, so don't wait out a tick to use it.
+                        self.wake.notify_one();
                         return Ok(JobEnd::Dropped);
                     }
                     let outranked = self
@@ -706,6 +708,7 @@ impl OptimizeWorker {
                                 && other.priority < version.priority
                         });
                     if outranked {
+                        self.wake.notify_one();
                         return self.requeue(child, version, raw).await;
                     }
                 },

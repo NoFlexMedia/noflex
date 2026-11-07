@@ -14,6 +14,7 @@
   import { palette, sidebar, toggleSidebar } from "$lib/ui.svelte.js";
   import { titleCase } from "$lib/format.js";
   import BrandMark from "$components/BrandMark.svelte";
+  import ConnectPicker from "$components/ConnectPicker.svelte";
   import Menu from "$components/ui/Menu.svelte";
   import MenuItem from "$components/ui/MenuItem.svelte";
   import Tip from "$components/ui/Tip.svelte";
@@ -39,6 +40,7 @@
     <kbd>{mac ? "⌘" : "Ctrl"} K</kbd>
   </button>
   <div class="spacer"></div>
+  <ConnectPicker />
   <Menu width={240}>
     {#snippet trigger(props)}
       <button {...props} class="account" aria-label="Account menu for {app.viewer.name}">

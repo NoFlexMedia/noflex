@@ -2,6 +2,7 @@
 
 import { CachePolicy, ChildPageStore, MediaFilesStore, StartPlaybackStore, StopPlaybackStore, WorkDetailStore } from "$houdini";
 import { clientCapabilities } from "$codecs";
+import { connect } from "$lib/connect.svelte.js";
 import { app } from "$lib/session.svelte.js";
 import { syncWatchState } from "$lib/sync.js";
 import { isImageSubtitle, preferredAudio, preferredSubtitle } from "$lib/tracks.js";
@@ -89,6 +90,10 @@ export async function playWork(work: any, options: PlayOptions = {}): Promise<bo
   if (player.preparing) return false;
   player.preparing = work.id;
   try {
+    // A chosen device plays it, resuming from the viewer's place unless told otherwise.
+    if (connect.target && !options.room) {
+      return await connect.cast(work, { editionId: options.editionId, mediaFileId: options.mediaFileId, positionMs: options.fromStart ? 0 : options.positionMs });
+    }
     const detail = await request(new WorkDetailStore(), { id: work.id }, { policy: CachePolicy.CacheOrNetwork });
     const editions = detail.editions ?? [];
     const edition = editions.find((item: any) => item.id === options.editionId) ?? editions[0];

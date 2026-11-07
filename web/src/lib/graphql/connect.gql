@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+
+fragment ConnectDeviceFields on ConnectDevice {
+  online
+  device { id name client }
+  playback {
+    state
+    positionMs
+    durationMs
+    work { ...WorkCard }
+  }
+}
+
+query ConnectDevices @cache(policy: NetworkOnly) {
+  connectDevices { ...ConnectDeviceFields }
+}
+
+subscription ConnectDeviceUpdates {
+  connectDevices { ...ConnectDeviceFields }
+}
+
+mutation CastToDevice($device: ID!, $work: ID!, $edition: ID, $media: ID, $position: Int) {
+  castToDevice(deviceId: $device, workId: $work, editionId: $edition, mediaFileId: $media, positionMs: $position) { ...ConnectDeviceFields }
+}
+
+mutation ControlDevice($device: ID!, $action: DeviceControl!, $position: Int) {
+  controlDevice(deviceId: $device, action: $action, positionMs: $position) { ...ConnectDeviceFields }
+}

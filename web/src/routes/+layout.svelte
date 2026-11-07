@@ -4,6 +4,7 @@
   import { onNavigate } from "$app/navigation";
   import { Tooltip } from "bits-ui";
   import IconContext from "phosphor-svelte/lib/IconContext";
+  import { connect } from "$lib/connect.svelte.js";
   import { player } from "$lib/playback.svelte.js";
   import { app, start } from "$lib/session.svelte.js";
   import { morph } from "$lib/transition.svelte.js";
@@ -14,6 +15,7 @@
   import ConfirmHost from "$components/ConfirmHost.svelte";
   import MobileNav from "$components/MobileNav.svelte";
   import NavProgress from "$components/NavProgress.svelte";
+  import RemoteBar from "$components/RemoteBar.svelte";
   import Player from "$components/Player.svelte";
   import Sidebar from "$components/Sidebar.svelte";
   import State from "$components/State.svelte";
@@ -34,6 +36,9 @@
   });
 
   start();
+
+  // The viewer's other devices, for as long as they are signed in.
+  $effect(() => { if (app.phase === "app") return connect.run(); });
 
   onNavigate((navigation) => {
     const from = navigation.from?.url.pathname ?? "";
@@ -85,6 +90,7 @@
     <Topbar />
     <main id="main" class="main nav-follow" tabindex="-1">{@render children()}</main>
     <MobileNav />
+    {#if !player.current}<RemoteBar />{/if}
     <CommandPalette bind:open={palette.open} />
     {#if player.current}<Player playback={player.current} />{/if}
   {/if}

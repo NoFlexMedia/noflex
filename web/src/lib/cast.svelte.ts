@@ -219,7 +219,6 @@ class Cast {
       clearInterval(this.#beat);
       this.#beat = setInterval(() => { if (this.#last === "PLAYING") this.#report("PLAYING"); }, REPORT_MS);
       this.#publish();
-      toast(`Playing on ${session.getCastDevice().friendlyName}`, "success");
       return true;
     } catch (cause) {
       void this.#finish(false);

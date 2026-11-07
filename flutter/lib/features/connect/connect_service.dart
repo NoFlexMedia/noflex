@@ -216,7 +216,6 @@ class ConnectService {
             ..position = positionMs,
         ),
       ),
-      success: 'Playing on ${device.name}',
     );
     if (sent != null) _replace(sent.castToDevice);
     return sent != null;

@@ -101,7 +101,7 @@ class Connect {
       edition: options.editionId ?? null,
       media: options.mediaFileId ?? null,
       position: options.positionMs ?? null,
-    }), `Playing on ${target.device.name}`);
+    }));
     if (sent) this.#replace(sent.castToDevice);
     return sent !== null;
   }

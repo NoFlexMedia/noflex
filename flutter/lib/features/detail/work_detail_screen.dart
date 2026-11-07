@@ -40,6 +40,7 @@ import '../../widgets/nf_state.dart';
 import '../../widgets/poster_flight.dart';
 import 'attributions.dart';
 import '../downloads/download_models.dart';
+import '../connect/connect_picker.dart';
 import '../downloads/downloads_service.dart';
 import '../player/decoder_probe.dart';
 import '../player/decoders.dart';
@@ -674,6 +675,7 @@ class _Actions extends SignalWidget {
             label: 'Play from the beginning',
             onPressed: () => controller.play(fromStart: true),
           ),
+        if (!isContainer) const ConnectButton(),
         NfIconButton.glass(
           icon: watch.favorite
               ? PhosphorIconsFill.heart

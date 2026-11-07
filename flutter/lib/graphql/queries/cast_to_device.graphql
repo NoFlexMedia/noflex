@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'fragments/connect_device_fields.graphql'
+
+mutation CastToDevice($device: ID!, $work: ID!, $edition: ID, $media: ID, $position: Int) {
+  castToDevice(deviceId: $device, workId: $work, editionId: $edition, mediaFileId: $media, positionMs: $position) { ...ConnectDeviceFields }
+}

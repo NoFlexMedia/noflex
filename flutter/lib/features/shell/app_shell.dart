@@ -15,6 +15,7 @@ import '../../services/nav_service.dart';
 import '../../theme.dart';
 import '../../widgets/brand_mark.dart';
 import '../account/account_screen.dart';
+import '../connect/remote_bar.dart';
 import '../browse/browse_screen.dart';
 import '../downloads/downloads_screen.dart';
 import '../home/home_screen.dart';
@@ -68,17 +69,34 @@ class AppShell extends SignalWidget {
         : NfSpacing.sidebarWidth;
     return Scaffold(
       resizeToAvoidBottomInset: false,
-      bottomNavigationBar: compact ? const _BottomNav() : null,
-      body: Row(
+      bottomNavigationBar: compact
+          ? const Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [RemoteBar(), _BottomNav()],
+            )
+          : null,
+      body: Stack(
         children: [
-          if (!compact && width < sidebarMinWidth) const _Rail(),
-          if (width >= sidebarMinWidth) const Sidebar(),
-          Expanded(
-            child: FoldsFromContent(
-              left: navigationWidth,
-              child: const _Content(),
-            ),
+          Row(
+            children: [
+              if (!compact && width < sidebarMinWidth) const _Rail(),
+              if (width >= sidebarMinWidth) const Sidebar(),
+              Expanded(
+                child: FoldsFromContent(
+                  left: navigationWidth,
+                  child: const _Content(),
+                ),
+              ),
+            ],
           ),
+          // Over the content, beside the navigation; on a phone it sits above the bar instead.
+          if (!compact)
+            Positioned(
+              left: navigationWidth + 8,
+              right: 8,
+              bottom: 0,
+              child: const RemoteBar(),
+            ),
         ],
       ),
     );

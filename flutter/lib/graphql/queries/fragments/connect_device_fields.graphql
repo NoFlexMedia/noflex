@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#import 'work_card.graphql'
+
+fragment ConnectDeviceFields on ConnectDevice {
+  online
+  device { id name client }
+  playback {
+    state
+    positionMs
+    durationMs
+    work { ...WorkCard }
+  }
+}

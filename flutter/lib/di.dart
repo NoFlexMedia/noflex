@@ -2,6 +2,7 @@
 
 import 'package:get_it/get_it.dart';
 
+import 'features/connect/connect_service.dart';
 import 'features/downloads/downloads_service.dart';
 import 'features/home/home_service.dart';
 import 'services/indexing_service.dart';
@@ -44,6 +45,14 @@ void configureDependencies() {
     ..registerLazySingleton(
       IndexingService.new,
       dispose: (service) => service.dispose(),
+    )
+    ..registerSingleton(
+      ConnectService(
+        session: getIt<SessionService>(),
+        graphql: getIt<GraphqlService>(),
+        identity: getIt<DeviceIdentity>(),
+        toasts: getIt<ToastService>(),
+      ),
     )
     ..registerSingleton(PlaybackService());
 }

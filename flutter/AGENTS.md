@@ -126,6 +126,15 @@ Ferry, against `lib/graphql/schema.graphql`, a symlink to `backend/crates/noflex
 - Picture-in-picture is Android only (`PipService`, `MainActivity.kt`): libmpv draws into a Flutter texture, and iOS's API wants an AVPlayer layer. Leaving the app while something plays enters it.
 - HDR on Android forces `mediacodec-copy`, because SurfaceTexture's conversion doesn't know PQ or HLG. This hasn't been run on a real HDR device.
 
+## NoFlex Connect
+
+`features/connect/` controls the viewer's other devices: this app is a remote, not a receiver.
+
+- `ConnectService` follows `connectDevices` (signals, from the shell's session phase) and holds the choice of where Play goes. `PlaybackService.playWork` hands the title to `ConnectService.cast` while a device is chosen; a watch room's still plays here.
+- A command names the title, not a file: the device picks its own version. Resume comes from the viewer's place on the server unless `fromStart` or a position says otherwise.
+- `RemoteBar` shows whichever device is playing, over the bottom bar on a phone and over the content beside the navigation on wider windows. Position advances between reports from `ConnectService.now`; controls update at once and the device's next report corrects them.
+- `ConnectButton` is on a title's actions only while a device is listening, as a cast button is.
+
 ## Downloads
 
 - `background_downloader` owns transfers natively: URLSession background tasks on iOS and macOS, WorkManager or UIDT on Android, isolates on Windows and Linux.

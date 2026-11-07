@@ -32,6 +32,7 @@ import '../../services/toast_service.dart';
 import '../../services/tokens.dart';
 import '../../utils/tracks.dart';
 import '../downloads/download_models.dart';
+import '../connect/connect_service.dart';
 import '../downloads/downloads_service.dart';
 import '../home/home_service.dart';
 import 'capabilities.dart';
@@ -333,6 +334,15 @@ class PlaybackService {
     if (preparing.value != null) return false;
     preparing.value = work.id;
     try {
+      // A chosen device plays it, resuming from the viewer's place unless told otherwise.
+      if (room == null && getIt<ConnectService>().target.peek() != null) {
+        return await getIt<ConnectService>().cast(
+          work,
+          editionId: editionId,
+          mediaFileId: mediaFileId,
+          positionMs: fromStart ? 0 : positionMs,
+        );
+      }
       final downloaded = getIt<DownloadsService>().completedFor(work.id);
       if (downloaded != null && editionId == null && mediaFileId == null) {
         return await _playDownloaded(

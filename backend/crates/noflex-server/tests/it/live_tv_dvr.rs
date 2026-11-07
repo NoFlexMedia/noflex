@@ -429,7 +429,7 @@ async fn dvr_cancellation_kills_reaps_and_stays_cancelled() {
     executable(
         &ffmpeg,
         &format!(
-            "#!/bin/sh\necho $$ > '{}'\nout=\nfor arg in \"$@\"; do out=$arg; done\nprintf partial > \"$out\"\nsleep 30\n",
+            "#!/bin/sh\necho $$ > '{}'\nout=\nfor arg in \"$@\"; do out=$arg; done\nprintf partial > \"$out\"\nexec sleep 30\n",
             pid_file.display()
         ),
     );

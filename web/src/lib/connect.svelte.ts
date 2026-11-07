@@ -11,8 +11,15 @@ import { deviceId } from "$lib/device.js";
 import { request } from "$lib/graphql.js";
 import { attempt } from "$lib/ui.svelte.js";
 
-export type RemoteDevice = ConnectDeviceFields$data & { heardAt: number };
+/** `via` names the route that reaches a device other than through the server, such as a Cast session. */
+export type RemoteDevice = ConnectDeviceFields$data & { heardAt: number; via?: string };
 export type Control = "PLAY" | "PAUSE" | "SEEK" | "STOP";
+
+/** How a device the server doesn't know of is played on and steered, so it shares the picker and the bar. */
+export interface Route {
+  cast(work: { id: string }, options: { editionId?: string; mediaFileId?: string; positionMs?: number }): Promise<boolean>;
+  control(device: RemoteDevice, action: Control, positionMs?: number): Promise<void>;
+}
 
 const updates = new ConnectDeviceUpdatesStore();
 const TARGET_KEY = "noflex.castTarget";
@@ -29,8 +36,12 @@ class Connect {
   /** Ticks while something is playing remotely, so a position advances smoothly. */
   now = $state(Date.now());
 
+  /** Devices reached by a route of their own, which whoever owns the route keeps current. */
+  external = $state.raw<RemoteDevice[]>([]);
+  routes = new Map<string, Route>();
+
   /** Devices that can be played on right now. */
-  available = $derived(this.devices.filter((item) => item.online));
+  available = $derived([...this.devices, ...this.external].filter((item) => item.online));
   target = $derived(this.available.find((item) => item.device.id === this.targetId) ?? null);
   /** What the now-playing bar shows: the chosen device if it has something, else whichever does. */
   active = $derived(
@@ -82,6 +93,8 @@ class Connect {
   async cast(work: { id: string }, options: { editionId?: string; mediaFileId?: string; positionMs?: number } = {}): Promise<boolean> {
     const target = this.target;
     if (!target) return false;
+    const route = target.via ? this.routes.get(target.via) : undefined;
+    if (route) return route.cast(work, options);
     const sent = await attempt(() => request(new CastToDeviceStore(), {
       device: target.device.id,
       work: work.id,
@@ -95,6 +108,8 @@ class Connect {
 
   /** Steer the device that's playing. The control answers at once; the device's word follows. */
   async control(device: RemoteDevice, action: Control, positionMs?: number): Promise<void> {
+    const route = device.via ? this.routes.get(device.via) : undefined;
+    if (route) return route.control(device, action, positionMs);
     const playback = device.playback;
     if (playback && action !== "STOP") {
       const state = action === "PAUSE" ? "PAUSED" : action === "PLAY" ? "PLAYING" : playback.state;

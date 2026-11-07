@@ -66,8 +66,9 @@ export const player = $state<{ current: Playback | null; preparing: string | nul
 if (typeof window !== "undefined") (window.requestIdleCallback ?? setTimeout)(() => { clientCapabilities().catch(() => {}); });
 
 /** Open a session; a transcode starts at `startPositionMs` so far seeks don't wait on ffmpeg. */
-export async function startSession(mediaFileId: string, subtitle: number | null = null, startPositionMs = 0, audioStream: number | null = null): Promise<Session> {
-  const capabilities = await clientCapabilities();
+export async function startSession(mediaFileId: string, subtitle: number | null = null, startPositionMs = 0, audioStream: number | null = null, profile?: unknown): Promise<Session> {
+  // A device other than this browser plays it when `profile` says what that device decodes.
+  const capabilities = profile ?? await clientCapabilities();
   const data = await request(new StartPlaybackStore(), { media: mediaFileId, capabilities, subtitle, start: Math.max(0, Math.round(startPositionMs)), audio: audioStream });
   const session = data.startPlaybackSession as Session;
   return { ...session, url: mediaUrl(session.url), subtitles: session.subtitles?.map((track: any) => ({ ...track, url: mediaUrl(track.url) })) } as Session;
@@ -82,9 +83,43 @@ export function stopSession(sessionId: string | null | undefined): Promise<void>
 /** `audioStream` and `subtitleIndex` default to the viewer's preferences; null subtitles means off. */
 export interface PlayOptions { editionId?: string; mediaFileId?: string; audioStream?: number; subtitleIndex?: number | null; fromStart?: boolean; positionMs?: number; room?: Playback["room"] }
 
+/** A work resolved down to the one file to play and how to start it. */
+export interface Playable {
+  detail: any;
+  edition: any;
+  mediaFileId: string;
+  audioStream: number | null;
+  subtitleIndex: number | null;
+  burnedSubtitle: number | null;
+  /** Where to begin, in source time. */
+  resume: number;
+}
+
 /**
- * Resolve a work down to a playable media file (first edition, first part
- * unless told otherwise), open a session, and hand it to the player.
+ * Resolve a work to a media file (first edition, first part unless told
+ * otherwise) with the viewer's audio and subtitle preferences, and where to
+ * resume. Throws what to tell the viewer when there is nothing to play.
+ */
+export async function resolvePlayable(work: any, options: PlayOptions = {}): Promise<Playable> {
+  const detail = await request(new WorkDetailStore(), { id: work.id }, { policy: CachePolicy.CacheOrNetwork });
+  const editions = detail.editions ?? [];
+  const edition = editions.find((item: any) => item.id === options.editionId) ?? editions[0];
+  if (!edition) throw new Error(`“${work.title}” has nothing playable attached yet.`);
+  const media = await request(new MediaFilesStore(), { edition: edition.id }, { policy: CachePolicy.CacheOrNetwork });
+  const file: any = media.mediaFiles.find((item: any) => item.id === options.mediaFileId) ?? media.mediaFiles[0];
+  const mediaFileId = options.mediaFileId ?? file?.id;
+  if (!mediaFileId) throw new Error("This edition has no media files on disk.");
+  const audioStream = options.audioStream ?? preferredAudio(file?.probe?.audio, app.playbackPrefs);
+  const subtitleIndex = options.subtitleIndex !== undefined ? options.subtitleIndex : preferredSubtitle(file?.subtitleTracks, app.playbackPrefs);
+  const burnedSubtitle = subtitleIndex != null && isImageSubtitle(file?.subtitleTracks?.[subtitleIndex]) ? subtitleIndex : null;
+  const userData = detail.work?.userData;
+  const resume = options.positionMs ?? (options.fromStart || userData?.played ? 0 : userData?.positionMs ?? 0);
+  return { detail, edition, mediaFileId, audioStream, subtitleIndex, burnedSubtitle, resume };
+}
+
+/**
+ * Resolve a work down to a playable media file, open a session, and hand it
+ * to the player.
  */
 export async function playWork(work: any, options: PlayOptions = {}): Promise<boolean> {
   if (player.preparing) return false;
@@ -94,19 +129,7 @@ export async function playWork(work: any, options: PlayOptions = {}): Promise<bo
     if (connect.target && !options.room) {
       return await connect.cast(work, { editionId: options.editionId, mediaFileId: options.mediaFileId, positionMs: options.fromStart ? 0 : options.positionMs });
     }
-    const detail = await request(new WorkDetailStore(), { id: work.id }, { policy: CachePolicy.CacheOrNetwork });
-    const editions = detail.editions ?? [];
-    const edition = editions.find((item: any) => item.id === options.editionId) ?? editions[0];
-    if (!edition) throw new Error(`“${work.title}” has nothing playable attached yet.`);
-    const media = await request(new MediaFilesStore(), { edition: edition.id }, { policy: CachePolicy.CacheOrNetwork });
-    const file: any = media.mediaFiles.find((item: any) => item.id === options.mediaFileId) ?? media.mediaFiles[0];
-    const mediaFileId = options.mediaFileId ?? file?.id;
-    if (!mediaFileId) throw new Error("This edition has no media files on disk.");
-    const audioStream = options.audioStream ?? preferredAudio(file?.probe?.audio, app.playbackPrefs);
-    const subtitleIndex = options.subtitleIndex !== undefined ? options.subtitleIndex : preferredSubtitle(file?.subtitleTracks, app.playbackPrefs);
-    const burnedSubtitle = subtitleIndex != null && isImageSubtitle(file?.subtitleTracks?.[subtitleIndex]) ? subtitleIndex : null;
-    const userData = detail.work?.userData;
-    const resume = options.positionMs ?? (options.fromStart || userData?.played ? 0 : userData?.positionMs ?? 0);
+    const { detail, edition, mediaFileId, audioStream, subtitleIndex, burnedSubtitle, resume } = await resolvePlayable(work, options);
     const session = await startSession(mediaFileId, burnedSubtitle, resume, audioStream);
     player.current = {
       ...session,

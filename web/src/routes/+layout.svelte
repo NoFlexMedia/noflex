@@ -4,6 +4,7 @@
   import { onNavigate } from "$app/navigation";
   import { Tooltip } from "bits-ui";
   import IconContext from "phosphor-svelte/lib/IconContext";
+  import { cast } from "$lib/cast.svelte.js";
   import { connect } from "$lib/connect.svelte.js";
   import { player } from "$lib/playback.svelte.js";
   import { useReceiver } from "$lib/receiver.svelte.js";
@@ -41,6 +42,7 @@
   // The viewer's other devices, for as long as they are signed in.
   $effect(() => { if (app.phase === "app") return connect.run(); });
   $effect(() => { if (app.phase === "app") return useReceiver(); });
+  $effect(() => { if (app.phase === "app") return cast.run(); });
 
   onNavigate((navigation) => {
     const from = navigation.from?.url.pathname ?? "";

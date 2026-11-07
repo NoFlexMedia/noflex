@@ -14,6 +14,7 @@
   import { palette, sidebar, toggleSidebar } from "$lib/ui.svelte.js";
   import { titleCase } from "$lib/format.js";
   import BrandMark from "$components/BrandMark.svelte";
+  import CastButton from "$components/CastButton.svelte";
   import ConnectPicker from "$components/ConnectPicker.svelte";
   import Menu from "$components/ui/Menu.svelte";
   import MenuItem from "$components/ui/MenuItem.svelte";
@@ -41,6 +42,7 @@
   </button>
   <div class="spacer"></div>
   <ConnectPicker />
+  <CastButton />
   <Menu width={240}>
     {#snippet trigger(props)}
       <button {...props} class="account" aria-label="Account menu for {app.viewer.name}">

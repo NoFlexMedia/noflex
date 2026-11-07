@@ -134,6 +134,7 @@ pub enum HwAccel {
     Mf,
     Nvenc,
     Qsv,
+    Amf,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]

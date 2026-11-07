@@ -88,16 +88,17 @@ pub fn configured_backend(cfg: HwAccel) -> Option<HwBackend> {
         HwAccel::Mf => Some(HwBackend::Mf),
         HwAccel::Nvenc => Some(HwBackend::Nvenc),
         HwAccel::Qsv => Some(HwBackend::Qsv),
+        HwAccel::Amf => Some(HwBackend::Amf),
     }
 }
 
-/// Preference order when more than one backend works: discrete
-/// GPU encode (NVENC) first, then QSV, then VAAPI, then the platform
-/// APIs.
+/// Preference order when more than one backend works: the vendor APIs
+/// (NVENC, QSV, AMF) first, then VAAPI, then the platform APIs.
 fn best_available(det: &HwDetect) -> Option<HwBackend> {
     [
         HwBackend::Nvenc,
         HwBackend::Qsv,
+        HwBackend::Amf,
         HwBackend::Vaapi,
         HwBackend::VideoToolbox,
         HwBackend::Mf,
@@ -115,11 +116,12 @@ pub fn backend_name(backend: HwBackend) -> &'static str {
         HwBackend::Mf => "mf",
         HwBackend::Nvenc => "nvenc",
         HwBackend::Qsv => "qsv",
+        HwBackend::Amf => "amf",
     }
 }
 
 /// Every video encoder the transcoder can drive, for capability reports.
-pub const ALL_VIDEO_ENCODERS: [Encoder; 16] = [
+pub const ALL_VIDEO_ENCODERS: [Encoder; 19] = [
     Encoder::Software264,
     Encoder::Software265,
     Encoder::SoftwareAv1,
@@ -136,6 +138,9 @@ pub const ALL_VIDEO_ENCODERS: [Encoder; 16] = [
     Encoder::Qsv264,
     Encoder::Qsv265,
     Encoder::QsvAv1,
+    Encoder::Amf264,
+    Encoder::Amf265,
+    Encoder::AmfAv1,
 ];
 
 /// Map the resolved backend + ladder codec onto an `Encoder`.
@@ -163,6 +168,9 @@ pub fn pick_encoder(backend: HwBackend, codec: VideoCodec) -> Encoder {
         (HwBackend::Qsv, VideoCodec::H264) => Encoder::Qsv264,
         (HwBackend::Qsv, VideoCodec::H265) => Encoder::Qsv265,
         (HwBackend::Qsv, VideoCodec::Av1) => Encoder::QsvAv1,
+        (HwBackend::Amf, VideoCodec::H264) => Encoder::Amf264,
+        (HwBackend::Amf, VideoCodec::H265) => Encoder::Amf265,
+        (HwBackend::Amf, VideoCodec::Av1) => Encoder::AmfAv1,
         _ => software,
     }
 }
@@ -268,9 +276,10 @@ mod tests {
     }
 
     #[test]
-    fn best_available_prefers_nvenc_then_qsv_then_vaapi() {
+    fn best_available_prefers_vendor_apis_then_vaapi() {
         let det = det_with(&[
             HwBackend::Vaapi,
+            HwBackend::Amf,
             HwBackend::Qsv,
             HwBackend::Nvenc,
             HwBackend::VideoToolbox,
@@ -279,8 +288,12 @@ mod tests {
         assert_eq!(best_available(&det), Some(HwBackend::Nvenc));
 
         // Drop NVENC: QSV wins.
-        let det = det_with(&[HwBackend::Vaapi, HwBackend::Qsv]);
+        let det = det_with(&[HwBackend::Vaapi, HwBackend::Amf, HwBackend::Qsv]);
         assert_eq!(best_available(&det), Some(HwBackend::Qsv));
+
+        // An AMD card on Windows: AMF over Media Foundation.
+        let det = det_with(&[HwBackend::Mf, HwBackend::Amf]);
+        assert_eq!(best_available(&det), Some(HwBackend::Amf));
 
         // Drop QSV: VAAPI wins.
         let det = det_with(&[HwBackend::Vaapi]);

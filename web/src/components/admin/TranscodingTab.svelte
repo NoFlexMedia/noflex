@@ -186,7 +186,7 @@
     return !!support && browser.hls.some((hls) => hls.videoCodecs.includes(rung.videoCodec)) && support.profiles.includes(rung.videoProfile) && (support.maxPixels == null || support.maxPixels >= rung.maxPixels);
   }
 
-  const BACKEND = { software: "Software", vaapi: "VAAPI", nvenc: "NVENC", qsv: "Quick Sync", videotoolbox: "VideoToolbox", mf: "Media Foundation", cuda: "CUDA (NVDEC)" };
+  const BACKEND = { software: "Software", vaapi: "VAAPI", nvenc: "NVENC", qsv: "Quick Sync", amf: "AMF", videotoolbox: "VideoToolbox", mf: "Media Foundation", cuda: "CUDA (NVDEC)" };
   const backendLabel = (name) => BACKEND[name] ?? name;
 
   function grouped(list) {

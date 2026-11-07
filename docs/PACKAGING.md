@@ -74,6 +74,9 @@ ffmpeg loads these at runtime, and does without them when they're absent:
   ffmpeg aborts rather than errors if it's missing, but only when VAAPI is tried,
   which hardware detection survives.
 - **QSV:** Intel's oneVPL runtime.
+- **AMF:** AMD's AMF runtime, which ships with the Adrenalin driver on Windows
+  and only the proprietary AMDGPU-PRO stack on Linux, where Mesa's VAAPI is the
+  usual path.
 - **libplacebo tone-mapping:** a Vulkan loader and driver.
 
 ### License

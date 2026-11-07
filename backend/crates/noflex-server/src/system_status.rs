@@ -647,6 +647,7 @@ fn hwaccel_name(h: HwAccel) -> &'static str {
         HwAccel::Mf => "mf",
         HwAccel::Nvenc => "nvenc",
         HwAccel::Qsv => "qsv",
+        HwAccel::Amf => "amf",
     }
 }
 

@@ -60,8 +60,9 @@ Backups include each user's keys for the other servers they've linked, and those
 
 The `hwaccel` option takes `none` (software only), `auto`
 (recommended; picks the first available backend), `vaapi`,
-`videotoolbox`, `nvenc`, `qsv`, or `mf`. The `auto` probe runs at
-startup and is logged. A release bundle carries its own ffmpeg; otherwise
+`videotoolbox`, `nvenc`, `qsv`, `amf`, or `mf`. The `auto` probe runs at
+startup and is logged. AMD cards use `amf` on Windows and `vaapi` on Linux.
+A release bundle carries its own ffmpeg; otherwise
 it must be on the host's PATH, or named by `FFMPEG_BIN` and `FFPROBE_BIN`.
 See [`PACKAGING.md`](PACKAGING.md) for what each accelerator needs on the host.
 

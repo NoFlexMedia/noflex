@@ -35,6 +35,7 @@ const _backends = {
   'vaapi': 'VAAPI',
   'nvenc': 'NVENC',
   'qsv': 'Quick Sync',
+  'amf': 'AMF',
   'videotoolbox': 'VideoToolbox',
   'mf': 'Media Foundation',
   'cuda': 'CUDA (NVDEC)',

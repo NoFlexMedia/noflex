@@ -51,9 +51,10 @@ impl HwDetect {
 
 /// The encoder proving each hardware backend works: H.264, which every one of
 /// them has.
-const PROBES: [Encoder; 5] = [
+const PROBES: [Encoder; 6] = [
     Encoder::Nvenc264,
     Encoder::Qsv264,
+    Encoder::Amf264,
     Encoder::Vaapi264,
     Encoder::VideoToolbox264,
     Encoder::Mf264,

@@ -27,7 +27,7 @@ ffmpeg_commit = "7adfbe40dcde598f93a6963d2f7b22cd75202ccc"
 # set of libraries, where static repeats them in each binary.
 [target.x86_64-unknown-linux-gnu]
 pipeline = "linux64"
-encoders = ["h264_nvenc", "hevc_nvenc", "av1_nvenc", "h264_vaapi", "hevc_vaapi", "av1_vaapi", "h264_qsv", "hevc_qsv", "av1_qsv"]
+encoders = ["h264_nvenc", "hevc_nvenc", "av1_nvenc", "h264_vaapi", "hevc_vaapi", "av1_vaapi", "h264_qsv", "hevc_qsv", "av1_qsv", "h264_amf", "hevc_amf", "av1_amf"]
 filters = ["scale_vaapi", "scale_qsv", "libplacebo"]
 
 [target.aarch64-unknown-linux-gnu]
@@ -37,7 +37,7 @@ filters = ["scale_vaapi", "libplacebo"]
 
 [target.x86_64-pc-windows-msvc]
 pipeline = "win64"
-encoders = ["h264_mf", "hevc_mf", "h264_nvenc", "hevc_nvenc", "av1_nvenc", "h264_qsv", "hevc_qsv", "av1_qsv"]
+encoders = ["h264_mf", "hevc_mf", "h264_nvenc", "hevc_nvenc", "av1_nvenc", "h264_qsv", "hevc_qsv", "av1_qsv", "h264_amf", "hevc_amf", "av1_amf"]
 filters = ["scale_qsv", "libplacebo"]
 
 # No pipeline: VideoToolbox can't be cross-compiled, so packaging/ffmpeg/build-macos.sh

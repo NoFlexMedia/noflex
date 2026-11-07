@@ -1583,6 +1583,12 @@ pub(crate) fn pick_encoder(backend: HwBackend, codec: VideoCodec) -> Encoder {
             VideoCodec::Av1 => Encoder::QsvAv1,
             other => software_for(other),
         },
+        HwBackend::Amf => match codec {
+            VideoCodec::H264 => Encoder::Amf264,
+            VideoCodec::H265 => Encoder::Amf265,
+            VideoCodec::Av1 => Encoder::AmfAv1,
+            other => software_for(other),
+        },
     }
 }
 

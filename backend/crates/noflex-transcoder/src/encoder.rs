@@ -15,6 +15,7 @@ pub enum HwBackend {
     Mf,
     Nvenc,
     Qsv,
+    Amf,
 }
 
 /// Which ffmpeg video encoder (`-c:v`) a re-encode runs. Audio encoders
@@ -44,6 +45,10 @@ pub enum Encoder {
     Qsv264,
     Qsv265,
     QsvAv1,
+    /// AMD AMF.
+    Amf264,
+    Amf265,
+    AmfAv1,
 }
 
 impl Encoder {
@@ -57,6 +62,7 @@ impl Encoder {
             Encoder::Mf264 | Encoder::Mf265 => HwBackend::Mf,
             Encoder::Nvenc264 | Encoder::Nvenc265 | Encoder::NvencAv1 => HwBackend::Nvenc,
             Encoder::Qsv264 | Encoder::Qsv265 | Encoder::QsvAv1 => HwBackend::Qsv,
+            Encoder::Amf264 | Encoder::Amf265 | Encoder::AmfAv1 => HwBackend::Amf,
         }
     }
 
@@ -78,6 +84,9 @@ impl Encoder {
             Encoder::Qsv264 => "h264_qsv",
             Encoder::Qsv265 => "hevc_qsv",
             Encoder::QsvAv1 => "av1_qsv",
+            Encoder::Amf264 => "h264_amf",
+            Encoder::Amf265 => "hevc_amf",
+            Encoder::AmfAv1 => "av1_amf",
         }
     }
 
@@ -142,6 +151,7 @@ mod tests {
         assert_eq!(Encoder::Mf264.backend(), HwBackend::Mf);
         assert_eq!(Encoder::NvencAv1.backend(), HwBackend::Nvenc);
         assert_eq!(Encoder::Qsv265.backend(), HwBackend::Qsv);
+        assert_eq!(Encoder::AmfAv1.backend(), HwBackend::Amf);
     }
 
     #[test]

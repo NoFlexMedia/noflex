@@ -144,7 +144,7 @@ When set, log lines go to this file instead of stderr. The file is not
 rotated; use logrotate or journald for that. The parent directory must exist.
 
 ### `transcoder.hwaccel`
-- **Type:** enum: `none | auto | vaapi | videotoolbox | mf | nvenc | qsv`
+- **Type:** enum: `none | auto | vaapi | videotoolbox | mf | nvenc | qsv | amf`
 - **Default:** `auto`
 - **Env:** `NOFLEX_TRANSCODER_HWACCEL`
 

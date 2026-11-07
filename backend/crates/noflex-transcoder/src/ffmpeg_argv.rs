@@ -379,7 +379,7 @@ fn profile_flag(profile: VideoProfile, backend: HwBackend) -> Option<&'static st
         VideoProfile::H264High | VideoProfile::H264High10 => "high",
         VideoProfile::H264Main => "main",
         VideoProfile::H264Baseline | VideoProfile::H264ConstrainedBaseline => match backend {
-            HwBackend::Vaapi => "constrained_baseline",
+            HwBackend::Vaapi | HwBackend::Amf => "constrained_baseline",
             _ => "baseline",
         },
         VideoProfile::HevcMain | VideoProfile::HevcMain10 => "main",
@@ -934,6 +934,11 @@ mod tests {
     fn baseline_profile_name_follows_the_backend() {
         assert_eq!(
             profile_flag(VideoProfile::H264ConstrainedBaseline, HwBackend::Vaapi),
+            Some("constrained_baseline")
+        );
+        // h264_amf offers no plain baseline.
+        assert_eq!(
+            profile_flag(VideoProfile::H264Baseline, HwBackend::Amf),
             Some("constrained_baseline")
         );
         assert_eq!(

@@ -104,7 +104,7 @@
     return [...groups.values()].sort((a, b) => ratio(b.used, b.total) - ratio(a.used, a.total));
   });
 
-  const BACKEND = { software: "Software", vaapi: "VAAPI", nvenc: "NVENC", qsv: "Quick Sync", videotoolbox: "VideoToolbox", mf: "Media Foundation" };
+  const BACKEND = { software: "Software", vaapi: "VAAPI", nvenc: "NVENC", qsv: "Quick Sync", amf: "AMF", videotoolbox: "VideoToolbox", mf: "Media Foundation" };
 
   function place(location) {
     return ({ DATA: "Data folder", CACHE: "Cache folder", TRANSCODE_CACHE: "Transcode cache", IMAGE_CACHE: "Image cache", EMBED_CACHE: "Embedding cache", RECORDINGS: "Recordings folder" })[location.kind] ?? `${location.libraryName ?? "Library"} folder`;

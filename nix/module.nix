@@ -71,7 +71,7 @@ in
     };
 
     hwaccel = lib.mkOption {
-      type = lib.types.enum [ "none" "auto" "vaapi" "videotoolbox" "nvenc" "qsv" "mf" ];
+      type = lib.types.enum [ "none" "auto" "vaapi" "videotoolbox" "nvenc" "qsv" "amf" "mf" ];
       default = "auto";
       description = "Hardware-accelerated transcode backend.";
     };

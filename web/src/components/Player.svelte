@@ -33,6 +33,8 @@
   import { request, writeUserData } from "$lib/graphql.js";
   import { onReconnect } from "$lib/live.js";
   import { closePlayer, nextSibling, player, playWork, restartSession, stopSession } from "$lib/playback.svelte.js";
+  import { reportSoon } from "$lib/receiver.svelte.js";
+  import { transport } from "$lib/transport.svelte.js";
   import { poll, toast } from "$lib/ui.svelte.js";
   import Artwork from "$components/Artwork.svelte";
   import Menu from "$components/ui/Menu.svelte";
@@ -270,6 +272,7 @@
     restarting = null;
     waiting = false; paused = false;
     clearInterval(heartbeat);
+    reportSoon();
     report("PLAYING");
     heartbeat = setInterval(() => report("PLAYING"), 15_000);
     roomSend("PLAY");
@@ -278,6 +281,7 @@
     if (restarting != null) return;
     paused = true;
     clearInterval(heartbeat);
+    reportSoon();
     if (!finalized && !video.ended) report("PAUSED");
     showChrome();
     if (!video.ended) roomSend("PAUSE");
@@ -568,6 +572,24 @@
       stopPolling();
       stopReconnect();
     };
+  });
+
+  // What another of the viewer's devices may do to this player; each answers on screen as a key would.
+  $effect(() => {
+    const mine = {
+      play: () => { video?.play().catch(() => {}); showChrome(); },
+      pause: () => { video?.pause(); showChrome(); },
+      seekTo: (seconds) => { seekTo(seconds); showChrome(); reportSoon(); },
+      stop: () => { void close(); },
+      finish,
+      state: () => {
+        if (!playback.workId || live) return null;
+        return { workId: playback.workId, state: waiting ? "BUFFERING" : paused ? "PAUSED" : "PLAYING", positionMs: positionMs(), durationMs: duration > 0 ? Math.round(duration * 1000) : null };
+      },
+    };
+    transport.current = mine;
+    reportSoon();
+    return () => { if (transport.current === mine) transport.current = null; };
   });
 
   $effect(() => {

@@ -6,6 +6,7 @@
   import IconContext from "phosphor-svelte/lib/IconContext";
   import { connect } from "$lib/connect.svelte.js";
   import { player } from "$lib/playback.svelte.js";
+  import { useReceiver } from "$lib/receiver.svelte.js";
   import { app, start } from "$lib/session.svelte.js";
   import { morph } from "$lib/transition.svelte.js";
   import { ambient, palette, prefersReducedMotion, toggleSidebar } from "$lib/ui.svelte.js";
@@ -39,6 +40,7 @@
 
   // The viewer's other devices, for as long as they are signed in.
   $effect(() => { if (app.phase === "app") return connect.run(); });
+  $effect(() => { if (app.phase === "app") return useReceiver(); });
 
   onNavigate((navigation) => {
     const from = navigation.from?.url.pathname ?? "";

@@ -5,12 +5,14 @@
   import Copy from "phosphor-svelte/lib/Copy";
   import Devices from "phosphor-svelte/lib/Devices";
   import Key from "phosphor-svelte/lib/Key";
+  import MonitorPlay from "phosphor-svelte/lib/MonitorPlay";
   import Plus from "phosphor-svelte/lib/Plus";
   import Television from "phosphor-svelte/lib/Television";
   import { page } from "$app/state";
   import { graphql } from "$houdini";
   import { accessClaims, deviceName } from "$lib/api.js";
   import { deviceId } from "$lib/device.js";
+  import { receiving, setReceiving } from "$lib/receiver.svelte.js";
   import { date } from "$lib/format.js";
   import { refetch, request } from "$lib/graphql.js";
   import { logout } from "$lib/session.svelte.js";
@@ -229,6 +231,14 @@
     </section>
 
     <section class="panel wide" style:--i={2}>
+      <header class="panel-head">
+        <span class="panel-icon"><MonitorPlay size={19} /></span>
+        <div><h2>Play on this browser</h2><p>Let your other devices start and steer a title here, from their “Play on” button</p></div>
+      </header>
+      <label class="toggle"><input type="checkbox" class="switch" checked={receiving.on} onchange={(event) => setReceiving(event.currentTarget.checked)} /><span class="what"><strong>Allow other devices to play on this browser</strong><small>Only your own devices. It works while a NoFlex tab is open, and browsers hold back sound until the page has been used.</small></span></label>
+    </section>
+
+    <section class="panel wide" style:--i={3}>
       <header class="panel-head">
         <span class="panel-icon"><Devices size={19} /></span>
         <div><h2>Smart transcoding</h2><p>For these devices, the server prepares what you’re likely to watch next while it’s idle, so playback starts without a live transcode, and <a class="inline" href="/account?tab=smart">what you’ve marked</a> before anything else</p></div>

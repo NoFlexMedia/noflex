@@ -317,6 +317,38 @@ impl ConnectHub {
         }
     }
 
+    /// Show `device` as loading `work`, for a title just sent to it, so every
+    /// controller has something to show from the moment of the cast rather than
+    /// from the device's first report. What the device says next replaces it,
+    /// and silence ends it with the device's presence.
+    pub(crate) fn mark_loading(
+        &self,
+        user: UserId,
+        device: DeviceId,
+        work: WorkId,
+        position_ms: u64,
+    ) {
+        let marked = {
+            let mut devices = self.lock();
+            devices
+                .get_mut(&device)
+                .filter(|entry| entry.user == user)
+                .map(|entry| {
+                    entry.playback = Some(DevicePlayback {
+                        work_id: work,
+                        state: DevicePlayState::Buffering,
+                        position_ms,
+                        duration_ms: None,
+                        reported_at: OffsetDateTime::now_utc(),
+                    });
+                })
+                .is_some()
+        };
+        if marked {
+            self.announce(user);
+        }
+    }
+
     /// Forget what `device` was playing, for a stop just sent to it, so every
     /// controller sees it idle now rather than at its next report. A device
     /// that didn't obey says so with its next report.
@@ -498,6 +530,12 @@ impl ConnectMutation {
             },
         )
         .map_err(refused)?;
+        hub.mark_loading(
+            principal.user_id,
+            device_id,
+            work_id,
+            position_ms.unwrap_or(0),
+        );
         let (online, playback) = hub.status(principal.user_id, device_id);
         Ok(ConnectDevice {
             device,
@@ -680,6 +718,35 @@ mod tests {
         assert!(
             hub.status(user, device).1.is_some(),
             "only the owner's stop counts"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cast_shows_the_device_loading_until_it_says_otherwise() {
+        let hub = Arc::new(ConnectHub::default());
+        let (user, device, work) = (UserId::new(), DeviceId::new(), WorkId::new());
+        let _attachment = hub.attach(user, device);
+        let mut heard = hub.watch();
+
+        hub.mark_loading(user, device, work, 0);
+        assert_eq!(heard.recv().await.expect("announced"), user);
+        let shown = hub.status(user, device).1.expect("loading");
+        assert_eq!(
+            (shown.work_id, shown.state),
+            (work, DevicePlayState::Buffering)
+        );
+
+        hub.report(user, device, Some(playing(work)));
+        assert_eq!(
+            hub.status(user, device).1.map(|p| p.state),
+            Some(DevicePlayState::Playing),
+            "the device's own word replaces it"
+        );
+        hub.mark_loading(UserId::new(), device, work, 0);
+        assert_eq!(
+            hub.status(user, device).1.map(|p| p.state),
+            Some(DevicePlayState::Playing),
+            "only the owner's cast counts"
         );
     }
 

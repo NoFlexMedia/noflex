@@ -138,7 +138,7 @@ fn request(query: impl Into<String>, as_user: &User) -> Request {
 
 fn cast(fixture: &Fixture) -> String {
     format!(
-        r#"mutation {{ castToDevice(deviceId: "{}", workId: "{}", positionMs: 90000) {{ online }} }}"#,
+        r#"mutation {{ castToDevice(deviceId: "{}", workId: "{}", positionMs: 90000) {{ online playback {{ state }} }} }}"#,
         fixture.tv, fixture.work
     )
 }
@@ -179,10 +179,10 @@ async fn a_cast_reaches_a_listening_device_and_nothing_else_can_send_to_it() {
         .expect("subscription ended");
     let sent = sent_rx.await.expect("cast response");
     assert!(sent.errors.is_empty(), "{:?}", sent.errors);
-    assert_eq!(
-        sent.data.into_json().expect("json")["castToDevice"]["online"],
-        true
-    );
+    let sent = sent.data.into_json().expect("json");
+    assert_eq!(sent["castToDevice"]["online"], true);
+    // The controller has something to show before the device has said a word.
+    assert_eq!(sent["castToDevice"]["playback"]["state"], "BUFFERING");
     let command = command.data.into_json().expect("json");
     assert_eq!(command["deviceCommands"]["kind"], "LOAD");
     assert_eq!(

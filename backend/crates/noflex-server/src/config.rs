@@ -37,6 +37,11 @@ pub struct Config {
     /// Answer cross-origin requests, so clients connected to several servers
     /// can reach this one from another's web page.
     pub cross_origin: bool,
+    /// Let the web client load Google's Cast sender script, so it can start a
+    /// session on a Cast device. Off by default: the page's policy then admits
+    /// scripts from Google, which a server that never casts has no need of.
+    #[serde(default)]
+    pub cast_sdk: bool,
     pub log: LogConfig,
     pub transcoder: TranscoderConfig,
     pub plugin: PluginConfig,
@@ -267,6 +272,7 @@ impl Default for Config {
             data_dir,
             cache_dir,
             cross_origin: true,
+            cast_sdk: false,
             log: LogConfig {
                 level: "info".to_string(),
                 file: None,
@@ -415,6 +421,7 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("LOG_LEVEL", "log.level"),
     ("LOG_FILE", "log.file"),
     ("CROSS_ORIGIN", "cross_origin"),
+    ("CAST_SDK", "cast_sdk"),
     ("TRANSCODER_HWACCEL", "transcoder.hwaccel"),
     ("TRANSCODER_FALLBACK", "transcoder.fallback"),
     ("TRANSCODER_TONEMAP_CURVE", "transcoder.tonemap_curve"),

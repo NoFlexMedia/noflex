@@ -154,7 +154,14 @@ struct ServerInfo {
     /// Whether this server offers its media for keeping on a device. A client
     /// asks the server a title came from, as each decides for itself.
     downloads_allowed: bool,
+    /// Whether the web client may load Google's Cast sender script. Other clients
+    /// ignore it: they bring their own Cast support.
+    cast_sdk: bool,
 }
+
+/// Whether the server's configuration admits Google's Cast sender script.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CastSdk(pub bool);
 
 #[Object]
 impl CoreQuery {
@@ -179,6 +186,7 @@ impl CoreQuery {
                 .downloads_allowed()
                 .await
                 .map_err(|e| async_graphql::Error::new(e.to_string()))?,
+            cast_sdk: ctx.data_opt::<CastSdk>().is_some_and(|sdk| sdk.0),
         })
     }
 
@@ -725,6 +733,8 @@ pub struct SchemaContext {
     /// Who is listening for commands, for NoFlex Connect. Defaults to a fresh
     /// hub when absent.
     pub connect_hub: Option<Arc<ConnectHub>>,
+    /// Defaults to off.
+    pub cast_sdk: Option<CastSdk>,
     /// Admin diagnostics (host, transcoder, indexing, logs). Absent →
     /// the admin status queries error with "admin status not configured".
     pub admin_status: Option<Arc<dyn AdminStatusService>>,
@@ -761,6 +771,7 @@ pub fn build_schema(ctx: SchemaContext) -> NoflexSchema {
         .data(ctx.export_events.unwrap_or_default())
         .data(ctx.watch_room_bus.unwrap_or_default())
         .data(ctx.connect_hub.unwrap_or_default())
+        .data(ctx.cast_sdk.unwrap_or_default())
         .data(Arc::new(noflex_auth::LoginThrottle::default()));
     if let Some(storage) = ctx.storage {
         builder = builder

@@ -73,6 +73,13 @@ get access, since any of them can then create an account.
 
 Whether to answer cross-origin requests, which lets web clients signed in to another NoFlex server connect here as a linked server. Requests still need this server's own credentials. Stays off until the first account exists, whatever this says, so a website can't reach the setup wizard through a visitor's browser. Native clients don't need it.
 
+### `cast_sdk`
+- **Type:** boolean
+- **Default:** `false`
+- **Env:** `NOFLEX_CAST_SDK`
+
+Whether the web client may load Google's Cast sender script, which it needs to start a session on a Chromecast or a TV with Cast built in. Turning it on adds `https://www.gstatic.com/cast/sdk/libs/sender/` and Chrome's own copy of the script to the page's `script-src`, so the policy admits code from Google. Leave it off if nothing at home casts. The phone app and the TV apps don't use it.
+
 ### `data_dir`
 - **Type:** path
 - **Default:** XDG data dir (`~/.local/share/noflex` on Linux)

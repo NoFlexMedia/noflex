@@ -26,7 +26,12 @@ where
     Router::new().fallback(get(serve))
 }
 
-async fn serve(storage: Option<Extension<Arc<dyn Storage>>>, uri: Uri) -> Response {
+async fn serve(
+    storage: Option<Extension<Arc<dyn Storage>>>,
+    cast_sdk: Option<Extension<noflex_graphql::CastSdk>>,
+    uri: Uri,
+) -> Response {
+    let cast_sdk = cast_sdk.is_some_and(|Extension(sdk)| sdk.0);
     let linked = match &storage {
         Some(Extension(storage)) => match storage.linked_server_origins().await {
             Ok(origins) => origins,
@@ -56,7 +61,7 @@ async fn serve(storage: Option<Extension<Arc<dyn Storage>>>, uri: Uri) -> Respon
     let mut response = response.unwrap_or_else(|| {
         protected_response(StatusCode::NOT_FOUND, Body::empty(), None, NO_CACHE)
     });
-    if let Ok(policy) = HeaderValue::from_str(&content_security_policy(&linked)) {
+    if let Ok(policy) = HeaderValue::from_str(&content_security_policy(&linked, cast_sdk)) {
         response
             .headers_mut()
             .insert(header::CONTENT_SECURITY_POLICY, policy);
@@ -70,14 +75,24 @@ async fn serve(storage: Option<Extension<Arc<dyn Storage>>>, uri: Uri) -> Respon
 /// servers users have linked. Exact origins rather than `https:`: injected
 /// script could otherwise send a token anywhere. `linked` holds origins that
 /// passed validation when they were linked.
-fn content_security_policy(linked: &[String]) -> String {
+fn content_security_policy(linked: &[String], cast_sdk: bool) -> String {
     let origins = linked
         .iter()
         .fold(String::new(), |all, origin| format!("{all} {origin}"));
+    let build = if cast_sdk {
+        // Google's sender script, and Chrome's own copy of it, for a server whose
+        // administrator turned casting on.
+        embedded::CONTENT_SECURITY_POLICY.replacen(
+            "script-src ",
+            "script-src https://www.gstatic.com/cast/sdk/libs/sender/ https://www.gstatic.com/eureka/ chrome-extension://pkedcjkdefgpdelpbcmbmeomcjbeemfm ",
+            1,
+        )
+    } else {
+        embedded::CONTENT_SECURITY_POLICY.to_string()
+    };
     format!(
         "default-src 'self'; connect-src 'self'{origins}; img-src 'self' blob:{origins}; \
-         media-src 'self' blob:{origins}; {}",
-        embedded::CONTENT_SECURITY_POLICY
+         media-src 'self' blob:{origins}; {build}"
     )
 }
 
@@ -364,7 +379,7 @@ mod tests {
 
     #[test]
     fn linked_origins_are_allowed_exactly() {
-        let policy = content_security_policy(&["https://friend.example".to_string()]);
+        let policy = content_security_policy(&["https://friend.example".to_string()], false);
         for directive in [
             "connect-src 'self' https://friend.example",
             "img-src 'self' blob: https://friend.example",
@@ -375,8 +390,30 @@ mod tests {
         assert!(policy.contains("default-src 'self'"), "{policy}");
         assert!(!policy.contains("https:;"), "{policy}");
         assert!(
-            !content_security_policy(&[]).contains("friend"),
+            !content_security_policy(&[], false).contains("friend"),
             "nothing linked, nothing allowed"
+        );
+    }
+
+    #[test]
+    fn google_s_cast_script_is_admitted_only_when_casting_is_on() {
+        let script_src = |policy: &str| {
+            policy
+                .split(';')
+                .map(str::trim)
+                .find(|directive| directive.starts_with("script-src"))
+                .map(str::to_owned)
+                .unwrap()
+        };
+        assert!(!script_src(&content_security_policy(&[], false)).contains("gstatic"));
+        let on = script_src(&content_security_policy(&[], true));
+        assert!(
+            on.contains("https://www.gstatic.com/cast/sdk/libs/sender/"),
+            "{on}"
+        );
+        assert!(
+            !on.contains("https://www.gstatic.com "),
+            "only Cast's path: {on}"
         );
     }
 

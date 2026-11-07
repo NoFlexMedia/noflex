@@ -497,6 +497,7 @@ async fn run() -> anyhow::Result<()> {
         ))),
         watch_room_bus: Some(Arc::new(noflex_graphql::WatchRoomBus::default())),
         connect_hub: Some(Arc::new(noflex_graphql::ConnectHub::default())),
+        cast_sdk: Some(noflex_graphql::CastSdk(cfg.cast_sdk)),
         admin_status: Some(admin_status),
         metadata_service: Some(metadata_service),
         tonemap_curve: Some(cfg.transcoder.tonemap_curve),
@@ -617,6 +618,7 @@ async fn run() -> anyhow::Result<()> {
         .layer(axum::Extension(state.jwt.as_ref().clone()))
         // Published for the auth middleware's API-key lookups.
         .layer(axum::Extension(storage.clone()))
+        .layer(axum::Extension(noflex_graphql::CastSdk(cfg.cast_sdk)))
         .merge(restricted_routes);
     let app = if cfg.cross_origin {
         app.layer(noflex_server::web::cross_origin_layer(storage.clone()))

@@ -13,6 +13,7 @@ import { request } from "$lib/graphql.js";
 import { host } from "$lib/host.js";
 import { pickImage, sized } from "$lib/images.js";
 import { closePlayer, isAudioOnly, nextSibling, type Playback, playWork, restartSession, stopSession } from "$lib/playback.js";
+import { clearTransport, reportNow, setTransport, type Transport } from "$lib/remote.js";
 import { chapterStops, thumbAt, type Stop } from "$lib/player/trickplay.js";
 import type { AudioTrack, VideoPlayer } from "$lib/player/types.js";
 import { cueAt, parseVtt, type Cue } from "$lib/player/vtt.js";
@@ -210,6 +211,7 @@ export default function Player(props: { playback: Playback }) {
             setPaused(false);
             clearInterval(heartbeat);
             void report("PLAYING");
+            reportNow();
             heartbeat = setInterval(() => void report("PLAYING"), HEARTBEAT_MS);
             break;
           case "paused":
@@ -217,6 +219,7 @@ export default function Player(props: { playback: Playback }) {
             setPaused(true);
             clearInterval(heartbeat);
             if (!finalized) void report("PAUSED");
+            reportNow();
             showChrome();
             break;
           case "waiting":
@@ -296,12 +299,28 @@ export default function Player(props: { playback: Playback }) {
 
   // Paused or not: a film left paused still shouldn't wake to a screensaver, and leaving ends it.
   const returnTo = untrack(activeElement) as ElementNode | undefined;
+  // What another of the viewer's devices may do to this player; each answers on screen as a key would.
+  const transport: Transport = {
+    play: () => { video?.play(); showChrome(); },
+    pause: () => { video?.pause(); showChrome(); },
+    seekTo: (seconds) => { seekTo(seconds); showChrome(); reportNow(); },
+    stop: () => void close(),
+    finish,
+    state: () => {
+      const workId = playback().workId;
+      if (!workId || live()) return null;
+      const state = waiting() ? "BUFFERING" : paused() ? "PAUSED" : "PLAYING";
+      return { workId, state, positionMs: positionMs(), durationMs: length() > 0 ? Math.round(length() * 1000) : null };
+    },
+  };
   onMount(() => {
     root?.setFocus();
     showChrome();
     host.keepAwake?.(true);
+    setTransport(transport);
   });
   onCleanup(() => {
+    clearTransport(transport);
     host.keepAwake?.(false);
     if (returnTo && !returnTo.destroyed) returnTo.setFocus();
     clearTimeout(chromeTimer);

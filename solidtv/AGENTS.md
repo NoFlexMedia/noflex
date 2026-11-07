@@ -97,6 +97,15 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 - `QrCode` draws the approval URL with the code in it (`&pin=`), which the web's Devices tab fills in. It's rectangles, not a canvas: no host-specific drawing, and one quad per run of dark modules.
 - A code lives 10 minutes and renews itself three times, then the screen stops asking the server. A TV's clock can be wrong, so an `expiresAt` that makes no sense counts as the whole 10 minutes.
 
+## NoFlex Connect
+
+The viewer's other devices play on this TV, and steer what it's playing. `lib/remote.ts` is the receiver, `lib/live.ts` the `graphql-transport-ws` client it listens through.
+
+- `startRemote` (from `App`) subscribes to `deviceCommands` and reports with `reportDeviceState` every 5 s, which is also how the server keeps the TV listed as online. It reports at once when the player starts, pauses or seeks.
+- **`Player` hands over its transport** (`setTransport`) for as long as it's open, so a command steers it as the remote does: it shows the overlay and answers on screen. `LOAD` ends the session as the next episode does (`Transport.finish`) and then calls `playWork` with only the title's id: the TV picks the version it plays best.
+- **tvOS and iOS don't listen**: NativeScript has no `WebSocket` (`canSubscribe`), as with watch together.
+- Live TV isn't reported: a state needs a work.
+
 ## Focus and keys
 
 - `App.tsx` maps keys. The framework reads `event.key` before `keyCode`, so TV-reported names must be listed, not just codes.
@@ -170,7 +179,7 @@ Other notes:
 
 Administration stays in the web client and the apps; the status dot (`ServerStatus`) is what admins get here. Settings (`pages/Account.tsx`) has what a viewer changes from the couch, not their profile, sessions or API keys.
 
-- **Watch together:** needs a WebSocket, which NativeScript's runtime lacks.
+- **Watch together** and being **played on from another device** (NoFlex Connect): both need a WebSocket, which NativeScript's runtime lacks.
 - **Linked servers:** rails and search stay on the home server.
 - **External login:** needs a browser to redirect through. A device-PIN (`pages/Login.tsx`) is the way in without typing a password, and covers it: whoever approves it can have signed in however they like.
 - **Live TV's programme grid and recording rules:** channels with what's on now, and tuning in.

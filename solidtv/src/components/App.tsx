@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useNavigate } from "@solidjs/router";
-import { createEffect, Match, Show, Switch, type ParentProps } from "solid-js";
+import { createEffect, Match, onCleanup, Show, Switch, type ParentProps } from "solid-js";
 import { useFocusManager, useMouse } from "@solidtv/solid/primitives";
 import { clearKeepAliveRoute } from "@solidtv/solid/primitives/router";
 import type { KeyMap } from "@solidtv/solid";
@@ -9,6 +9,7 @@ import { originX, originY } from "$lib/viewport.js";
 import { SCREEN } from "../theme.js";
 import { host } from "$lib/host.js";
 import { player } from "$lib/playback.js";
+import { startRemote } from "$lib/remote.js";
 import { app, start } from "$lib/session.js";
 import { ui } from "$lib/ui.js";
 import Backdrop from "$components/Backdrop.js";
@@ -48,6 +49,10 @@ export default function App(props: ParentProps) {
     clearKeepAliveRoute();
     ui.backdrop = null;
     navigate("/", { replace: true });
+  });
+  // Other devices of the viewer's can play on this one while it's signed in.
+  createEffect(() => {
+    if (app.phase === "app") onCleanup(startRemote());
   });
   return (
     // Whatever nothing else took: Home's navigation, or a screen with none, like signing in.

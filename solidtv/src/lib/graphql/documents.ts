@@ -257,3 +257,9 @@ query ServerActivity {
   activeStreams { id transcode { status } }
   optimizedVersionStats { running }
 }`;
+
+// ---- NoFlex Connect -----------------------------------------------------------
+
+export const DEVICE_COMMANDS = `subscription DeviceCommands($device: ID!) { deviceCommands(deviceId: $device) { kind workId editionId mediaFileId positionMs } }`;
+
+export const REPORT_DEVICE_STATE = `mutation ReportDeviceState($device: ID!, $playback: DevicePlaybackInput) { reportDeviceState(deviceId: $device, playback: $playback) }`;

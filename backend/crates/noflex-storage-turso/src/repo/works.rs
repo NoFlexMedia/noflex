@@ -15,6 +15,9 @@ use crate::{
     error::map_turso,
 };
 
+/// Leaves an unchanged row alone, `updated_at` included, so a rescan
+/// rewrites neither it nor its search index. Every column the update sets
+/// belongs in its WHERE, or a change to that column alone is dropped.
 const UPSERT_WORK: &str = "INSERT INTO works (\
     id, kind, parent_id, library_id, title, sort_title, year, release_date, overview, \
     external_ids_json, index_number, index_end, parent_index, metadata_status, added_at, updated_at, \
@@ -40,7 +43,26 @@ ON CONFLICT(id) DO UPDATE SET \
     community_rating = excluded.community_rating, \
     locked_fields_json = excluded.locked_fields_json, \
     metadata_provider = excluded.metadata_provider, \
-    updated_at = excluded.updated_at";
+    updated_at = excluded.updated_at \
+WHERE works.kind IS NOT excluded.kind OR \
+    works.parent_id IS NOT excluded.parent_id OR \
+    works.root_id IS NOT excluded.root_id OR \
+    works.library_id IS NOT excluded.library_id OR \
+    works.title IS NOT excluded.title OR \
+    works.sort_title IS NOT excluded.sort_title OR \
+    works.year IS NOT excluded.year OR \
+    works.release_date IS NOT excluded.release_date OR \
+    works.overview IS NOT excluded.overview OR \
+    works.external_ids_json IS NOT excluded.external_ids_json OR \
+    works.index_number IS NOT excluded.index_number OR \
+    works.index_end IS NOT excluded.index_end OR \
+    works.parent_index IS NOT excluded.parent_index OR \
+    works.metadata_status IS NOT excluded.metadata_status OR \
+    works.tagline IS NOT excluded.tagline OR \
+    works.original_title IS NOT excluded.original_title OR \
+    works.community_rating IS NOT excluded.community_rating OR \
+    works.locked_fields_json IS NOT excluded.locked_fields_json OR \
+    works.metadata_provider IS NOT excluded.metadata_provider";
 
 const GET_BY_ID: &str = "SELECT id, kind, parent_id, library_id, title, sort_title, year, \
     release_date, overview, external_ids_json, index_number, index_end, parent_index, \
@@ -139,7 +161,10 @@ pub(crate) async fn upsert(conn: &Connection, work: &Work) -> StorageResult<()> 
             .unwrap_or(Value::Null),
         Value::Blob(root.clone()),
     ];
-    conn.execute(UPSERT_WORK, params).await.map_err(map_turso)?;
+    let written = conn.execute(UPSERT_WORK, params).await.map_err(map_turso)?;
+    if written == 0 {
+        return Ok(());
+    }
 
     // Whatever sits beneath it moved too. Parents nest two levels at most.
     if previous_root.as_ref() != Some(&root) {
@@ -286,4 +311,78 @@ pub(crate) fn row_to_work(row: &turso::Row) -> StorageResult<Work> {
         added_at: text_to_dt(col_text(&added_at)?)?,
         updated_at: text_to_dt(col_text(&updated_at)?)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use noflex_core::{MetadataStatus, WorkKind};
+    use noflex_storage::{
+        Storage,
+        domain::{Library, LibraryKind},
+    };
+    use time::{Duration, OffsetDateTime};
+
+    use super::*;
+    use crate::TursoStore;
+
+    #[tokio::test]
+    async fn rewriting_an_unchanged_work_leaves_it_alone_but_one_change_lands() {
+        let store = TursoStore::open_temp().await.unwrap();
+        store.migrate().await.unwrap();
+        let library = Library {
+            id: LibraryId::new(),
+            name: "Films".to_string(),
+            kind: LibraryKind::Movies,
+            paths: vec!["/srv/films".to_string()],
+            ..Default::default()
+        };
+        store.upsert_library(&library).await.unwrap();
+        let written = OffsetDateTime::now_utc() - Duration::days(1);
+        let mut work = Work {
+            id: WorkId::new(),
+            kind: WorkKind::Movie,
+            parent_id: None,
+            library_id: library.id,
+            title: "Harbor".to_string(),
+            sort_title: "harbor".to_string(),
+            year: None,
+            release_date: None,
+            overview: None,
+            external_ids: vec![],
+            index_number: None,
+            index_end: None,
+            parent_index: None,
+            metadata_status: MetadataStatus::Unconfirmed,
+            tagline: None,
+            original_title: None,
+            community_rating: Some(7.5),
+            locked_fields: vec![],
+            metadata_provider: None,
+            added_at: written,
+            updated_at: written,
+        };
+        store.upsert_work(&work).await.unwrap();
+
+        work.updated_at = OffsetDateTime::now_utc();
+        store.upsert_work(&work).await.unwrap();
+        let stored = store.get_work(work.id).await.unwrap().unwrap();
+        assert_eq!(stored.updated_at, written, "nothing changed");
+
+        // The last column the update compares, and the external ids it skips
+        // rebuilding when the row is unchanged.
+        work.metadata_provider = Some("tmdb".to_string());
+        work.external_ids = vec![ExternalId {
+            kind: ExternalIdKind::Tmdb,
+            value: "603".to_string(),
+        }];
+        store.upsert_work(&work).await.unwrap();
+        let stored = store.get_work(work.id).await.unwrap().unwrap();
+        assert_eq!(stored.metadata_provider.as_deref(), Some("tmdb"));
+        assert_eq!(stored.updated_at, work.updated_at);
+        let found = store
+            .works_by_external_id(ExternalIdKind::Tmdb, "603")
+            .await
+            .unwrap();
+        assert_eq!(found.len(), 1);
+    }
 }

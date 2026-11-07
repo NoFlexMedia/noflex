@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* The web client's tokens (web/src/app.css), as far as the framework's player lets a receiver style. */
+html, body { margin: 0; height: 100%; background: #07080b; }
+
+cast-media-player {
+  --splash-image: url("splash.svg");
+  --splash-color: #07080b;
+  --background-image: none;
+  --progress-color: #d4ff5a;
+  --theme-hue: 74;
+  --font-family: Inter, system-ui, sans-serif;
+}

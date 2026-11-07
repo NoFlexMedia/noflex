@@ -120,20 +120,43 @@ class _RemoteBarState extends State<RemoteBar> {
                       size: 40,
                       onPressed: () => seek(at - _skipBack),
                     ),
-                  NfIconButton(
-                    icon: device.playing
-                        ? PhosphorIconsFill.pause
-                        : PhosphorIconsFill.play,
-                    label: device.playing ? 'Pause' : 'Play',
-                    size: 44,
-                    background: NfColors.surface2,
-                    onPressed: () => connect.control(
-                      device,
-                      device.playing
-                          ? GDeviceControl.PAUSE
-                          : GDeviceControl.PLAY,
+                  if (device.buffering)
+                    // Loading: the spinner stands where the play button does, and still pauses.
+                    Semantics(
+                      button: true,
+                      label: 'Loading',
+                      child: InkResponse(
+                        onTap: () =>
+                            connect.control(device, GDeviceControl.PAUSE),
+                        child: const SizedBox.square(
+                          dimension: 44,
+                          child: Center(
+                            child: SizedBox.square(
+                              dimension: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: NfColors.text,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    NfIconButton(
+                      icon: device.playing
+                          ? PhosphorIconsFill.pause
+                          : PhosphorIconsFill.play,
+                      label: device.playing ? 'Pause' : 'Play',
+                      size: 44,
+                      background: NfColors.surface2,
+                      onPressed: () => connect.control(
+                        device,
+                        device.playing
+                            ? GDeviceControl.PAUSE
+                            : GDeviceControl.PLAY,
+                      ),
                     ),
-                  ),
                   if (!compact)
                     NfIconButton(
                       icon: PhosphorIconsRegular.arrowClockwise,

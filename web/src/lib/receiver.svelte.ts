@@ -11,7 +11,7 @@ import { deviceId } from "$lib/device.js";
 import { request } from "$lib/graphql.js";
 import { playWork } from "$lib/playback.svelte.js";
 import { toast } from "$lib/ui.svelte.js";
-import { transport } from "$lib/transport.svelte.js";
+import { transport, type DeviceState } from "$lib/transport.svelte.js";
 
 const KEY = "noflex.receive";
 const LOCK = "noflex-receiver";
@@ -34,14 +34,30 @@ export function setReceiving(on: boolean): void {
   try { localStorage.setItem(KEY, String(on)); } catch { /* applies to this tab only */ }
 }
 
+// A title this tab has been asked to start and hasn't got playing yet. Said as loading, or the idle
+// reports between the command and the player would take back what the controllers were shown.
+let loading: DeviceState | null = null;
+const LOADING_MS = 30_000;
+
+/** What to say now: the title being started until the player has taken it over, else what's playing. */
+function current(): DeviceState | null {
+  const playing = transport.current?.state() ?? null;
+  if (loading && playing?.workId === loading.workId) loading = null;
+  return loading ?? playing;
+}
+
 /** Say what this browser is doing now. Best effort: the next report says it again. */
 function report(device: string): void {
-  const playback = transport.current?.state() ?? null;
+  const playback = current();
   request(new ReportDeviceStateStore(), { device, playback }).catch(() => {});
 }
 
 async function load(command: Command): Promise<void> {
   if (!command.workId) return;
+  const mine: DeviceState = { workId: command.workId, state: "BUFFERING", positionMs: command.positionMs ?? 0, durationMs: null };
+  loading = mine;
+  setTimeout(() => { if (loading === mine) loading = null; }, LOADING_MS);
+  reportSoon();
   await transport.current?.finish();
   // Browsers hold back sound from a page nobody has touched; the player then waits to be started.
   const played = await playWork({ id: command.workId, title: "" }, {
@@ -49,7 +65,10 @@ async function load(command: Command): Promise<void> {
     mediaFileId: command.mediaFileId ?? undefined,
     positionMs: command.positionMs ?? undefined,
   });
-  if (!played) return;
+  if (!played) {
+    if (loading === mine) { loading = null; reportSoon(); }
+    return;
+  }
   setTimeout(() => { if (transport.current?.state()?.state === "PAUSED") toast("Press play to start. This browser holds back sound until it has been used.", "info"); }, 1500);
 }
 

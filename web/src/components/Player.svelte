@@ -645,7 +645,7 @@
     ontimeupdate={onTime}
     onplaying={onPlaying}
     onpause={onPause}
-    onwaiting={() => (waiting = true)}
+    onwaiting={() => { waiting = true; reportSoon(); }}
     oncanplay={() => (waiting = false)}
     onseeked={() => { if (restarting == null) roomSend(video.paused ? "PAUSE" : "SEEK"); }}
     onended={onEnded}

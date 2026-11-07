@@ -53,6 +53,7 @@ class RemoteDevice {
   GConnectDeviceFields_playback? get playback =>
       _stopped ? null : data.playback;
   bool get playing => state == GDevicePlayState.PLAYING;
+  bool get buffering => state == GDevicePlayState.BUFFERING;
 }
 
 class ConnectService {

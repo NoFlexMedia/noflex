@@ -224,6 +224,7 @@ export default function Player(props: { playback: Playback }) {
             break;
           case "waiting":
             setWaiting(true);
+            reportNow();
             break;
           case "time":
             if (restarting() != null) break;

@@ -21,6 +21,7 @@
   let playback = $derived(remote?.playback ?? null);
   let position = $derived(remote ? connect.position(remote) : 0);
   let playing = $derived(playback?.state === "PLAYING");
+  let loading = $derived(playback?.state === "BUFFERING");
   let duration = $derived(playback?.durationMs ?? 0);
   let scrubbing = $state(null);
 
@@ -36,8 +37,8 @@
     </div>
     <div class="controls">
       <Tip text="Back 10 seconds">{#snippet children(tip)}<button {...tip} type="button" class="icon-btn sm skip" aria-label="Back 10 seconds" onclick={() => seek(position - SKIP_BACK_MS)}><ArrowCounterClockwise size={19} /></button>{/snippet}</Tip>
-      <button type="button" class="icon-btn solid toggle" aria-label={playing ? "Pause" : "Play"} onclick={() => connect.control(remote, playing ? "PAUSE" : "PLAY")}>
-        {#if playing}<Pause size={20} weight="fill" />{:else}<Play size={20} weight="fill" />{/if}
+      <button type="button" class="icon-btn solid toggle" aria-label={loading ? "Loading" : playing ? "Pause" : "Play"} aria-busy={loading} onclick={() => connect.control(remote, playing || loading ? "PAUSE" : "PLAY")}>
+        {#if loading}<span class="spinner sm"></span>{:else if playing}<Pause size={20} weight="fill" />{:else}<Play size={20} weight="fill" />{/if}
       </button>
       <Tip text="Forward 30 seconds">{#snippet children(tip)}<button {...tip} type="button" class="icon-btn sm skip" aria-label="Forward 30 seconds" onclick={() => seek(position + SKIP_FORWARD_MS)}><ArrowClockwise size={19} /></button>{/snippet}</Tip>
     </div>

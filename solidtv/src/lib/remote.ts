@@ -35,9 +35,21 @@ interface Command { kind: "LOAD" | "PLAY" | "PAUSE" | "SEEK" | "STOP"; workId: s
 
 let transport: Transport | null = null;
 
+// A title this TV has been asked to start and hasn't got playing yet. Said as loading, or the idle
+// reports between the command and the player would take back what the controllers were shown.
+let loading: DeviceState | null = null;
+const LOADING_MS = 30_000;
+
 export function setTransport(next: Transport | null): void {
   transport = next;
   if (next) reportNow();
+}
+
+/** What to say now: the title being started until the player has taken it over, else what's playing. */
+function current(): DeviceState | null {
+  const playing = transport?.state() ?? null;
+  if (loading && playing?.workId === loading.workId) loading = null;
+  return loading ?? playing;
 }
 
 /** Drop `mine` if it is still the transport, and say so at once: the controllers' bar shouldn't wait for the next report to go. */
@@ -50,20 +62,28 @@ export function clearTransport(mine: Transport): void {
 /** Say what this TV is doing now, for the moments it changes. Best effort: the next report says it again. */
 export function reportNow(): void {
   if (!listening) return;
-  const playback = transport?.state() ?? null;
+  const playback = current();
   request(REPORT_DEVICE_STATE, { device: thisDeviceId(), playback }).catch(() => {});
 }
 
 async function load(command: Command): Promise<void> {
   if (!command.workId) return;
+  loading = { workId: command.workId, state: "BUFFERING", positionMs: command.positionMs ?? 0, durationMs: null };
+  const mine = loading;
+  setTimeout(() => { if (loading === mine) loading = null; }, LOADING_MS);
+  reportNow();
   await transport?.finish();
   // The title is resolved by its id alone; the player takes everything else from the server.
-  await playWork({ id: command.workId, title: "" } as Work, {
+  const played = await playWork({ id: command.workId, title: "" } as Work, {
     editionId: command.editionId ?? undefined,
     mediaFileId: command.mediaFileId ?? undefined,
     positionMs: command.positionMs ?? undefined,
   });
-  reportNow();
+  // Played, the player says so itself once it mounts; failed, nothing will.
+  if (!played && loading === mine) {
+    loading = null;
+    reportNow();
+  }
 }
 
 function handle(command: Command): void {

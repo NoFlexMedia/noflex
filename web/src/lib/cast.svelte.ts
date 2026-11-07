@@ -63,6 +63,8 @@ class Cast {
   #beat: ReturnType<typeof setInterval> | undefined;
   #last: "PLAYING" | "PAUSED" | null = null;
   #started = false;
+  /** A title being started, which the Cast device hasn't answered for yet. */
+  #preparing: { work: any; positionMs: number } | null = null;
 
   /** Load Google's script once, if the server admits it. Returns the disposer. */
   run(): () => void {
@@ -125,6 +127,7 @@ class Cast {
     const loaded = this.#loaded;
     const state = remote.playerState as string | null;
     const live = loaded && remote.isMediaLoaded && state && state !== "IDLE";
+    const preparing = !live ? this.#preparing : null;
     // A finished or stopped title leaves the device idle; what it was is then ours to close out.
     if (loaded && !live && state === "IDLE" && !remote.isMediaLoaded) {
       void this.#finish(this.#session()?.getMediaSession?.()?.idleReason === "FINISHED");
@@ -141,7 +144,7 @@ class Cast {
         positionMs: this.#positionMs(),
         durationMs: loaded.durationMs ?? (remote.duration ? Math.round(remote.duration * 1000) : null),
         work: loaded.work,
-      } : null,
+      } : preparing ? { state: "BUFFERING", positionMs: preparing.positionMs, durationMs: null, work: preparing.work } : null,
       heardAt: Date.now(),
       via: "cast",
     } as unknown as RemoteDevice];
@@ -179,6 +182,9 @@ class Cast {
       const model: string = session.getCastDevice().modelName ?? "";
       const playable = await resolvePlayable(work, options);
       await this.#finish(false);
+      // From here the bar shows it loading, through opening the session and the encoder's first segments.
+      this.#preparing = { work: playable.detail.work ?? work, positionMs: playable.resume };
+      this.#publish();
       const stream = await startSession(playable.mediaFileId, playable.burnedSubtitle, playable.resume, playable.audioStream, castCapabilities(model));
       const url = absolute(stream.url);
       const transcode = stream.route === "TRANSCODE";
@@ -216,12 +222,15 @@ class Cast {
         transcode, offsetMs: transcode ? (stream.startPositionMs ?? 0) : 0, durationMs: runtime,
       };
       await session.loadMedia(request_);
+      this.#preparing = null;
       clearInterval(this.#beat);
       this.#beat = setInterval(() => { if (this.#last === "PLAYING") this.#report("PLAYING"); }, REPORT_MS);
       this.#publish();
       return true;
     } catch (cause) {
+      this.#preparing = null;
       void this.#finish(false);
+      this.#publish();
       toast(typeof cause === "string" ? `That Cast device couldn’t play this (${cause}).` : cause instanceof Error ? cause.message : "That Cast device couldn’t play this.", "error");
       return false;
     }

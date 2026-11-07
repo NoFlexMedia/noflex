@@ -92,6 +92,8 @@ Don't break these without an architecture discussion in the PR description.
 ### Search
 
 - Modes are lexical, vector, and hybrid (default). Hybrid fuses both with reciprocal rank fusion.
+- **Turso's lexical search is BM25 over Tantivy indexes** (`CREATE INDEX … USING fts`): 1–3-grams for titles and person names, so part of a word matches; whole words for synopses. Titles, credits and synopses are separate queries merged in that order.
+- **Turso only consults an FTS index for a single-table query.** A join, an `OR` across two indexes, or a `LIMIT` beside a multi-key `ORDER BY` silently falls back to a scan scoring 0; put each `fts_match` alone in a subquery. Build query strings from quoted words (`LexicalQuery`), never from raw input, which is query syntax.
 - Embeddings are computed locally unless an administrator configures an OpenAI-compatible endpoint, which is never a default. Every backend implements `upsert_embedding` and `search_vector`.
 - **"Is it still indexing" is `Work.indexing`, never `metadataStatus`.** A work with no match stays `Unconfirmed` for good. `IndexingProgress` is in memory, fed by scan events and the metadata worker, and a rescan or a retry doesn't count as new work. Zero complexity, so cards can afford it.
 - **Removing an optimized version doesn't stop the planner wanting it.** It's remade if a mark or a prediction still wants it; that's deliberate, and the admin dialog shows who and takes back marks. `enqueue_optimized_version` refreshes `plan_json` on every plan, so `targets` says who it's for now. Read counts through `optimized_version_stats`: `list_optimized_versions` carries every row's index and probe.

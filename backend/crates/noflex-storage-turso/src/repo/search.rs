@@ -19,50 +19,109 @@ use crate::{
     repo::works::row_to_work,
 };
 
-// Works crediting someone whose name holds ?1. Runs once rather than per work:
-// people are far fewer than works, and a tag's assignments are keyed by tag.
-const CREDITED: &str = "(SELECT ta.target_id FROM tags t \
-    JOIN tag_assignments ta ON ta.tag_id = t.id AND ta.target_kind = 'work' \
-    WHERE t.namespace = 'person' AND LOWER(t.display) LIKE ?1 ESCAPE '\\')";
+/// Words past this many, and characters past this many in a word, don't
+/// narrow a search further; capping them keeps a pasted essay a valid query.
+const MAX_QUERY_WORDS: usize = 16;
+const MAX_WORD_CHARS: usize = 40;
 
-const IN_TITLE: &str =
-    "(LOWER(w.title) LIKE ?1 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?1 ESCAPE '\\')";
+// A season, episode or track that only repeats its show's name or credits.
+const EPISODIC: &str = "w.kind IN ('season', 'episode', 'track')";
 
-/// The lexical query up to its filters. ?1 is the query anywhere, ?2 the whole
-/// title, ?3 its start, ?4 the start of a word.
-fn search_lexical_sql() -> String {
-    format!(
-        "SELECT w.id, {IN_TITLE} AS in_title, w.id IN {CREDITED} AS in_credits \
-         FROM works w \
-         LEFT JOIN works parent ON parent.id = w.parent_id \
-         LEFT JOIN works grandparent ON grandparent.id = parent.parent_id \
-         WHERE ({IN_TITLE} \
-            OR LOWER(COALESCE(w.overview, '')) LIKE ?1 ESCAPE '\\' \
-            OR w.id IN {CREDITED})"
-    )
+// Works whose names match ?1, from the n-gram index.
+const NAMED: &str = "(SELECT n.id FROM works n WHERE fts_match(n.title, n.sort_title, ?1))";
+
+// Works crediting someone whose name matches ?1. Each FTS lookup sits alone
+// in its own subquery: the engine only consults the index for a single table.
+const CREDITED: &str = "(SELECT ta.target_id FROM tag_assignments ta \
+    WHERE ta.target_kind = 'work' AND ta.tag_id IN \
+        (SELECT t.id FROM tags t WHERE fts_match(t.display, ?1) AND t.namespace = 'person'))";
+
+/// Titles, then credits, then synopses. Within each, whole titles and series
+/// come before single episodes; then a title that is the query, starts with it,
+/// or has a word that does, as n-gram scores can't tell where in a name a
+/// match falls; then BM25. ?2 is the query as typed, ?3 its start, ?4 the
+/// start of a word. No LIMIT: with one, the engine may cut the index's matches
+/// short before sorting them this way.
+const TITLE_TIER: &str = "SELECT w.id, fts_score(w.title, w.sort_title, ?1) AS score, \
+    CASE WHEN w.title LIKE ?2 ESCAPE '\\' OR w.sort_title LIKE ?2 ESCAPE '\\' THEN 0 \
+        WHEN w.title LIKE ?3 ESCAPE '\\' OR w.sort_title LIKE ?3 ESCAPE '\\' THEN 1 \
+        WHEN w.title LIKE ?4 ESCAPE '\\' THEN 2 \
+        ELSE 3 END AS placement \
+    FROM works w WHERE fts_match(w.title, w.sort_title, ?1)";
+const CREDITS_TIER: &str = "SELECT w.id, 0.0 AS score, 0 AS placement FROM works w WHERE w.id IN ";
+const SYNOPSIS_TIER: &str = "SELECT w.id, fts_score(w.overview, ?2) AS score, 0 AS placement \
+    FROM works w WHERE fts_match(w.overview, ?2)";
+
+/// A search as query strings for the Tantivy indexes, built from the words
+/// alone so nothing typed is read as query syntax.
+#[derive(Debug, PartialEq)]
+struct LexicalQuery {
+    /// Every word must appear somewhere in a name, the whole query in order
+    /// ranking higher. Names index n-grams, so a quoted word matches wherever
+    /// it occurs inside one.
+    names: String,
+    /// The same over a synopsis's whole words; `None` when no word has a
+    /// letter or digit to look for.
+    synopsis: Option<String>,
+    /// The words as typed, one space apart, for LIKE patterns.
+    phrase: String,
+}
+
+impl LexicalQuery {
+    /// `None` for a query with nothing to look for.
+    fn parse(text: &str) -> Option<Self> {
+        let words: Vec<String> = text
+            .split_whitespace()
+            .map(|word| {
+                word.chars()
+                    .filter(|c| !matches!(c, '"' | '\\'))
+                    .take(MAX_WORD_CHARS)
+                    .collect::<String>()
+            })
+            .filter(|word| !word.is_empty())
+            .take(MAX_QUERY_WORDS)
+            .collect();
+        if words.is_empty() {
+            return None;
+        }
+        let worded: Vec<String> = words
+            .iter()
+            .filter(|word| word.chars().any(char::is_alphanumeric))
+            .cloned()
+            .collect();
+        Some(Self {
+            names: Self::all_of(&words),
+            synopsis: (!worded.is_empty()).then(|| Self::all_of(&worded)),
+            phrase: words.join(" "),
+        })
+    }
+
+    fn all_of(words: &[String]) -> String {
+        let mut query = words
+            .iter()
+            .map(|word| format!("+\"{word}\""))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if words.len() > 1 {
+            query.push_str(&format!(" \"{}\"", words.join(" ")));
+        }
+        query
+    }
 }
 
 /// A show matching the query already answers it, and its episodes' synopses tend
 /// to repeat its name, as their credits do its regular cast. Episodes matching on
-/// their own title still count, as do guest stars the show doesn't credit.
+/// their own title come first anyway, and guest stars the show doesn't credit
+/// still count.
 fn not_just_echoing_its_series_sql() -> String {
+    let grandparent = "(SELECT p.parent_id FROM works p WHERE p.id = w.parent_id)";
     format!(
-        " AND (w.kind NOT IN ('season', 'episode', 'track') OR {IN_TITLE} \
-         OR NOT (LOWER(COALESCE(parent.title, '')) LIKE ?1 ESCAPE '\\' \
-             OR LOWER(COALESCE(grandparent.title, '')) LIKE ?1 ESCAPE '\\' \
-             OR COALESCE(parent.id IN {CREDITED}, 0) \
-             OR COALESCE(grandparent.id IN {CREDITED}, 0)))"
+        " AND (NOT {EPISODIC} OR NOT (COALESCE(w.parent_id IN {NAMED}, 0) \
+             OR COALESCE(w.parent_id IN {CREDITED}, 0) \
+             OR COALESCE({grandparent} IN {NAMED}, 0) \
+             OR COALESCE({grandparent} IN {CREDITED}, 0)))"
     )
 }
-
-// Titles, then credits, then synopses; whole titles and series before single episodes.
-const LEXICAL_RELEVANCE: &str = " ORDER BY in_title DESC, in_credits DESC, \
-    w.kind IN ('season', 'episode', 'track') ASC, \
-    CASE WHEN LOWER(w.title) LIKE ?2 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?2 ESCAPE '\\' THEN 0 \
-        WHEN LOWER(w.title) LIKE ?3 ESCAPE '\\' OR LOWER(w.sort_title) LIKE ?3 ESCAPE '\\' THEN 1 \
-        WHEN LOWER(w.title) LIKE ?4 ESCAPE '\\' THEN 2 \
-        ELSE 3 END, \
-    w.added_at DESC";
 
 const EMB_UPSERT: &str = "INSERT INTO embeddings (target_kind, target_id, namespace, model_id, dimensions, vector_blob, updated_at) \
     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
@@ -74,9 +133,12 @@ const EMB_UPSERT: &str = "INSERT INTO embeddings (target_kind, target_id, namesp
 // Joins `works` so filters apply before scoring and truncation. A season or
 // episode with no synopsis embeds as little more than "Episode 3", which says
 // nothing about it yet sits near every query, so it can only match by name.
-const EMB_FETCH: &str = "SELECT e.target_kind, e.target_id, e.namespace, e.model_id, e.dimensions, e.vector_blob \
+// The engine scores each stored vector against ?2 in place, with SIMD, and
+// keeps only the nearest; checking the length first skips a corrupt row rather
+// than failing the query on it.
+const EMB_NEAREST: &str = "SELECT e.target_id, vector_distance_cos(e.vector_blob, ?2) AS distance \
     FROM embeddings e JOIN works w ON e.target_kind = 'work' AND e.target_id = w.id \
-    WHERE e.namespace = ?1 \
+    WHERE e.namespace = ?1 AND e.dimensions = ?3 AND length(e.vector_blob) = ?4 \
     AND (w.kind NOT IN ('season', 'episode') OR COALESCE(w.overview, '') <> '')";
 
 // Anti-join on `embeddings` for the backfill sweep. Ordering by `w.id`
@@ -97,43 +159,72 @@ pub(crate) async fn search_lexical(
     access_user_id: Option<noflex_core::UserId>,
     limit: u32,
 ) -> StorageResult<Vec<SearchHit>> {
-    let escaped = escape_like(query);
-    let mut sql = search_lexical_sql();
-    let mut params = vec![
-        Value::Text(format!("%{escaped}%")),
-        Value::Text(escaped.clone()),
-        Value::Text(format!("{escaped}%")),
-        Value::Text(format!("% {escaped}%")),
+    let Some(query) = LexicalQuery::parse(query) else {
+        return Ok(Vec::new());
+    };
+    let names = Value::Text(query.names);
+    let phrase = escape_like(&query.phrase);
+    let mut tiers = vec![
+        (
+            TITLE_TIER.to_string(),
+            vec![
+                names.clone(),
+                Value::Text(phrase.clone()),
+                Value::Text(format!("{phrase}%")),
+                Value::Text(format!("% {phrase}%")),
+            ],
+            MATCHED_TITLE,
+        ),
+        (
+            format!("{CREDITS_TIER}{CREDITED}"),
+            vec![names.clone()],
+            MATCHED_CREDITS,
+        ),
     ];
-    // Asking for episodes by kind means wanting them, however they matched.
-    if kinds.is_empty() {
-        sql.push_str(&not_just_echoing_its_series_sql());
+    if let Some(synopsis) = query.synopsis {
+        tiers.push((
+            SYNOPSIS_TIER.to_string(),
+            vec![names, Value::Text(synopsis)],
+            "overview",
+        ));
     }
-    push_kind_filter(&mut sql, &mut params, kinds, "w.kind");
-    if let Some(user) = access_user_id {
-        push_access_filter(&mut sql, &mut params, user, "w");
-    }
-    sql.push_str(LEXICAL_RELEVANCE);
-    sql.push_str(&format!(" LIMIT ?{}", params.len() + 1));
-    params.push(Value::Integer(limit as i64));
-    let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
+
+    let limit = limit as usize;
+    let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    while let Some(row) = rows.next().await.map_err(map_turso)? {
-        let id = row.get_value(0).map_err(map_turso)?;
-        let matched = if col_int(&row.get_value(1).map_err(map_turso)?)? != 0 {
-            MATCHED_TITLE
-        } else if col_int(&row.get_value(2).map_err(map_turso)?)? != 0 {
-            MATCHED_CREDITS
-        } else {
-            "overview"
-        };
-        out.push(SearchHit {
-            work: WorkId::from_uuid(blob_to_uuid(col_blob(&id)?)?),
-            access_checked: access_user_id.is_some(),
-            score: 0.0,
-            similarity: None,
-            matched_fields: vec![matched.to_string()],
-        });
+    for (index, (mut sql, mut params, matched)) in tiers.into_iter().enumerate() {
+        if out.len() >= limit {
+            break;
+        }
+        // Asking for episodes by kind means wanting them, however they matched.
+        if index > 0 && kinds.is_empty() {
+            sql.push_str(&not_just_echoing_its_series_sql());
+        }
+        push_kind_filter(&mut sql, &mut params, kinds, "w.kind");
+        if let Some(user) = access_user_id {
+            push_access_filter(&mut sql, &mut params, user, "w");
+        }
+        sql.push_str(&format!(
+            " ORDER BY {EPISODIC}, placement, score DESC, w.added_at DESC"
+        ));
+        let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
+        while out.len() < limit {
+            let Some(row) = rows.next().await.map_err(map_turso)? else {
+                break;
+            };
+            let work = WorkId::from_uuid(blob_to_uuid(col_blob(
+                &row.get_value(0).map_err(map_turso)?,
+            )?)?);
+            if seen.insert(work) {
+                out.push(SearchHit {
+                    work,
+                    access_checked: access_user_id.is_some(),
+                    score: 0.0,
+                    similarity: None,
+                    matched_fields: vec![matched.to_string()],
+                });
+            }
+        }
     }
     Ok(out)
 }
@@ -266,6 +357,10 @@ pub(crate) async fn set_embedding_endpoint(
     Ok(())
 }
 
+/// # Errors
+///
+/// [`StorageError::InvalidInput`] for a vector holding NaN or an infinity,
+/// which every distance from it would be.
 pub(crate) async fn upsert_embedding(
     conn: &Connection,
     target: EmbeddingTarget,
@@ -273,18 +368,19 @@ pub(crate) async fn upsert_embedding(
     model_id: &str,
     vector: &[f32],
 ) -> StorageResult<()> {
-    let (kind, id) = emb_target_parts(&target);
-    let mut bytes = Vec::with_capacity(vector.len() * 4);
-    for f in vector {
-        bytes.extend_from_slice(&f.to_le_bytes());
+    if !vector.iter().all(|value| value.is_finite()) {
+        return Err(StorageError::InvalidInput(
+            "embedding holds a non-finite value".to_string(),
+        ));
     }
+    let (kind, id) = emb_target_parts(&target);
     let params: Vec<Value> = vec![
         Value::Text(kind.to_string()),
         Value::Blob(uuid_to_blob(id)),
         Value::Text(namespace.to_string()),
         Value::Text(model_id.to_string()),
         Value::Integer(vector.len() as i64),
-        Value::Blob(bytes),
+        Value::Blob(encode_embedding(vector)),
         Value::Text(dt_to_text(time::OffsetDateTime::now_utc())?),
     ];
     conn.execute(EMB_UPSERT, params).await.map_err(map_turso)?;
@@ -299,44 +395,38 @@ pub(crate) async fn search_vector(
     access_user_id: Option<noflex_core::UserId>,
     limit: u32,
 ) -> StorageResult<Vec<VectorHit>> {
-    let mut params = vec![Value::Text(namespace.to_string())];
-    let mut sql = String::from(EMB_FETCH);
+    let dimensions = query_vector.len() as i64;
+    let mut params = vec![
+        Value::Text(namespace.to_string()),
+        Value::Blob(encode_embedding(query_vector)),
+        Value::Integer(dimensions),
+        Value::Integer(dimensions * std::mem::size_of::<f32>() as i64),
+    ];
+    let mut sql = String::from(EMB_NEAREST);
     push_kind_filter(&mut sql, &mut params, kinds, "w.kind");
     if let Some(user) = access_user_id {
         push_access_filter(&mut sql, &mut params, user, "w");
     }
+    sql.push_str(&format!(" ORDER BY distance LIMIT ?{}", params.len() + 1));
+    params.push(Value::Integer(i64::from(limit)));
     let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
-    let mut scored: Vec<(Uuid, f32)> = Vec::new();
+    let mut out = Vec::new();
     while let Some(row) = rows.next().await.map_err(map_turso)? {
-        let target_kind = row.get_value(0).map_err(map_turso)?;
-        let target_id_blob = row.get_value(1).map_err(map_turso)?;
-        let dims = row.get_value(4).map_err(map_turso)?;
-        let vec_blob = row.get_value(5).map_err(map_turso)?;
-        let _ = col_text(&target_kind)?;
-        let target_id = blob_to_uuid(col_blob(&target_id_blob)?)?;
-        let stored_dims = col_int(&dims)?;
-        if stored_dims != query_vector.len() as i64 {
-            continue;
-        }
-        let stored_bytes = match vec_blob {
-            Value::Blob(b) => b,
-            _ => continue,
+        let work = blob_to_uuid(col_blob(&row.get_value(0).map_err(map_turso)?)?)?;
+        let distance = match row.get_value(1).map_err(map_turso)? {
+            Value::Real(distance) => distance,
+            other => {
+                return Err(crate::error::backend_msg(format!(
+                    "vector distance is not a number: {other:?}"
+                )));
+            }
         };
-        let Some(stored) = decode_embedding(&stored_bytes, stored_dims) else {
-            tracing::warn!(%target_id, stored_dims, "skipping corrupt embedding");
-            continue;
-        };
-        scored.push((target_id, l2_to_similarity(&stored, query_vector)));
+        out.push(VectorHit {
+            work: WorkId::from_uuid(work),
+            similarity: cosine_similarity(distance),
+        });
     }
-    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    scored.truncate(limit as usize);
-    Ok(scored
-        .into_iter()
-        .map(|(id, sim)| VectorHit {
-            work: WorkId::from_uuid(id),
-            similarity: sim,
-        })
-        .collect())
+    Ok(out)
 }
 
 pub(crate) async fn delete_work_embeddings(conn: &Connection, work: WorkId) -> StorageResult<()> {
@@ -450,12 +540,6 @@ fn emb_target_parts(target: &EmbeddingTarget) -> (&'static str, Uuid) {
     }
 }
 
-fn escape_like(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
 /// Append `AND <column> IN (?,…)` for a non-empty kinds filter, using
 /// the same placeholder convention as `list_works`. Empty kinds means
 /// "all kinds", so nothing is appended.
@@ -507,15 +591,43 @@ fn decode_embedding(bytes: &[u8], dimensions: i64) -> Option<Vec<f32>> {
         .then_some(values)
 }
 
-/// `1 / (1 + d)` so the RRF fuser doesn't need to know per-backend scale.
-fn l2_to_similarity(a: &[f32], b: &[f32]) -> f32 {
-    let sum: f32 = a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum();
-    1.0 / (1.0 + sum.sqrt())
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+fn encode_embedding(vector: &[f32]) -> Vec<u8> {
+    vector
+        .iter()
+        .flat_map(|value| value.to_le_bytes())
+        .collect()
+}
+
+/// Cosine distance runs from 0, the same direction, to 2, opposite; as a
+/// similarity from 1 down to 0 the RRF fuser needn't know the engine's scale.
+fn cosine_similarity(distance: f64) -> f32 {
+    (1.0 - distance / 2.0).clamp(0.0, 1.0) as f32
 }
 
 #[cfg(test)]
 mod tests {
-    use super::decode_embedding;
+    use super::{LexicalQuery, decode_embedding};
+
+    #[test]
+    fn lexical_queries_quote_every_word_and_keep_nothing_as_syntax() {
+        let query = LexicalQuery::parse(r#"  title:"blade -run\ner  ( "#).unwrap();
+        assert_eq!(
+            query.names,
+            r#"+"title:blade" +"-runner" +"(" "title:blade -runner (""#
+        );
+        assert_eq!(
+            query.synopsis.as_deref(),
+            Some(r#"+"title:blade" +"-runner" "title:blade -runner""#),
+            "a word with no letter or digit has nothing to match in prose"
+        );
+        assert_eq!(LexicalQuery::parse(r#" " \ "#), None);
+    }
 
     #[test]
     fn embedding_decoder_rejects_corrupt_shapes_and_values() {

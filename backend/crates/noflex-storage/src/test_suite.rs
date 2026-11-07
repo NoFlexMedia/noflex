@@ -5256,6 +5256,16 @@ async fn search_lexical_match<S: Storage + ?Sized>(store: &S) {
     assert_eq!(hits_sub.len(), 1);
     assert_eq!(hits_sub[0].work, b_id);
 
+    // Every word counts, in any order, the last one as far as it's typed.
+    for query in ["runner blade", "blade run"] {
+        let hits = store
+            .search_lexical(query, &[], None, 10)
+            .await
+            .expect("search");
+        let found = hits.iter().map(|hit| hit.work).collect::<Vec<_>>();
+        assert_eq!(found, [b_id], "{query:?}");
+    }
+
     store.delete_work(m_id).await.ok();
     store.delete_work(i_id).await.ok();
     store.delete_work(b_id).await.ok();
@@ -5276,6 +5286,23 @@ async fn search_lexical_miss<S: Storage + ?Sized>(store: &S) {
         .await
         .expect("search");
     assert!(hits.is_empty());
+
+    // What a search engine would read as syntax is only text to look for.
+    for query in [
+        "\"zzz",
+        "(zzz",
+        "-zzz",
+        "title:zzz",
+        "zzz AND",
+        "zz\\z*",
+        "   ",
+    ] {
+        let hits = store
+            .search_lexical(query, &[], None, 10)
+            .await
+            .unwrap_or_else(|error| panic!("{query:?}: {error}"));
+        assert!(hits.is_empty(), "{query:?}: {hits:?}");
+    }
 
     store.delete_work(w_id).await.ok();
     store.delete_library(lib.id).await.ok();

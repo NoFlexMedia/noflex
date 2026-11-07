@@ -275,11 +275,18 @@ CREATE TABLE IF NOT EXISTS provider_attributions (
     logo_digest TEXT
 );
 
--- Lexical search is a case-insensitive LIKE on the works table
--- (Turso 0.6 doesn't expose FTS5 — the FTS5 variant lands when the
--- upstream library exposes it via a build feature). Embeddings live
--- in their own table for vector similarity. Hybrid fusing lives in
--- `noflex-storage/src/search.rs` (RRF).
+-- Lexical search ranks with BM25 over Tantivy indexes. Names index every
+-- 1- to 3-gram so part of a word finds them as someone types; a synopsis
+-- indexes whole words, as grams of prose would match nearly anything.
+-- Hybrid fusing lives in `noflex-storage/src/search.rs` (RRF).
+CREATE INDEX IF NOT EXISTS works_title_fts ON works USING fts (title, sort_title)
+    WITH (tokenizer = 'ngram', min_gram = 1, max_gram = 3);
+CREATE INDEX IF NOT EXISTS works_overview_fts ON works USING fts (overview);
+CREATE INDEX IF NOT EXISTS tags_display_fts ON tags USING fts (display)
+    WITH (tokenizer = 'ngram', min_gram = 1, max_gram = 3);
+
+-- Vectors are raw little-endian f32, which is the engine's `vector32`
+-- format, so `vector_distance_cos` reads them as stored.
 CREATE TABLE IF NOT EXISTS embeddings (
     target_kind TEXT NOT NULL,
     target_id   BLOB NOT NULL,

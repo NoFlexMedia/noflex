@@ -13,9 +13,12 @@
 {#if connect.available.length > 0 || connect.target}
   <Menu width={260}>
     {#snippet trigger(props)}
+      <!-- The menu and the tooltip each want the trigger's handlers, so each gets its own element. -->
       <Tip text={connect.target ? `Playing on ${connect.target.device.name}` : "Play on a device"}>
         {#snippet children(tip)}
-          <button {...props} {...tip} type="button" class="icon-btn sm" class:on={connect.target} aria-pressed={!!connect.target} aria-label="Play on a device"><MonitorPlay size={19} weight={connect.target ? "fill" : "regular"} /></button>
+          <span {...tip} class="tip-target">
+            <button {...props} type="button" class="icon-btn sm" class:on={connect.target} aria-label="Play on a device"><MonitorPlay size={19} weight={connect.target ? "fill" : "regular"} /></button>
+          </span>
         {/snippet}
       </Tip>
     {/snippet}
@@ -33,4 +36,5 @@
 
 <style>
   .icon-btn.on { color: var(--accent); }
+  .tip-target { display: inline-flex; }
 </style>

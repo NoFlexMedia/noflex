@@ -24,6 +24,7 @@
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
   import X from "phosphor-svelte/lib/X";
   import { Slider } from "bits-ui";
+  import { siAirplayvideo } from "simple-icons";
   import { CachePolicy, ControlWatchRoomStore, MarkPlayedStore, MediaFilesStore, ReportProgressStore, StopPlaybackStore, WatchRoomEventsStore, WatchRoomStore } from "$houdini";
   import { reportOnExit } from "$lib/api.js";
   import { chapterStops } from "$lib/chapters.js";
@@ -43,6 +44,7 @@
   let root = $state();
   let video = $state();
   let hls = null;
+  let alternate = null;
   // Only prepared versions offer these: a live transcode carries one track.
   let audioTracks = $state([]);
   let audioTrack = $state(-1);
@@ -54,6 +56,9 @@
   let volume = $state(readVolume());
   let muted = $state(false);
   let fullscreen = $state(false);
+  // Safari alone: the picker is the system's, and says when something is there to play on.
+  const canAirPlay = typeof window !== "undefined" && "WebKitPlaybackTargetAvailabilityEvent" in window;
+  let airplay = $state({ available: false, active: false });
   let chromeVisible = $state(true);
   let error = $state("");
   let flash = $state(null);
@@ -145,6 +150,15 @@
         hls = new Hls({ enableWorker: false, backBufferLength: 60, maxBufferLength: 30, manifestLoadPolicy: policy, playlistLoadPolicy: policy, ...(live ? {} : { startPosition: 0 }) });
         hls.loadSource(url);
         hls.attachMedia(video);
+        // AirPlay sends the target to fetch the stream itself, and Safari offers that for a
+        // stream played through MSE only when the playlist sits beside it.
+        if (canAirPlay) {
+          alternate = document.createElement("source");
+          alternate.src = url;
+          alternate.type = "application/x-mpegURL";
+          video.append(alternate);
+          video.disableRemotePlayback = false;
+        }
         hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
         let chosen = playback.audioStream;
         hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, (_event, data) => {
@@ -169,6 +183,8 @@
       disposed = true;
       hls?.destroy();
       hls = null;
+      alternate?.remove();
+      alternate = null;
       audioTracks = [];
       audioTrack = -1;
       video?.removeAttribute("src");
@@ -555,6 +571,18 @@
   });
 
   $effect(() => {
+    if (!video || !canAirPlay) return;
+    const available = (event) => { airplay.available = event.availability === "available"; };
+    const wireless = () => { airplay.active = !!video.webkitCurrentPlaybackTargetIsWireless; };
+    video.addEventListener("webkitplaybacktargetavailabilitychanged", available);
+    video.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", wireless);
+    return () => {
+      video.removeEventListener("webkitplaybacktargetavailabilitychanged", available);
+      video.removeEventListener("webkitcurrentplaybacktargetiswirelesschanged", wireless);
+    };
+  });
+
+  $effect(() => {
     const onFullscreen = () => (fullscreen = !!document.fullscreenElement);
     document.addEventListener("fullscreenchange", onFullscreen);
     showChrome();
@@ -737,6 +765,7 @@
         {#snippet trigger(props)}<button {...props} class="ctl" aria-label="Settings"><Gear size={20} /></button>{/snippet}
         <MenuItem icon={infoOpen ? Check : Info} hint="i" onSelect={() => (infoOpen = !infoOpen)}>Playback info</MenuItem>
       </Menu>
+      {#if airplay.available}<Tip portal={root} text={airplay.active ? "Playing with AirPlay" : "AirPlay"}>{#snippet children(props)}<button {...props} class="ctl" class:on={airplay.active} aria-label="AirPlay" aria-pressed={airplay.active} onclick={() => video.webkitShowPlaybackTargetPicker()}><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d={siAirplayvideo.path} /></svg></button>{/snippet}</Tip>{/if}
       {#if document.pictureInPictureEnabled}<Tip portal={root} text="Picture in picture" hint="p">{#snippet children(props)}<button {...props} class="ctl" aria-label="Picture in picture" onclick={togglePip}><PictureInPicture size={20} /></button>{/snippet}</Tip>{/if}
       <Tip portal={root} text={fullscreen ? "Exit fullscreen" : "Fullscreen"} hint="f">{#snippet children(props)}<button {...props} class="ctl" aria-label="Fullscreen" onclick={toggleFullscreen}>{#if fullscreen}<CornersIn size={20} />{:else}<CornersOut size={20} />{/if}</button>{/snippet}</Tip>
     </div>
@@ -794,6 +823,7 @@
   .ctl { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; color: rgb(255 255 255 / 0.88); transition: background var(--t), color var(--t), transform var(--t-fast) var(--ease-out); }
   .ctl:hover { background: rgb(255 255 255 / 0.12); color: #fff; }
   .ctl:active { transform: scale(0.9); }
+  .ctl.on { color: var(--accent); }
   .ctl.big { width: 50px; height: 50px; }
   .ctl.on { color: var(--accent); }
   .volume { display: flex; align-items: center; }

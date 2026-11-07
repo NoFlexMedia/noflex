@@ -149,7 +149,9 @@ rotated; use logrotate or journald for that. The parent directory must exist.
 - **Env:** `NOFLEX_TRANSCODER_HWACCEL`
 
 Hardware acceleration preference. `auto` probes the host at startup and
-picks the best available.
+picks the best available. A backend counts as available once it has encoded a
+frame, not merely because ffmpeg was built with it; an explicit choice that
+fails that probe falls back as `transcoder.fallback` says.
 
 ### `transcoder.fallback`
 - **Type:** enum: `auto | software`

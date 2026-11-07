@@ -67,7 +67,7 @@ pub fn resolve_backend(cfg: HwAccel, fallback: TranscodeFallback, det: &HwDetect
             _ => best_available(det).unwrap_or(HwBackend::Software),
         };
     };
-    if backend_available(wanted, det) {
+    if det.available(wanted) {
         wanted
     } else {
         match fallback {
@@ -91,18 +91,7 @@ pub fn configured_backend(cfg: HwAccel) -> Option<HwBackend> {
     }
 }
 
-fn backend_available(backend: HwBackend, det: &HwDetect) -> bool {
-    match backend {
-        HwBackend::Software => true,
-        HwBackend::Vaapi => det.has_vaapi(),
-        HwBackend::Qsv => det.has_qsv(),
-        HwBackend::Nvenc => det.has_nvenc(),
-        HwBackend::VideoToolbox => det.has_videotoolbox(),
-        HwBackend::Mf => det.has_mf(),
-    }
-}
-
-/// Preference order when more than one backend is usable: discrete
+/// Preference order when more than one backend works: discrete
 /// GPU encode (NVENC) first, then QSV, then VAAPI, then the platform
 /// APIs.
 fn best_available(det: &HwDetect) -> Option<HwBackend> {
@@ -114,7 +103,7 @@ fn best_available(det: &HwDetect) -> Option<HwBackend> {
         HwBackend::Mf,
     ]
     .into_iter()
-    .find(|b| backend_available(*b, det))
+    .find(|b| det.available(*b))
 }
 
 /// Lowercase wire name of a backend, as config and diagnostics spell it.
@@ -212,32 +201,13 @@ pub const DECODERS: [(&str, &str, bool); 22] = [
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
 
-    /// Build an `HwDetect` that reports exactly the given backends as
-    /// available (VAAPI carries a synthetic render node so
-    /// `has_vaapi` is true).
+    /// An `HwDetect` on which exactly `backends` encoded a frame.
     fn det_with(backends: &[HwBackend]) -> HwDetect {
-        let mut hwaccels = Vec::new();
-        let mut encoders = Vec::new();
-        let has_vaapi_dev = backends.contains(&HwBackend::Vaapi);
-        for b in backends {
-            match b {
-                HwBackend::Vaapi => hwaccels.push("vaapi".to_string()),
-                HwBackend::Qsv => hwaccels.push("qsv".to_string()),
-                HwBackend::VideoToolbox => hwaccels.push("videotoolbox".to_string()),
-                HwBackend::Nvenc => encoders.push("h264_nvenc".to_string()),
-                HwBackend::Mf => encoders.push("h264_mf".to_string()),
-                HwBackend::Software => {}
-            }
-        }
         HwDetect {
-            gpu_tonemap: false,
-            hwaccels,
-            encoders,
-            vaapi_device: has_vaapi_dev.then(|| PathBuf::from("/dev/dri/renderD128")),
+            working: backends.to_vec(),
+            ..HwDetect::default()
         }
     }
 

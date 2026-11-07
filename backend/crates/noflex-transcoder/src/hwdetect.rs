@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 //! Runtime hardware-acceleration probe. We ask the ffmpeg binary
-//! what it can do (`-hwaccels`, `-encoders`) and pair that with a
-//! `/dev/dri` scan for a VAAPI render node. The result is a
+//! what it can do (`-hwaccels`, `-encoders`), pair that with a
+//! `/dev/dri` scan for a VAAPI render node, and encode a frame on
+//! each hardware backend it was built with. The result is a
 //! plain-data snapshot the server resolves into a single
 //! [`HwBackend`](crate::encoder::HwBackend) at startup — detection
 //! never blocks or fails startup, so a misconfigured ffmpeg just
@@ -35,29 +36,28 @@ pub struct HwDetect {
     pub vaapi_device: Option<PathBuf>,
     /// HDR can be tone-mapped on the GPU; see [`gpu_tonemap_works`].
     pub gpu_tonemap: bool,
+    /// Hardware backends whose H.264 encoder produced a frame here.
+    pub working: Vec<HwBackend>,
 }
 
 impl HwDetect {
-    pub fn has_vaapi(&self) -> bool {
-        self.hwaccels.iter().any(|h| h == "vaapi") && self.vaapi_device.is_some()
-    }
-
-    pub fn has_qsv(&self) -> bool {
-        self.hwaccels.iter().any(|h| h == "qsv")
-    }
-
-    pub fn has_videotoolbox(&self) -> bool {
-        self.hwaccels.iter().any(|h| h == "videotoolbox")
-    }
-
-    pub fn has_nvenc(&self) -> bool {
-        self.encoders.iter().any(|e| e == "h264_nvenc")
-    }
-
-    pub fn has_mf(&self) -> bool {
-        self.encoders.iter().any(|e| e == "h264_mf")
+    /// Whether transcodes can run on `backend`. Software always can; hardware
+    /// only once it has encoded a frame, as a build lists encoders whether or
+    /// not their GPU and driver are present.
+    pub fn available(&self, backend: HwBackend) -> bool {
+        backend == HwBackend::Software || self.working.contains(&backend)
     }
 }
+
+/// The encoder proving each hardware backend works: H.264, which every one of
+/// them has.
+const PROBES: [Encoder; 5] = [
+    Encoder::Nvenc264,
+    Encoder::Qsv264,
+    Encoder::Vaapi264,
+    Encoder::VideoToolbox264,
+    Encoder::Mf264,
+];
 
 /// Probe the local ffmpeg for hardware-acceleration support. Every
 /// failure mode (missing binary, nonzero exit, unparseable output)
@@ -74,11 +74,21 @@ pub async fn detect(ffmpeg: &Path) -> HwDetect {
         .as_deref()
         .map(parse_encoder_names)
         .unwrap_or_default();
+    let vaapi_device = find_vaapi_device();
+    let mut working = Vec::new();
+    for encoder in PROBES {
+        if encoders.iter().any(|name| name == encoder.video_flag())
+            && encoder_works(ffmpeg, encoder, vaapi_device.as_deref()).await
+        {
+            working.push(encoder.backend());
+        }
+    }
     HwDetect {
         hwaccels,
         encoders,
-        vaapi_device: find_vaapi_device(),
+        vaapi_device,
         gpu_tonemap: gpu_tonemap_works(ffmpeg).await,
+        working,
     }
 }
 
@@ -281,30 +291,17 @@ Encoders:
     }
 
     #[test]
-    fn has_predicates_reflect_parsed_fields() {
+    fn built_encoders_are_not_available_until_proven() {
         let det = HwDetect {
-            gpu_tonemap: false,
             hwaccels: parse_hwaccels(HWACCELS_SAMPLE),
             encoders: parse_encoder_names(ENCODERS_SAMPLE),
             vaapi_device: Some(PathBuf::from("/dev/dri/renderD128")),
+            working: vec![HwBackend::Vaapi],
+            ..HwDetect::default()
         };
-        assert!(det.has_vaapi());
-        assert!(det.has_qsv());
-        assert!(det.has_videotoolbox());
-        assert!(det.has_nvenc());
-        assert!(det.has_mf());
-    }
-
-    #[test]
-    fn has_vaapi_requires_device() {
-        // vaapi method present but no render node: not usable.
-        let det = HwDetect {
-            gpu_tonemap: false,
-            hwaccels: vec!["vaapi".to_string()],
-            encoders: vec![],
-            vaapi_device: None,
-        };
-        assert!(!det.has_vaapi());
+        assert!(det.available(HwBackend::Vaapi));
+        assert!(!det.available(HwBackend::Nvenc));
+        assert!(det.available(HwBackend::Software));
     }
 
     #[tokio::test]
@@ -314,5 +311,6 @@ Encoders:
         let det = detect(Path::new("/nonexistent/noflex-ffmpeg-probe")).await;
         assert!(det.hwaccels.is_empty());
         assert!(det.encoders.is_empty());
+        assert!(det.working.is_empty());
     }
 }

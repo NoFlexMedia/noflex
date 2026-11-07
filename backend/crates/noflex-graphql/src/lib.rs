@@ -38,6 +38,7 @@ pub mod admin_status;
 mod auth;
 mod browse;
 mod collections;
+mod connect;
 mod credentials;
 mod deletion;
 mod devices;
@@ -61,6 +62,7 @@ pub mod subscriptions;
 mod users;
 mod watch;
 pub use admin_status::{AdminStatusError, AdminStatusService};
+pub use connect::ConnectHub;
 pub use devices::SmartTranscodingDefaults;
 pub use external_auth::{ExternalAuthChallenge, ExternalAuthError, ExternalAuthService};
 pub use live_tv::{LiveTvService, LiveTvServiceError};
@@ -105,6 +107,7 @@ pub struct Query(
     embedding::EmbeddingQuery,
     restrictions::RestrictionsQuery,
     watch::WatchQuery,
+    connect::ConnectQuery,
     live_tv::LiveTvQuery,
     stats::StatsQuery,
 );
@@ -130,6 +133,7 @@ pub struct Mutation(
     sessions::SessionsMutation,
     restrictions::RestrictionsMutation,
     watch::WatchMutation,
+    connect::ConnectMutation,
     live_tv::LiveTvMutation,
 );
 
@@ -718,6 +722,9 @@ pub struct SchemaContext {
     pub media_url_signer: Option<Arc<dyn noflex_storage::MediaUrlSigner>>,
     /// In-process fan-out for persisted watch-room control events.
     pub watch_room_bus: Option<Arc<WatchRoomBus>>,
+    /// Who is listening for commands, for NoFlex Connect. Defaults to a fresh
+    /// hub when absent.
+    pub connect_hub: Option<Arc<ConnectHub>>,
     /// Admin diagnostics (host, transcoder, indexing, logs). Absent →
     /// the admin status queries error with "admin status not configured".
     pub admin_status: Option<Arc<dyn AdminStatusService>>,
@@ -753,6 +760,7 @@ pub fn build_schema(ctx: SchemaContext) -> NoflexSchema {
         .limit_directives(100)
         .data(ctx.export_events.unwrap_or_default())
         .data(ctx.watch_room_bus.unwrap_or_default())
+        .data(ctx.connect_hub.unwrap_or_default())
         .data(Arc::new(noflex_auth::LoginThrottle::default()));
     if let Some(storage) = ctx.storage {
         builder = builder
@@ -1480,6 +1488,33 @@ impl Subscription {
                 }
             }
         }))
+    }
+
+    /// Commands for one of the caller's devices, for as long as it listens.
+    /// A device listens in one place: subscribing again replaces the first
+    /// subscription. While one is open, and the device keeps calling
+    /// `reportDeviceState`, `connectDevices` shows it online.
+    async fn device_commands(
+        &self,
+        ctx: &Context<'_>,
+        device_id: noflex_core::DeviceId,
+    ) -> async_graphql::Result<
+        std::pin::Pin<Box<dyn futures::Stream<Item = connect::DeviceCommand> + Send + 'static>>,
+    > {
+        connect::device_commands(ctx, device_id).await
+    }
+
+    /// The caller's devices now, and again whenever one comes, goes or says
+    /// what it's playing.
+    async fn connect_devices(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<
+        std::pin::Pin<
+            Box<dyn futures::Stream<Item = Vec<connect::ConnectDevice>> + Send + 'static>,
+        >,
+    > {
+        connect::watch_devices(ctx).await
     }
 
     /// Stream every plugin lifecycle event the host emits.

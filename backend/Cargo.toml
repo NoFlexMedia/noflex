@@ -84,7 +84,7 @@ async-graphql = { version = "7.2", features = ["dataloader", "time", "uuid"] }
 async-graphql-axum = "7.2"
 
 # Storage engines
-turso = "0.6"
+turso = "0.8"
 
 # Config
 figment = { version = "0.10", features = ["toml", "env"] }

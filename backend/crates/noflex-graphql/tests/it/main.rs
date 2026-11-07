@@ -14,6 +14,7 @@ mod auth;
 mod canonical_identity;
 mod client_contract;
 mod collections;
+mod connect;
 mod deletion;
 mod device_download;
 mod export_jobs;

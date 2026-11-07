@@ -109,7 +109,7 @@ fn storage<'a>(ctx: &'a Context<'a>) -> async_graphql::Result<&'a Arc<dyn Storag
         .map_err(|_| async_graphql::Error::new("storage not configured"))
 }
 
-fn gql_err(e: impl std::fmt::Display) -> async_graphql::Error {
+pub(crate) fn gql_err(e: impl std::fmt::Display) -> async_graphql::Error {
     async_graphql::Error::new(e.to_string())
 }
 
@@ -427,7 +427,7 @@ pub(crate) async fn require_downloads_allowed(
     )
 }
 
-async fn owned_device(
+pub(crate) async fn owned_device(
     storage: &Arc<dyn Storage>,
     user: noflex_core::UserId,
     id: DeviceId,

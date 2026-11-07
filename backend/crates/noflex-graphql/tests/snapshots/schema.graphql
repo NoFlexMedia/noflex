@@ -294,6 +294,21 @@ type ConfigEntry {
 }
 
 """
+A device of the caller's and whether it can be controlled right now.
+"""
+type ConnectDevice {
+	device: Device!
+	"""
+	Listening for commands, and heard from lately.
+	"""
+	online: Boolean!
+	"""
+	Null while it's idle.
+	"""
+	playback: DevicePlayback
+}
+
+"""
 What viewers browse by, across libraries. Every top-level work belongs to
 at most one category.
 """
@@ -470,6 +485,54 @@ type Device {
 }
 
 """
+A command for a device to carry out. Only the fields its `kind` uses are set.
+"""
+type DeviceCommand {
+	kind: DeviceCommandKind!
+	"""
+	The title to start, on `Load`.
+	"""
+	workId: ID
+	"""
+	A cut the viewer picked, on `Load`; the device chooses otherwise.
+	"""
+	editionId: ID
+	"""
+	A version the viewer picked, on `Load`; the device chooses otherwise.
+	"""
+	mediaFileId: ID
+	"""
+	Where to start on `Load`, or the place to go on `Seek`.
+	"""
+	positionMs: Int
+	issuedAt: DateTime!
+}
+
+"""
+Something a controlling client asks a device to do.
+"""
+enum DeviceCommandKind {
+	"""
+	Start a title: the device picks the version it plays best.
+	"""
+	LOAD
+	PLAY
+	PAUSE
+	SEEK
+	STOP
+}
+
+"""
+What `controlDevice` may ask of a device that already has something loaded.
+"""
+enum DeviceControl {
+	PLAY
+	PAUSE
+	SEEK
+	STOP
+}
+
+"""
 The device's half of the link flow: show `pin` on screen, then
 poll `pollDevicePin` until it yields a session or `expires_at`
 passes.
@@ -477,6 +540,45 @@ passes.
 type DevicePinInfo {
 	pin: String!
 	expiresAt: DateTime!
+}
+
+"""
+What a device is doing, as it last said.
+"""
+enum DevicePlayState {
+	PLAYING
+	PAUSED
+	BUFFERING
+}
+
+"""
+What a device is playing. It's the device's own word, refreshed every few
+seconds, so a controller advances `positionMs` itself while `PLAYING`.
+"""
+type DevicePlayback {
+	workId: ID!
+	state: DevicePlayState!
+	positionMs: Int!
+	durationMs: Int
+	"""
+	The server's clock when it heard, so a controller can tell how stale
+	`positionMs` is without trusting its own clock.
+	"""
+	reportedAt: DateTime!
+	"""
+	The title; null once it's gone, or for a viewer who can't see it.
+	"""
+	work: Work
+}
+
+"""
+What a device reports about itself.
+"""
+input DevicePlaybackInput {
+	workId: ID!
+	state: DevicePlayState!
+	positionMs: Int!
+	durationMs: Int
 }
 
 """
@@ -1826,6 +1928,23 @@ type Mutation {
 	joinWatchRoom(roomId: ID!): WatchRoom!
 	leaveWatchRoom(roomId: ID!): Boolean!
 	controlWatchRoom(roomId: ID!, action: WatchRoomAction!, positionMs: Int): WatchRoom!
+	"""
+	Start a title on one of the caller's devices. The device chooses the
+	version it plays best unless `editionId` or `mediaFileId` say otherwise.
+	Fails with `DEVICE_OFFLINE` when nothing is listening there.
+	"""
+	castToDevice(deviceId: ID!, workId: ID!, editionId: ID, mediaFileId: ID, positionMs: Int): ConnectDevice!
+	"""
+	Play, pause, seek or stop what one of the caller's devices has loaded.
+	`positionMs` is where `SEEK` goes.
+	"""
+	controlDevice(deviceId: ID!, action: DeviceControl!, positionMs: Int): ConnectDevice!
+	"""
+	Say what this device is playing, or `null` when it's idle. A device that
+	listens for commands calls this every few seconds: it's also how the
+	server knows the device is still there.
+	"""
+	reportDeviceState(deviceId: ID!, playback: DevicePlaybackInput): Boolean!
 	createLiveTvSource(input: CreateLiveTvSourceInput!): LiveTvSource!
 	updateLiveTvSource(id: ID!, input: UpdateLiveTvSourceInput!): LiveTvSource!
 	"""
@@ -2923,6 +3042,10 @@ type Query {
 	userRestrictions(userId: ID!): UserRestrictions!
 	watchRooms: [WatchRoom!]!
 	watchRoom(id: ID!): WatchRoom
+	"""
+	The caller's devices and which can be controlled now.
+	"""
+	connectDevices: [ConnectDevice!]!
 	liveTvSources: [LiveTvSource!]!
 	"""
 	Enabled channels, optionally of one source, in id order.
@@ -3469,6 +3592,18 @@ type StreamSummary {
 type Subscription {
 	exportJobStatus(id: ID!): ExportStatusEvent!
 	watchRoomEvents(roomId: ID!): WatchRoomEvent!
+	"""
+	Commands for one of the caller's devices, for as long as it listens.
+	A device listens in one place: subscribing again replaces the first
+	subscription. While one is open, and the device keeps calling
+	`reportDeviceState`, `connectDevices` shows it online.
+	"""
+	deviceCommands(deviceId: ID!): DeviceCommand!
+	"""
+	The caller's devices now, and again whenever one comes, goes or says
+	what it's playing.
+	"""
+	connectDevices: [ConnectDevice!]!
 	"""
 	Stream every plugin lifecycle event the host emits.
 	Subscribers receive a flat, tagged event with

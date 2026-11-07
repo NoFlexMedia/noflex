@@ -472,7 +472,7 @@ mod tests {
         let older = dt_to_text(datetime!(2029-12-31 00:00 UTC)).unwrap();
         let mut expected = Vec::new();
         {
-            let (_schema, writer) = store.writer().await.unwrap();
+            let writer = store.writers.acquire().await.unwrap();
             for (index, kind) in ["work", "edition", "work", "edition", "work"]
                 .into_iter()
                 .enumerate()

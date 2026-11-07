@@ -237,8 +237,9 @@ impl SystemStatusService {
         if let Some(path) = &self.deps.db_path {
             status.path = Some(path.display().to_string());
             status.size_bytes = tokio::fs::metadata(path).await.ok().map(|m| m.len());
+            // Turso's MVCC log: commits not yet checkpointed into the file.
             let mut wal = path.as_os_str().to_owned();
-            wal.push("-wal");
+            wal.push("-log");
             status.wal_size_bytes = tokio::fs::metadata(PathBuf::from(wal))
                 .await
                 .ok()

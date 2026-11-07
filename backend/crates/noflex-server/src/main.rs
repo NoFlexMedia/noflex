@@ -496,6 +496,7 @@ async fn run() -> anyhow::Result<()> {
             jwt.clone(),
         ))),
         watch_room_bus: Some(Arc::new(noflex_graphql::WatchRoomBus::default())),
+        connect_hub: Some(Arc::new(noflex_graphql::ConnectHub::default())),
         admin_status: Some(admin_status),
         metadata_service: Some(metadata_service),
         tonemap_curve: Some(cfg.transcoder.tonemap_curve),

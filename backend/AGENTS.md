@@ -104,6 +104,13 @@ Don't break these without an architecture discussion in the PR description.
 - **`setProfilePicture` re-encodes to a 512 px JPEG**, for size and so nothing but pixels survives. The bytes live in `user_avatars`, apart from `users`, which every request reads. AVIF and HEIC go through ffmpeg first, as `image` can't read them: forced to the `mov` demuxer with only the `file` protocol, so an upload can't point it anywhere else, and on a timeout.
 - **`Device.client` and `Session.client` are free text alongside the name**, as a model or hostname often doesn't say what something is. Clients read both through `lib/ts/device.ts`.
 
+### Connect
+
+- **NoFlex Connect is in memory.** `ConnectHub` (`noflex-graphql/src/connect.rs`) holds who is listening and what they last said. A command is for a device listening now: none is queued and nothing survives a restart.
+- **Online means both** a `deviceCommands` subscription and a `reportDeviceState` call within 40 s, since a TV unplugged mid-stream never closes its socket. A device listens in one place: a second subscription replaces the first.
+- **A command names a Work**, not a file: the receiving device picks the version it plays best, as it would on its own. `editionId` and `mediaFileId` are only for a viewer's explicit pick.
+- Every operation goes through `owned_device`: a viewer reaches their own devices and no one else's.
+
 ### Plugins
 
 - **Plugins are WASM components.** First-party providers (TMDb, TVDB, MusicBrainz) ship as `.wasm` too; the server has no native `MetadataProvider`, so first-party code exercises the plugin ABI on every startup.

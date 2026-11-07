@@ -23,7 +23,13 @@ import '../../services/toast_service.dart';
 
 /// A device of the viewer's as the server last described it.
 class RemoteDevice {
-  const RemoteDevice(this.data, this.heardAt, {this._state, this._positionMs});
+  const RemoteDevice(
+    this.data,
+    this.heardAt, {
+    this._state,
+    this._positionMs,
+    this._stopped = false,
+  });
 
   final GConnectDeviceFields data;
 
@@ -34,6 +40,9 @@ class RemoteDevice {
   final GDevicePlayState? _state;
   final int? _positionMs;
 
+  // A stop just sent, until the device's next word says it's idle.
+  final bool _stopped;
+
   GDevicePlayState? get state => _state ?? playback?.state;
   int get positionMs => _positionMs ?? playback?.positionMs ?? 0;
 
@@ -41,7 +50,8 @@ class RemoteDevice {
   String get name => data.device.name;
   String? get client => data.device.client;
   bool get online => data.online;
-  GConnectDeviceFields_playback? get playback => data.playback;
+  GConnectDeviceFields_playback? get playback =>
+      _stopped ? null : data.playback;
   bool get playing => state == GDevicePlayState.PLAYING;
 }
 
@@ -219,6 +229,16 @@ class ConnectService {
     GDeviceControl action, {
     int? positionMs,
   }) async {
+    if (action == GDeviceControl.STOP) {
+      // Stopped is stopped: the bar goes now, and the device's word that it's idle only confirms it.
+      devices.value = [
+        for (final each in devices.value)
+          if (each.id == device.id)
+            RemoteDevice(device.data, DateTime.now(), stopped: true)
+          else
+            each,
+      ];
+    }
     if (device.playback != null && action != GDeviceControl.STOP) {
       final state = action == GDeviceControl.PAUSE
           ? GDevicePlayState.PAUSED

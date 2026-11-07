@@ -589,7 +589,7 @@
     };
     transport.current = mine;
     reportSoon();
-    return () => { if (transport.current === mine) transport.current = null; };
+    return () => { if (transport.current === mine) { transport.current = null; reportSoon(); } };
   });
 
   $effect(() => {

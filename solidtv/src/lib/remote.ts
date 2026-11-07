@@ -40,9 +40,11 @@ export function setTransport(next: Transport | null): void {
   if (next) reportNow();
 }
 
-/** Drop `mine` if it is still the transport: the next episode's player may have registered already. */
+/** Drop `mine` if it is still the transport, and say so at once: the controllers' bar shouldn't wait for the next report to go. */
 export function clearTransport(mine: Transport): void {
-  if (transport === mine) transport = null;
+  if (transport !== mine) return;
+  transport = null;
+  reportNow();
 }
 
 /** Say what this TV is doing now, for the moments it changes. Best effort: the next report says it again. */

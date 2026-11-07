@@ -111,6 +111,8 @@ class Connect {
     const route = device.via ? this.routes.get(device.via) : undefined;
     if (route) return route.control(device, action, positionMs);
     const playback = device.playback;
+    // Stopped is stopped: the bar goes now, and the device's word that it's idle only confirms it.
+    if (action === "STOP") this.devices = this.devices.map((item) => (item.device.id === device.device.id ? { ...item, playback: null } : item));
     if (playback && action !== "STOP") {
       const state = action === "PAUSE" ? "PAUSED" : action === "PLAY" ? "PLAYING" : playback.state;
       const position = action === "SEEK" && positionMs !== undefined ? positionMs : this.position(device);

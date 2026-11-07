@@ -126,6 +126,14 @@ proptest = "1"
 [profile.dev]
 debug = "line-tables-only"
 
+# The storage engine and its search index, optimized even in development:
+# unoptimized, Tantivy makes every indexed write several times slower.
+[profile.dev.package.turso_core]
+opt-level = 3
+
+[profile.dev.package.tantivy]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -211,6 +211,18 @@ async fn a_cast_reaches_a_listening_device_and_nothing_else_can_send_to_it() {
     assert_eq!(tv["playback"]["state"], "PLAYING");
     assert_eq!(tv["playback"]["work"]["title"], "Film");
 
+    // Stopping it shows it idle in the very response, not at the device's next report.
+    let stopped = schema
+        .execute(request(
+            format!(r#"mutation {{ controlDevice(deviceId: "{}", action: STOP) {{ online playback {{ state }} }} }}"#, fixture.tv),
+            &fixture.viewer,
+        ))
+        .await;
+    assert!(stopped.errors.is_empty(), "{:?}", stopped.errors);
+    let stopped = stopped.data.into_json().expect("json");
+    assert_eq!(stopped["controlDevice"]["online"], true);
+    assert!(stopped["controlDevice"]["playback"].is_null(), "{stopped}");
+
     // Someone else's device is not found, whether to listen, send or report.
     let spy = schema
         .execute_stream(request(listen, &fixture.stranger))

@@ -317,6 +317,22 @@ impl ConnectHub {
         }
     }
 
+    /// Forget what `device` was playing, for a stop just sent to it, so every
+    /// controller sees it idle now rather than at its next report. A device
+    /// that didn't obey says so with its next report.
+    pub(crate) fn clear_playback(&self, user: UserId, device: DeviceId) {
+        let cleared = {
+            let mut devices = self.lock();
+            devices
+                .get_mut(&device)
+                .filter(|entry| entry.user == user)
+                .is_some_and(|entry| entry.playback.take().is_some())
+        };
+        if cleared {
+            self.announce(user);
+        }
+    }
+
     /// `device`'s presence and what it's playing.
     pub(crate) fn status(&self, user: UserId, device: DeviceId) -> (bool, Option<DevicePlayback>) {
         let devices = self.lock();
@@ -518,6 +534,9 @@ impl ConnectMutation {
             },
         )
         .map_err(refused)?;
+        if action == DeviceControl::Stop {
+            hub.clear_playback(principal.user_id, device_id);
+        }
         let (online, playback) = hub.status(principal.user_id, device_id);
         Ok(ConnectDevice {
             device,
@@ -636,6 +655,31 @@ mod tests {
         assert_eq!(
             hub.send(user, device, command(DeviceCommandKind::Play)),
             Err(SendError::Offline)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stop_leaves_the_device_idle_at_once_and_is_announced() {
+        let hub = Arc::new(ConnectHub::default());
+        let (user, device) = (UserId::new(), DeviceId::new());
+        let _attachment = hub.attach(user, device);
+        hub.report(user, device, Some(playing(WorkId::new())));
+        let mut heard = hub.watch();
+
+        hub.clear_playback(user, device);
+        assert_eq!(heard.recv().await.expect("announced"), user);
+        assert_eq!(hub.status(user, device), (true, None));
+        hub.clear_playback(user, device);
+        assert!(
+            heard.try_recv().is_err(),
+            "nothing left to clear, nothing to say"
+        );
+        let stranger = UserId::new();
+        hub.report(user, device, Some(playing(WorkId::new())));
+        hub.clear_playback(stranger, device);
+        assert!(
+            hub.status(user, device).1.is_some(),
+            "only the owner's stop counts"
         );
     }
 

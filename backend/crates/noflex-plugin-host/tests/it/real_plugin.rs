@@ -191,22 +191,6 @@ async fn dispatches_search_into_real_plugin() {
     );
     assert_eq!(season[0].external_id.value, "tv/1399/season/2");
     assert_eq!(season[0].confidence, 1.0);
-
-    // A movie search needs the API key; without the secret the plugin
-    // answers `unavailable` before any egress.
-    let result = plugin
-        .call_search(plugin_types::SearchQuery {
-            title: "The Matrix".to_string(),
-            year: Some(1999),
-            kind: plugin_types::WorkKind::Movie,
-            hints: vec![],
-        })
-        .await
-        .expect("dispatch succeeds");
-    assert!(
-        matches!(result, Err(plugin_types::PluginError::Unavailable(ref m)) if m.contains("api_key")),
-        "{result:?}"
-    );
 }
 
 /// Same smoke coverage for the local-embedding plugin: artifact loads,

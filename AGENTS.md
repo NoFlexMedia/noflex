@@ -38,6 +38,7 @@ Each project subdirectory owns an `AGENTS.md` describing its stack, commands, an
 - The data model has three levels: a _Work_ has one or more _Editions_ (Theatrical, Director's Cut), each with one or more _MediaFiles_ (versions: multi-disc parts, HDR and SDR encodes). Never conflate these levels.
 - The **GraphQL API** is canonical. New features land there first; clients consume nothing else.
 - **Tags are the one taxonomy.** Genres, moods, studios, people, ratings, quality badges, edition labels, and user tags share one `tags` table split by `namespace`. Add a namespace, never a taxonomy table.
+- **A profile is a user.** There's nothing beneath an account: a shared device keeps a session for each person who has signed in on it and asks who's watching. Its list is only those people, as the server never publishes who has an account. A PIN guards a profile on a device that's shared; it opens a session the device already holds and never signs anyone in.
 - **Self-hosted.** No cloud services in core paths; optional plugins may reach the internet.
 - **Complete hardware and codec support.** Aim for full hardware acceleration on the server and every client. Prioritize open codecs like AV1: treat them as first-class, never as a fallback.
 

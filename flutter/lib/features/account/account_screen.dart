@@ -352,7 +352,7 @@ class _SectionSliver extends StatelessWidget {
 class _Header extends SignalWidget {
   const _Header({required this.stacked});
 
-  /// In a narrow pane, where Sign out goes below the name.
+  /// In a narrow pane, where leaving goes below the name.
   final bool stacked;
 
   @override
@@ -361,12 +361,26 @@ class _Header extends SignalWidget {
     final viewer = session.viewer.value;
     if (viewer == null) return const SizedBox.shrink();
     final name = viewer.name;
-    final signOutButton = NfButton(
-      label: 'Sign out',
-      style: NfButtonStyle.ghost,
-      size: NfButtonSize.small,
-      icon: const Icon(PhosphorIconsRegular.signOut),
-      onPressed: () => unawaited(signOut()),
+    // Stepping away keeps them signed in here; signing out doesn't.
+    final leave = Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        NfButton(
+          label: 'Switch profile',
+          style: NfButtonStyle.ghost,
+          size: NfButtonSize.small,
+          icon: const Icon(PhosphorIconsRegular.userSwitch),
+          onPressed: () => unawaited(session.switchProfile()),
+        ),
+        NfButton(
+          label: 'Sign out',
+          style: NfButtonStyle.ghost,
+          size: NfButtonSize.small,
+          icon: const Icon(PhosphorIconsRegular.signOut),
+          onPressed: () => unawaited(signOut()),
+        ),
+      ],
     );
     final identity = Row(
       children: [
@@ -397,14 +411,14 @@ class _Header extends SignalWidget {
     if (stacked) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [identity, const SizedBox(height: 12), signOutButton],
+        children: [identity, const SizedBox(height: 12), leave],
       );
     }
     return Row(
       children: [
         Expanded(child: identity),
         const SizedBox(width: 8),
-        signOutButton,
+        leave,
       ],
     );
   }

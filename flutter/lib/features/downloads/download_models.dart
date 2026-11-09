@@ -49,6 +49,7 @@ class OfflineSubtitle {
 /// separate entries.
 class OfflineItem {
   const OfflineItem({
+    required this.accountId,
     required this.work,
     required this.partIndex,
     required this.origin,
@@ -68,6 +69,7 @@ class OfflineItem {
   });
 
   factory OfflineItem.fromJson(Map<String, dynamic> json) => OfflineItem(
+    accountId: json['account'] as String,
     work: WorkSummary.fromJson((json['work'] as Map).cast<String, dynamic>()),
     partIndex: json['partIndex'] as int,
     origin: OfflineOrigin.values.byName(json['origin'] as String),
@@ -89,6 +91,9 @@ class OfflineItem {
     error: json['error'] as String?,
   );
 
+  /// Whose download this is. Several people can be signed in on one device, and
+  /// each keeps their own: the same title twice is two files and two transfers.
+  final String accountId;
   final WorkSummary work;
   final int partIndex;
   final OfflineOrigin origin;
@@ -113,8 +118,9 @@ class OfflineItem {
 
   String get key => '${work.id}-$partIndex';
 
-  /// The background downloader's id for this file's transfer.
-  String get taskId => key;
+  /// The background downloader's id for this file's transfer. The downloader is
+  /// one for the whole device, so the account is part of it.
+  String get taskId => '$accountId-$key';
 
   bool get isFinished => status == OfflineStatus.complete;
 
@@ -130,6 +136,7 @@ class OfflineItem {
     String? posterFile,
     List<OfflineSubtitle>? subtitles,
   }) => OfflineItem(
+    accountId: accountId,
     work: work,
     partIndex: partIndex,
     origin: origin ?? this.origin,
@@ -149,6 +156,7 @@ class OfflineItem {
   );
 
   Map<String, dynamic> toJson() => {
+    'account': accountId,
     'work': work.toJson(),
     'partIndex': partIndex,
     'origin': origin.name,

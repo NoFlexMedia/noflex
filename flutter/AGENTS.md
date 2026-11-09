@@ -52,12 +52,25 @@ Signals are the only way this app does reactivity. `test/conventions_test.dart` 
 
 No router, no named routes.
 
-- `_AppFrame` in `app.dart` switches on `SessionService.phase`; flipping the phase is all sign-in and sign-out do.
+- `_AppFrame` in `app.dart` switches on `SessionService.phase`; flipping the phase is all sign-in, sign-out and switching profile do.
 - `AppShell` keeps tab roots alive in an `IndexedStack`.
 - Pages push onto the content navigator with `NavService.push`, beside the navigation rather than over it.
 - The player (`pushFullWindow`), sheets and dialogs (`openSheet`) go on the root navigator.
 - Destinations beyond the tabs are places (`NavPlace`). The sidebar goes to one with `NavService.open`, which replaces the current place and fades; a Browse tile pushes one with `push(place:)`.
 - An observer on the content navigator keeps `NavService.place` current through every way of leaving. Everything opened from a place stays in it, so Movies stays lit under a film.
+
+## Signing in and profiles
+
+A device several people use keeps a session for each of them. `features/auth/profiles_screen.dart` is "Who's watching?".
+
+- `TokenStore` holds everyone signed in here (`accounts`) and who's active (`activeId`), written as one secure-storage value so the headless sync never reads one without the other. "The session" everywhere else means the active account's.
+- Only `SessionService` changes who's active: `signIn`, `chooseProfile`, `switchProfile`, `logout`. Each loads that account's downloads (`DownloadsService.useAccount`) before the shell appears.
+- **At launch, one account that's still active goes straight in.** Anything else is `AppPhase.profiles`: several accounts, or one that stepped away. Showing it deactivates whoever was active and, if they have a PIN, locks their session on the server.
+- **A profile with a PIN is entered only through `TokenStore.unlock`** (`unlockSession`), locked or not, so the gate holds when `lockSession` never got through. No hash of the PIN is on the device, so such a profile can't be opened while the server is away; one without a PIN can, for its downloads.
+- A refresh refused with `SESSION_LOCKED` keeps the account: it's `SessionExpired(locked: true)` and `onLocked`, back to "Who's watching?". Any other refusal forgets that account alone.
+- Tiles paint from what's stored, then `rememberedProfiles` corrects them and marks a session the server no longer knows (`needsSignIn`). A tile's picture comes from there too: `viewer.avatarUrl` is signed for the session and dies with a lock.
+- **Each account has its own device id** (`DeviceIdentity.idFor`), because the server refuses an id another user registered. It's in preferences, not with the session, so it outlives signing out.
+- Signing in as someone already here replaces their session where it was. Whoever was signed in stays remembered, so the sign-in screen offers Back to profiles in place of Change server, which signs everyone out.
 
 ## Adaptive layout
 
@@ -143,6 +156,15 @@ Ferry, against `lib/graphql/schema.graphql`, a symlink to `backend/crates/noflex
 - Only what the server put here (`OfflineOrigin.smart`) can be evicted. What the viewer chose stays until they remove it.
 - A manual download asks `deviceDownload`. When that's null, the server has nothing ready for this device and an export job can stand in.
 - The target folder setting is hidden on iOS. Android lists its app-specific volumes, including SD cards, which need no permission. Desktop gets a folder picker.
+
+### Accounts
+
+- **Downloads belong to an account.** Each has `offline/<user id>/` for its manifest and files, and a folder of its own (`Name [id]`) inside one the viewer chose. A transfer's id starts with the user's, since the downloader is one for the device.
+- `DownloadsService` holds the active account's manifest only. An update for anyone else's transfer is dropped, and their manifest catches up from the downloader's records when they're back (`_syncWithDownloader`), as it does after the app was suspended.
+- **Locking a profile stops its transfers** (`hold`), and opening it restarts them (`_release`): download URLs carry tokens for the session, which the lock refuses. They keep their URLs, good again once the PIN is in. Unverified against a real downloader.
+- A reconcile that finishes after someone else became active stops rather than writing into their manifest.
+- The headless sync fetches for the active account, and for nobody while the app sits on "Who's watching?".
+- Signing out removes that account's downloads and nobody else's. An expired session keeps them for when they sign in again. Changing server removes everyone's, manifests of expired accounts included (`removeEveryone`).
 
 ### Smart transcode marks
 

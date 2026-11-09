@@ -23,7 +23,7 @@ final getIt = GetIt.instance;
 void configureDependencies() {
   getIt
     ..registerSingleton(TokenStore())
-    ..registerSingleton(DeviceIdentity())
+    ..registerSingleton(DeviceIdentity(getIt<TokenStore>()))
     ..registerSingleton(NavService())
     ..registerSingleton(ToastService())
     ..registerSingleton(NetworkService())

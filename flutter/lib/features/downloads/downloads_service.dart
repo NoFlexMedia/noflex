@@ -5,6 +5,11 @@
 // the app suspended or gone. This keeps the manifest of what's held, mirrors
 // transfer updates into signals, and reconciles with the server's smart list.
 //
+// Downloads belong to an account. Each person signed in on the device has a
+// manifest and a folder of their own, and this holds the active one's: the
+// downloader is shared, so a transfer says whose it is in its id, and an update
+// for anyone else's is left for their manifest to catch up on when they're back.
+//
 // iOS gives no guarantee about when an app runs in the background, so everything
 // wanted is handed to the system at once rather than one at a time: the transfers
 // then finish whether or not Dart ever wakes. See AGENTS.md "Downloads".
@@ -54,21 +59,59 @@ const _manifestName = 'manifest.json';
 /// Stamped while the app is on screen, so the headless sync knows to stay out.
 const foregroundStampKey = 'noflex.foregroundAt';
 
-/// The offline manifest on disk, shared by the app and the headless sync.
-class OfflineStore {
-  OfflineStore();
+/// Where [accountId]'s downloads live, under the app's own storage.
+String offlineDirectory(String accountId) => p.join(_storageDir, accountId);
 
+/// The folder for [account]'s downloads inside one the viewer chose, or null
+/// for the app's own storage. Named for people browsing it, with enough of the
+/// id that two people of one name don't share it.
+String? chosenDirectory(String? target, StoredAccount account) => target == null
+    ? null
+    : p.join(
+        target,
+        safeFileName(
+          '${account.name} [${account.userId.substring(account.userId.length - 8)}]',
+        ),
+      );
+
+/// One account's offline manifest on disk, shared by the app and the headless
+/// sync. With no account it holds nothing and saves nowhere.
+class OfflineStore {
+  OfflineStore(this.accountId);
+
+  final String? accountId;
   List<OfflineItem> items = const [];
   List<PendingReport> reports = const [];
 
-  static Future<File> _file() async {
+  /// Transfers stopped when their profile was locked, to start again when
+  /// it's opened.
+  List<String> held = const [];
+
+  static Future<Directory> _root() async {
     final base = await getApplicationSupportDirectory();
-    final directory = Directory(p.join(base.path, _storageDir));
+    return Directory(p.join(base.path, _storageDir));
+  }
+
+  /// Every account with a manifest here, signed in or not.
+  static Future<List<String>> accountIds() async {
+    final root = await _root();
+    if (!root.existsSync()) return const [];
+    return [
+      for (final entry in root.listSync())
+        if (entry is Directory &&
+            File(p.join(entry.path, _manifestName)).existsSync())
+          p.basename(entry.path),
+    ];
+  }
+
+  Future<File> _file() async {
+    final directory = Directory(p.join((await _root()).path, accountId));
     await directory.create(recursive: true);
     return File(p.join(directory.path, _manifestName));
   }
 
   Future<void> load() async {
+    if (accountId == null) return;
     try {
       final file = await _file();
       if (!file.existsSync()) return;
@@ -82,6 +125,7 @@ class OfflineStore {
         for (final report in json['reports'] as List? ?? const [])
           PendingReport.fromJson((report as Map).cast<String, dynamic>()),
       ];
+      held = [...(json['held'] as List? ?? const []).cast<String>()];
     } catch (error) {
       debugPrint('offline manifest unreadable: $error');
     }
@@ -95,15 +139,29 @@ class OfflineStore {
       _lastSave = _lastSave.catchError((Object _) {}).then((_) => _write());
 
   Future<void> _write() async {
+    if (accountId == null || _deleted) return;
     final file = await _file();
     final temp = File('${file.path}.tmp');
     await temp.writeAsString(
       jsonEncode({
         'items': [for (final item in items) item.toJson()],
         'reports': [for (final report in reports) report.toJson()],
+        'held': held,
       }),
     );
     await temp.rename(file.path);
+  }
+
+  bool _deleted = false;
+
+  /// Remove the manifest and the folder it's in, once its files are gone. A
+  /// save still waiting writes nothing.
+  Future<void> delete() async {
+    if (accountId == null) return;
+    _deleted = true;
+    await _lastSave.catchError((Object _) {});
+    final directory = Directory(p.join((await _root()).path, accountId));
+    if (directory.existsSync()) await directory.delete(recursive: true);
   }
 }
 
@@ -134,7 +192,7 @@ Future<DownloadTask> enqueueTransfer(
     group: _mediaGroup,
     url: url,
     filename: item.fileName,
-    directory: item.directory ?? _storageDir,
+    directory: item.directory ?? offlineDirectory(item.accountId),
     baseDirectory: item.directory != null
         ? BaseDirectory.root
         : BaseDirectory.applicationSupport,
@@ -163,22 +221,22 @@ Future<void> enqueueExtras(
   final tasks = <DownloadTask>[
     if (poster != null && posterUrl != null)
       DownloadTask(
-        taskId: '${item.key}-poster',
+        taskId: '${item.taskId}-poster',
         group: _extrasGroup,
         url: '${absolute(posterUrl)}&w=480',
         filename: poster,
-        directory: _storageDir,
+        directory: offlineDirectory(item.accountId),
         baseDirectory: BaseDirectory.applicationSupport,
         updates: Updates.none,
         retries: 3,
       ),
     for (final subtitle in file.subtitles)
       DownloadTask(
-        taskId: '${item.key}-sub-${subtitle.index}',
+        taskId: '${item.taskId}-sub-${subtitle.index}',
         group: _extrasGroup,
         url: absolute(subtitle.url),
         filename: '${item.key}-${subtitle.index}.vtt',
-        directory: _storageDir,
+        directory: offlineDirectory(item.accountId),
         baseDirectory: BaseDirectory.applicationSupport,
         updates: Updates.none,
         retries: 3,
@@ -192,8 +250,10 @@ Future<void> enqueueExtras(
 OfflineItem itemFor(
   WantedFile file,
   OfflineOrigin origin, {
+  required String accountId,
   String? directory,
 }) => OfflineItem(
+  accountId: accountId,
   work: file.work,
   partIndex: file.partIndex,
   origin: origin,
@@ -251,7 +311,7 @@ WantedFile wantedFromDownload(GDownloadFields download, {ServerRef? server}) {
 Future<String?> mediaPathOf(OfflineItem item) async {
   if (item.directory != null) return p.join(item.directory!, item.fileName);
   final base = await getApplicationSupportDirectory();
-  return p.join(base.path, _storageDir, item.fileName);
+  return p.join(base.path, offlineDirectory(item.accountId), item.fileName);
 }
 
 Future<void> deleteOfflineFiles(OfflineItem item) async {
@@ -259,9 +319,9 @@ Future<void> deleteOfflineFiles(OfflineItem item) async {
   final paths = [
     await mediaPathOf(item),
     if (item.posterFile != null)
-      p.join(base.path, _storageDir, item.posterFile!),
+      p.join(base.path, offlineDirectory(item.accountId), item.posterFile!),
     for (final subtitle in item.subtitles)
-      p.join(base.path, _storageDir, subtitle.fileName),
+      p.join(base.path, offlineDirectory(item.accountId), subtitle.fileName),
   ];
   for (final path in paths) {
     try {
@@ -273,7 +333,7 @@ Future<void> deleteOfflineFiles(OfflineItem item) async {
 }
 
 class DownloadsService {
-  final _store = OfflineStore();
+  var _store = OfflineStore(null);
   StreamSubscription<TaskUpdate>? _updates;
   Timer? _periodic;
   Timer? _saveDebounce;
@@ -304,12 +364,9 @@ class DownloadsService {
     _supportPath = (await getApplicationSupportDirectory()).path;
     final prefs = await SharedPreferences.getInstance();
     targetDirectory.value = prefs.getString(_targetKey);
-    await _store.load();
-    items.value = _store.items;
     await _configure();
     _updates = FileDownloader().updates.listen(_onUpdate);
     await FileDownloader().start();
-    await _syncWithDownloader();
     // Reconcile once the device has registered, on getting back on a network,
     // and now and then while the app is open.
     _stopWatching = effect(() {
@@ -324,6 +381,65 @@ class DownloadsService {
     });
     _lifecycle = AppLifecycleListener(onResume: _onResume, onPause: _onPause);
     await _startForegroundWork();
+  }
+
+  /// Whose downloads these are from now on, or nobody's with null. The session
+  /// says so as someone is chosen or leaves. Transfers of whoever was here carry
+  /// on in the downloader, and their manifest catches up when they're back.
+  Future<void> useAccount(String? accountId) async {
+    if (accountId == _store.accountId) return;
+    _saveDebounce?.cancel();
+    await _store.save();
+    final store = OfflineStore(accountId);
+    await store.load();
+    _store = store;
+    items.value = store.items;
+    await _release();
+    await _syncWithDownloader();
+  }
+
+  /// Stop the active account's transfers before its session is locked. Their
+  /// URLs carry tokens the lock refuses, so left running they'd fail; stopped,
+  /// they pick up from [_release] with the same URLs, which the PIN makes good
+  /// again. What the viewer paused themselves is left paused.
+  Future<void> hold() async {
+    final held = <String>[];
+    for (final item in _store.items) {
+      if (item.isFinished ||
+          item.status == OfflineStatus.failed ||
+          item.status == OfflineStatus.paused) {
+        continue;
+      }
+      final task = await FileDownloader().taskForId(item.taskId);
+      if (task is! DownloadTask) continue;
+      // Only a running transfer can pause; one still queued is taken out, and
+      // goes back in from its record.
+      if (!await FileDownloader().pause(task)) {
+        await FileDownloader().cancelTaskWithId(item.taskId);
+      }
+      held.add(item.taskId);
+    }
+    if (held.isEmpty) return;
+    _store.held = held;
+    _saveDebounce?.cancel();
+    await _store.save();
+  }
+
+  Future<void> _release() async {
+    final held = _store.held;
+    if (held.isEmpty) return;
+    _store.held = const [];
+    for (final taskId in held) {
+      final record = await FileDownloader().database.recordForId(taskId);
+      final task = record?.task;
+      if (task is! DownloadTask) continue;
+      if (record!.status == TaskStatus.paused) {
+        await FileDownloader().resume(task);
+      } else {
+        await FileDownloader().enqueue(task);
+      }
+    }
+    _saveNow();
   }
 
   /// The headless sync stands down for what's marked here, and this stops when
@@ -354,6 +470,8 @@ class DownloadsService {
   Future<void> _onResume() async {
     await _startForegroundWork();
     await getIt<TokenStore>().reloadTokens();
+    // The session it rotated may also be one it found ended.
+    if (await _session.lostWhileAway()) return;
     await _store.load();
     items.value = _store.items;
     await _syncWithDownloader();
@@ -485,6 +603,8 @@ class DownloadsService {
   }
 
   void _update(String taskId, OfflineItem Function(OfflineItem) change) {
+    // Someone else's transfer: theirs to hear about when they're active.
+    if (!_store.items.any((item) => item.taskId == taskId)) return;
     _setItems([
       for (final item in _store.items)
         item.taskId == taskId ? change(item) : item,
@@ -525,14 +645,18 @@ class DownloadsService {
     OfflineItem item,
     OfflineSubtitle subtitle,
   ) async {
-    final path = p.join(_supportPath, _storageDir, subtitle.fileName);
+    final path = p.join(
+      _supportPath,
+      offlineDirectory(item.accountId),
+      subtitle.fileName,
+    );
     return File(path).existsSync() ? path : null;
   }
 
   String? localPosterPath(OfflineItem item) {
     final file = item.posterFile;
     if (file == null) return null;
-    final path = p.join(_supportPath, _storageDir, file);
+    final path = p.join(_supportPath, offlineDirectory(item.accountId), file);
     return File(path).existsSync() ? path : null;
   }
 
@@ -599,6 +723,8 @@ class DownloadsService {
 
   Future<void> _enqueue(WantedFile file, OfflineOrigin origin) async {
     final tokens = getIt<TokenStore>();
+    final account = tokens.account(_store.accountId);
+    if (account == null) return;
     final existing = _store.items
         .where((item) => item.key == file.key)
         .firstOrNull;
@@ -610,7 +736,12 @@ class DownloadsService {
       }
       return;
     }
-    final item = itemFor(file, origin, directory: targetDirectory.value);
+    final item = itemFor(
+      file,
+      origin,
+      accountId: account.userId,
+      directory: chosenDirectory(targetDirectory.value, account),
+    );
     _setItems([
       for (final other in _store.items)
         if (other.key != item.key) other,
@@ -636,12 +767,31 @@ class DownloadsService {
     _saveNow();
   }
 
+  /// Everything of the active account's, as they sign out.
   Future<void> removeAll() async {
-    for (final item in [..._store.items]) {
+    final store = _store;
+    for (final item in [...store.items]) {
       await remove(item);
     }
-    _store.reports = const [];
-    _saveNow();
+    _saveDebounce?.cancel();
+    _store = OfflineStore(null);
+    items.value = const [];
+    await store.delete();
+  }
+
+  /// Everyone's, signed in or not, as the device leaves the server.
+  Future<void> removeEveryone() async {
+    await removeAll();
+    for (final accountId in await OfflineStore.accountIds()) {
+      final store = OfflineStore(accountId);
+      await store.load();
+      for (final item in store.items) {
+        await FileDownloader().cancelTaskWithId(item.taskId);
+        await deleteOfflineFiles(item);
+        await FileDownloader().database.deleteRecordWithId(item.taskId);
+      }
+      await store.delete();
+    }
   }
 
   Future<void> pause(OfflineItem item) async {
@@ -676,6 +826,7 @@ class DownloadsService {
     if (_reconciling || _session.phase.value != AppPhase.app) return;
     final device = _session.device.value;
     if (device == null) return;
+    final store = _store;
     _reconciling = true;
     try {
       await flushReports();
@@ -696,6 +847,8 @@ class DownloadsService {
             ..vars.device = device.id,
         ),
       );
+      // Someone else is active by now, and the answer was for whoever asked.
+      if (!identical(store, _store)) return;
       final plan = planSmartDownloads(
         enabled: true,
         wanted: [
@@ -714,10 +867,13 @@ class DownloadsService {
   }
 
   Future<void> _apply(SmartPlan plan) async {
+    final store = _store;
     for (final item in plan.evict) {
+      if (!identical(store, _store)) return;
       await remove(item);
     }
     for (final file in plan.fetch) {
+      if (!identical(store, _store)) return;
       await _enqueue(file, OfflineOrigin.smart);
     }
   }
@@ -879,13 +1035,16 @@ class DownloadsService {
     required WorkSummary work,
   }) async {
     final tokens = getIt<TokenStore>();
+    final account = tokens.account(_store.accountId);
+    if (account == null) return;
     final server = work.server;
     if (server == null) await tokens.refresh();
     unawaited(_ensurePermission());
     final item = itemFor(
       WantedFile(work: work, partIndex: 0, url: '', sizeBytes: 0),
       OfflineOrigin.manual,
-      directory: targetDirectory.value,
+      accountId: account.userId,
+      directory: chosenDirectory(targetDirectory.value, account),
     );
     _setItems([
       for (final other in _store.items)
@@ -903,7 +1062,7 @@ class DownloadsService {
             ? {'Authorization': 'Bearer ${server.apiKey}'}
             : tokens.authHeaders,
         filename: item.fileName,
-        directory: item.directory ?? _storageDir,
+        directory: item.directory ?? offlineDirectory(item.accountId),
         baseDirectory: item.directory != null
             ? BaseDirectory.root
             : BaseDirectory.applicationSupport,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme.dart';
 
@@ -22,6 +23,7 @@ class NfField extends StatelessWidget {
     this.suffix,
     this.autocorrect = true,
     this.maxLines = 1,
+    this.inputFormatters,
   });
 
   final TextEditingController controller;
@@ -39,6 +41,7 @@ class NfField extends StatelessWidget {
   final Widget? suffix;
   final bool autocorrect;
   final int maxLines;
+  final List<TextInputFormatter>? inputFormatters;
 
   @override
   Widget build(BuildContext context) {
@@ -67,6 +70,7 @@ class NfField extends StatelessWidget {
           autocorrect: autocorrect,
           enableSuggestions: autocorrect,
           maxLines: maxLines,
+          inputFormatters: inputFormatters,
           style: NfType.body,
           decoration: InputDecoration(
             hintText: hint,

@@ -16,6 +16,7 @@ OfflineItem item(
   OfflineOrigin origin = OfflineOrigin.smart,
   OfflineStatus status = OfflineStatus.complete,
 }) => OfflineItem(
+  accountId: 'viewer',
   work: work(id),
   partIndex: 0,
   origin: origin,

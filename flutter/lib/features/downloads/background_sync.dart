@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../../graphql/queries/__generated__/smart_downloads.req.gql.dart';
+import '../../services/device_identity.dart';
 import '../../services/graphql.dart';
 import '../../services/tokens.dart';
 import 'download_models.dart';
@@ -22,7 +23,6 @@ import 'downloads_service.dart';
 import 'smart_planner.dart';
 
 const smartSyncTask = 'live.noflex.smartDownloads';
-const _deviceIdKey = 'noflex.deviceId';
 const _targetKey = 'noflex.downloadDirectory';
 
 bool get _supported => Platform.isAndroid || Platform.isIOS;
@@ -69,15 +69,17 @@ Future<void> runSmartSyncOnce() async {
       const Duration(minutes: 2).inMilliseconds) {
     return;
   }
-  final deviceId = prefs.getString(_deviceIdKey);
   final tokens = TokenStore();
   await tokens.load();
-  if (deviceId == null || tokens.origin.value == null || !tokens.hasSession) {
-    return;
-  }
+  // Whoever is active, if anyone: with the app on "Who's watching?" there's
+  // nobody to fetch for, and a locked session would only refuse.
+  final account = tokens.active;
+  if (account == null || tokens.origin.value == null) return;
+  final deviceId = prefs.getString(deviceIdKey(account.userId));
+  if (deviceId == null) return;
 
   final graphql = GraphqlService(tokens);
-  final store = OfflineStore();
+  final store = OfflineStore(account.userId);
   await store.load();
 
   final data = await graphql.run(
@@ -100,7 +102,7 @@ Future<void> runSmartSyncOnce() async {
   );
   if (plan.isEmpty) return;
 
-  final directory = prefs.getString(_targetKey);
+  final directory = chosenDirectory(prefs.getString(_targetKey), account);
   for (final item in plan.evict) {
     await FileDownloader().cancelTaskWithId(item.taskId);
     await deleteOfflineFiles(item);
@@ -111,7 +113,12 @@ Future<void> runSmartSyncOnce() async {
   ];
   final added = <OfflineItem>[];
   for (final file in plan.fetch) {
-    final item = itemFor(file, OfflineOrigin.smart, directory: directory);
+    final item = itemFor(
+      file,
+      OfflineOrigin.smart,
+      accountId: account.userId,
+      directory: directory,
+    );
     await enqueueTransfer(item, tokens.absolute(file.url), wifiOnly: true);
     await enqueueExtras(item, file, absolute: tokens.absolute);
     added.add(item);

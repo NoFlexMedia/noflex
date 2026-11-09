@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// The app's lifecycle, a port of web/src/lib/session.svelte.ts with two more
-// phases a native client needs: choosing a server, there being no same-origin,
-// and running offline from what's been downloaded.
+// The app's lifecycle, a port of web/src/lib/session.svelte.ts with the phases
+// a native client needs on top: choosing a server, there being no same-origin,
+// running offline from what's been downloaded, and choosing who's watching, as
+// a device several people use keeps a session for each of them.
 
 import 'dart:async';
 
 import 'package:built_value/json_object.dart';
+import 'package:flutter/foundation.dart';
 import 'package:ferry/ferry.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
@@ -23,6 +25,7 @@ import '../graphql/queries/__generated__/login.req.gql.dart';
 import '../graphql/queries/__generated__/logout.req.gql.dart';
 import '../graphql/queries/__generated__/redeem_invite.req.gql.dart';
 import '../graphql/queries/__generated__/register_device.req.gql.dart';
+import '../graphql/queries/__generated__/remembered_profiles.req.gql.dart';
 import '../graphql/queries/fragments/__generated__/device_fields.data.gql.dart';
 import '../graphql/queries/fragments/__generated__/library_fields.data.gql.dart';
 import '../graphql/queries/fragments/__generated__/linked_server_fields.data.gql.dart';
@@ -36,7 +39,7 @@ import 'nav_service.dart';
 import 'tokens.dart';
 import 'watch_state.dart';
 
-enum AppPhase { boot, connect, error, setup, auth, app, offline }
+enum AppPhase { boot, connect, error, setup, profiles, auth, app, offline }
 
 /// Preference key: list libraries in the navigation alongside content types.
 const showLibrariesKey = 'browse.showLibraries';
@@ -49,11 +52,23 @@ class SessionService {
     required this.decoders,
     required this.watchState,
   }) {
-    tokens.onExpired = (error) => _signedOut(
-      error.reused
-          ? '${error.toString()} Sign in again, and change your password if that wasn’t you.'
-          : 'Your session expired. Sign in again to continue.',
+    tokens.onExpired = (error) => unawaited(
+      _afterLeaving(
+        error.reused
+            ? '${error.toString()} Sign in again, and change your password if that wasn’t you.'
+            : 'Your session expired. Sign in again to continue.',
+      ),
     );
+    // Locked from elsewhere, or a PIN set since this device last asked.
+    tokens.onLocked = () {
+      final userId = tokens.activeId.value;
+      if (userId == null) return;
+      unawaited(
+        tokens
+            .describe(userId, hasPin: true)
+            .then((_) => _showProfiles(message: 'Enter your PIN to carry on.')),
+      );
+    };
   }
 
   final TokenStore tokens;
@@ -74,7 +89,14 @@ class SessionService {
   final showLibraries = signal(false);
   final device = signal<GDeviceFields?>(null);
   final error = signal('');
+
+  /// What went wrong on the way in, for the sign-in screen and "Who's watching?".
   final authError = signal('');
+
+  /// Whether the server answered at launch. Without it a profile can still be
+  /// chosen for what it has downloaded, but not one behind a PIN: only the
+  /// server can check that.
+  final reachable = signal(true);
 
   /// Linked servers the user has signed in to.
   late final connectedServers = computed(
@@ -90,6 +112,14 @@ class SessionService {
     ],
   );
 
+  DownloadsService get _downloads => getIt<DownloadsService>();
+
+  /// One person, still in their profile, goes straight back to it. Anyone else
+  /// starts from "Who's watching?": several people share the device, or the
+  /// one who does stepped away from their profile on purpose.
+  bool get _resumesAlone =>
+      tokens.hasSession && tokens.accounts.value.length == 1;
+
   Future<void> start() async {
     batch(() {
       phase.value = AppPhase.boot;
@@ -102,20 +132,30 @@ class SessionService {
     }
     try {
       final info = await graphql.probe(origin);
-      serverName.value = info.name;
+      batch(() {
+        serverName.value = info.name;
+        reachable.value = true;
+      });
       if (!info.isConfigured) {
         phase.value = AppPhase.setup;
         return;
       }
-      if (!tokens.hasSession) {
+      if (tokens.accounts.value.isEmpty) {
         phase.value = AppPhase.auth;
-        return;
+      } else if (_resumesAlone) {
+        await _useDownloads(tokens.activeId.value);
+        await bootstrap();
+      } else {
+        await _showProfiles();
       }
-      await bootstrap();
     } on ServerUnreachable catch (cause) {
+      reachable.value = false;
       // Not a sign-out, and what's downloaded still plays.
-      if (tokens.hasSession) {
+      if (_resumesAlone) {
+        await _useDownloads(tokens.activeId.value);
         phase.value = AppPhase.offline;
+      } else if (tokens.accounts.value.isNotEmpty) {
+        await _showProfiles();
       } else {
         batch(() {
           error.value = cause.message;
@@ -134,6 +174,14 @@ class SessionService {
     try {
       final data = await graphql.run(
         GBootstrapReq((b) => b..fetchPolicy = FetchPolicy.NetworkOnly),
+      );
+      // Their tile next time, as the server knows them now. The picture comes
+      // from "Who's watching?" itself: this one's URL dies with a lock.
+      await tokens.describe(
+        data.viewer.id,
+        name: data.viewer.name,
+        hasPin: data.viewer.hasPin,
+        needsSignIn: false,
       );
       batch(() {
         viewer.value = data.viewer;
@@ -154,14 +202,10 @@ class SessionService {
       });
       unawaited(registerThisDevice());
     } on SessionExpired {
-      // The expiry handler has already moved to the sign-in screen.
+      // The expiry and lock handlers have already moved on from here.
     } on ApiError catch (cause) {
-      await tokens.clear();
-      batch(() {
-        viewer.value = null;
-        authError.value = cause.message;
-        phase.value = AppPhase.auth;
-      });
+      await tokens.removeActive();
+      await _afterLeaving(cause.message);
     }
   }
 
@@ -212,7 +256,7 @@ class SessionService {
     }
   }
 
-  /// Point the app at a server. The session belongs to the old one.
+  /// Point the app at a server. The sessions belong to the old one.
   Future<void> connect(String origin) async {
     if (origin != tokens.origin.value) {
       await tokens.clear();
@@ -222,10 +266,26 @@ class SessionService {
     await start();
   }
 
-  Future<void> signIn({required String access, required String refresh}) async {
-    await tokens.save(access: access, refresh: refresh);
-    _dropClientState();
-    await bootstrap();
+  /// Adopt a session the server just issued and go in as its user. Someone
+  /// already signed in here has their old session replaced, not a second tile.
+  Future<void> signIn({
+    required String userId,
+    required String name,
+    required String access,
+    required String refresh,
+    bool hasPin = false,
+  }) async {
+    await tokens.signIn(
+      StoredAccount(
+        userId: userId,
+        name: name,
+        access: access,
+        refresh: refresh,
+        hasPin: hasPin,
+        avatarUrl: tokens.account(userId)?.avatarUrl,
+      ),
+    );
+    await _enter();
   }
 
   Future<void> login(String username, String password) async {
@@ -238,7 +298,13 @@ class SessionService {
           ..device = identity.name,
       ),
     );
-    await signIn(access: data.login.token, refresh: data.login.refreshToken);
+    await signIn(
+      userId: data.login.user.id,
+      name: data.login.user.name,
+      hasPin: data.login.user.hasPin,
+      access: data.login.token,
+      refresh: data.login.refreshToken,
+    );
   }
 
   Future<void> completeSetup(String username, String password) async {
@@ -250,6 +316,8 @@ class SessionService {
       ),
     );
     await signIn(
+      userId: data.completeSetupWizard.userId,
+      name: username,
       access: data.completeSetupWizard.accessToken,
       refresh: data.completeSetupWizard.refreshToken,
     );
@@ -271,32 +339,183 @@ class SessionService {
       ),
     );
     await signIn(
+      userId: data.redeemInvite.user.id,
+      name: data.redeemInvite.user.name,
+      hasPin: data.redeemInvite.user.hasPin,
       access: data.redeemInvite.token,
       refresh: data.redeemInvite.refreshToken,
     );
   }
 
-  /// Sign out on purpose. Downloads go too: they're this account's, and the next
-  /// person signing in on this device shouldn't find them. An expired session
-  /// keeps them, as nobody chose to leave.
+  // ---- who's watching ---------------------------------------------------
+
+  /// Go in as someone signed in here. A profile with a PIN opens only through
+  /// the server, whether or not its session got as far as being locked.
+  ///
+  /// Throws [WrongPin] while there are tries left; [ApiError] once there aren't
+  /// or the session turns out to be gone, by which time the tile says so; and
+  /// [ServerUnreachable].
+  Future<void> chooseProfile(String userId, {String pin = ''}) async {
+    final account = tokens.account(userId);
+    if (account == null) return;
+    if (account.hasPin) {
+      try {
+        await tokens.unlock(userId, pin);
+      } on ApiError catch (error) {
+        if (error.codes.contains('PIN_ATTEMPTS_EXHAUSTED')) {
+          await tokens.remove(userId);
+          throw const ApiError(
+            'Too many wrong PINs. Sign in again to use this profile.',
+          );
+        }
+        await tokens.describe(userId, needsSignIn: true);
+        throw ApiError('${account.name} needs to sign in again.');
+      }
+    }
+    await tokens.activate(userId);
+    try {
+      await _enter();
+    } on ServerUnreachable {
+      // Still on "Who's watching?", where nobody is active.
+      await tokens.deactivate();
+      rethrow;
+    }
+  }
+
+  /// Step away from the active profile, to "Who's watching?".
+  Future<void> switchProfile() => _showProfiles();
+
+  /// Sign someone else in, or someone whose session ended.
+  void addProfile() => batch(() {
+    authError.value = '';
+    phase.value = AppPhase.auth;
+  });
+
+  /// Back from signing someone in, with nobody new.
+  void cancelAddProfile() {
+    if (tokens.accounts.value.isNotEmpty) phase.value = AppPhase.profiles;
+  }
+
+  /// What the server says of everyone signed in here: their tiles as they are
+  /// now, and which sessions it no longer knows. Best effort, as the tiles
+  /// already show what was true last time.
+  Future<void> refreshProfiles() async {
+    final asked = tokens.accounts.value;
+    if (asked.isEmpty) return;
+    try {
+      final data = await graphql.run(
+        GRememberedProfilesReq(
+          (b) => b
+            ..fetchPolicy = FetchPolicy.NetworkOnly
+            ..vars.tokens.addAll([
+              for (final account in asked) account.refresh,
+            ]),
+        ),
+      );
+      for (final (index, profile) in data.rememberedProfiles.indexed) {
+        final account = asked[index];
+        // Rotated since, so the answer is about a token that's gone anyway.
+        if (tokens.account(account.userId)?.refresh != account.refresh) {
+          continue;
+        }
+        if (profile == null) {
+          await tokens.describe(account.userId, needsSignIn: true);
+        } else {
+          await tokens.describe(
+            account.userId,
+            name: profile.name,
+            hasPin: profile.hasPin,
+            avatarUrl: profile.avatarUrl,
+            clearAvatar: profile.avatarUrl == null,
+            needsSignIn: false,
+          );
+        }
+      }
+    } on Exception {
+      return;
+    }
+  }
+
+  /// The headless sync shares the session, and may have found it ended while
+  /// the app was away. Returns whether it had, and moves on from the shell.
+  Future<bool> lostWhileAway() async {
+    if (phase.value != AppPhase.app || tokens.hasSession) return false;
+    await _afterLeaving('Your session expired. Sign in again to continue.');
+    return true;
+  }
+
+  Future<void> _enter() async {
+    _dropClientState();
+    await _useDownloads(tokens.activeId.value);
+    if (reachable.value) {
+      await bootstrap();
+    } else {
+      phase.value = AppPhase.offline;
+    }
+  }
+
+  /// Nobody is active from here. Whoever was is left behind their PIN if they
+  /// have one, which is what makes switching away mean something.
+  Future<void> _showProfiles({String message = ''}) async {
+    final left = tokens.active;
+    if (left != null) {
+      if (left.hasPin && reachable.value) {
+        // Theirs may not be loaded yet, when this is the app starting.
+        await _useDownloads(left.userId);
+        await _guarded(_downloads.hold);
+        await tokens.lock(left.userId);
+      }
+      await tokens.deactivate();
+    }
+    await _useDownloads(null);
+    _signedOut(message, to: AppPhase.profiles);
+    unawaited(refreshProfiles());
+  }
+
+  /// Where to go once the active account is gone: the others, if there are any.
+  Future<void> _afterLeaving(String message) async {
+    if (tokens.accounts.value.isEmpty) {
+      await _useDownloads(null);
+      _signedOut(message);
+    } else {
+      await _showProfiles(message: message);
+    }
+  }
+
+  Future<void> _useDownloads(String? userId) =>
+      _guarded(() => _downloads.useAccount(userId));
+
+  /// Streaming needs none of the downloader, so a broken one mustn't keep
+  /// anyone out.
+  static Future<void> _guarded(Future<void> Function() action) async {
+    try {
+      await action();
+    } on Object catch (error) {
+      debugPrint('downloads unavailable: $error');
+    }
+  }
+
+  /// Sign out on purpose. This account's downloads go too: they're theirs, and
+  /// the next person on this device shouldn't find them. An expired session
+  /// keeps them, as nobody chose to leave. Anyone else signed in here stays.
   Future<void> logout() async {
     try {
       await graphql.run(GLogoutReq());
     } on Exception {
       // Signing out locally regardless.
     }
-    await getIt<DownloadsService>().removeAll();
-    await tokens.clear();
-    _signedOut('');
+    await _guarded(_downloads.removeAll);
+    await tokens.removeActive();
+    await _afterLeaving('');
   }
 
-  /// Forget this server altogether, to choose another.
+  /// Forget this server altogether, to choose another: everyone signed in
+  /// here, and what they downloaded.
   Future<void> forgetServer() async {
-    await getIt<DownloadsService>().removeAll();
+    await _guarded(_downloads.removeEveryone);
     await tokens.clear();
     await tokens.setOrigin(null);
-    _signedOut('');
-    phase.value = AppPhase.connect;
+    _signedOut('', to: AppPhase.connect);
   }
 
   /// The clients go, and with them anything still listening to one.
@@ -307,7 +526,7 @@ class SessionService {
     getIt.resetLazySingleton<IndexingService>();
   }
 
-  void _signedOut(String message) {
+  void _signedOut(String message, {AppPhase to = AppPhase.auth}) {
     _dropClientState();
     batch(() {
       viewer.value = null;
@@ -316,7 +535,7 @@ class SessionService {
       linkedServers.value = const [];
       device.value = null;
       authError.value = message;
-      phase.value = AppPhase.auth;
+      phase.value = to;
       getIt<NavService>().tab.value = ShellTab.home;
     });
   }

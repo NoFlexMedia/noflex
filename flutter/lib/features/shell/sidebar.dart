@@ -285,6 +285,14 @@ class _SidebarState extends State<Sidebar> {
                       session.viewer.value?.name ?? 'You',
                       PhosphorIconsRegular.user,
                     ),
+                    // Never lit: it leaves the shell for "Who's watching?".
+                    _SidebarItem(
+                      label: 'Switch profile',
+                      icon: PhosphorIconsRegular.userSwitch,
+                      collapsed: collapsed,
+                      selected: false,
+                      onTap: () => unawaited(session.switchProfile()),
+                    ),
                     if (session.viewer.value?.isAdmin ?? false)
                       placeItem(
                         NavPlace.administration,

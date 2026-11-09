@@ -2,10 +2,12 @@
 //
 // Downloads belong to the account that made them, so leaving it removes them.
 // That can be gigabytes on a metered connection to get back, so it's asked
-// before rather than discovered after.
+// before rather than discovered after. Stepping away to "Who's watching?" keeps
+// them: the account is still signed in here.
 
 import '../../di.dart';
 import '../../services/session.dart';
+import '../../services/tokens.dart';
 import '../../widgets/nf_overlays.dart';
 import 'downloads_service.dart';
 
@@ -27,8 +29,18 @@ Future<void> signOut() async {
   }
 }
 
+/// Leaving a server leaves everyone signed in on this device, not only whoever
+/// is asking.
 Future<void> changeServer() async {
-  if (await _confirmLosingDownloads('Change server?', 'Change server')) {
-    await getIt<SessionService>().forgetServer();
-  }
+  final accounts = getIt<TokenStore>().accounts.value;
+  final confirmed = accounts.length > 1
+      ? await confirmAction(
+          title: 'Change server?',
+          message:
+              'This signs out all ${accounts.length} profiles on this device and removes their downloads.',
+          confirmLabel: 'Change server',
+          danger: true,
+        )
+      : await _confirmLosingDownloads('Change server?', 'Change server');
+  if (confirmed) await getIt<SessionService>().forgetServer();
 }

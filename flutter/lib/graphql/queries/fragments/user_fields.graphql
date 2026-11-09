@@ -4,6 +4,7 @@ fragment UserFields on User {
   name
   username
   avatarUrl
+  hasPin
   isAdmin
   role
   createdAt

@@ -5,6 +5,7 @@ import 'package:signals_flutter/signals_flutter.dart';
 
 import 'di.dart';
 import 'features/auth/connect_screen.dart';
+import 'features/auth/profiles_screen.dart';
 import 'features/downloads/downloads_screen.dart';
 import 'features/shell/app_shell.dart';
 import 'services/nav_service.dart';
@@ -51,6 +52,7 @@ class _AppFrame extends SignalWidget {
             ),
           ),
           AppPhase.setup => const SetupScreen(),
+          AppPhase.profiles => const ProfilesScreen(),
           AppPhase.auth => const SignInScreen(),
           AppPhase.app => const AppShell(),
           AppPhase.offline => const OfflineShell(),

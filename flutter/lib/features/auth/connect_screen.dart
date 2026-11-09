@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// Everything before the shell: choosing a server, signing in, first-run setup,
-// redeeming an invite, and approving this device from a signed-in browser for
-// accounts without a password (external sign-in).
+// Everything before the shell but choosing who's watching: choosing a server,
+// signing in, first-run setup, redeeming an invite, and approving this device
+// from a signed-in browser for accounts without a password (external sign-in).
 
 import 'dart:async';
 
@@ -87,8 +87,9 @@ class _AuthFrame extends StatelessWidget {
   );
 }
 
-class _ErrorLine extends StatelessWidget {
-  const _ErrorLine(this.message);
+/// What went wrong on the way in, above whatever would be tried again.
+class AuthErrorLine extends StatelessWidget {
+  const AuthErrorLine(this.message, {super.key});
   final String message;
 
   @override
@@ -158,7 +159,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       SignalBuilder(
         builder: (_) => _error.value.isEmpty
             ? const SizedBox.shrink()
-            : _ErrorLine(_error.value),
+            : AuthErrorLine(_error.value),
       ),
       NfField(
         controller: _controller,
@@ -274,7 +275,13 @@ class _SignInScreenState extends State<SignInScreen> {
       final result = data.pollDeviceCode;
       if (result == null) return;
       _poll?.cancel();
-      await _session.signIn(access: result.token, refresh: result.refreshToken);
+      await _session.signIn(
+        userId: result.user.id,
+        name: result.user.name,
+        hasPin: result.user.hasPin,
+        access: result.token,
+        refresh: result.refreshToken,
+      );
     } on ServerUnreachable {
       // Keep polling; the code outlives a blip.
     } on ApiError catch (cause) {
@@ -304,6 +311,9 @@ class _SignInScreenState extends State<SignInScreen> {
       final message = _error.value.isNotEmpty
           ? _error.value
           : _session.authError.value;
+      // Someone is already signed in here, so this is adding another: there's
+      // a "Who's watching?" to go back to, and the server isn't theirs to change.
+      final adding = getIt<TokenStore>().accounts.value.isNotEmpty;
       return _AuthFrame(
         title: switch (mode) {
           _AuthMode.signIn => 'Sign in',
@@ -312,7 +322,7 @@ class _SignInScreenState extends State<SignInScreen> {
         },
         subtitle: server,
         children: [
-          if (message.isNotEmpty) _ErrorLine(message),
+          if (message.isNotEmpty) AuthErrorLine(message),
           if (mode == _AuthMode.code) ...[
             Text(
               'On a device that’s already signed in, open Account → Devices and enter this code.',
@@ -404,13 +414,22 @@ class _SignInScreenState extends State<SignInScreen> {
                     style: nfText(13, weight: 600, color: NfColors.text2),
                   ),
                 ),
-                TextButton(
-                  onPressed: () => unawaited(changeServer()),
-                  child: Text(
-                    'Change server',
-                    style: nfText(13, weight: 600, color: NfColors.text2),
+                if (adding)
+                  TextButton(
+                    onPressed: _session.cancelAddProfile,
+                    child: Text(
+                      'Back to profiles',
+                      style: nfText(13, weight: 600, color: NfColors.text2),
+                    ),
+                  )
+                else
+                  TextButton(
+                    onPressed: () => unawaited(changeServer()),
+                    child: Text(
+                      'Change server',
+                      style: nfText(13, weight: 600, color: NfColors.text2),
+                    ),
                   ),
-                ),
               ],
             ),
           ],
@@ -465,7 +484,7 @@ class _SetupScreenState extends State<SetupScreen> {
       SignalBuilder(
         builder: (_) => _error.value.isEmpty
             ? const SizedBox.shrink()
-            : _ErrorLine(_error.value),
+            : AuthErrorLine(_error.value),
       ),
       NfField(
         controller: _username,

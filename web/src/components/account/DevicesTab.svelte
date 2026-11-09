@@ -5,6 +5,7 @@
   import Copy from "phosphor-svelte/lib/Copy";
   import Devices from "phosphor-svelte/lib/Devices";
   import Key from "phosphor-svelte/lib/Key";
+  import LockKey from "phosphor-svelte/lib/LockKey";
   import MonitorPlay from "phosphor-svelte/lib/MonitorPlay";
   import Plus from "phosphor-svelte/lib/Plus";
   import Television from "phosphor-svelte/lib/Television";
@@ -285,7 +286,7 @@
           <li class:current={session.id === currentId}>
             <span class="glyph"><DeviceIcon device={session.device} client={session.client} /></span>
             <span class="what">
-              <strong>{session.device || "Unknown device"}{#if session.id === currentId}<span class="chip accent">This browser</span>{/if}</strong>
+              <strong>{session.device || "Unknown device"}{#if session.id === currentId}<span class="chip accent">This browser</span>{/if}{#if session.lockedAt}<span class="chip" title="Waiting for your PIN since {date(session.lockedAt, { dateStyle: "medium", timeStyle: "short" })}"><LockKey size={12} />Locked</span>{/if}</strong>
               <small>{[session.client, session.appVersion && `v${session.appVersion}`].filter(Boolean).join(" ") || "NoFlex client"} · signed in {date(session.createdAt)}</small>
             </span>
             <span class="seen">

@@ -19,6 +19,7 @@ import '../../graphql/__generated__/schema.schema.gql.dart';
 import '../../graphql/queries/__generated__/account.data.gql.dart';
 import '../../graphql/queries/__generated__/account.req.gql.dart';
 import '../../graphql/queries/__generated__/account.var.gql.dart';
+import '../../graphql/queries/__generated__/approvable_users.req.gql.dart';
 import '../../graphql/queries/__generated__/authorize_device_code.req.gql.dart';
 import '../../graphql/queries/__generated__/cancel_export_job.req.gql.dart';
 import '../../graphql/queries/__generated__/change_password.req.gql.dart';
@@ -171,6 +172,9 @@ String _pictureTier(int pixels) => pixels >= pixels2160p ? '4K' : '1080p';
       : '${_pictureTier(any)} 8-bit, ${_pictureTier(tenBit)} 10-bit';
   return (hardware: true, detail: 'Hardware, $detail');
 }
+
+/// Someone a device can be signed in as.
+typedef ApprovableUser = ({String id, String name, String username});
 
 class AccountController {
   Timer? _marksTimer;
@@ -597,21 +601,53 @@ class AccountController {
     if (data != null) query.refetch();
   }
 
-  Future<bool> approveCode(String code) async {
-    final data = await _toasts.attempt(() async {
-      final result = await _graphql.run(
-        // Codes are capitals, and the server matches them exactly.
-        GAuthorizeDeviceCodeReq((b) => b.vars.code = code.toUpperCase()),
-      );
-      // A wrong code is an answer rather than an error, to the server.
-      if (!result.authorizeDeviceCode) {
-        throw const ApiError('That code is wrong or has expired.');
-      }
-      return result;
-    }, success: 'Device approved. It will finish signing in on its own.');
+  /// Approve the code a device is showing, signing it in as the viewer, or as
+  /// [user] when an administrator approves for someone with no device of their
+  /// own to do it from.
+  Future<bool> approveCode(String code, {ApprovableUser? user}) async {
+    final data = await _toasts.attempt(
+      () async {
+        final result = await _graphql.run(
+          GAuthorizeDeviceCodeReq(
+            (b) => b.vars
+              // Codes are capitals, and the server matches them exactly.
+              ..code = code.toUpperCase()
+              ..user = user?.id,
+          ),
+        );
+        // A wrong code is an answer rather than an error, to the server.
+        if (!result.authorizeDeviceCode) {
+          throw const ApiError('That code is wrong or has expired.');
+        }
+        return result;
+      },
+      success: user == null
+          ? 'Device approved. It will finish signing in on its own.'
+          : 'Device approved for ${user.name}. It will finish signing in on its own.',
+    );
     if (data == null) return false;
     query.refetch();
     return true;
+  }
+
+  /// Everyone an administrator can sign a device in as, themselves first.
+  /// Null when the server wouldn't say.
+  Future<List<ApprovableUser>?> approvableUsers() async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(
+        GApprovableUsersReq((b) => b..fetchPolicy = FetchPolicy.NetworkOnly),
+      ),
+    );
+    if (data == null) return null;
+    final self = getIt<SessionService>().viewer.value?.id;
+    return [
+      for (final user in data.users)
+        if (user.id == self)
+          (id: user.id, name: user.name, username: user.username),
+      for (final user in data.users)
+        if (user.id != self)
+          (id: user.id, name: user.name, username: user.username),
+    ];
   }
 
   bool isThisDevice(String id) => id == getIt<DeviceIdentity>().id;

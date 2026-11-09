@@ -8,6 +8,7 @@ import 'package:phosphor_icons/phosphor_icons.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
 import '../../di.dart';
+import '../../services/session.dart';
 import '../../services/toast_service.dart';
 import '../../services/tokens.dart';
 import '../../theme.dart';
@@ -15,6 +16,7 @@ import '../../utils/format.dart';
 import '../../widgets/nf_button.dart';
 import '../../widgets/nf_field.dart';
 import '../../widgets/nf_overlays.dart';
+import '../../widgets/user_avatar.dart';
 import '../downloads/leave_account.dart';
 import 'account_controller.dart';
 import '../../utils/device_icon.dart';
@@ -205,6 +207,9 @@ class _LinkDevicePanelState extends State<_LinkDevicePanel> {
   final _generated = signal<String?>(null);
   final _approved = signal(false);
   final _generating = signal(false);
+
+  /// Who the device will be signed in as; null is whoever is approving.
+  final _for = signal<ApprovableUser?>(null);
   Timer? _poll;
 
   @override
@@ -255,13 +260,40 @@ class _LinkDevicePanelState extends State<_LinkDevicePanel> {
     final code = _code.text.trim();
     if (code.isEmpty || _busy.value) return;
     _busy.value = true;
-    final approved = await widget.controller.approveCode(code);
+    final approved = await widget.controller.approveCode(
+      code,
+      user: _for.value,
+    );
     if (!mounted) return;
     _busy.value = false;
     if (approved) {
       _code.clear();
-      _hasCode.value = false;
+      batch(() {
+        _hasCode.value = false;
+        // The next code is the approver's own unless they say otherwise again.
+        _for.value = null;
+      });
     }
+  }
+
+  Future<void> _chooseFor() async {
+    final users = await widget.controller.approvableUsers();
+    if (users == null || !mounted) return;
+    final self = getIt<SessionService>().viewer.value?.id;
+    final chosen = await pickOption<ApprovableUser>(
+      title: 'Sign the device in as',
+      selected: _for.value ?? users.where((u) => u.id == self).firstOrNull,
+      options: [
+        for (final user in users)
+          NfOption(
+            user,
+            user.id == self ? '${user.name} (you)' : user.name,
+            detail: user.name == user.username ? null : user.username,
+            leading: UserAvatar(name: user.name, avatarUrl: null, size: 30),
+          ),
+      ],
+    );
+    if (chosen != null) _for.value = chosen.id == self ? null : chosen;
   }
 
   @override
@@ -297,6 +329,38 @@ class _LinkDevicePanelState extends State<_LinkDevicePanel> {
               ),
             ),
           ],
+        ),
+        // A child's TV has nobody signed in to approve it from.
+        SignalBuilder(
+          builder: (context) {
+            final viewer = getIt<SessionService>().viewer.value;
+            if (!(viewer?.isAdmin ?? false)) return const SizedBox.shrink();
+            final chosen = _for.value;
+            return Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                alignment: WrapAlignment.spaceBetween,
+                children: [
+                  Text(
+                    chosen == null
+                        ? 'The device signs in as you.'
+                        : 'The device signs in as ${chosen.name}.',
+                    style: NfType.small,
+                  ),
+                  NfButton(
+                    label: 'Sign in as…',
+                    style: NfButtonStyle.ghost,
+                    size: NfButtonSize.small,
+                    icon: const Icon(PhosphorIconsRegular.userSwitch),
+                    onPressed: () => unawaited(_chooseFor()),
+                  ),
+                ],
+              ),
+            );
+          },
         ),
         const SizedBox(height: 12),
         const Divider(height: 1, color: NfColors.line),

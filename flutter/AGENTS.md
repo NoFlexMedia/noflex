@@ -70,6 +70,8 @@ A device several people use keeps a session for each of them. `features/auth/pro
 - A refresh refused with `SESSION_LOCKED` keeps the account: it's `SessionExpired(locked: true)` and `onLocked`, back to "Who's watching?". Any other refusal forgets that account alone.
 - Tiles paint from what's stored, then `rememberedProfiles` corrects them and marks a session the server no longer knows (`needsSignIn`). A tile's picture comes from there too: `viewer.avatarUrl` is signed for the session and dies with a lock.
 - **Each account has its own device id** (`DeviceIdentity.idFor`), because the server refuses an id another user registered. It's in preferences, not with the session, so it outlives signing out.
+- You → Devices → Link a device approves a code as the viewer. An administrator can choose anyone instead (`approveCode(user:)`), for an account with nothing signed in to approve from; the server records it.
+- The PIN is set under You → Profile, with the password (`setPin`, `removePin`). `_pinChanged` tells this device's own tile.
 - Signing in as someone already here replaces their session where it was. Whoever was signed in stays remembered, so the sign-in screen offers Back to profiles in place of Change server, which signs everyone out.
 
 ## Adaptive layout

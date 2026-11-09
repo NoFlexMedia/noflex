@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-mutation AuthorizeDeviceCode($code: String!) {
-  authorizeDeviceCode(code: $code)
+mutation AuthorizeDeviceCode($code: String!, $user: ID) {
+  authorizeDeviceCode(code: $code, userId: $user)
 }

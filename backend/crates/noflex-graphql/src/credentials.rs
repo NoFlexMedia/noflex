@@ -2,18 +2,18 @@
 //
 // Long-lived credentials and device linking. API keys are shown to
 // the user exactly once — storage only ever sees the SHA-256 hex, the
-// same treatment refresh tokens get in `auth.rs`. Device PINs are the
+// same treatment refresh tokens get in `auth.rs`. Device codes are the
 // Plex-style link flow: an unauthenticated device displays a short
 // code, a signed-in user authorizes it, and the device polls until
-// the PIN trades for an ordinary session token pair.
+// the code trades for an ordinary session token pair.
 
 use std::sync::Arc;
 
 use async_graphql::{Context, Object, SimpleObject};
-use noflex_core::{ApiKeyId, DevicePinId};
+use noflex_core::{ApiKeyId, DeviceCodeId};
 use noflex_storage::{
     Storage, StorageError,
-    domain::{ApiKey, DevicePin},
+    domain::{ApiKey, DeviceCode},
 };
 use time::OffsetDateTime;
 
@@ -39,29 +39,29 @@ pub struct CreatedApiKey {
     pub api_key: ApiKey,
 }
 
-/// The device's half of the link flow: show `pin` on screen, then
-/// poll `pollDevicePin` until it yields a session or `expires_at`
+/// The device's half of the link flow: show `code` on screen, then
+/// poll `pollDeviceCode` until it yields a session or `expires_at`
 /// passes.
 #[derive(SimpleObject)]
-pub struct DevicePinInfo {
-    pub pin: String,
+pub struct DeviceCodeInfo {
+    pub code: String,
     pub expires_at: OffsetDateTime,
 }
 
-const PIN_LEN: usize = 6;
-const PIN_TTL: time::Duration = time::Duration::minutes(10);
+const CODE_LEN: usize = 6;
+const CODE_TTL: time::Duration = time::Duration::minutes(10);
 /// Glyphs that survive being read off a TV and retyped by hand: no
 /// 0/O, no 1/I/L.
-const PIN_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-/// Collision rerolls before giving up on a fresh PIN.
-const PIN_CREATE_ATTEMPTS: u32 = 5;
+const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+/// Collision rerolls before giving up on a fresh code.
+const CODE_CREATE_ATTEMPTS: u32 = 5;
 
-fn generate_pin() -> String {
+fn generate_code() -> String {
     // OS randomness arrives hex-encoded (the refresh-token generator);
     // decode pairs back to bytes and reject the 248..=255 tail so the
-    // alphabet index stays unbiased (248 = 8 * PIN_ALPHABET.len()).
-    let mut pin = String::with_capacity(PIN_LEN);
-    while pin.len() < PIN_LEN {
+    // alphabet index stays unbiased (248 = 8 * CODE_ALPHABET.len()).
+    let mut code = String::with_capacity(CODE_LEN);
+    while code.len() < CODE_LEN {
         for pair in noflex_auth::generate_refresh_token()
             .into_bytes()
             .as_chunks::<2>()
@@ -77,13 +77,13 @@ fn generate_pin() -> String {
             if byte >= 248 {
                 continue;
             }
-            pin.push(PIN_ALPHABET[(byte % PIN_ALPHABET.len() as u8) as usize] as char);
-            if pin.len() == PIN_LEN {
+            code.push(CODE_ALPHABET[(byte % CODE_ALPHABET.len() as u8) as usize] as char);
+            if code.len() == CODE_LEN {
                 break;
             }
         }
     }
-    pin
+    code
 }
 
 #[derive(Default)]
@@ -153,73 +153,75 @@ impl CredentialsMutation {
     }
 
     /// Begin the device-link flow: an unauthenticated device (a TV
-    /// with no credentials yet) asks for a PIN to show on screen.
-    async fn create_device_pin(
+    /// with no credentials yet) asks for a code to show on screen.
+    async fn create_device_code(
         &self,
         ctx: &Context<'_>,
         client: Option<String>,
         device: Option<String>,
-    ) -> async_graphql::Result<DevicePinInfo> {
+    ) -> async_graphql::Result<DeviceCodeInfo> {
         let storage = storage(ctx)?;
         let now = OffsetDateTime::now_utc();
-        for attempt in 0..PIN_CREATE_ATTEMPTS {
-            let pin = DevicePin {
-                id: DevicePinId::new(),
-                pin: generate_pin(),
+        for attempt in 0..CODE_CREATE_ATTEMPTS {
+            let code = DeviceCode {
+                id: DeviceCodeId::new(),
+                code: generate_code(),
                 user_id: None,
                 client: client.clone(),
                 device: device.clone(),
                 created_at: now,
-                expires_at: now + PIN_TTL,
+                expires_at: now + CODE_TTL,
             };
-            match storage.create_device_pin(&pin).await {
+            match storage.create_device_code(&code).await {
                 Ok(()) => {
-                    return Ok(DevicePinInfo {
-                        pin: pin.pin,
-                        expires_at: pin.expires_at,
+                    return Ok(DeviceCodeInfo {
+                        code: code.code,
+                        expires_at: code.expires_at,
                     });
                 }
                 // A colliding code just rerolls.
-                Err(StorageError::Constraint(_)) if attempt + 1 < PIN_CREATE_ATTEMPTS => {}
+                Err(StorageError::Constraint(_)) if attempt + 1 < CODE_CREATE_ATTEMPTS => {}
                 Err(e) => return Err(gql_err(e)),
             }
         }
-        Err(async_graphql::Error::new("could not allocate a device pin"))
+        Err(async_graphql::Error::new(
+            "could not allocate a device code",
+        ))
     }
 
-    /// Attach the calling user to a pending PIN. `false` for unknown,
+    /// Attach the calling user to a pending code. `false` for unknown,
     /// expired, or already-authorized codes — deliberately
     /// indistinguishable.
     // Credential checks cost most of the per-operation complexity budget,
     // so aliasing can't batch hundreds of guesses into one request.
     #[graphql(complexity = "crate::CREDENTIAL_COMPLEXITY")]
-    async fn authorize_device_pin(
+    async fn authorize_device_code(
         &self,
         ctx: &Context<'_>,
-        pin: String,
+        code: String,
     ) -> async_graphql::Result<bool> {
         let principal = authed_principal(ctx)?;
         storage(ctx)?
-            .authorize_device_pin(&pin, principal.user_id)
+            .authorize_device_code(&code, principal.user_id)
             .await
             .map_err(gql_err)
     }
 
     /// The device side of the link flow, unauthenticated. Null while
-    /// the PIN is pending, unknown, or expired. Once authorized, the
+    /// the code is pending, unknown, or expired. Once authorized, the
     /// first poll mints a session for the bound user (carrying the
-    /// PIN's client/device), consumes the PIN, and returns the same
+    /// code's client/device), consumes the code, and returns the same
     /// token pair `login` issues — later polls see null again.
     // Credential checks cost most of the per-operation complexity budget,
     // so aliasing can't batch hundreds of guesses into one request.
     #[graphql(complexity = "crate::CREDENTIAL_COMPLEXITY")]
-    async fn poll_device_pin(
+    async fn poll_device_code(
         &self,
         ctx: &Context<'_>,
-        pin: String,
+        code: String,
     ) -> async_graphql::Result<Option<LoginResult>> {
         let storage = storage(ctx)?;
-        let Some(row) = storage.device_pin_by_pin(&pin).await.map_err(gql_err)? else {
+        let Some(row) = storage.device_code_by_code(&code).await.map_err(gql_err)? else {
             return Ok(None);
         };
         let Some(user_id) = row.user_id else {
@@ -229,8 +231,8 @@ impl CredentialsMutation {
             return Ok(None);
         };
         let (token, refresh_token) = mint_session(ctx, &user, row.client, row.device).await?;
-        // One-shot: the PIN dies the moment it mints a session.
-        storage.delete_device_pin(row.id).await.map_err(gql_err)?;
+        // One-shot: the code dies the moment it mints a session.
+        storage.delete_device_code(row.id).await.map_err(gql_err)?;
         Ok(Some(LoginResult {
             token,
             refresh_token,

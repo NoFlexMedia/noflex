@@ -19,7 +19,7 @@ import '../../graphql/__generated__/schema.schema.gql.dart';
 import '../../graphql/queries/__generated__/account.data.gql.dart';
 import '../../graphql/queries/__generated__/account.req.gql.dart';
 import '../../graphql/queries/__generated__/account.var.gql.dart';
-import '../../graphql/queries/__generated__/authorize_device_pin.req.gql.dart';
+import '../../graphql/queries/__generated__/authorize_device_code.req.gql.dart';
 import '../../graphql/queries/__generated__/cancel_export_job.req.gql.dart';
 import '../../graphql/queries/__generated__/change_password.req.gql.dart';
 import '../../graphql/queries/__generated__/change_username.req.gql.dart';
@@ -27,14 +27,14 @@ import '../../graphql/queries/__generated__/remove_profile_picture.req.gql.dart'
 import '../../graphql/queries/__generated__/set_profile_picture.req.gql.dart';
 import '../../graphql/queries/__generated__/update_profile.req.gql.dart';
 import '../../graphql/queries/__generated__/create_api_key.req.gql.dart';
-import '../../graphql/queries/__generated__/create_device_pin.req.gql.dart';
+import '../../graphql/queries/__generated__/create_device_code.req.gql.dart';
 import '../../graphql/queries/__generated__/delete_export_job.req.gql.dart';
 import '../../graphql/queries/__generated__/export_jobs.req.gql.dart';
 import '../../graphql/queries/__generated__/linked_servers.req.gql.dart';
 import '../../graphql/queries/__generated__/play_history.data.gql.dart';
 import '../../graphql/queries/__generated__/play_history.req.gql.dart';
 import '../../graphql/queries/__generated__/remove_device.req.gql.dart';
-import '../../graphql/queries/__generated__/poll_device_pin.req.gql.dart';
+import '../../graphql/queries/__generated__/poll_device_code.req.gql.dart';
 import '../../graphql/queries/__generated__/remove_linked_server.req.gql.dart';
 import '../../graphql/queries/__generated__/revoke_api_key.req.gql.dart';
 import '../../graphql/queries/__generated__/revoke_session.req.gql.dart';
@@ -560,14 +560,14 @@ class AccountController {
     if (data != null) query.refetch();
   }
 
-  Future<bool> approvePin(String pin) async {
+  Future<bool> approveCode(String code) async {
     final data = await _toasts.attempt(() async {
       final result = await _graphql.run(
         // Codes are capitals, and the server matches them exactly.
-        GAuthorizeDevicePinReq((b) => b.vars.pin = pin.toUpperCase()),
+        GAuthorizeDeviceCodeReq((b) => b.vars.code = code.toUpperCase()),
       );
       // A wrong code is an answer rather than an error, to the server.
-      if (!result.authorizeDevicePin) {
+      if (!result.authorizeDeviceCode) {
         throw const ApiError('That code is wrong or has expired.');
       }
       return result;
@@ -626,24 +626,26 @@ class AccountController {
   }
 
   /// A code for another signed-in device to approve.
-  Future<String?> generatePin() async {
+  Future<String?> generateCode() async {
     final identity = getIt<DeviceIdentity>();
     final data = await _toasts.attempt(
       () => _graphql.run(
-        GCreateDevicePinReq(
+        GCreateDeviceCodeReq(
           (b) => b.vars
             ..client = identity.clientName
             ..device = identity.name,
         ),
       ),
     );
-    return data?.createDevicePin.pin;
+    return data?.createDeviceCode.code;
   }
 
   /// Whether the code has been approved; asking again after that fails.
-  Future<bool> pinApproved(String pin) async {
-    final data = await _graphql.run(GPollDevicePinReq((b) => b.vars.pin = pin));
-    if (data.pollDevicePin == null) return false;
+  Future<bool> codeApproved(String code) async {
+    final data = await _graphql.run(
+      GPollDeviceCodeReq((b) => b.vars.code = code),
+    );
+    if (data.pollDeviceCode == null) return false;
     query.refetch();
     return true;
   }

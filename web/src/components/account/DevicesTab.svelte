@@ -58,14 +58,14 @@
   const revokeApiKey = graphql(`
     mutation RevokeApiKey($id: ID!) { revokeApiKey(id: $id) { id revokedAt } }
   `);
-  const authorizeDevicePin = graphql(`
-    mutation AuthorizeDevicePin($pin: String!) { authorizeDevicePin(pin: $pin) }
+  const authorizeDeviceCode = graphql(`
+    mutation AuthorizeDeviceCode($code: String!) { authorizeDeviceCode(code: $code) }
   `);
-  const createDevicePin = graphql(`
-    mutation CreateDevicePin($device: String!) { createDevicePin(client: "NoFlex Web", device: $device) { pin expiresAt } }
+  const createDeviceCode = graphql(`
+    mutation CreateDeviceCode($device: String!) { createDeviceCode(client: "NoFlex Web", device: $device) { code expiresAt } }
   `);
-  const pollDevicePin = graphql(`
-    mutation PollDevicePin($pin: String!) { pollDevicePin(pin: $pin) { token } }
+  const pollDeviceCode = graphql(`
+    mutation PollDeviceCode($code: String!) { pollDeviceCode(code: $code) { token } }
   `);
 
   let data = $derived($account.data);
@@ -115,23 +115,23 @@
     await attempt(() => revokeApiKey.mutate({ id: key.id }), "API key revoked");
   }
 
-  // ---- Device PINs ----
+  // ---- Device codes ----
   // A TV's QR code carries the code it's showing.
-  let pin = $state(page.url.searchParams.get("pin")?.toUpperCase() ?? "");
+  let code = $state(page.url.searchParams.get("code")?.toUpperCase() ?? "");
   let authorizing = $state(false);
 
   async function authorize(event) {
     event.preventDefault();
     authorizing = true;
-    const result = await attempt(() => authorizeDevicePin.mutate({ pin: pin.trim() }));
+    const result = await attempt(() => authorizeDeviceCode.mutate({ code: code.trim() }));
     authorizing = false;
     if (!result) return;
-    if (result.data.authorizeDevicePin) {
+    if (result.data.authorizeDeviceCode) {
       toast("Device approved — it will finish signing in on its own", "success");
-      pin = "";
+      code = "";
       refetch(account);
     } else {
-      toast("That PIN isn’t right, or it has expired", "error");
+      toast("That code isn’t right, or it has expired", "error");
     }
   }
 
@@ -143,17 +143,17 @@
 
   async function generate() {
     generating = true;
-    const result = await attempt(() => createDevicePin.mutate({ device: deviceName() }));
+    const result = await attempt(() => createDeviceCode.mutate({ device: deviceName() }));
     generating = false;
-    if (result) { generated = result.data.createDevicePin; approved = false; clock = Date.now(); }
+    if (result) { generated = result.data.createDeviceCode; approved = false; clock = Date.now(); }
   }
 
   async function check() {
     if (!generated || approved) return;
     try {
-      const result = await request(pollDevicePin, { pin: generated.pin }, { metadata: { noRefresh: true } });
-      if (result.pollDevicePin) { approved = true; toast("PIN approved and used", "success"); refetch(account); }
-    } catch { /* pending PINs can error until approved; keep waiting */ }
+      const result = await request(pollDeviceCode, { code: generated.code }, { metadata: { noRefresh: true } });
+      if (result.pollDeviceCode) { approved = true; toast("Code approved and used", "success"); refetch(account); }
+    } catch { /* pending codes can error until approved; keep waiting */ }
   }
 
   $effect(() => {
@@ -162,7 +162,7 @@
     const stop = poll(check, 4000);
     return () => { clearInterval(tick); stop(); };
   });
-  $effect(() => { if (generated && !approved && remaining === 0) { generated = null; toast("That PIN expired", "info"); } });
+  $effect(() => { if (generated && !approved && remaining === 0) { generated = null; toast("That code expired", "info"); } });
 
   const countdown = (ms) => `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`;
 </script>
@@ -204,16 +204,16 @@
         <div><h2>Link a device</h2><p>Approve the code shown on a TV or another screen</p></div>
       </header>
       <form class="inline-form" onsubmit={authorize}>
-        <label class="field grow">Device PIN<input class="pin-input" bind:value={pin} oninput={() => (pin = pin.toUpperCase())} required autocapitalize="characters" autocomplete="off" placeholder="K7M2QX" spellcheck="false" /></label>
-        <button class="btn primary sm" disabled={authorizing || !pin.trim()}>{#if authorizing}<span class="spinner sm"></span>{/if}Approve</button>
+        <label class="field grow">Device code<input class="code-input" bind:value={code} oninput={() => (code = code.toUpperCase())} required autocapitalize="characters" autocomplete="off" placeholder="K7M2QX" spellcheck="false" /></label>
+        <button class="btn primary sm" disabled={authorizing || !code.trim()}>{#if authorizing}<span class="spinner sm"></span>{/if}Approve</button>
       </form>
       <div class="divider"></div>
       {#if generated}
-        <div class="pin-card fade-up" aria-live="polite">
+        <div class="code-card fade-up" aria-live="polite">
           <span class="eyebrow">{approved ? "Approved" : "Enter on a signed-in device"}</span>
-          <strong class="pin mono" class:done={approved}>{generated.pin}</strong>
+          <strong class="link-code mono" class:done={approved}>{generated.code}</strong>
           {#if approved}
-            <small><CheckCircle size={14} />This PIN has been used.</small>
+            <small><CheckCircle size={14} />This code has been used.</small>
           {:else}
             <small class="tabular"><span class="spinner sm"></span>Waiting for approval · expires in {countdown(remaining)}</small>
           {/if}
@@ -223,9 +223,9 @@
           </div>
         </div>
       {:else}
-        <div class="pin-offer">
+        <div class="code-offer">
           <p>Need a code for this browser instead?</p>
-          <button class="btn outline sm" onclick={generate} disabled={generating}>{#if generating}<span class="spinner sm"></span>{/if}Generate a PIN</button>
+          <button class="btn outline sm" onclick={generate} disabled={generating}>{#if generating}<span class="spinner sm"></span>{/if}Generate a code</button>
         </div>
       {/if}
     </section>
@@ -324,13 +324,13 @@
   .inline-form { display: flex; gap: 10px; align-items: flex-end; margin-top: 14px; }
   .inline-form .grow { flex: 1; }
   .inline-form .btn { height: 42px; }
-  .pin-input { font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.3em; font-size: 1.05rem !important; }
-  .pin-offer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .pin-offer p { color: var(--text-3); font-size: 0.88rem; }
-  .pin-card { display: grid; justify-items: center; gap: 8px; padding: 18px; border-radius: var(--r); background: var(--surface); border: 1px dashed var(--line-strong); text-align: center; }
-  .pin { font-size: 2.1rem; font-weight: 700; letter-spacing: 0.28em; padding-left: 0.28em; color: var(--text); }
-  .pin.done { color: var(--success); }
-  .pin-card small { display: inline-flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 0.84rem; }
+  .code-input { font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.3em; font-size: 1.05rem !important; }
+  .code-offer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .code-offer p { color: var(--text-3); font-size: 0.88rem; }
+  .code-card { display: grid; justify-items: center; gap: 8px; padding: 18px; border-radius: var(--r); background: var(--surface); border: 1px dashed var(--line-strong); text-align: center; }
+  .link-code { font-size: 2.1rem; font-weight: 700; letter-spacing: 0.28em; padding-left: 0.28em; color: var(--text); }
+  .link-code.done { color: var(--success); }
+  .code-card small { display: inline-flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 0.84rem; }
   .secret { display: grid; gap: 10px; }
   .secret code { display: block; padding: 16px; border-radius: var(--r); background: rgb(0 0 0 / 0.35); border: 1px solid var(--line); color: var(--accent); font-size: 0.92rem; word-break: break-all; user-select: all; }
   @media (max-width: 620px) {

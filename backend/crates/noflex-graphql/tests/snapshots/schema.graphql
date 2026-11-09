@@ -485,6 +485,16 @@ type Device {
 }
 
 """
+The device's half of the link flow: show `code` on screen, then
+poll `pollDeviceCode` until it yields a session or `expires_at`
+passes.
+"""
+type DeviceCodeInfo {
+	code: String!
+	expiresAt: DateTime!
+}
+
+"""
 A command for a device to carry out. Only the fields its `kind` uses are set.
 """
 type DeviceCommand {
@@ -530,16 +540,6 @@ enum DeviceControl {
 	PAUSE
 	SEEK
 	STOP
-}
-
-"""
-The device's half of the link flow: show `pin` on screen, then
-poll `pollDevicePin` until it yields a session or `expires_at`
-passes.
-"""
-type DevicePinInfo {
-	pin: String!
-	expiresAt: DateTime!
 }
 
 """
@@ -1381,7 +1381,7 @@ type LogSummary {
 
 """
 The token-pair-plus-user payload `login`, `refreshSession`, and
-`pollDevicePin` all return — one shape regardless of which flow
+`pollDeviceCode` all return — one shape regardless of which flow
 minted the session.
 """
 type LoginResult {
@@ -1806,23 +1806,23 @@ type Mutation {
 	revokeApiKey(id: ID!): ApiKey
 	"""
 	Begin the device-link flow: an unauthenticated device (a TV
-	with no credentials yet) asks for a PIN to show on screen.
+	with no credentials yet) asks for a code to show on screen.
 	"""
-	createDevicePin(client: String, device: String): DevicePinInfo!
+	createDeviceCode(client: String, device: String): DeviceCodeInfo!
 	"""
-	Attach the calling user to a pending PIN. `false` for unknown,
+	Attach the calling user to a pending code. `false` for unknown,
 	expired, or already-authorized codes — deliberately
 	indistinguishable.
 	"""
-	authorizeDevicePin(pin: String!): Boolean!
+	authorizeDeviceCode(code: String!): Boolean!
 	"""
 	The device side of the link flow, unauthenticated. Null while
-	the PIN is pending, unknown, or expired. Once authorized, the
+	the code is pending, unknown, or expired. Once authorized, the
 	first poll mints a session for the bound user (carrying the
-	PIN's client/device), consumes the PIN, and returns the same
+	code's client/device), consumes the code, and returns the same
 	token pair `login` issues — later polls see null again.
 	"""
-	pollDevicePin(pin: String!): LoginResult
+	pollDeviceCode(code: String!): LoginResult
 	"""
 	Delete a work and its editions and media-file rows. Admin only.
 	With `deleteFile`, also removes every backing file from disk;

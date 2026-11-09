@@ -199,8 +199,8 @@ class _LinkDevicePanel extends StatefulWidget {
 }
 
 class _LinkDevicePanelState extends State<_LinkDevicePanel> {
-  final _pin = TextEditingController();
-  final _hasPin = signal(false);
+  final _code = TextEditingController();
+  final _hasCode = signal(false);
   final _busy = signal(false);
   final _generated = signal<String?>(null);
   final _approved = signal(false);
@@ -210,28 +210,28 @@ class _LinkDevicePanelState extends State<_LinkDevicePanel> {
   @override
   void dispose() {
     _poll?.cancel();
-    _pin.dispose();
+    _code.dispose();
     super.dispose();
   }
 
   Future<void> _generate() async {
     if (_generating.value) return;
     _generating.value = true;
-    final pin = await widget.controller.generatePin();
+    final code = await widget.controller.generateCode();
     if (!mounted) return;
     _generating.value = false;
-    if (pin == null) return;
+    if (code == null) return;
     batch(() {
-      _generated.value = pin;
+      _generated.value = code;
       _approved.value = false;
     });
     _poll?.cancel();
-    _poll = Timer.periodic(const Duration(seconds: 3), (_) => _check(pin));
+    _poll = Timer.periodic(const Duration(seconds: 3), (_) => _check(code));
   }
 
-  Future<void> _check(String pin) async {
+  Future<void> _check(String code) async {
     try {
-      final approved = await widget.controller.pinApproved(pin);
+      final approved = await widget.controller.codeApproved(code);
       if (!mounted || !approved) return;
       _poll?.cancel();
       _approved.value = true;
@@ -252,15 +252,15 @@ class _LinkDevicePanelState extends State<_LinkDevicePanel> {
   }
 
   Future<void> _approve() async {
-    final pin = _pin.text.trim();
-    if (pin.isEmpty || _busy.value) return;
+    final code = _code.text.trim();
+    if (code.isEmpty || _busy.value) return;
     _busy.value = true;
-    final approved = await widget.controller.approvePin(pin);
+    final approved = await widget.controller.approveCode(code);
     if (!mounted) return;
     _busy.value = false;
     if (approved) {
-      _pin.clear();
-      _hasPin.value = false;
+      _code.clear();
+      _hasCode.value = false;
     }
   }
 
@@ -277,13 +277,13 @@ class _LinkDevicePanelState extends State<_LinkDevicePanel> {
           children: [
             Expanded(
               child: NfField(
-                controller: _pin,
-                label: 'Device PIN',
+                controller: _code,
+                label: 'Device code',
                 hint: 'K7M2QX',
                 textCapitalization: TextCapitalization.characters,
                 textInputAction: TextInputAction.done,
                 autocorrect: false,
-                onChanged: (value) => _hasPin.value = value.trim().isNotEmpty,
+                onChanged: (value) => _hasCode.value = value.trim().isNotEmpty,
                 onSubmitted: (_) => unawaited(_approve()),
               ),
             ),
@@ -293,7 +293,7 @@ class _LinkDevicePanelState extends State<_LinkDevicePanel> {
                 label: 'Approve',
                 style: NfButtonStyle.primary,
                 busy: _busy.value,
-                onPressed: _hasPin.value ? () => unawaited(_approve()) : null,
+                onPressed: _hasCode.value ? () => unawaited(_approve()) : null,
               ),
             ),
           ],
@@ -316,7 +316,7 @@ class _LinkDevicePanelState extends State<_LinkDevicePanel> {
                     style: NfType.small,
                   ),
                   NfButton(
-                    label: 'Generate a PIN',
+                    label: 'Generate a code',
                     size: NfButtonSize.small,
                     busy: _generating.value,
                     onPressed: () => unawaited(_generate()),
@@ -344,7 +344,7 @@ class _LinkDevicePanelState extends State<_LinkDevicePanel> {
                 const SizedBox(height: 4),
                 Text(
                   approved
-                      ? 'This PIN has been used.'
+                      ? 'This code has been used.'
                       : 'Waiting for approval.',
                   style: NfType.small,
                 ),

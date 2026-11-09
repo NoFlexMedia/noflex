@@ -4,7 +4,7 @@ use std::future::Future;
 
 use async_trait::async_trait;
 use noflex_core::{
-    ApiKeyId, ChannelId, CollectionId, DeviceId, DevicePinId, EditionId, EmbeddingTarget,
+    ApiKeyId, ChannelId, CollectionId, DeviceCodeId, DeviceId, EditionId, EmbeddingTarget,
     EpgProgramId, ExportJobId, ExternalIdKind, ImageKind, InviteId, LibraryId, LinkedServerId,
     LiveTvSourceId, MediaFileId, OptimizedVersionId, PlaySessionId, PlayTarget, PlaylistId,
     RecordingId, RecordingScheduleId, SessionId, TagId, TagTarget, UserId, WatchRoomId, WorkId,
@@ -15,7 +15,7 @@ use tokio::io::AsyncWrite;
 
 use crate::{
     domain::{
-        ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount, Device, DevicePin,
+        ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount, Device, DeviceCode,
         Edition, EmbeddingEndpoint, EmbeddingModel, EpgProgram, ExportFormat, ExportJob,
         ExportJobStatus, ExternalIdentity, HistoryPage, Image, ImageSource, ImageTarget,
         IntroMarkers, Invite, Library, LinkedServer, LiveTvChannel, LiveTvSource, MediaFile,
@@ -381,28 +381,28 @@ pub trait Storage: Send + Sync + 'static {
     /// revoked, so callers can tell a replayed revoke from a real one.
     async fn revoke_api_key(&self, id: ApiKeyId) -> StorageResult<bool>;
 
-    // ---- Device PINs ----------------------------------------------------
-    /// Persist a freshly-minted PIN request: the caller assigns id, PIN
-    /// code, and expiry, and passes `user_id: None`. A duplicate `pin`
+    // ---- Device codes ----------------------------------------------------
+    /// Persist a freshly-minted code request: the caller assigns id, code,
+    /// and expiry, and passes `user_id: None`. A duplicate `code`
     /// or `id` is a `Constraint` error.
-    async fn create_device_pin(&self, pin: &DevicePin) -> StorageResult<()>;
+    async fn create_device_code(&self, code: &DeviceCode) -> StorageResult<()>;
 
-    /// Look a request up by its PIN code. Expired rows count as absent
+    /// Look a request up by its code. Expired rows count as absent
     /// (`None`); the implementation may delete them lazily on the way
     /// out. Authorized-but-unexpired rows are returned with `user_id`
     /// set — that's how the device learns it got linked.
-    async fn device_pin_by_pin(&self, pin: &str) -> StorageResult<Option<DevicePin>>;
+    async fn device_code_by_code(&self, code: &str) -> StorageResult<Option<DeviceCode>>;
 
-    /// Attach `user_id` to a pending PIN. `true` if this call did the
-    /// authorizing; `false` when the PIN is unknown, expired, or
+    /// Attach `user_id` to a pending code. `true` if this call did the
+    /// authorizing; `false` when the code is unknown, expired, or
     /// already authorized — clients can't tell those apart, which is
     /// deliberate.
-    async fn authorize_device_pin(&self, pin: &str, user_id: UserId) -> StorageResult<bool>;
+    async fn authorize_device_code(&self, code: &str, user_id: UserId) -> StorageResult<bool>;
 
-    /// Consume a PIN request. Called by the device once it has traded
+    /// Consume a code request. Called by the device once it has traded
     /// the authorization for a token, and by cleanup for stale rows.
     /// `false` when the id was already gone.
-    async fn delete_device_pin(&self, id: DevicePinId) -> StorageResult<bool>;
+    async fn delete_device_code(&self, id: DeviceCodeId) -> StorageResult<bool>;
 
     async fn user_data(&self, user: UserId, target: PlayTarget) -> StorageResult<UserData>;
     async fn record_playback_progress(

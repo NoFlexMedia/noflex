@@ -11,8 +11,8 @@ import 'package:phosphor_icons/phosphor_icons.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
 import '../../di.dart';
-import '../../graphql/queries/__generated__/create_device_pin.req.gql.dart';
-import '../../graphql/queries/__generated__/poll_device_pin.req.gql.dart';
+import '../../graphql/queries/__generated__/create_device_code.req.gql.dart';
+import '../../graphql/queries/__generated__/poll_device_code.req.gql.dart';
 import '../../services/device_identity.dart';
 import '../../services/graphql.dart';
 import '../../services/session.dart';
@@ -185,7 +185,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   );
 }
 
-enum _AuthMode { signIn, invite, pin }
+enum _AuthMode { signIn, invite, code }
 
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
@@ -201,7 +201,7 @@ class _SignInScreenState extends State<SignInScreen> {
   final _mode = signal(_AuthMode.signIn);
   final _busy = signal(false);
   final _error = signal('');
-  final _pin = signal<String?>(null);
+  final _code = signal<String?>(null);
   Timer? _poll;
 
   SessionService get _session => getIt<SessionService>();
@@ -244,40 +244,43 @@ class _SignInScreenState extends State<SignInScreen> {
     return Uri.tryParse(trimmed)?.queryParameters['token'] ?? trimmed;
   }
 
-  Future<void> _startPin() async {
-    _mode.value = _AuthMode.pin;
+  Future<void> _startCode() async {
+    _mode.value = _AuthMode.code;
     final graphql = getIt<GraphqlService>();
     final identity = getIt<DeviceIdentity>();
     await _run(() async {
       final data = await graphql.run(
-        GCreateDevicePinReq(
+        GCreateDeviceCodeReq(
           (b) => b.vars
             ..client = identity.clientName
             ..device = identity.name,
         ),
       );
-      final pin = data.createDevicePin.pin;
-      _pin.value = pin;
+      final code = data.createDeviceCode.code;
+      _code.value = code;
       _poll?.cancel();
-      _poll = Timer.periodic(const Duration(seconds: 3), (_) => _checkPin(pin));
+      _poll = Timer.periodic(
+        const Duration(seconds: 3),
+        (_) => _checkCode(code),
+      );
     });
   }
 
-  Future<void> _checkPin(String pin) async {
+  Future<void> _checkCode(String code) async {
     try {
       final data = await getIt<GraphqlService>().run(
-        GPollDevicePinReq((b) => b.vars.pin = pin),
+        GPollDeviceCodeReq((b) => b.vars.code = code),
       );
-      final result = data.pollDevicePin;
+      final result = data.pollDeviceCode;
       if (result == null) return;
       _poll?.cancel();
       await _session.signIn(access: result.token, refresh: result.refreshToken);
     } on ServerUnreachable {
-      // Keep polling; the PIN outlives a blip.
+      // Keep polling; the code outlives a blip.
     } on ApiError catch (cause) {
       _poll?.cancel();
       batch(() {
-        _pin.value = null;
+        _code.value = null;
         _error.value = cause.message;
       });
     }
@@ -305,22 +308,22 @@ class _SignInScreenState extends State<SignInScreen> {
         title: switch (mode) {
           _AuthMode.signIn => 'Sign in',
           _AuthMode.invite => 'Accept your invite',
-          _AuthMode.pin => 'Approve this device',
+          _AuthMode.code => 'Approve this device',
         },
         subtitle: server,
         children: [
           if (message.isNotEmpty) _ErrorLine(message),
-          if (mode == _AuthMode.pin) ...[
+          if (mode == _AuthMode.code) ...[
             Text(
               'On a device that’s already signed in, open Account → Devices and enter this code.',
               style: NfType.bodyMuted,
             ),
             const SizedBox(height: 18),
             Center(
-              child: _pin.value == null
+              child: _code.value == null
                   ? const CircularProgressIndicator()
                   : SelectableText(
-                      _pin.value!,
+                      _code.value!,
                       style: nfText(
                         40,
                         weight: 700,
@@ -395,7 +398,7 @@ class _SignInScreenState extends State<SignInScreen> {
                   ),
                 ),
                 TextButton(
-                  onPressed: _startPin,
+                  onPressed: _startCode,
                   child: Text(
                     'Sign in with a code',
                     style: nfText(13, weight: 600, color: NfColors.text2),

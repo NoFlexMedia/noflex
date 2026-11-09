@@ -4,7 +4,7 @@
 // store; behavioral divergence shows up as a test failure, not a runtime
 // surprise.
 use noflex_core::{
-    CollectionId, DevicePinId, EditionId, EmbeddingTarget, ExternalId, ExternalIdKind, LibraryId,
+    CollectionId, DeviceCodeId, EditionId, EmbeddingTarget, ExternalId, ExternalIdKind, LibraryId,
     MediaFileId, MetadataStatus, PlayTarget, PlaylistId, SessionId, TagId, TagTarget, UserId,
     WatchRoomId, WorkField, WorkId, WorkKind,
 };
@@ -13,7 +13,7 @@ use time::OffsetDateTime;
 use crate::{
     RequestUser,
     domain::{
-        ActivityKind, Collection, DevicePin, Edition, ExternalIdentity, ImageSource, IntroMarkers,
+        ActivityKind, Collection, DeviceCode, Edition, ExternalIdentity, ImageSource, IntroMarkers,
         Library, LibraryKind, MediaFile, Playlist, RefreshTokenLookup, Session, SubtitleTrack,
         TrickplayAsset, TrickplayChapterCue, TrickplaySheet, User, UserPreference,
         UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, Work,
@@ -134,9 +134,9 @@ where
     session_retired_refresh_tokens_die_with_session(store).await;
     api_key_lifecycle(store).await;
     user_delete_cascades_api_keys(store).await;
-    device_pin_lifecycle(store).await;
-    device_pin_expired_is_absent(store).await;
-    user_delete_cascades_device_pins(store).await;
+    device_code_lifecycle(store).await;
+    device_code_expired_is_absent(store).await;
+    user_delete_cascades_device_codes(store).await;
     list_works_basic_filter(store).await;
     list_works_watched_filter(store).await;
     list_works_rules(store).await;
@@ -2388,15 +2388,15 @@ async fn user_delete_cascades_sessions<S: Storage + ?Sized>(store: &S) {
     );
 }
 
-fn make_device_pin() -> DevicePin {
+fn make_device_code() -> DeviceCode {
     let now = OffsetDateTime::now_utc();
-    DevicePin {
-        id: DevicePinId::new(),
-        // Unique per call: the UNIQUE index on pin would otherwise
-        // collide across PINs coexisting in one test.
-        pin: format!(
+    DeviceCode {
+        id: DeviceCodeId::new(),
+        // Unique per call: the UNIQUE index on code would otherwise
+        // collide across codes coexisting in one test.
+        code: format!(
             "{:06}",
-            DevicePinId::new().into_uuid().as_u128() % 1_000_000
+            DeviceCodeId::new().into_uuid().as_u128() % 1_000_000
         ),
         user_id: None,
         client: Some("NoFlex for Android TV".to_string()),
@@ -2526,118 +2526,118 @@ async fn user_delete_cascades_api_keys<S: Storage + ?Sized>(store: &S) {
     );
 }
 
-/// create → lookup → authorize → consume covers the device-PIN flow.
+/// create → lookup → authorize → consume covers the device-code flow.
 /// Authorizing twice fails (the second attempt sees `user_id` already
-/// set), authorizing an unknown PIN fails, and delete consumes the row.
-async fn device_pin_lifecycle<S: Storage + ?Sized>(store: &S) {
-    let user = make_user("device-pin-user", false);
+/// set), authorizing an unknown code fails, and delete consumes the row.
+async fn device_code_lifecycle<S: Storage + ?Sized>(store: &S) {
+    let user = make_user("device-code-user", false);
     store.upsert_user(&user).await.expect("upsert user");
 
-    let pin = make_device_pin();
-    store.create_device_pin(&pin).await.expect("create pin");
+    let code = make_device_code();
+    store.create_device_code(&code).await.expect("create code");
 
     let pending = store
-        .device_pin_by_pin(&pin.pin)
+        .device_code_by_code(&code.code)
         .await
         .expect("lookup")
-        .expect("pin resolves");
-    assert_eq!(pending.id, pin.id);
-    assert!(pending.user_id.is_none(), "fresh pin is unauthorized");
-    assert_eq!(pending.client, pin.client);
-    assert_eq!(pending.device, pin.device);
+        .expect("code resolves");
+    assert_eq!(pending.id, code.id);
+    assert!(pending.user_id.is_none(), "fresh code is unauthorized");
+    assert_eq!(pending.client, code.client);
+    assert_eq!(pending.device, code.device);
 
     let authorized = store
-        .authorize_device_pin(&pin.pin, user.id)
+        .authorize_device_code(&code.code, user.id)
         .await
         .expect("authorize");
     assert!(authorized, "first authorize succeeds");
 
     let linked = store
-        .device_pin_by_pin(&pin.pin)
+        .device_code_by_code(&code.code)
         .await
         .expect("lookup after authorize")
-        .expect("authorized pin still resolves");
+        .expect("authorized code still resolves");
     assert_eq!(linked.user_id, Some(user.id), "device sees who linked it");
 
     let twice = store
-        .authorize_device_pin(&pin.pin, user.id)
+        .authorize_device_code(&code.code, user.id)
         .await
         .expect("re-authorize");
     assert!(!twice, "double-authorize returns false");
 
     let unknown = store
-        .authorize_device_pin("000000-no-such-pin", user.id)
+        .authorize_device_code("000000-no-such-code", user.id)
         .await
         .expect("authorize unknown");
-    assert!(!unknown, "authorizing an unknown pin returns false");
+    assert!(!unknown, "authorizing an unknown code returns false");
 
-    let deleted = store.delete_device_pin(pin.id).await.expect("delete");
+    let deleted = store.delete_device_code(code.id).await.expect("delete");
     assert!(deleted, "delete consumes the row");
     assert!(
         store
-            .device_pin_by_pin(&pin.pin)
+            .device_code_by_code(&code.code)
             .await
             .expect("lookup after delete")
             .is_none(),
-        "consumed pin stops resolving"
+        "consumed code stops resolving"
     );
-    let gone = store.delete_device_pin(pin.id).await.expect("re-delete");
-    assert!(!gone, "deleting an absent pin returns false");
+    let gone = store.delete_device_code(code.id).await.expect("re-delete");
+    assert!(!gone, "deleting an absent code returns false");
 
     store.delete_user(user.id).await.ok();
 }
 
-/// An expired PIN is indistinguishable from an unknown one: lookup
+/// An expired code is indistinguishable from an unknown one: lookup
 /// reports `None` and authorization refuses.
-async fn device_pin_expired_is_absent<S: Storage + ?Sized>(store: &S) {
-    let user = make_user("device-pin-expired-user", false);
+async fn device_code_expired_is_absent<S: Storage + ?Sized>(store: &S) {
+    let user = make_user("device-code-expired-user", false);
     store.upsert_user(&user).await.expect("upsert user");
 
-    let mut pin = make_device_pin();
-    pin.expires_at = OffsetDateTime::now_utc() - time::Duration::minutes(1);
+    let mut code = make_device_code();
+    code.expires_at = OffsetDateTime::now_utc() - time::Duration::minutes(1);
     store
-        .create_device_pin(&pin)
+        .create_device_code(&code)
         .await
-        .expect("create expired pin");
+        .expect("create expired code");
 
     assert!(
         store
-            .device_pin_by_pin(&pin.pin)
+            .device_code_by_code(&code.code)
             .await
             .expect("lookup expired")
             .is_none(),
-        "expired pin is treated as absent"
+        "expired code is treated as absent"
     );
     let authorized = store
-        .authorize_device_pin(&pin.pin, user.id)
+        .authorize_device_code(&code.code, user.id)
         .await
         .expect("authorize expired");
-    assert!(!authorized, "expired pin can't be authorized");
+    assert!(!authorized, "expired code can't be authorized");
 
     store.delete_user(user.id).await.ok();
 }
 
-/// Device PINs are FK CASCADE on user delete: an authorized PIN dies
+/// Device codes are FK CASCADE on user delete: an authorized code dies
 /// with the user who authorized it.
-async fn user_delete_cascades_device_pins<S: Storage + ?Sized>(store: &S) {
-    let user = make_user("device-pin-cascade-user", false);
+async fn user_delete_cascades_device_codes<S: Storage + ?Sized>(store: &S) {
+    let user = make_user("device-code-cascade-user", false);
     store.upsert_user(&user).await.expect("upsert user");
 
-    let pin = make_device_pin();
-    store.create_device_pin(&pin).await.expect("create pin");
+    let code = make_device_code();
+    store.create_device_code(&code).await.expect("create code");
     store
-        .authorize_device_pin(&pin.pin, user.id)
+        .authorize_device_code(&code.code, user.id)
         .await
         .expect("authorize");
 
     store.delete_user(user.id).await.expect("delete user");
     let still_there = store
-        .device_pin_by_pin(&pin.pin)
+        .device_code_by_code(&code.code)
         .await
         .expect("lookup after cascade");
     assert!(
         still_there.is_none(),
-        "FK CASCADE on users.id must wipe device pins on user delete"
+        "FK CASCADE on users.id must wipe device codes on user delete"
     );
 }
 

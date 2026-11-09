@@ -3,7 +3,7 @@
 pub(crate) mod activity;
 pub(crate) mod api_keys;
 pub(crate) mod collections;
-pub(crate) mod device_pins;
+pub(crate) mod device_codes;
 pub(crate) mod devices;
 pub(crate) mod editions;
 pub(crate) mod export_jobs;

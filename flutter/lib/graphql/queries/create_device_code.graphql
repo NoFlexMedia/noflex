@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation CreateDeviceCode($client: String!, $device: String!) {
+  createDeviceCode(client: $client, device: $device) { code expiresAt }
+}

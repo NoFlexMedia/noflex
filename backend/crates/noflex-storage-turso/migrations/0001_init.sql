@@ -458,9 +458,9 @@ CREATE INDEX IF NOT EXISTS playlist_items_page
 CREATE INDEX IF NOT EXISTS playlist_items_target
     ON playlist_items(target_kind, target_id);
 
--- API keys and device-linking PINs. Both FK CASCADE on user delete, so
+-- API keys and device-linking codes. Both FK CASCADE on user delete, so
 -- revoking a user wipes every credential they ever minted. The key hash
--- and PIN are the lookup paths; plaintexts never touch the DB.
+-- and code are the lookup paths; plaintexts never touch the DB.
 CREATE TABLE IF NOT EXISTS api_keys (
     id         BLOB PRIMARY KEY,
     user_id    BLOB NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -476,11 +476,11 @@ CREATE TABLE IF NOT EXISTS api_keys (
 
 CREATE INDEX IF NOT EXISTS api_keys_user ON api_keys(user_id);
 
--- `user_id` is NULL until a signed-in user authorizes the PIN; an
+-- `user_id` is NULL until a signed-in user authorizes the code; an
 -- expired row is garbage the backend may delete lazily on lookup.
-CREATE TABLE IF NOT EXISTS device_pins (
+CREATE TABLE IF NOT EXISTS device_codes (
     id         BLOB PRIMARY KEY,
-    pin        TEXT NOT NULL UNIQUE,
+    code       TEXT NOT NULL UNIQUE,
     user_id    BLOB REFERENCES users(id) ON DELETE CASCADE,
     client     TEXT,
     device     TEXT,

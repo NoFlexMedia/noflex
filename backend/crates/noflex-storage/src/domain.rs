@@ -6,11 +6,11 @@
 
 use async_graphql::{Enum, SimpleObject, connection::Connection};
 use noflex_core::{
-    ApiKeyId, ChannelId, CollectionId, DeviceId, DevicePinId, EditionId, EpgProgramId, ExportJobId,
-    ExternalId, ExternalIdKind, ImageKind, InviteId, LibraryId, LinkedServerId, LiveTvSourceId,
-    MediaFileId, MetadataStatus, OptimizedVersionId, PlaySessionId, PlayTargetKind, PlaylistId,
-    RecordingId, RecordingScheduleId, SessionId, TagId, TagTarget, UserId, VideoCodec, WatchRoomId,
-    WorkField, WorkId, WorkKind,
+    ApiKeyId, ChannelId, CollectionId, DeviceCodeId, DeviceId, EditionId, EpgProgramId,
+    ExportJobId, ExternalId, ExternalIdKind, ImageKind, InviteId, LibraryId, LinkedServerId,
+    LiveTvSourceId, MediaFileId, MetadataStatus, OptimizedVersionId, PlaySessionId, PlayTargetKind,
+    PlaylistId, RecordingId, RecordingScheduleId, SessionId, TagId, TagTarget, UserId, VideoCodec,
+    WatchRoomId, WorkField, WorkId, WorkKind,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -1702,12 +1702,12 @@ pub struct ApiKey {
 }
 
 /// A pending device-linking request (Plex-PIN-style). `user_id` is
-/// `None` until a signed-in user authorizes the PIN; past `expires_at`
+/// `None` until a signed-in user authorizes the code; past `expires_at`
 /// the row is dead regardless of authorization state.
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
-pub struct DevicePin {
-    pub id: DevicePinId,
-    pub pin: String,
+pub struct DeviceCode {
+    pub id: DeviceCodeId,
+    pub code: String,
     pub user_id: Option<UserId>,
     pub client: Option<String>,
     pub device: Option<String>,

@@ -16,10 +16,10 @@ pub mod text;
 pub use error::{PluginError, PluginResult};
 pub use events::{DomainEvent, DomainEventBus};
 pub use ids::{
-    ApiKeyId, ChannelId, CollectionId, DeviceId, DevicePinId, EditionId, EpgProgramId, ExportJobId,
-    InviteId, LibraryId, LinkedServerId, LiveTvSourceId, MediaFileId, OptimizedVersionId,
-    PlaySessionId, PlaylistId, RecordingId, RecordingScheduleId, SessionId, TagId, UserId,
-    WatchRoomId, WorkId,
+    ApiKeyId, ChannelId, CollectionId, DeviceCodeId, DeviceId, EditionId, EpgProgramId,
+    ExportJobId, InviteId, LibraryId, LinkedServerId, LiveTvSourceId, MediaFileId,
+    OptimizedVersionId, PlaySessionId, PlaylistId, RecordingId, RecordingScheduleId, SessionId,
+    TagId, UserId, WatchRoomId, WorkId,
 };
 pub use model::{
     AudioCodec, AudioObjectType, ChannelLayout, ColorPrimaries, DolbyVisionProfile,

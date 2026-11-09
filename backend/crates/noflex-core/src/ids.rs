@@ -96,7 +96,10 @@ typed_id!(
     ApiKeyId,
     "Identifier for an API key (a long-lived programmatic credential)."
 );
-typed_id!(DevicePinId, "Identifier for a device-linking PIN request.");
+typed_id!(
+    DeviceCodeId,
+    "Identifier for a device-linking code request."
+);
 typed_id!(WatchRoomId, "Identifier for a synchronized watch room.");
 typed_id!(
     PlaySessionId,

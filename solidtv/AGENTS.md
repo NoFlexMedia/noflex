@@ -93,8 +93,8 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 
 ## Signing in
 
-- A code comes first (`createDevicePin`, then `pollDevicePin` every 3 s, as Flutter does); the password is the fallback. Approval is Devices → Link a device on the web and in the apps.
-- `QrCode` draws the approval URL with the code in it (`&pin=`), which the web's Devices tab fills in. It's rectangles, not a canvas: no host-specific drawing, and one quad per run of dark modules.
+- A code comes first (`createDeviceCode`, then `pollDeviceCode` every 3 s, as Flutter does); the password is the fallback. Approval is Devices → Link a device on the web and in the apps.
+- `QrCode` draws the approval URL with the code in it (`&code=`), which the web's Devices tab fills in. It's rectangles, not a canvas: no host-specific drawing, and one quad per run of dark modules.
 - A code lives 10 minutes and renews itself three times, then the screen stops asking the server. A TV's clock can be wrong, so an `expiresAt` that makes no sense counts as the whole 10 minutes.
 
 ## NoFlex Connect
@@ -181,7 +181,7 @@ Administration stays in the web client and the apps; the status dot (`ServerStat
 
 - **Watch together** and being **played on from another device** (NoFlex Connect): both need a WebSocket, which NativeScript's runtime lacks.
 - **Linked servers:** rails and search stay on the home server.
-- **External login:** needs a browser to redirect through. A device-PIN (`pages/Login.tsx`) is the way in without typing a password, and covers it: whoever approves it can have signed in however they like.
+- **External login:** needs a browser to redirect through. A device code (`pages/Login.tsx`) is the way in without typing a password, and covers it: whoever approves it can have signed in however they like.
 - **Live TV's programme grid and recording rules:** channels with what's on now, and tuning in.
 - **Photos:** a title page with the image; no slideshow.
 - **Offline copies and downloading on the TV itself, library management, filters, per-title admin.**

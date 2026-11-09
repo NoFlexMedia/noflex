@@ -7,7 +7,7 @@
 import { Column, Row } from "@solidtv/solid/primitives";
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { ElementNode, NodeProps } from "@solidtv/solid";
-import { app, changeServer, checkDevicePin, requestDevicePin, signIn } from "$lib/session.js";
+import { app, changeServer, checkDeviceCode, requestDeviceCode, signIn } from "$lib/session.js";
 import { serverOrigin } from "$lib/tokens.js";
 import { attempt } from "$lib/ui.js";
 import { color, radius, SCREEN, type, weight } from "../theme.js";
@@ -20,12 +20,12 @@ import TextField from "$components/TextField.js";
 const LEFT = 140;
 const FIELD = 720;
 const POLL_MS = 3000;
-const PIN_LIFE_MS = 10 * 60 * 1000;
+const CODE_LIFE_MS = 10 * 60 * 1000;
 // Half an hour of codes. After that a TV left on this screen stops asking the server.
 const ROUNDS = 3;
-const PIN_LENGTH = 6;
+const CODE_LENGTH = 6;
 const CELL = { width: 112, height: 144, gap: 14 };
-const GUIDE_X = LEFT + (CELL.width + CELL.gap) * PIN_LENGTH + 80;
+const GUIDE_X = LEFT + (CELL.width + CELL.gap) * CODE_LENGTH + 80;
 const GUIDE_WIDTH = SCREEN.width - LEFT - GUIDE_X;
 const QR_SIZE = 264;
 const approveUrl = () => `${serverOrigin() ?? ""}/account?tab=devices`;
@@ -44,7 +44,7 @@ function Heading() {
 }
 
 function CodeSignIn(props: { onPassword: () => void }) {
-  const [pin, setPin] = createSignal("");
+  const [code, setCode] = createSignal("");
   const [problem, setProblem] = createSignal("");
   let round = 0;
   let poll: ReturnType<typeof setInterval> | undefined;
@@ -56,20 +56,20 @@ function CodeSignIn(props: { onPassword: () => void }) {
     stop();
     setProblem("");
     try {
-      const info = await requestDevicePin();
+      const info = await requestDeviceCode();
       if (disposed) return;
-      setPin(info.pin);
+      setCode(info.code);
       // A blip doesn't matter: the code outlives it, and the next poll asks again.
-      poll = setInterval(() => { void checkDevicePin(info.pin).catch(() => {}); }, POLL_MS);
+      poll = setInterval(() => { void checkDeviceCode(info.code).catch(() => {}); }, POLL_MS);
       // TV clocks are often wrong, so a time that makes no sense means the code's whole life.
       const left = Date.parse(info.expiresAt) - Date.now();
       renew = setTimeout(() => {
         round += 1;
         if (round < ROUNDS) { void issue(); return; }
         stop();
-        setPin("");
+        setCode("");
         setProblem("That code expired. Choose New code when you’re ready.");
-      }, left > 0 && left <= PIN_LIFE_MS ? left : PIN_LIFE_MS);
+      }, left > 0 && left <= CODE_LIFE_MS ? left : CODE_LIFE_MS);
     } catch (cause) {
       if (!disposed) setProblem(cause instanceof Error ? cause.message : String(cause));
     }
@@ -78,8 +78,8 @@ function CodeSignIn(props: { onPassword: () => void }) {
   onCleanup(() => { disposed = true; stop(); });
 
   const cells = () => {
-    const letters = pin().split("");
-    return Array.from({ length: PIN_LENGTH }, (_, index) => letters[index] ?? "");
+    const letters = code().split("");
+    return Array.from({ length: CODE_LENGTH }, (_, index) => letters[index] ?? "");
   };
 
   return (
@@ -90,7 +90,7 @@ function CodeSignIn(props: { onPassword: () => void }) {
         <Button size="lg" icon="globe" label="Change server" onEnter={() => { changeServer(); return true; }} />
       </Row>
       <Heading />
-      <view x={LEFT} y={400} width={(CELL.width + CELL.gap) * PIN_LENGTH} height={CELL.height} display="flex" gap={CELL.gap} skipFocus>
+      <view x={LEFT} y={400} width={(CELL.width + CELL.gap) * CODE_LENGTH} height={CELL.height} display="flex" gap={CELL.gap} skipFocus>
         <For each={cells()}>
           {(letter) => (
             <view width={CELL.width} height={CELL.height} borderRadius={radius.m} color={color.surface2} border={{ width: 2, color: color.lineStrong }}>
@@ -99,18 +99,18 @@ function CodeSignIn(props: { onPassword: () => void }) {
           )}
         </For>
       </view>
-      <text x={LEFT} y={572} fontSize={type.caption} fontWeight={weight.semibold} color={problem() ? color.danger : color.text2}>{problem() || (pin() ? "Waiting for you to approve it" : "Getting a code…")}</text>
+      <text x={LEFT} y={572} fontSize={type.caption} fontWeight={weight.semibold} color={problem() ? color.danger : color.text2}>{problem() || (code() ? "Waiting for you to approve it" : "Getting a code…")}</text>
       <view x={GUIDE_X} y={400} width={GUIDE_WIDTH} height={420} skipFocus>
         <text fontSize={type.lead} fontWeight={weight.semibold}>On a phone or computer</text>
         <text y={64} width={GUIDE_WIDTH - QR_SIZE - 48} contain="width" lineHeight={42} fontSize={type.caption} color={color.text2}>Open NoFlex where you’re already signed in, go to Devices in your account, and enter this code under Link a device.</text>
         <text y={314} fontSize={type.caption} color={color.text3}>Or in a browser, go to</text>
         <text y={354} width={GUIDE_WIDTH} contain="width" maxLines={2} lineHeight={36} fontSize={type.caption} fontWeight={weight.semibold}>{approveUrl()}</text>
-        <Show when={pin()}>
-          <QrCode x={GUIDE_WIDTH - QR_SIZE} text={`${approveUrl()}&pin=${pin()}`} size={QR_SIZE} />
+        <Show when={code()}>
+          <QrCode x={GUIDE_WIDTH - QR_SIZE} text={`${approveUrl()}&code=${code()}`} size={QR_SIZE} />
           <text x={GUIDE_WIDTH - QR_SIZE} y={QR_SIZE + 10} width={QR_SIZE} contain="width" textAlign="center" fontSize={22} color={color.text3}>Scan to fill the code in</text>
         </Show>
       </view>
-      <text x={LEFT} y={640} width={CELL.width * PIN_LENGTH} contain="width" lineHeight={38} fontSize={type.caption} color={color.text3}>This TV signs in by itself as soon as you do.</text>
+      <text x={LEFT} y={640} width={CELL.width * CODE_LENGTH} contain="width" lineHeight={38} fontSize={type.caption} color={color.text3}>This TV signs in by itself as soon as you do.</text>
     </view>
   );
 }

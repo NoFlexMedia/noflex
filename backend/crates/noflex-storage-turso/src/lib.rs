@@ -8,14 +8,14 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use noflex_core::{
-    ApiKeyId, ChannelId, CollectionId, DevicePinId, EditionId, EmbeddingTarget, EpgProgramId,
+    ApiKeyId, ChannelId, CollectionId, DeviceCodeId, EditionId, EmbeddingTarget, EpgProgramId,
     ExportJobId, ExternalIdKind, ImageKind, LibraryId, LiveTvSourceId, MediaFileId, PlayTarget,
     PlaylistId, RecordingId, RecordingScheduleId, SessionId, TagId, TagTarget, UserId, WatchRoomId,
     WorkId, WorkKind,
 };
 use noflex_storage::{
     domain::{
-        ActivityKind, ApiKey, Collection, DevicePin, Edition, EpgProgram, ExportJob,
+        ActivityKind, ApiKey, Collection, DeviceCode, Edition, EpgProgram, ExportJob,
         ExportJobStatus, ExternalIdentity, Image, ImageSource, ImageTarget, IntroMarkers, Library,
         LiveTvChannel, LiveTvSource, MediaFile, MediaRemoval, Playlist, PluginOverrideRow,
         PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule, RecordingStatus,
@@ -701,25 +701,25 @@ impl Storage for TursoStore {
         ))
     }
 
-    async fn create_device_pin(&self, pin: &DevicePin) -> StorageResult<()> {
-        transact!(self, Lane::Concurrent, |conn| repo::device_pins::create(
-            conn, pin
+    async fn create_device_code(&self, code: &DeviceCode) -> StorageResult<()> {
+        transact!(self, Lane::Concurrent, |conn| repo::device_codes::create(
+            conn, code
         ))
     }
-    async fn device_pin_by_pin(&self, pin: &str) -> StorageResult<Option<DevicePin>> {
+    async fn device_code_by_code(&self, code: &str) -> StorageResult<Option<DeviceCode>> {
+        transact!(self, Lane::Concurrent, |conn| {
+            repo::device_codes::get_by_code(conn, code)
+        })
+    }
+    async fn authorize_device_code(&self, code: &str, user_id: UserId) -> StorageResult<bool> {
         transact!(
             self,
             Lane::Concurrent,
-            |conn| repo::device_pins::get_by_pin(conn, pin)
+            |conn| repo::device_codes::authorize(conn, code, user_id)
         )
     }
-    async fn authorize_device_pin(&self, pin: &str, user_id: UserId) -> StorageResult<bool> {
-        transact!(self, Lane::Concurrent, |conn| repo::device_pins::authorize(
-            conn, pin, user_id
-        ))
-    }
-    async fn delete_device_pin(&self, id: DevicePinId) -> StorageResult<bool> {
-        transact!(self, Lane::Concurrent, |conn| repo::device_pins::delete(
+    async fn delete_device_code(&self, id: DeviceCodeId) -> StorageResult<bool> {
+        transact!(self, Lane::Concurrent, |conn| repo::device_codes::delete(
             conn, id
         ))
     }

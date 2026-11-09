@@ -750,34 +750,38 @@ async fn viewer_reflects_logged_in_user() {
 }
 
 #[tokio::test]
-async fn device_pin_link_flow() {
+async fn device_code_link_flow() {
     let (schema, jwt, _store) = authed_schema().await;
     let (_user_id, principal) = run_setup_wizard(&schema).await;
 
-    // An unauthenticated device asks for a PIN to show on screen.
+    // An unauthenticated device asks for a code to show on screen.
     let resp = schema
-        .execute(r#"mutation { createDevicePin(client: "noflex-tv", device: "Living Room TV") { pin expiresAt } }"#)
+        .execute(r#"mutation { createDeviceCode(client: "noflex-tv", device: "Living Room TV") { code expiresAt } }"#)
         .await;
-    assert!(resp.errors.is_empty(), "createDevicePin: {:?}", resp.errors);
+    assert!(
+        resp.errors.is_empty(),
+        "createDeviceCode: {:?}",
+        resp.errors
+    );
     let data = resp.data.into_json().unwrap();
-    let pin = data["createDevicePin"]["pin"]
+    let code = data["createDeviceCode"]["code"]
         .as_str()
-        .expect("pin")
+        .expect("code")
         .to_string();
-    assert_eq!(pin.len(), 6);
-    assert!(data["createDevicePin"]["expiresAt"].as_str().is_some());
+    assert_eq!(code.len(), 6);
+    assert!(data["createDeviceCode"]["expiresAt"].as_str().is_some());
 
     let poll = format!(
-        r#"mutation {{ pollDevicePin(pin: "{pin}") {{ token refreshToken user {{ name }} }} }}"#
+        r#"mutation {{ pollDeviceCode(code: "{code}") {{ token refreshToken user {{ name }} }} }}"#
     );
 
     // Pending: poll answers null, not an error.
     let resp = schema.execute(poll.as_str()).await;
     assert!(resp.errors.is_empty(), "poll pending: {:?}", resp.errors);
-    assert!(resp.data.into_json().unwrap()["pollDevicePin"].is_null());
+    assert!(resp.data.into_json().unwrap()["pollDeviceCode"].is_null());
 
     // Authorizing needs a signed-in user.
-    let authorize = format!(r#"mutation {{ authorizeDevicePin(pin: "{pin}") }}"#);
+    let authorize = format!(r#"mutation {{ authorizeDeviceCode(code: "{code}") }}"#);
     let resp = schema.execute(authorize.as_str()).await;
     assert!(
         resp.errors
@@ -794,31 +798,31 @@ async fn device_pin_link_flow() {
         )
         .await;
     assert!(resp.errors.is_empty(), "authorize: {:?}", resp.errors);
-    assert_eq!(resp.data.into_json().unwrap()["authorizeDevicePin"], true);
+    assert_eq!(resp.data.into_json().unwrap()["authorizeDeviceCode"], true);
 
-    // The first poll after authorization trades the PIN for a session.
+    // The first poll after authorization trades the code for a session.
     let resp = schema.execute(poll.as_str()).await;
     assert!(resp.errors.is_empty(), "poll authorized: {:?}", resp.errors);
     let data = resp.data.into_json().unwrap();
-    let token = data["pollDevicePin"]["token"].as_str().expect("token");
-    let claims = verify_jwt(&jwt, token).expect("pin token verifies");
+    let token = data["pollDeviceCode"]["token"].as_str().expect("token");
+    let claims = verify_jwt(&jwt, token).expect("code token verifies");
     assert_eq!(claims.sub, principal.user_id.to_string());
-    assert_eq!(data["pollDevicePin"]["user"]["name"], "admin");
+    assert_eq!(data["pollDeviceCode"]["user"]["name"], "admin");
 
-    // The PIN is consumed: a second poll is null again.
+    // The code is consumed: a second poll is null again.
     let resp = schema.execute(poll.as_str()).await;
     assert!(resp.errors.is_empty(), "poll consumed: {:?}", resp.errors);
-    assert!(resp.data.into_json().unwrap()["pollDevicePin"].is_null());
+    assert!(resp.data.into_json().unwrap()["pollDeviceCode"].is_null());
 
     // Unknown codes fail soft on both halves of the flow.
     let resp = schema
-        .execute(r#"mutation { pollDevicePin(pin: "ZZZZZZ") { token } }"#)
+        .execute(r#"mutation { pollDeviceCode(code: "ZZZZZZ") { token } }"#)
         .await;
     assert!(resp.errors.is_empty(), "poll unknown: {:?}", resp.errors);
-    assert!(resp.data.into_json().unwrap()["pollDevicePin"].is_null());
+    assert!(resp.data.into_json().unwrap()["pollDeviceCode"].is_null());
     let resp = schema
         .execute(
-            async_graphql::Request::new(r#"mutation { authorizeDevicePin(pin: "ZZZZZZ") }"#)
+            async_graphql::Request::new(r#"mutation { authorizeDeviceCode(code: "ZZZZZZ") }"#)
                 .data(principal)
                 .data(request_user(principal)),
         )
@@ -828,7 +832,7 @@ async fn device_pin_link_flow() {
         "authorize unknown: {:?}",
         resp.errors
     );
-    assert_eq!(resp.data.into_json().unwrap()["authorizeDevicePin"], false);
+    assert_eq!(resp.data.into_json().unwrap()["authorizeDeviceCode"], false);
 }
 
 #[tokio::test]

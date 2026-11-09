@@ -23,7 +23,7 @@ use noflex_storage::{
 use time::OffsetDateTime;
 
 /// The token-pair-plus-user payload `login`, `refreshSession`, and
-/// `pollDevicePin` all return — one shape regardless of which flow
+/// `pollDeviceCode` all return — one shape regardless of which flow
 /// minted the session.
 #[derive(SimpleObject)]
 pub(crate) struct LoginResult {
@@ -137,7 +137,7 @@ pub(crate) fn too_many_attempts(retry_after: std::time::Duration) -> async_graph
 
 /// Mint a session row + token pair for `user`, recording the request's
 /// [`ClientAddr`](noflex_auth::ClientAddr) when the transport published
-/// one. Every sign-in flow (login, setup wizard, device PIN, external
+/// one. Every sign-in flow (login, setup wizard, device code, external
 /// provider) goes through here so all issue identical, revocable sessions.
 pub(crate) async fn mint_session(
     ctx: &Context<'_>,

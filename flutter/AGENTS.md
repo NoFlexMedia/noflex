@@ -67,7 +67,9 @@ A device several people use keeps a session for each of them. `features/auth/pro
 - Only `SessionService` changes who's active: `signIn`, `chooseProfile`, `switchProfile`, `logout`. Each loads that account's downloads (`DownloadsService.useAccount`) before the shell appears.
 - **At launch, one account that's still active goes straight in.** Anything else is `AppPhase.profiles`: several accounts, or one that stepped away. Showing it deactivates whoever was active and, if they have a PIN, locks their session on the server.
 - **A profile with a PIN is entered only through `TokenStore.unlock`** (`unlockSession`), locked or not, so the gate holds when `lockSession` never got through. No hash of the PIN is on the device, so such a profile can't be opened while the server is away; one without a PIN can, for its downloads.
-- A refresh refused with `SESSION_LOCKED` keeps the account: it's `SessionExpired(locked: true)` and `onLocked`, back to "Who's watching?". Any other refusal forgets that account alone.
+- **Only signing out or Remove takes someone off the device.** A session the server ended (expired, reused, out of PIN tries, or unknown to `rememberedProfiles`) keeps its tile as `needsSignIn` (`TokenStore.end`), and its downloads keep their owner. Its message names whose it was.
+- A refresh refused with `SESSION_LOCKED` isn't an ending: it's `SessionExpired(locked: true)` and `onLocked`, back to "Who's watching?" with the session as it was.
+- Choosing a `needsSignIn` tile opens the sign-in screen for them (`signingInFor`): "Sign in again", with Remove beside it. One person who has to sign in again skips the tiles and lands there directly (`_soleEnded`), as the TV does.
 - Tiles paint from what's stored, then `rememberedProfiles` corrects them and marks a session the server no longer knows (`needsSignIn`). A tile's picture comes from there too: `viewer.avatarUrl` is signed for the session and dies with a lock.
 - **Each account has its own device id** (`DeviceIdentity.idFor`), because the server refuses an id another user registered. It's in preferences, not with the session, so it outlives signing out.
 - You → Devices → Link a device approves a code as the viewer. An administrator can choose anyone instead (`approveCode(user:)`), for an account with nothing signed in to approve from; the server records it.
@@ -166,7 +168,7 @@ Ferry, against `lib/graphql/schema.graphql`, a symlink to `backend/crates/noflex
 - **Locking a profile stops its transfers** (`hold`), and opening it restarts them (`_release`): download URLs carry tokens for the session, which the lock refuses. They keep their URLs, good again once the PIN is in. Unverified against a real downloader.
 - A reconcile that finishes after someone else became active stops rather than writing into their manifest.
 - The headless sync fetches for the active account, and for nobody while the app sits on "Who's watching?".
-- Signing out removes that account's downloads and nobody else's. An expired session keeps them for when they sign in again. Changing server removes everyone's, manifests of expired accounts included (`removeEveryone`).
+- Signing out removes that account's downloads and nobody else's, and so does removing someone whose session ended (`removeAccount`). An ended session keeps them for when they sign in again. Changing server removes everyone's (`removeEveryone`).
 
 ### Smart transcode marks
 

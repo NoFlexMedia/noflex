@@ -48,7 +48,14 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
   Future<void> _choose(StoredAccount account) async {
     if (_entering.value != null) return;
     if (account.needsSignIn) {
-      _session.addProfile();
+      if (_session.reachable.value) {
+        _session.signInAgain(account.userId);
+      } else {
+        getIt<ToastService>().show(
+          'Signing in needs the server. Try again once it’s back.',
+          kind: ToastKind.error,
+        );
+      }
       return;
     }
     if (account.hasPin) {
@@ -380,9 +387,11 @@ class _PinSheetState extends State<_PinSheet> {
       });
     } on ServerUnreachable catch (cause) {
       _error.value = cause.message;
+    } on ApiError {
+      // Out of tries, or the session is gone. The screen behind says so, and
+      // what's next; there's nothing more to do here.
+      if (mounted) Navigator.of(context).pop();
     } on Exception catch (cause) {
-      // Out of tries, or the session is gone: the tile says what's next, and
-      // there's nothing more to do here.
       if (mounted) Navigator.of(context).pop();
       getIt<ToastService>().show(cause.toString(), kind: ToastKind.error);
     } finally {

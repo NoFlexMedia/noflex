@@ -779,18 +779,24 @@ class DownloadsService {
     await store.delete();
   }
 
-  /// Everyone's, signed in or not, as the device leaves the server.
+  /// Someone's who isn't necessarily active, as they're taken off the device.
+  Future<void> removeAccount(String accountId) async {
+    if (accountId == _store.accountId) return removeAll();
+    final store = OfflineStore(accountId);
+    await store.load();
+    for (final item in store.items) {
+      await FileDownloader().cancelTaskWithId(item.taskId);
+      await deleteOfflineFiles(item);
+      await FileDownloader().database.deleteRecordWithId(item.taskId);
+    }
+    await store.delete();
+  }
+
+  /// Everyone's who has a manifest here, as the device leaves the server.
   Future<void> removeEveryone() async {
     await removeAll();
     for (final accountId in await OfflineStore.accountIds()) {
-      final store = OfflineStore(accountId);
-      await store.load();
-      for (final item in store.items) {
-        await FileDownloader().cancelTaskWithId(item.taskId);
-        await deleteOfflineFiles(item);
-        await FileDownloader().database.deleteRecordWithId(item.taskId);
-      }
-      await store.delete();
+      await removeAccount(accountId);
     }
   }
 

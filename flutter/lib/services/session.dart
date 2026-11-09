@@ -52,13 +52,8 @@ class SessionService {
     required this.decoders,
     required this.watchState,
   }) {
-    tokens.onExpired = (error) => unawaited(
-      _afterLeaving(
-        error.reused
-            ? '${error.toString()} Sign in again, and change your password if that wasn’t you.'
-            : 'Your session expired. Sign in again to continue.',
-      ),
-    );
+    tokens.onExpired = (error, account) =>
+        unawaited(_afterLeaving(_endedMessage(account?.name, error)));
     // Locked from elsewhere, or a PIN set since this device last asked.
     tokens.onLocked = () {
       final userId = tokens.activeId.value;
@@ -69,6 +64,16 @@ class SessionService {
             .then((_) => _showProfiles(message: 'Enter your PIN to carry on.')),
       );
     };
+  }
+
+  /// Why someone has to sign in again, naming them: with several tiles, "your
+  /// session" doesn't say whose.
+  static String _endedMessage(String? name, SessionExpired error) {
+    if (name == null) return 'Your session expired. Sign in again to continue.';
+    return error.reused
+        ? '$name was signed out because their session was used from somewhere '
+              'else. Sign in again, and change the password if that wasn’t them.'
+        : '$name’s session expired. Sign in again to continue.';
   }
 
   final TokenStore tokens;
@@ -92,6 +97,10 @@ class SessionService {
 
   /// What went wrong on the way in, for the sign-in screen and "Who's watching?".
   final authError = signal('');
+
+  /// Whose session the sign-in screen is bringing back: someone still on this
+  /// device whose session ended. Null when it's signing in somebody new.
+  final signingInFor = signal<String?>(null);
 
   /// Whether the server answered at launch. Without it a profile can still be
   /// chosen for what it has downloaded, but not one behind a PIN: only the
@@ -204,7 +213,9 @@ class SessionService {
     } on SessionExpired {
       // The expiry and lock handlers have already moved on from here.
     } on ApiError catch (cause) {
-      await tokens.removeActive();
+      // Refused as they are, which signing in again may mend. They stay.
+      final userId = tokens.activeId.value;
+      if (userId != null) await tokens.end(userId);
       await _afterLeaving(cause.message);
     }
   }
@@ -285,6 +296,7 @@ class SessionService {
         avatarUrl: tokens.account(userId)?.avatarUrl,
       ),
     );
+    signingInFor.value = null;
     await _enter();
   }
 
@@ -353,8 +365,8 @@ class SessionService {
   /// the server, whether or not its session got as far as being locked.
   ///
   /// Throws [WrongPin] while there are tries left; [ApiError] once there aren't
-  /// or the session turns out to be gone, by which time the tile says so; and
-  /// [ServerUnreachable].
+  /// or the session turns out to be gone, by which time their tile says to sign
+  /// in again and [authError] why; and [ServerUnreachable].
   Future<void> chooseProfile(String userId, {String pin = ''}) async {
     final account = tokens.account(userId);
     if (account == null) return;
@@ -362,14 +374,18 @@ class SessionService {
       try {
         await tokens.unlock(userId, pin);
       } on ApiError catch (error) {
-        if (error.codes.contains('PIN_ATTEMPTS_EXHAUSTED')) {
-          await tokens.remove(userId);
-          throw const ApiError(
-            'Too many wrong PINs. Sign in again to use this profile.',
-          );
+        await tokens.end(userId);
+        final message = error.codes.contains('PIN_ATTEMPTS_EXHAUSTED')
+            ? 'Too many wrong PINs. Sign in again to use this profile.'
+            : '${account.name} was signed out here. Sign in again to continue.';
+        // Said where they are now: beside the tiles, or on the sign-in screen
+        // when theirs was the only one.
+        if (_soleEnded != null) {
+          _toSignIn(userId, message: message);
+        } else {
+          authError.value = message;
         }
-        await tokens.describe(userId, needsSignIn: true);
-        throw ApiError('${account.name} needs to sign in again.');
+        throw ApiError(message);
       }
     }
     await tokens.activate(userId);
@@ -385,15 +401,44 @@ class SessionService {
   /// Step away from the active profile, to "Who's watching?".
   Future<void> switchProfile() => _showProfiles();
 
-  /// Sign someone else in, or someone whose session ended.
-  void addProfile() => batch(() {
-    authError.value = '';
+  /// Sign someone new in.
+  void addProfile() => _toSignIn(null);
+
+  /// Sign in again for someone whose session ended, to bring their profile back.
+  void signInAgain(String userId) => _toSignIn(userId);
+
+  void _toSignIn(String? userId, {String message = ''}) => batch(() {
+    signingInFor.value = userId;
+    authError.value = message;
     phase.value = AppPhase.auth;
   });
 
   /// Back from signing someone in, with nobody new.
   void cancelAddProfile() {
-    if (tokens.accounts.value.isNotEmpty) phase.value = AppPhase.profiles;
+    if (tokens.accounts.value.isEmpty) return;
+    batch(() {
+      signingInFor.value = null;
+      phase.value = AppPhase.profiles;
+    });
+  }
+
+  /// Take someone off this device, with what they downloaded. For a session
+  /// that ended and won't be signed in to again; someone signed in signs out.
+  Future<void> removeProfile(String userId) async {
+    await _guarded(() => _downloads.removeAccount(userId));
+    await tokens.remove(userId);
+    await _afterLeaving('');
+  }
+
+  /// One person, who has to sign in again: their tile would only be a step in
+  /// the way. Signing in needs the server, so without it the tile stays.
+  StoredAccount? get _soleEnded {
+    final accounts = tokens.accounts.value;
+    return reachable.value &&
+            accounts.length == 1 &&
+            accounts.single.needsSignIn
+        ? accounts.single
+        : null;
   }
 
   /// What the server says of everyone signed in here: their tiles as they are
@@ -434,13 +479,21 @@ class SessionService {
     } on Exception {
       return;
     }
+    // Found out here that the one person has to sign in again.
+    final sole = _soleEnded;
+    if (sole != null && phase.value == AppPhase.profiles) {
+      _toSignIn(sole.userId, message: authError.value);
+    }
   }
 
   /// The headless sync shares the session, and may have found it ended while
-  /// the app was away. Returns whether it had, and moves on from the shell.
+  /// the app was away: whoever was here is then nobody's active account, and
+  /// needs to sign in again. Returns whether that happened, and moves on from
+  /// the shell.
   Future<bool> lostWhileAway() async {
     if (phase.value != AppPhase.app || tokens.hasSession) return false;
-    await _afterLeaving('Your session expired. Sign in again to continue.');
+    final ended = tokens.account(viewer.value?.id);
+    await _afterLeaving(_endedMessage(ended?.name, const SessionExpired()));
     return true;
   }
 
@@ -468,11 +521,17 @@ class SessionService {
       await tokens.deactivate();
     }
     await _useDownloads(null);
+    final sole = _soleEnded;
+    if (sole != null) {
+      _signedOut(message);
+      signingInFor.value = sole.userId;
+      return;
+    }
     _signedOut(message, to: AppPhase.profiles);
     unawaited(refreshProfiles());
   }
 
-  /// Where to go once the active account is gone: the others, if there are any.
+  /// Where to go once nobody is active: whoever is signed in here, if anyone.
   Future<void> _afterLeaving(String message) async {
     if (tokens.accounts.value.isEmpty) {
       await _useDownloads(null);
@@ -497,7 +556,8 @@ class SessionService {
 
   /// Sign out on purpose. This account's downloads go too: they're theirs, and
   /// the next person on this device shouldn't find them. An expired session
-  /// keeps them, as nobody chose to leave. Anyone else signed in here stays.
+  /// keeps them, and its tile, as nobody chose to leave. Anyone else signed in
+  /// here stays.
   Future<void> logout() async {
     try {
       await graphql.run(GLogoutReq());
@@ -535,6 +595,7 @@ class SessionService {
       linkedServers.value = const [];
       device.value = null;
       authError.value = message;
+      signingInFor.value = null;
       phase.value = to;
       getIt<NavService>().tab.value = ShellTab.home;
     });

@@ -44,3 +44,17 @@ Future<void> changeServer() async {
       : await _confirmLosingDownloads('Change server?', 'Change server');
   if (confirmed) await getIt<SessionService>().forgetServer();
 }
+
+/// Take someone whose session ended off this device, rather than sign in again
+/// for them. Whether they'd downloaded anything isn't known without loading
+/// what's theirs, so it's asked either way.
+Future<void> removeProfile(StoredAccount account) async {
+  final confirmed = await confirmAction(
+    title: 'Remove ${account.name}?',
+    message:
+        'This takes ${account.name} off this device, with anything they downloaded here.',
+    confirmLabel: 'Remove',
+    danger: true,
+  );
+  if (confirmed) await getIt<SessionService>().removeProfile(account.userId);
+}

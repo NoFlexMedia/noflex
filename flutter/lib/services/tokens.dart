@@ -92,8 +92,9 @@ class StoredAccount {
   /// As the server last signed it, relative to the server.
   final String? avatarUrl;
 
-  /// The server no longer knows the session. The tile stays, so they can
-  /// sign in again and find what was theirs.
+  /// The server ended the session, or no longer knows it. The tile stays, so
+  /// they can sign in again and find what was theirs: only signing out or
+  /// being removed takes someone off a device.
   final bool needsSignIn;
 
   StoredAccount copyWith({
@@ -158,9 +159,10 @@ class TokenStore {
 
   Future<void>? _refreshing;
 
-  /// Told once when the server ends the active session. The account is gone
-  /// from [accounts] by then.
-  void Function(SessionExpired error)? onExpired;
+  /// Told once when the server ends the active session, with whose it was.
+  /// By then nobody is active, and they're in [accounts] still, needing to
+  /// sign in again.
+  void Function(SessionExpired error, StoredAccount? account)? onExpired;
 
   /// Told when the active session turns out to be waiting for its PIN.
   void Function()? onLocked;
@@ -310,15 +312,22 @@ class TokenStore {
     if (userId != null) await remove(userId);
   }
 
+  /// Someone's session is over without their having left: they stay, needing
+  /// to sign in again, and stop being the active one.
+  Future<void> end(String userId) => _set([
+    for (final account in accounts.value)
+      account.userId == userId ? account.copyWith(needsSignIn: true) : account,
+  ], activeId.value == userId ? null : activeId.value);
+
   /// Forget everyone: the sessions belong to a server being left.
   Future<void> clear() => _set(const [], null);
 
   /// Rotate the active token pair. Single-flight: a second refresh with the same
   /// token looks like replay to the server. Pass the access token a rejected
   /// request carried to skip refreshing when another caller already replaced
-  /// it. A refusal forgets the account and throws [SessionExpired], unless the
-  /// session is only locked, which keeps it; an unreachable server throws
-  /// [ServerUnreachable] and keeps it.
+  /// it. A refusal throws [SessionExpired] and leaves the account needing to
+  /// sign in again, unless the session is only locked, which leaves it as it
+  /// is; an unreachable server throws [ServerUnreachable] and changes nothing.
   Future<void> refresh([String? staleAccess]) {
     final access = accessToken;
     if (staleAccess != null && access != null && staleAccess != access) {
@@ -360,8 +369,9 @@ class TokenStore {
 
   Future<void> _expire(String? userId, SessionExpired error) async {
     final wasActive = activeId.value == userId;
-    if (userId != null) await remove(userId);
-    if (wasActive) onExpired?.call(error);
+    final ended = account(userId);
+    if (ended != null) await end(ended.userId);
+    if (wasActive) onExpired?.call(error, ended);
     throw error;
   }
 

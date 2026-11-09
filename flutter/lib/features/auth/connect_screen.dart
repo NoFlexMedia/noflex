@@ -313,16 +313,34 @@ class _SignInScreenState extends State<SignInScreen> {
           : _session.authError.value;
       // Someone is already signed in here, so this is adding another: there's
       // a "Who's watching?" to go back to, and the server isn't theirs to change.
-      final adding = getIt<TokenStore>().accounts.value.isNotEmpty;
+      final tokens = getIt<TokenStore>();
+      final adding = tokens.accounts.value.isNotEmpty;
+      // Or bringing back someone whose session ended.
+      final returning = tokens.account(_session.signingInFor.value);
       return _AuthFrame(
         title: switch (mode) {
-          _AuthMode.signIn => 'Sign in',
+          _AuthMode.signIn =>
+            returning != null
+                ? 'Sign in again'
+                : adding
+                ? 'Add someone'
+                : 'Sign in',
           _AuthMode.invite => 'Accept your invite',
           _AuthMode.code => 'Approve this device',
         },
         subtitle: server,
         children: [
-          if (message.isNotEmpty) AuthErrorLine(message),
+          if (message.isNotEmpty)
+            AuthErrorLine(message)
+          else if (returning != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Text(
+                '${returning.name} was signed out here. Sign in as them to '
+                'bring their profile back.',
+                style: NfType.bodyMuted,
+              ),
+            ),
           if (mode == _AuthMode.code) ...[
             Text(
               'On a device that’s already signed in, open Account → Devices and enter this code.',
@@ -432,6 +450,18 @@ class _SignInScreenState extends State<SignInScreen> {
                   ),
               ],
             ),
+            if (returning != null) ...[
+              const SizedBox(height: 10),
+              Center(
+                child: NfButton(
+                  label: 'Remove ${returning.name}',
+                  style: NfButtonStyle.danger,
+                  size: NfButtonSize.small,
+                  icon: const Icon(PhosphorIconsRegular.trash),
+                  onPressed: () => unawaited(removeProfile(returning)),
+                ),
+              ),
+            ],
           ],
         ],
       );

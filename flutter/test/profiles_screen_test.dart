@@ -69,6 +69,7 @@ void main() {
     await tester.tap(find.text('Gran'));
     await tester.pump();
     expect(session.phase.value, AppPhase.auth);
+    expect(session.signingInFor.value, 'Gran');
     expect(tokens.hasSession, isFalse);
   });
 

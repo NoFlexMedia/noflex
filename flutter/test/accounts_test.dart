@@ -82,7 +82,7 @@ void main() {
     await tokens.signIn(account('vera', pin: true));
     var locked = 0;
     tokens.onLocked = () => locked++;
-    tokens.onExpired = (_) => fail('a lock is not an expiry');
+    tokens.onExpired = (_, _) => fail('a lock is not an expiry');
 
     await expectLater(
       tokens.refresh(),
@@ -92,17 +92,26 @@ void main() {
     expect(tokens.active?.refresh, 'vera-r1');
   });
 
-  test('a session the server ended takes only its own account', () async {
+  test('a session the server ended keeps its tile, to sign in again', () async {
     final tokens = await store((_) => refused('REFRESH_TOKEN_INVALID'));
     await tokens.signIn(account('kid'));
     await tokens.signIn(account('vera'));
-    final expired = <SessionExpired>[];
-    tokens.onExpired = expired.add;
+    final ended = <String?>[];
+    tokens.onExpired = (_, account) => ended.add(account?.userId);
 
     await expectLater(tokens.refresh(), throwsA(isA<SessionExpired>()));
-    expect(expired, hasLength(1));
+    expect(ended, ['vera']);
     expect(tokens.hasSession, isFalse);
-    expect(tokens.accounts.value.single.userId, 'kid');
+    // Nobody chose to leave, so nobody is gone: only signing out removes.
+    expect(tokens.accounts.value.map((a) => (a.userId, a.needsSignIn)), [
+      ('kid', false),
+      ('vera', true),
+    ]);
+
+    // Signing in again puts them back where they were.
+    await tokens.signIn(account('vera', refresh: 'r2'));
+    expect(tokens.active?.needsSignIn, isFalse);
+    expect(tokens.accounts.value.map((a) => a.userId), ['kid', 'vera']);
   });
 
   test('a PIN opens a session without making it the active one', () async {

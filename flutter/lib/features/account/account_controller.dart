@@ -35,6 +35,9 @@ import '../../graphql/queries/__generated__/play_history.data.gql.dart';
 import '../../graphql/queries/__generated__/play_history.req.gql.dart';
 import '../../graphql/queries/__generated__/remove_device.req.gql.dart';
 import '../../graphql/queries/__generated__/poll_device_code.req.gql.dart';
+import '../../graphql/queries/__generated__/remove_pin.req.gql.dart';
+import '../../graphql/queries/__generated__/set_pin.req.gql.dart';
+import '../../graphql/queries/fragments/__generated__/user_fields.data.gql.dart';
 import '../../graphql/queries/__generated__/remove_linked_server.req.gql.dart';
 import '../../graphql/queries/__generated__/revoke_api_key.req.gql.dart';
 import '../../graphql/queries/__generated__/revoke_session.req.gql.dart';
@@ -454,6 +457,40 @@ class AccountController {
     if (data == null) return false;
     getIt<SessionService>().viewer.value = data.changeUsername;
     return true;
+  }
+
+  /// Set or replace the PIN that opens this profile on a shared device.
+  Future<bool> setPin(String pin, String password) async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(
+        GSetPinReq(
+          (b) => b.vars
+            ..pin = pin
+            ..password = password,
+        ),
+      ),
+      success: 'PIN set. It’s asked for when someone switches to you.',
+    );
+    if (data == null) return false;
+    await _pinChanged(data.setPin);
+    return true;
+  }
+
+  Future<bool> removePin(String password) async {
+    final data = await _toasts.attempt(
+      () => _graphql.run(GRemovePinReq((b) => b.vars.password = password)),
+      success: 'PIN removed',
+    );
+    if (data == null) return false;
+    await _pinChanged(data.removePin);
+    return true;
+  }
+
+  /// This device's own tile has to know too, or it would ask for a PIN that's
+  /// gone, or not for one that's there.
+  Future<void> _pinChanged(GUserFields viewer) async {
+    getIt<SessionService>().viewer.value = viewer;
+    await getIt<TokenStore>().describe(viewer.id, hasPin: viewer.hasPin);
   }
 
   Future<bool> changePassword(String current, String next) async {

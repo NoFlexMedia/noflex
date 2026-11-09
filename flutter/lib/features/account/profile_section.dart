@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:phosphor_icons/phosphor_icons.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
@@ -31,6 +32,7 @@ class ProfileSection extends StatelessWidget {
   Widget build(BuildContext context) => AccountColumn(
     children: [
       _ProfilePanel(controller: controller),
+      _PinPanel(controller: controller),
       _BrowsingPanel(controller: controller),
       _PlaybackPanel(controller: controller),
       _ThisDevicePanel(controller: controller),
@@ -281,6 +283,186 @@ class _UsernameSheetState extends State<_UsernameSheet> {
       ],
     ),
   );
+}
+
+class _PinPanel extends SignalWidget {
+  const _PinPanel({required this.controller});
+  final AccountController controller;
+
+  void _open({required bool remove}) => unawaited(
+    getIt<NavService>().openSheet<void>(
+      (context) => _PinSheet(controller: controller, remove: remove),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPin = getIt<SessionService>().viewer.value?.hasPin ?? false;
+    return AccountPanel(
+      icon: PhosphorIconsRegular.lockKey,
+      title: 'Profile PIN',
+      detail: hasPin ? 'A PIN is set' : 'No PIN',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'A PIN keeps your profile yours on a TV or tablet you share. It’s '
+            'asked for when someone switches to you.',
+            style: NfType.small,
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (hasPin)
+                NfButton(
+                  label: 'Remove PIN',
+                  style: NfButtonStyle.ghost,
+                  size: NfButtonSize.small,
+                  onPressed: () => _open(remove: true),
+                ),
+              NfButton(
+                label: hasPin ? 'Change PIN' : 'Set a PIN',
+                style: hasPin ? NfButtonStyle.surface : NfButtonStyle.primary,
+                size: NfButtonSize.small,
+                onPressed: () => _open(remove: false),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Setting, changing or removing the PIN. Each takes the password, so whoever
+/// is holding the device can't do it for its owner.
+class _PinSheet extends StatefulWidget {
+  const _PinSheet({required this.controller, required this.remove});
+  final AccountController controller;
+  final bool remove;
+
+  @override
+  State<_PinSheet> createState() => _PinSheetState();
+}
+
+class _PinSheetState extends State<_PinSheet> {
+  final _pin = TextEditingController();
+  final _password = TextEditingController();
+  final _busy = signal(false);
+  final _ready = signal(false);
+
+  @override
+  void initState() {
+    super.initState();
+    _ready.value = widget.remove;
+  }
+
+  @override
+  void dispose() {
+    _pin.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (!_ready.value || _busy.value) return;
+    _busy.value = true;
+    final done = widget.remove
+        ? await widget.controller.removePin(_password.text)
+        : await widget.controller.setPin(_pin.text, _password.text);
+    if (!mounted) return;
+    _busy.value = false;
+    if (done) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPin = getIt<SessionService>().viewer.peek()?.hasPin ?? false;
+    final title = widget.remove
+        ? 'Remove your PIN'
+        : hasPin
+        ? 'Change your PIN'
+        : 'Set a PIN';
+    return Padding(
+      // A dialog already lifts itself above the keyboard; a sheet has to ask.
+      padding: EdgeInsets.fromLTRB(
+        20,
+        20,
+        20,
+        20 +
+            (context.windowClass.isCompact
+                ? MediaQuery.viewInsetsOf(context).bottom
+                : 0),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(title, style: nfText(18, weight: 650)),
+          const SizedBox(height: 4),
+          Text(
+            widget.remove
+                ? 'Anyone using a device you’re signed in on will be able to '
+                      'switch to your profile.'
+                : '4 to 6 digits. It opens your profile on devices you’re '
+                      'already signed in on, and never signs you in by itself.',
+            style: NfType.small,
+          ),
+          const SizedBox(height: 14),
+          if (!widget.remove) ...[
+            NfField(
+              controller: _pin,
+              label: hasPin ? 'New PIN' : 'PIN',
+              obscure: true,
+              autofocus: true,
+              autocorrect: false,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.next,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(6),
+              ],
+              onChanged: (value) => _ready.value = value.length >= 4,
+            ),
+            const SizedBox(height: 12),
+          ],
+          NfField(
+            controller: _password,
+            label: 'Current password',
+            obscure: true,
+            autofocus: widget.remove,
+            autocorrect: false,
+            autofillHints: const [AutofillHints.password],
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => unawaited(_save()),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Leave it blank if you only sign in through another service.',
+            style: NfType.caption,
+          ),
+          const SizedBox(height: 14),
+          Align(
+            alignment: Alignment.centerRight,
+            child: SignalBuilder(
+              builder: (context) => NfButton(
+                label: widget.remove ? 'Remove PIN' : title,
+                style: widget.remove
+                    ? NfButtonStyle.danger
+                    : NfButtonStyle.primary,
+                size: NfButtonSize.small,
+                busy: _busy.value,
+                onPressed: _ready.value ? () => unawaited(_save()) : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _BrowsingPanel extends SignalWidget {

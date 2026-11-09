@@ -15,13 +15,14 @@ import { MY_DEVICES, MY_SMART_MARKS, PREPARED_VERSIONS, UNMARK_FOR_SMART_TRANSCO
 import { request } from "$lib/graphql.js";
 import { host } from "$lib/host.js";
 import type { IconName } from "$lib/icons.generated.js";
-import { app, changeServer, logout, savePlaybackPrefs, setShowLibraries, thisDeviceId } from "$lib/session.js";
+import { app, changeServer, logout, savePlaybackPrefs, setShowLibraries, switchProfile, thisDeviceId } from "$lib/session.js";
 import { changeSetting, settings, type DeviceSettings } from "$lib/settings.js";
-import { mediaUrl, serverOrigin } from "$lib/tokens.js";
+import { serverOrigin } from "$lib/tokens.js";
 import type { Choice } from "$lib/tracks.js";
 import type { Device, PreparedVersion, SmartMark, SmartMarkState } from "$lib/types.js";
 import { attempt } from "$lib/ui.js";
 import { color, motion, PAGE_WIDTH, radius, SCREEN, type, weight } from "../theme.js";
+import Avatar from "$components/Avatar.js";
 import Button from "$components/Button.js";
 import Icon from "$components/Icon.js";
 import Page, { BODY_HEIGHT } from "$components/Page.js";
@@ -109,13 +110,6 @@ const BRAND_ICONS: Record<DeviceBrand, IconName> = {
   safari: "mark-safari", steamdeck: "mark-steamdeck", tablet: "device-tablet", television: "television", ubuntu: "mark-ubuntu", vivaldi: "mark-vivaldi", windows: "windows-logo-fill",
 };
 
-/** "Vera Viewer" is VV, "vera" is VE, as on the other clients. */
-function initials(name: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  const letters = words.length > 1 ? words[0]!.charAt(0) + words[words.length - 1]!.charAt(0) : (words[0] ?? "").slice(0, 2);
-  return letters.toUpperCase();
-}
-
 const Note = (props: { text: string }) => (
   <text skipFocus width={PANEL_WIDTH} contain="width" lineHeight={32} fontSize={22} color={color.text3}>{props.text}</text>
 );
@@ -181,8 +175,6 @@ export default function Account() {
     return true;
   };
   const device = <K extends keyof DeviceSettings>(key: K, value: DeviceSettings[K]) => changeSetting(key, value);
-
-  const [pictureFailed, setPictureFailed] = createSignal(false);
 
   const panels: Record<Section, () => any> = {
     playback: () => (
@@ -261,14 +253,7 @@ export default function Account() {
     account: () => (
       <>
         <view skipFocus width={PANEL_WIDTH} height={PROFILE_QR + 40}>
-          <view y={8} width={120} height={120} borderRadius={60} color={color.accent}>
-            <Show
-              when={pictureFailed() ? null : app.viewer?.avatarUrl}
-              fallback={<text width={120} height={120} lineHeight={120} contain="both" textAlign="center" fontSize={type.title} fontWeight={weight.bold} color={color.accentInk}>{initials(app.viewer?.name ?? "")}</text>}
-            >
-              {(url) => <view width={120} height={120} borderRadius={60} src={mediaUrl(url())} onEvent={{ failed: () => setPictureFailed(true) }} />}
-            </Show>
-          </view>
+          <Avatar y={8} size={120} name={app.viewer?.name ?? ""} url={app.viewer?.avatarUrl} />
           <text x={150} y={18} width={PANEL_WIDTH - PROFILE_QR - 190} contain="width" maxLines={1} fontSize={type.title} fontWeight={weight.semibold}>{app.viewer?.name ?? ""}</text>
           <text x={150} y={76} width={PANEL_WIDTH - PROFILE_QR - 190} contain="width" maxLines={1} fontSize={type.caption} color={color.text2}>{`${app.viewer?.isAdmin ? "Administrator" : "Member"} · ${app.server?.name ?? "NoFlex"} v${app.server?.version ?? ""}`}</text>
           <text x={150} y={110} width={PANEL_WIDTH - PROFILE_QR - 190} contain="width" maxLines={1} fontSize={22} color={color.text3}>{`Signs in as ${app.viewer?.username ?? ""} · ${serverOrigin() ?? ""}`}</text>
@@ -277,10 +262,14 @@ export default function Account() {
         </view>
         <SettingRow width={PANEL_WIDTH} label="Show libraries in the navigation" detail="Alongside Movies, TV Shows and the rest" checked={app.showLibraries} onEnter={() => { void attempt(() => setShowLibraries(!app.showLibraries)); return true; }} />
         <Row width={PANEL_WIDTH} height={84} gap={20} scroll="none">
+          <Button size="lg" icon="user-switch" label="Switch profile" onEnter={() => { void switchProfile(); return true; }} />
           <Button size="lg" icon="sign-out" label="Sign out" onEnter={() => { void attempt(logout); return true; }} />
           <Button size="lg" icon="globe" label="Change server" onEnter={() => { changeServer(); return true; }} />
         </Row>
-        <Note text="Your name, picture, devices and server administration are in the web client and the apps. The code opens your profile on a phone." />
+        <Note text={app.viewer?.hasPin
+          ? "Switching profile locks yours behind your PIN. Signing out takes only you off this TV; changing server signs everyone out."
+          : "Signing out takes only you off this TV; changing server signs everyone out. A PIN keeps your profile yours here: set one under Profile, in the web client or the apps."} />
+        <Note text="Your name, picture, PIN, devices and server administration are in the web client and the apps. The code opens your profile on a phone." />
       </>
     ),
   };

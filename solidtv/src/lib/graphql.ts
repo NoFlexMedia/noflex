@@ -14,7 +14,7 @@ const UNREACHABLE = "NoFlex could not reach the server. Check your connection an
 export type Document = string;
 export type Vars = Record<string, unknown>;
 
-interface GqlError { message: string; extensions?: { code?: unknown } }
+interface GqlError { message: string; extensions?: Record<string, unknown> }
 interface Payload { data?: any; errors?: GqlError[] | null }
 
 const operationName = (document: Document) => /(?:query|mutation)\s+(\w+)/.exec(document)?.[1];
@@ -46,7 +46,7 @@ async function post(document: Document, variables: Vars, refreshAllowed: boolean
   if (payload.errors?.length) {
     const message = payload.errors.map((error) => error.message).join("; ");
     if (refreshAllowed && hasSession() && AUTH_ERROR.test(message)) return retry();
-    throw new ApiError(message, payload.errors.flatMap((error) => (typeof error.extensions?.code === "string" ? [error.extensions.code] : [])));
+    throw new ApiError(message, payload.errors.flatMap((error) => (typeof error.extensions?.code === "string" ? [error.extensions.code] : [])), payload.errors[0]!.extensions ?? {});
   }
   if (!payload.data) throw new Error("The server returned an empty response.");
   return payload.data;
@@ -62,6 +62,9 @@ export function request<Data = any>(document: Document, variables: Vars = {}, op
 // A page's worth of cards per entry, on devices where memory is tight.
 const CACHE_ENTRIES = 48;
 const cache = new Map<string, unknown>();
+// Whose cache this is. An answer still on its way when the viewer changes was
+// for the last one, and mustn't land in the next one's.
+let viewerEpoch = 0;
 
 const cacheKey = (document: Document, variables: Vars) => `${operationName(document)}:${JSON.stringify(variables)}`;
 
@@ -71,13 +74,14 @@ function remember(key: string, data: unknown): void {
   if (cache.size > CACHE_ENTRIES) cache.delete(cache.keys().next().value as string);
 }
 
-export function resetCache(): void { cache.clear(); }
+export function resetCache(): void { cache.clear(); viewerEpoch++; }
 export function cached<Data = any>(document: Document, variables: Vars = {}): Data | undefined { return cache.get(cacheKey(document, variables)) as Data | undefined; }
 
 /** Fetch into the cache ahead of need, on intent: a card holding focus, say. Failures are the page's to report. */
 export function preload(document: Document, variables: Vars = {}): void {
   const key = cacheKey(document, variables);
-  if (!cache.has(key)) request(document, variables).then((data) => remember(key, data), () => {});
+  const epoch = viewerEpoch;
+  if (!cache.has(key)) request(document, variables).then((data) => { if (epoch === viewerEpoch) remember(key, data); }, () => {});
 }
 
 export interface Query<Data> {
@@ -103,9 +107,11 @@ export function createQuery<Data = any>(document: Document, variables: () => Var
   const fetchInto = async (input: Vars) => {
     const ticket = ++run;
     const key = cacheKey(document, input);
+    const epoch = viewerEpoch;
     setFetching(true);
     try {
       const fresh = await request<Data>(document, input);
+      if (epoch !== viewerEpoch) return;
       remember(key, fresh);
       if (ticket !== run || disposed) return;
       setData(() => fresh);

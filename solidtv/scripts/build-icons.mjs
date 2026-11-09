@@ -22,6 +22,7 @@ const ICONS = {
   translate: "regular", user: "regular", "warning-circle": "regular", "arrow-up": "regular", x: "regular",
   "android-logo-fill": "fill", "apple-logo-fill": "fill", browser: "regular", desktop: "regular", "device-tablet": "regular", "game-controller": "regular", laptop: "regular", "linux-logo-fill": "fill", "windows-logo-fill": "fill",
   "caret-down": "regular", "device-mobile": "regular", "download-simple": "regular", gauge: "regular", "monitor-play": "regular", "sliders-horizontal": "regular",
+  plus: "regular", "user-switch": "regular", "user-minus": "regular",
 };
 
 // Sprite name -> slug, for device brands Phosphor doesn't draw. See lib/ts/device.ts.

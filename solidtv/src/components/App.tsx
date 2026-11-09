@@ -8,7 +8,7 @@ import type { KeyMap } from "@solidtv/solid";
 import { originX, originY } from "$lib/viewport.js";
 import { SCREEN } from "../theme.js";
 import { host } from "$lib/host.js";
-import { player } from "$lib/playback.js";
+import { closePlayer, player } from "$lib/playback.js";
 import { startRemote } from "$lib/remote.js";
 import { app, start } from "$lib/session.js";
 import { ui } from "$lib/ui.js";
@@ -19,6 +19,7 @@ import State from "$components/State.js";
 import Toaster from "$components/Toaster.js";
 import Connect from "$pages/Connect.js";
 import Login from "$pages/Login.js";
+import Profiles from "$pages/Profiles.js";
 
 // The framework reads `event.key` before `event.keyCode`, so the names TVs report
 // have to be listed, not just their codes. Back: Tizen 10009, webOS 461. Media keys
@@ -42,15 +43,16 @@ export default function App(props: ParentProps) {
   useFocusManager(KEYS);
   // A desktop mouse, and LG's Magic Remote, which points: hovering focuses, a click is Enter.
   if (__TARGET__ === "browser" || __TARGET__ === "webos") useMouse();
-  // Whoever signs in next starts at Home, and not with what kept-alive pages held for the last viewer.
+  // Whoever watches next starts at Home, and not with what kept-alive pages or the player held for the last viewer.
   const navigate = useNavigate();
   createEffect(() => {
-    if (app.phase !== "auth") return;
+    if (app.phase !== "auth" && app.phase !== "profiles") return;
     clearKeepAliveRoute();
+    closePlayer();
     ui.backdrop = null;
     navigate("/", { replace: true });
   });
-  // Other devices of the viewer's can play on this one while it's signed in.
+  // Other devices of the viewer's can play on this one while they're the one watching.
   createEffect(() => {
     if (app.phase === "app") onCleanup(startRemote());
   });
@@ -64,6 +66,7 @@ export default function App(props: ParentProps) {
         <Switch>
           <Match when={app.phase === "app"}>{props.children}</Match>
           <Match when={app.phase === "connect"}><Connect /></Match>
+          <Match when={app.phase === "profiles"}><Profiles /></Match>
           <Match when={app.phase === "auth"}><Login /></Match>
           <Match when={app.phase === "setup"}>
             <State autofocus title="Almost there" message="This server hasn’t been set up yet. Open it in a browser to create the first account, then try again here." action={start} actionLabel="Try again" />

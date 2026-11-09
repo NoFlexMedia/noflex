@@ -2,12 +2,13 @@
 //
 // Signing in. A code to approve from a phone or computer comes first, because a
 // password on a remote is the worst thing this app asks of anyone. The password is
-// there for whoever has nothing else signed in.
+// there for whoever has nothing else signed in. It's also how someone is added to a
+// TV others are already signed in on, and Back then returns to who's watching.
 
 import { Column, Row } from "@solidtv/solid/primitives";
 import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { ElementNode, NodeProps } from "@solidtv/solid";
-import { app, changeServer, checkDeviceCode, requestDeviceCode, signIn } from "$lib/session.js";
+import { app, changeServer, checkDeviceCode, leaveSignIn, removeProfile, requestDeviceCode, signIn } from "$lib/session.js";
 import { serverOrigin } from "$lib/tokens.js";
 import { attempt } from "$lib/ui.js";
 import { color, radius, SCREEN, type, weight } from "../theme.js";
@@ -31,13 +32,28 @@ const QR_SIZE = 264;
 const approveUrl = () => `${serverOrigin() ?? ""}/account?tab=devices`;
 
 function Heading() {
+  const title = () => (app.rejoining ? "Sign in again" : app.profiles.length ? "Add someone" : "Sign in");
   return (
     <>
       <BrandMark x={LEFT} y={110} size={80} />
-      <text x={LEFT} y={214} fontSize={type.heading} fontWeight={weight.bold}>Sign in</text>
+      <text x={LEFT} y={214} fontSize={type.heading} fontWeight={weight.bold}>{title()}</text>
       <text x={LEFT} y={290} width={FIELD} contain="width" maxLines={1} fontSize={type.caption} color={color.text3}>{app.server?.name ? `${app.server.name} · ${serverOrigin() ?? ""}` : serverOrigin() ?? ""}</text>
-      <Show when={app.authError}>
-        <text x={LEFT} y={330} width={SCREEN.width - LEFT * 2} contain="width" maxLines={2} fontSize={type.caption} color={color.danger}>{app.authError}</text>
+      <Show when={app.authError || app.rejoining}>
+        <text x={LEFT} y={330} width={SCREEN.width - LEFT * 2} contain="width" maxLines={2} fontSize={type.caption} color={app.authError ? color.danger : color.text2}>{app.authError || `${app.rejoining!.name} was signed out here. Sign in as them to bring their profile back.`}</text>
+      </Show>
+    </>
+  );
+}
+
+/** The way out of signing in: back to who's watching when anyone is, and to another server when nobody's here yet. */
+function Leave() {
+  return (
+    <>
+      <Show when={app.profiles.length} fallback={<Button size="lg" icon="globe" label="Change server" onEnter={() => { changeServer(); return true; }} />}>
+        <Button size="lg" icon="user-switch" label="Who’s watching" onEnter={() => leaveSignIn()} />
+      </Show>
+      <Show when={app.rejoining}>
+        {(profile) => <Button size="lg" kind="danger" icon="user-minus" label={`Remove ${profile().name}`} onEnter={() => { removeProfile(profile().id); return true; }} />}
       </Show>
     </>
   );
@@ -87,7 +103,7 @@ function CodeSignIn(props: { onPassword: () => void }) {
       <Row autofocus x={LEFT} y={850} width={SCREEN.width - LEFT * 2} height={80} gap={20} scroll="none">
         <Button size="lg" kind="primary" icon="lock-key" label="Use a password instead" onEnter={() => { props.onPassword(); return true; }} />
         <Button size="lg" icon="arrow-clockwise" label="New code" onEnter={() => { round = 0; void issue(); return true; }} />
-        <Button size="lg" icon="globe" label="Change server" onEnter={() => { changeServer(); return true; }} />
+        <Leave />
       </Row>
       <Heading />
       <view x={LEFT} y={400} width={(CELL.width + CELL.gap) * CODE_LENGTH} height={CELL.height} display="flex" gap={CELL.gap} skipFocus>
@@ -148,7 +164,9 @@ function PasswordSignIn(props: { onCode: () => void }) {
         <Field label="Password" value={password()} secret active={active() === "password"} onEnter={() => edit("password")} />
         <Row width={FIELD} height={80} gap={20} scroll="none">
           <Button icon="television" label="Use a code instead" onEnter={() => { props.onCode(); return true; }} />
-          <Button icon="globe" label="Change server" onEnter={() => { changeServer(); return true; }} />
+          <Show when={app.profiles.length} fallback={<Button icon="globe" label="Change server" onEnter={() => { changeServer(); return true; }} />}>
+            <Button icon="user-switch" label="Who’s watching" onEnter={() => leaveSignIn()} />
+          </Show>
         </Row>
       </Column>
       <Keyboard
@@ -170,7 +188,7 @@ function PasswordSignIn(props: { onCode: () => void }) {
 export default function Login() {
   const [usePassword, setUsePassword] = createSignal(false);
   return (
-    <view width={SCREEN.width} height={SCREEN.height} forwardFocus={0}>
+    <view width={SCREEN.width} height={SCREEN.height} forwardFocus={0} onBack={() => leaveSignIn()}>
       <Show when={usePassword()} fallback={<CodeSignIn onPassword={() => setUsePassword(true)} />}>
         <PasswordSignIn onCode={() => setUsePassword(false)} />
       </Show>

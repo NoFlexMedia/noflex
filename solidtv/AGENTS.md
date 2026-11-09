@@ -62,7 +62,7 @@ Everything that differs goes through `host` (`lib/host.ts`): storage, capabiliti
 
 - Vite targets branch on `__TARGET__` inside `host.ts`, so another target's code is dropped.
 - NativeScript has no DOM: `hosts/nativescript/app/app.ts` calls `configureHost` before importing the app. Nothing in `src/` may touch `document` or `window` at import.
-- Sessions are stored durably here, unlike the web's tab-scoped ones: a TV is an appliance. Two browser tabs of the `browser` target would share a refresh token and trip reuse detection; the web's tab locks weren't ported.
+- Sessions are stored durably here, unlike the web's tab-scoped ones: a TV is an appliance. There's one per person signed in, under `noflex.accounts`. Two browser tabs of the `browser` target would share a refresh token and trip reuse detection; the web's tab locks weren't ported.
 
 ## Reactivity
 
@@ -95,7 +95,21 @@ Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has
 
 - A code comes first (`createDeviceCode`, then `pollDeviceCode` every 3 s, as Flutter does); the password is the fallback. Approval is Devices → Link a device on the web and in the apps.
 - `QrCode` draws the approval URL with the code in it (`&code=`), which the web's Devices tab fills in. It's rectangles, not a canvas: no host-specific drawing, and one quad per run of dark modules.
+- The same screen adds someone to a TV others are on. Back and "Who's watching" return to the tiles, and take the place of Change server.
 - A code lives 10 minutes and renews itself three times, then the screen stops asking the server. A TV's clock can be wrong, so an `expiresAt` that makes no sense counts as the whole 10 minutes.
+
+## Who's watching
+
+A TV is shared, so it keeps a session for everyone who has signed in on it (`lib/tokens.ts`) and `pages/Profiles.tsx` asks whose to use. The tiles are only ever people who signed in here: the server lists its users to nobody.
+
+- **One account launches straight in; two or more ask.** The last one watching is locked like anyone else who stepped away. "Switch profile" is in the nav for every count, as it's also how a second person gets added.
+- **A PIN is checked by the server, never here.** A profile with `hasPin` is entered through `unlockSession`, and left through `lockSession`, after which the tokens stored for it authenticate nothing. A refresh refused with `SESSION_LOCKED` goes back to the tiles and keeps the account.
+- **An account whose session ended keeps its tile**, marked "Signed out", so the row doesn't reshuffle. Choosing it opens sign-in, where signing in as that user replaces the dead session and Remove takes them off this TV. `rememberedProfiles` is what finds these, and brings names, pictures and PINs up to date.
+- **Each account has its own device id** (`Account.deviceId`, `thisDeviceId`). The server keeps a device per user and refuses an id that's someone else's, so one shared id left everyone after the first unregistered. It follows that the TV is in the Connect list of whoever is watching, and nobody else's.
+- **A tile's picture comes from `rememberedProfiles`**, signed for no session. `viewer.avatarUrl` is signed for the session and stops loading once it's locked.
+- **`resetCache` starts a new epoch**, and an answer from the last one is dropped rather than cached: a request still out when the viewer changes was the previous viewer's.
+- Leaving a profile clears kept pages, closes the player and returns to `/` (`App`), as signing out does.
+- Sign out removes only the active account. Change server forgets everyone, since sessions belong to the server that issued them.
 
 ## NoFlex Connect
 
@@ -119,7 +133,9 @@ The viewer's other devices play on this TV, and steer what it's playing. `lib/re
 - **A hidden kept page still reacts.** `useParams` goes blank once its route is gone (`Browse` holds its last value), and data arriving late still autofocuses. `Shell` moves focus off any hidden page, and tells one by `page.children`: it leaves that but keeps its `parent`.
 - **Don't hold focus in `<For>` over refetched data.** New objects rebuild every row, destroying the focused one with no event to catch. Use `<Index>` (`Account`'s marks).
 - A numbered `forwardFocus` counts children as they stand: dynamic ones move it. Put what takes focus first and use `0` (`Search`, `Login`).
-- Signing out clears kept pages and returns to `/`, so the next sign-in starts at Home with nothing of the last viewer's (`App`).
+- Signing out or switching profile clears kept pages and returns to `/`, so whoever watches next starts at Home with nothing of the last viewer's (`App`).
+- The nav's rows shrink before the list runs under the status dot (`itemSize`): every content type plus Switch profile is twelve of them.
+- `PinPad` takes number keys in the capture phase, as `Keyboard` takes letters, so a remote with digits types a PIN without the pad.
 
 ## Playback
 
@@ -177,7 +193,7 @@ Other notes:
 
 ## What's trimmed
 
-Administration stays in the web client and the apps; the status dot (`ServerStatus`) is what admins get here. Settings (`pages/Account.tsx`) has what a viewer changes from the couch, not their profile, sessions or API keys.
+Administration stays in the web client and the apps; the status dot (`ServerStatus`) is what admins get here. Settings (`pages/Account.tsx`) has what a viewer changes from the couch, not their profile, PIN, sessions or API keys.
 
 - **Watch together** and being **played on from another device** (NoFlex Connect): both need a WebSocket, which NativeScript's runtime lacks.
 - **Linked servers:** rails and search stay on the home server.

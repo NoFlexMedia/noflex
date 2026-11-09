@@ -78,16 +78,20 @@ export const SERVER_INFO = `query ServerInfo { serverInfo { name version backend
 
 export const BOOTSTRAP = `
 query Bootstrap {
-  viewer { id name username avatarUrl isAdmin }
+  viewer { id name username avatarUrl isAdmin hasPin }
   libraries { id name kind }
   contentCategories { category workCount }
   preferences { key value }
   serverInfo { name version backend isConfigured }
 }`;
 
+// Who a session is for comes back with it, so it can be kept under their name
+// before anything else is asked. Not their picture: its URL is signed for a caller.
+const SIGNED_IN = `token refreshToken user { id name hasPin }`;
+
 export const LOGIN = `
 mutation Login($username: String!, $password: String!, $client: String!, $device: String!) {
-  login(username: $username, password: $password, client: $client, device: $device) { token refreshToken }
+  login(username: $username, password: $password, client: $client, device: $device) { ${SIGNED_IN} }
 }`;
 
 export const LOGOUT = `mutation Logout { logout }`;
@@ -97,7 +101,13 @@ mutation CreateDeviceCode($client: String!, $device: String!) {
   createDeviceCode(client: $client, device: $device) { code expiresAt }
 }`;
 
-export const POLL_DEVICE_CODE = `mutation PollDeviceCode($code: String!) { pollDeviceCode(code: $code) { token refreshToken } }`;
+export const POLL_DEVICE_CODE = `mutation PollDeviceCode($code: String!) { pollDeviceCode(code: $code) { ${SIGNED_IN} } }`;
+
+export const REMEMBERED_PROFILES = `query RememberedProfiles($tokens: [String!]!) { rememberedProfiles(refreshTokens: $tokens) { userId name hasPin avatarUrl } }`;
+
+export const LOCK_SESSION = `mutation LockSession($token: String!) { lockSession(refreshToken: $token) }`;
+
+export const UNLOCK_SESSION = `mutation UnlockSession($token: String!, $pin: String!) { unlockSession(refreshToken: $token, pin: $pin) { ${SIGNED_IN} } }`;
 
 export const SET_PREFERENCE = `mutation SetPreference($key: String!, $value: JSON!) { setPreference(key: $key, value: $value) { key } }`;
 

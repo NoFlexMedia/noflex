@@ -836,6 +836,86 @@ async fn device_code_link_flow() {
     assert_eq!(resp.data.into_json().unwrap()["authorizeDeviceCode"], false);
 }
 
+/// A child's TV has nobody signed in to approve it from, so an administrator
+/// approves its code as them. Nobody else can sign a device in as another user.
+#[tokio::test]
+async fn an_administrator_approves_a_code_for_someone_else() {
+    let (schema, jwt, store) = authed_schema().await;
+    let (_admin_id, admin) = run_setup_wizard(&schema).await;
+    let create =
+        r#"mutation { createUser(username: "kid", password: "hunter22", role: USER) { id } }"#;
+    let resp = schema.execute(authed_request(create, admin)).await;
+    assert!(resp.errors.is_empty(), "createUser: {:?}", resp.errors);
+    let kid_id = resp.data.into_json().unwrap()["createUser"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let kid = Principal {
+        user_id: UserId::from_uuid(kid_id.parse().expect("uuid")),
+        is_admin: false,
+        session_id: None,
+    };
+
+    let new_code = || async {
+        let resp = schema
+            .execute(r#"mutation { createDeviceCode(client: "noflex-tv", device: "Playroom TV") { code } }"#)
+            .await;
+        resp.data.into_json().unwrap()["createDeviceCode"]["code"]
+            .as_str()
+            .expect("code")
+            .to_string()
+    };
+    let approve_for = |code: &str, user: &str| {
+        format!(r#"mutation {{ authorizeDeviceCode(code: "{code}", userId: "{user}") }}"#)
+    };
+
+    let code = new_code().await;
+    let resp = schema
+        .execute(authed_request(
+            approve_for(&code, &admin.user_id.to_string()),
+            kid,
+        ))
+        .await;
+    assert_eq!(resp.errors[0].message, "administrator required");
+
+    let resp = schema
+        .execute(authed_request(approve_for(&code, &kid_id), admin))
+        .await;
+    assert!(resp.errors.is_empty(), "approve: {:?}", resp.errors);
+    let resp = schema
+        .execute(format!(
+            r#"mutation {{ pollDeviceCode(code: "{code}") {{ token }} }}"#
+        ))
+        .await;
+    let data = resp.data.into_json().unwrap();
+    let claims = verify_jwt(
+        &jwt,
+        data["pollDeviceCode"]["token"].as_str().expect("token"),
+    )
+    .expect("token verifies");
+    assert_eq!(
+        claims.sub, kid_id,
+        "the device is the child's, not the admin's"
+    );
+
+    let activity = store
+        .list_activity(
+            &[noflex_storage::domain::ActivityKind::DeviceApprovedFor],
+            None,
+            10,
+            None,
+        )
+        .await
+        .expect("activity");
+    assert_eq!(activity.items.len(), 1);
+    let entry = &activity.items[0];
+    assert_eq!(
+        entry.actor.as_deref(),
+        Some(admin.user_id.to_string().as_str())
+    );
+    assert_eq!(entry.subject.as_deref(), Some(kid_id.as_str()));
+}
+
 #[tokio::test]
 async fn api_key_create_list_revoke() {
     let (schema, _jwt, _store) = authed_schema().await;

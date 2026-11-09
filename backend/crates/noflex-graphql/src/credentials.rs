@@ -10,10 +10,10 @@
 use std::sync::Arc;
 
 use async_graphql::{Context, Object, SimpleObject};
-use noflex_core::{ApiKeyId, DeviceCodeId};
+use noflex_core::{ApiKeyId, DeviceCodeId, UserId};
 use noflex_storage::{
     Storage, StorageError,
-    domain::{ApiKey, DeviceCode},
+    domain::{ActivityKind, ApiKey, DeviceCode},
 };
 use time::OffsetDateTime;
 
@@ -189,9 +189,11 @@ impl CredentialsMutation {
         ))
     }
 
-    /// Attach the calling user to a pending code. `false` for unknown,
-    /// expired, or already-authorized codes — deliberately
-    /// indistinguishable.
+    /// Approve a pending code, signing the device showing it in as the
+    /// caller. An administrator can pass `userId` to sign it in as someone
+    /// else instead, for a child with no device of their own to approve
+    /// from; that goes in the activity log. `false` for unknown, expired, or
+    /// already-authorized codes — deliberately indistinguishable.
     // Credential checks cost most of the per-operation complexity budget,
     // so aliasing can't batch hundreds of guesses into one request.
     #[graphql(complexity = "crate::CREDENTIAL_COMPLEXITY")]
@@ -199,12 +201,52 @@ impl CredentialsMutation {
         &self,
         ctx: &Context<'_>,
         code: String,
+        user_id: Option<UserId>,
     ) -> async_graphql::Result<bool> {
         let principal = authed_principal(ctx)?;
-        storage(ctx)?
-            .authorize_device_code(&code, principal.user_id)
+        let storage = storage(ctx)?;
+        let Some(other) = user_id.filter(|id| *id != principal.user_id) else {
+            return storage
+                .authorize_device_code(&code, principal.user_id)
+                .await
+                .map_err(gql_err);
+        };
+        crate::access::require_admin(ctx)?;
+        if storage.get_user(other).await.map_err(gql_err)?.is_none() {
+            return Err(async_graphql::Error::new("user not found"));
+        }
+        let pending = storage.device_code_by_code(&code).await.map_err(gql_err)?;
+        if !storage
+            .authorize_device_code(&code, other)
             .await
-            .map_err(gql_err)
+            .map_err(gql_err)?
+        {
+            return Ok(false);
+        }
+        let detail = serde_json::json!({
+            "client": pending.as_ref().and_then(|row| row.client.as_deref()),
+            "device": pending.as_ref().and_then(|row| row.device.as_deref()),
+        })
+        .to_string();
+        // The approval stands either way; an unrecorded one is logged.
+        if let Err(error) = storage
+            .append_activity(
+                ActivityKind::DeviceApprovedFor,
+                Some(&principal.user_id.to_string()),
+                Some(&other.to_string()),
+                Some(&detail),
+                OffsetDateTime::now_utc(),
+            )
+            .await
+        {
+            tracing::error!(
+                admin = %principal.user_id,
+                user = %other,
+                %error,
+                "recording a device approved for someone else failed"
+            );
+        }
+        Ok(true)
     }
 
     /// The device side of the link flow, unauthenticated. Null while

@@ -109,6 +109,7 @@ Don't break these without an architecture discussion in the PR description.
 - **A PIN opens a session; it never makes one.** `unlockSession` takes the refresh token a device already holds as well as the PIN, so four digits can't be guessed from anywhere else, and the fifth wrong one revokes the session. `User.hasPin` is all that's readable; the hash is `user_pin_hash`'s.
 - **A locked session is locked on the server.** `lockSession` stamps `sessions.locked_at`, and `principal_from_jwt_checked`, `refreshSession` and the byte routes all refuse it, so the tokens a shared device keeps for whoever stepped away are worth nothing without the PIN. Removing a PIN opens what it locked.
 - **`rememberedProfiles` is the one read a refresh token authenticates**, for a sign-in screen's tiles. It rotates nothing, and signs each picture for no session so a locked one still shows.
+- **A device code is approved as the caller**, or by an administrator as anyone (`authorizeDeviceCode(userId:)`), which goes in the activity log as `auth.device_approved_for`.
 - **`Device.client` and `Session.client` are free text alongside the name**, as a model or hostname often doesn't say what something is. Clients read both through `lib/ts/device.ts`.
 
 ### Connect

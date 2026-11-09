@@ -1833,6 +1833,10 @@ pub enum ActivityKind {
     /// A rotated-away refresh token was presented; its session was
     /// revoked. `actor` is the session's user, `subject` the session.
     RefreshTokenReuse,
+    /// An administrator approved a device code as someone else, signing a
+    /// device in for them. `actor` is the administrator, `subject` the
+    /// user the device now belongs to.
+    DeviceApprovedFor,
     Custom,
 }
 
@@ -1854,6 +1858,7 @@ impl ActivityKind {
             ActivityKind::LibraryUpdated => "library.updated",
             ActivityKind::LibraryDeleted => "library.deleted",
             ActivityKind::RefreshTokenReuse => "auth.refresh_token_reuse",
+            ActivityKind::DeviceApprovedFor => "auth.device_approved_for",
             ActivityKind::Custom => "custom",
         }
     }
@@ -1883,6 +1888,7 @@ impl std::str::FromStr for ActivityKind {
             "LibraryUpdated" | "library.updated" => ActivityKind::LibraryUpdated,
             "LibraryDeleted" | "library.deleted" => ActivityKind::LibraryDeleted,
             "auth.refresh_token_reuse" => ActivityKind::RefreshTokenReuse,
+            "auth.device_approved_for" => ActivityKind::DeviceApprovedFor,
             _ => ActivityKind::Custom,
         })
     }

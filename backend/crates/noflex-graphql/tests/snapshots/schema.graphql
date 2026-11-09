@@ -96,6 +96,12 @@ enum ActivityKind {
 	revoked. `actor` is the session's user, `subject` the session.
 	"""
 	REFRESH_TOKEN_REUSE
+	"""
+	An administrator approved a device code as someone else, signing a
+	device in for them. `actor` is the administrator, `subject` the
+	user the device now belongs to.
+	"""
+	DEVICE_APPROVED_FOR
 	CUSTOM
 }
 
@@ -1844,11 +1850,13 @@ type Mutation {
 	"""
 	createDeviceCode(client: String, device: String): DeviceCodeInfo!
 	"""
-	Attach the calling user to a pending code. `false` for unknown,
-	expired, or already-authorized codes — deliberately
-	indistinguishable.
+	Approve a pending code, signing the device showing it in as the
+	caller. An administrator can pass `userId` to sign it in as someone
+	else instead, for a child with no device of their own to approve
+	from; that goes in the activity log. `false` for unknown, expired, or
+	already-authorized codes — deliberately indistinguishable.
 	"""
-	authorizeDeviceCode(code: String!): Boolean!
+	authorizeDeviceCode(code: String!, userId: ID): Boolean!
 	"""
 	The device side of the link flow, unauthenticated. Null while
 	the code is pending, unknown, or expired. Once authorized, the

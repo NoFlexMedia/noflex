@@ -97,6 +97,7 @@ pub struct Query(
     smart_marks::SmartMarksQuery,
     multi_server::MultiServerQuery,
     users::UsersQuery,
+    auth::AuthQuery,
     preferences::PreferencesQuery,
     collections::CollectionsQuery,
     credentials::CredentialsQuery,
@@ -907,6 +908,7 @@ impl CoreMutation {
             role: noflex_core::UserRole::Admin,
             created_at: OffsetDateTime::now_utc(),
             avatar_updated_at: None,
+            has_pin: false,
         };
         let created = storage
             .create_initial_admin(&user)

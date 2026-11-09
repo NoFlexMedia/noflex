@@ -54,6 +54,7 @@ async fn seed_store() -> (
         role: noflex_core::UserRole::User,
         created_at: now,
         avatar_updated_at: None,
+        has_pin: false,
     };
     store.upsert_user(&user).await.expect("user");
     store
@@ -405,6 +406,7 @@ async fn session_bound_media_token_dies_with_its_session() {
             last_seen_at: now,
             expires_at: now + time::Duration::days(1),
             refresh_token_hash: None,
+            locked_at: None,
         })
         .await
         .expect("session");

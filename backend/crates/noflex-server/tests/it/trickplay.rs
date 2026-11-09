@@ -40,6 +40,7 @@ async fn seed_user(storage: &dyn Storage) -> UserId {
         role: UserRole::User,
         created_at: OffsetDateTime::now_utc(),
         avatar_updated_at: None,
+        has_pin: false,
     };
     storage.upsert_user(&user).await.expect("user");
     user.id

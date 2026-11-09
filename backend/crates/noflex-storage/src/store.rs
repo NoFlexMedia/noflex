@@ -255,6 +255,13 @@ pub trait Storage: Send + Sync + 'static {
     async fn link_external_identity(&self, identity: &ExternalIdentity) -> StorageResult<()>;
     async fn unlink_external_identity(&self, user: UserId, plugin_id: &str) -> StorageResult<bool>;
 
+    /// Set the hash of a user's PIN, or clear it with `None`. Clearing also
+    /// opens every locked session of theirs, as nothing else could again.
+    /// An unknown user is a no-op.
+    async fn set_user_pin(&self, user: UserId, pin_hash: Option<&str>) -> StorageResult<()>;
+    /// The hash [`Self::set_user_pin`] stored; `None` without a PIN or a user.
+    async fn user_pin_hash(&self, user: UserId) -> StorageResult<Option<String>>;
+
     async fn list_user_preferences(&self, user: UserId) -> StorageResult<Vec<UserPreference>>;
     async fn set_user_preference(&self, preference: &UserPreference) -> StorageResult<()>;
     async fn delete_user_preference(&self, user: UserId, key: &str) -> StorageResult<bool>;
@@ -287,6 +294,17 @@ pub trait Storage: Send + Sync + 'static {
         new_expires_at: OffsetDateTime,
         now: OffsetDateTime,
     ) -> StorageResult<bool>;
+
+    /// Leave a session waiting for its user's PIN, stamping
+    /// [`Session::locked_at`] with `at`. Returns `false`, writing nothing,
+    /// when the session is gone or already locked.
+    async fn lock_session(&self, id: SessionId, at: OffsetDateTime) -> StorageResult<bool>;
+    /// Open a locked session and forget its wrong PINs. A no-op for one
+    /// that's open or gone.
+    async fn unlock_session(&self, id: SessionId) -> StorageResult<()>;
+    /// Count a wrong PIN against a session, returning how many it has taken
+    /// since it last opened; `0` when the session is gone.
+    async fn record_pin_failure(&self, id: SessionId) -> StorageResult<u32>;
 
     async fn grant_library_access(&self, user: UserId, library: LibraryId) -> StorageResult<()>;
     async fn revoke_library_access(&self, user: UserId, library: LibraryId) -> StorageResult<()>;

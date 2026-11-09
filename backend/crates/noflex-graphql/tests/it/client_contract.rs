@@ -658,6 +658,7 @@ async fn browse_filters_cannot_read_another_users_state() {
         role: noflex_core::UserRole::User,
         created_at: OffsetDateTime::now_utc(),
         avatar_updated_at: None,
+        has_pin: false,
     };
     store.upsert_user(&viewer).await.expect("viewer");
     let library = seed_library();

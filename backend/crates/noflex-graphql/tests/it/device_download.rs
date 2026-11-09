@@ -81,6 +81,7 @@ fn user(name: &str, now: OffsetDateTime) -> User {
         role: noflex_core::UserRole::User,
         created_at: now,
         avatar_updated_at: None,
+        has_pin: false,
     }
 }
 

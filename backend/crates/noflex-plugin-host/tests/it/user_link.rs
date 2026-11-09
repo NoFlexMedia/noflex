@@ -138,6 +138,7 @@ async fn read_for_user_paths() {
             role: noflex_core::UserRole::User,
             created_at: time::OffsetDateTime::now_utc(),
             avatar_updated_at: None,
+            has_pin: false,
         })
         .await
         .expect("seed user");
@@ -156,6 +157,7 @@ async fn read_for_user_paths() {
             role: noflex_core::UserRole::User,
             created_at: time::OffsetDateTime::now_utc(),
             avatar_updated_at: None,
+            has_pin: false,
         })
         .await
         .expect("seed foreign user");
@@ -228,6 +230,7 @@ async fn seeded_store(dir: &std::path::Path, users: &[UserId]) -> Arc<dyn Storag
                 role: noflex_core::UserRole::User,
                 created_at: time::OffsetDateTime::now_utc(),
                 avatar_updated_at: None,
+                has_pin: false,
             })
             .await
             .expect("seed user");

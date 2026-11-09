@@ -50,6 +50,7 @@ fn user(name: &str, is_admin: bool) -> User {
         },
         created_at: OffsetDateTime::now_utc(),
         avatar_updated_at: None,
+        has_pin: false,
     }
 }
 
@@ -148,6 +149,7 @@ async fn stale_admin_claim_is_denied_after_demotion() {
         last_seen_at: now,
         expires_at: now + time::Duration::days(1),
         refresh_token_hash: None,
+        locked_at: None,
     };
     storage.create_session(&session).await.expect("session");
     let token = noflex_auth::issue_jwt(&jwt, former_admin.id, true, session.id).expect("token");

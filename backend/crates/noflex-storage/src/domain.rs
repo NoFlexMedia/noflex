@@ -345,6 +345,9 @@ pub struct User {
     /// [`Storage::set_user_avatar`](crate::Storage::set_user_avatar).
     #[graphql(skip)]
     pub avatar_updated_at: Option<OffsetDateTime>,
+    /// Whether a PIN opens their profile on a device they share. Setting or
+    /// removing the PIN changes it; saving the user never does.
+    pub has_pin: bool,
 }
 
 impl User {
@@ -357,20 +360,36 @@ impl User {
         &self,
         ctx: &async_graphql::Context<'_>,
     ) -> async_graphql::Result<Option<String>> {
+        self.avatar_url_for(
+            ctx.data_opt::<std::sync::Arc<dyn MediaUrlSigner>>()
+                .map(std::sync::Arc::as_ref),
+            crate::access::request_user(ctx)?.user_id,
+            crate::access::caller_session(ctx),
+        )
+        .map_err(async_graphql::Error::new)
+    }
+
+    /// Their picture's URL as `viewer` may fetch it, relative to this server;
+    /// `None` without a picture. The token dies with `session` when one is
+    /// given, and there's none at all without a `signer`.
+    ///
+    /// # Errors
+    ///
+    /// The signer's, when it can't mint a token.
+    pub fn avatar_url_for(
+        &self,
+        signer: Option<&dyn MediaUrlSigner>,
+        viewer: UserId,
+        session: Option<SessionId>,
+    ) -> Result<Option<String>, String> {
         let Some(at) = self.avatar_updated_at else {
             return Ok(None);
         };
         let path = format!("/avatars/{}?v={}", self.id, at.unix_timestamp());
-        let Some(signer) = ctx.data_opt::<std::sync::Arc<dyn MediaUrlSigner>>() else {
+        let Some(signer) = signer else {
             return Ok(Some(path));
         };
-        let token = signer
-            .sign_avatar_token(
-                crate::access::request_user(ctx)?.user_id,
-                crate::access::caller_session(ctx),
-                self.id,
-            )
-            .map_err(async_graphql::Error::new)?;
+        let token = signer.sign_avatar_token(viewer, session, self.id)?;
         Ok(Some(format!("{path}&token={}", percent_encode(&token))))
     }
 
@@ -1661,6 +1680,11 @@ pub struct Session {
     /// leaves the server — skipped on the GQL surface.
     #[graphql(skip)]
     pub refresh_token_hash: Option<String>,
+    /// When the session was left waiting for its user's PIN; unset while it's
+    /// open. A locked session authenticates nothing and can't refresh until the
+    /// PIN opens it. Locking and unlocking change it; saving the session never
+    /// does.
+    pub locked_at: Option<OffsetDateTime>,
 }
 
 /// What a refresh-token hash resolves to. See

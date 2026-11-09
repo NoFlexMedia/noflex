@@ -157,6 +157,7 @@ async fn seed_user(storage: &Arc<dyn Storage>, name: &str) -> UserId {
             role: noflex_core::UserRole::User,
             created_at: OffsetDateTime::now_utc(),
             avatar_updated_at: None,
+            has_pin: false,
         })
         .await
         .expect("seed user");

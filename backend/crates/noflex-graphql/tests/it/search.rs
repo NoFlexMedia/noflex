@@ -65,6 +65,7 @@ async fn seeded() -> Seeded {
         role: noflex_core::UserRole::Admin,
         created_at: OffsetDateTime::now_utc(),
         avatar_updated_at: None,
+        has_pin: false,
     };
     store.upsert_user(&user).await.expect("user");
 
@@ -203,6 +204,7 @@ async fn forbidden_search_hydration_stays_hidden() {
         role: noflex_core::UserRole::User,
         created_at: OffsetDateTime::now_utc(),
         avatar_updated_at: None,
+        has_pin: false,
     };
     store.upsert_user(&user).await.expect("user");
     let allowed = Library {

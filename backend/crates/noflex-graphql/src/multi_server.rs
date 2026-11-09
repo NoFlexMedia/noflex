@@ -343,6 +343,7 @@ impl MultiServerMutation {
             role: UserRole::User,
             created_at: now,
             avatar_updated_at: None,
+            has_pin: false,
         };
         if storage.upsert_user(&user).await.is_err() {
             // Lost a race for the name; the use wasn't really spent.

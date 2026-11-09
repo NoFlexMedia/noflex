@@ -26,7 +26,7 @@ const UPSERT: &str = "INSERT INTO users (id, username, display_name, password_ha
         role = excluded.role";
 
 const SELECT: &str = "SELECT u.id, u.username, u.display_name, u.password_hash, u.is_admin, \
-    u.role, u.created_at, a.updated_at \
+    u.role, u.created_at, a.updated_at, u.pin_hash IS NOT NULL \
     FROM users u LEFT JOIN user_avatars a ON a.user_id = u.id";
 
 const DELETE: &str = "DELETE FROM users WHERE id = ?1";
@@ -172,6 +172,51 @@ pub(crate) async fn delete_avatar(conn: &Connection, user: UserId) -> StorageRes
     Ok(removed > 0)
 }
 
+/// Must run inside a write transaction: clearing a PIN and opening the
+/// sessions it locked land together.
+pub(crate) async fn set_pin(
+    conn: &Connection,
+    user: UserId,
+    pin_hash: Option<&str>,
+) -> StorageResult<()> {
+    let id = uuid_to_blob(user.into_uuid());
+    conn.execute(
+        "UPDATE users SET pin_hash = ?1 WHERE id = ?2",
+        vec![
+            pin_hash
+                .map(|hash| Value::Text(hash.to_string()))
+                .unwrap_or(Value::Null),
+            Value::Blob(id.clone()),
+        ],
+    )
+    .await
+    .map_err(map_turso)?;
+    if pin_hash.is_none() {
+        conn.execute(
+            "UPDATE sessions SET locked_at = NULL, pin_failures = 0 \
+             WHERE user_id = ?1 AND locked_at IS NOT NULL",
+            vec![Value::Blob(id)],
+        )
+        .await
+        .map_err(map_turso)?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn pin_hash(conn: &Connection, user: UserId) -> StorageResult<Option<String>> {
+    let mut rows = conn
+        .query(
+            "SELECT pin_hash FROM users WHERE id = ?1",
+            vec![Value::Blob(uuid_to_blob(user.into_uuid()))],
+        )
+        .await
+        .map_err(map_turso)?;
+    match rows.next().await.map_err(map_turso)? {
+        Some(row) => col_text_opt(&row.get_value(0).map_err(map_turso)?),
+        None => Ok(None),
+    }
+}
+
 fn row_to_user(row: &turso::Row) -> StorageResult<User> {
     let id = row.get_value(0).map_err(map_turso)?;
     let username = row.get_value(1).map_err(map_turso)?;
@@ -181,6 +226,7 @@ fn row_to_user(row: &turso::Row) -> StorageResult<User> {
     let role = row.get_value(5).map_err(map_turso)?;
     let created_at = row.get_value(6).map_err(map_turso)?;
     let avatar_updated_at = row.get_value(7).map_err(map_turso)?;
+    let has_pin = row.get_value(8).map_err(map_turso)?;
     let is_admin = col_int(&is_admin)? != 0;
     let role = text_to_role(col_text(&role)?).unwrap_or(if is_admin {
         UserRole::Admin
@@ -198,6 +244,7 @@ fn row_to_user(row: &turso::Row) -> StorageResult<User> {
         avatar_updated_at: col_text_opt(&avatar_updated_at)?
             .map(|at| text_to_dt(&at))
             .transpose()?,
+        has_pin: col_int(&has_pin)? != 0,
     })
 }
 

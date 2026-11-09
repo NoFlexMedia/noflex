@@ -40,32 +40,40 @@ const RETIRE_REFRESH: &str = "INSERT INTO retired_refresh_tokens \
     (token_hash, session_id, replaced_by, retired_at) VALUES (?1, ?2, ?3, ?4)";
 
 const GET_BY_ID: &str = "SELECT id, user_id, client, device, device_id, app_version, \
-    remote_addr, created_at, last_seen_at, expires_at, refresh_token_hash \
+    remote_addr, created_at, last_seen_at, expires_at, refresh_token_hash, locked_at \
     FROM sessions WHERE id = ?1";
 
 // One statement, so current and retired matches come from a single
-// snapshot. Columns 0..=10 are the session; 11 is NULL for a current
-// match, else the retirement time; 12 flags the immediately-previous token.
+// snapshot. Columns 0..=11 are the session; 12 is NULL for a current
+// match, else the retirement time; 13 flags the immediately-previous token.
 const GET_BY_REFRESH_TOKEN: &str = "\
     SELECT id, user_id, client, device, device_id, app_version, remote_addr, created_at, \
-        last_seen_at, expires_at, refresh_token_hash, NULL, 0 \
+        last_seen_at, expires_at, refresh_token_hash, locked_at, NULL, 0 \
     FROM sessions WHERE refresh_token_hash = ?1 \
     UNION ALL \
     SELECT s.id, s.user_id, s.client, s.device, s.device_id, s.app_version, s.remote_addr, \
-        s.created_at, s.last_seen_at, s.expires_at, s.refresh_token_hash, r.retired_at, \
+        s.created_at, s.last_seen_at, s.expires_at, s.refresh_token_hash, s.locked_at, \
+        r.retired_at, \
         s.refresh_token_hash IS NOT NULL AND r.replaced_by = s.refresh_token_hash \
     FROM retired_refresh_tokens r JOIN sessions s ON s.id = r.session_id \
     WHERE r.token_hash = ?1";
 
 const LIST_FOR_USER: &str = "SELECT id, user_id, client, device, device_id, app_version, \
-    remote_addr, created_at, last_seen_at, expires_at, refresh_token_hash \
+    remote_addr, created_at, last_seen_at, expires_at, refresh_token_hash, locked_at \
     FROM sessions WHERE user_id = ?1 \
     ORDER BY last_seen_at DESC";
+
+const LOCK: &str = "UPDATE sessions SET locked_at = ?1 WHERE id = ?2 AND locked_at IS NULL";
+
+const UNLOCK: &str = "UPDATE sessions SET locked_at = NULL, pin_failures = 0 WHERE id = ?1";
+
+const RECORD_PIN_FAILURE: &str =
+    "UPDATE sessions SET pin_failures = pin_failures + 1 WHERE id = ?1 RETURNING pin_failures";
 
 const REVOKE: &str = "DELETE FROM sessions WHERE id = ?1";
 
 const LIST_ALL: &str = "SELECT id, user_id, client, device, device_id, app_version, \
-    remote_addr, created_at, last_seen_at, expires_at, refresh_token_hash \
+    remote_addr, created_at, last_seen_at, expires_at, refresh_token_hash, locked_at \
     FROM sessions ORDER BY last_seen_at DESC";
 
 const COUNT_USER: &str = "SELECT COUNT(*) FROM sessions WHERE user_id = ?1";
@@ -152,11 +160,11 @@ pub(crate) async fn get_by_refresh_token(
         return Ok(RefreshTokenLookup::Unknown);
     };
     let session = row_to_session(&row)?;
-    let retired_at = row.get_value(11).map_err(map_turso)?;
+    let retired_at = row.get_value(12).map_err(map_turso)?;
     let Some(retired_at) = col_text_opt(&retired_at)? else {
         return Ok(RefreshTokenLookup::Current(session));
     };
-    let latest = row.get_value(12).map_err(map_turso)?;
+    let latest = row.get_value(13).map_err(map_turso)?;
     Ok(RefreshTokenLookup::Retired(RetiredRefreshToken {
         session,
         retired_at: text_to_dt(&retired_at)?,
@@ -231,6 +239,45 @@ pub(crate) async fn revoke(conn: &Connection, id: SessionId) -> StorageResult<()
     Ok(())
 }
 
+pub(crate) async fn lock(
+    conn: &Connection,
+    id: SessionId,
+    at: time::OffsetDateTime,
+) -> StorageResult<bool> {
+    let locked = conn
+        .execute(
+            LOCK,
+            vec![
+                Value::Text(dt_to_text(at)?),
+                Value::Blob(uuid_to_blob(id.into_uuid())),
+            ],
+        )
+        .await
+        .map_err(map_turso)?;
+    Ok(locked == 1)
+}
+
+pub(crate) async fn unlock(conn: &Connection, id: SessionId) -> StorageResult<()> {
+    conn.execute(UNLOCK, vec![Value::Blob(uuid_to_blob(id.into_uuid()))])
+        .await
+        .map_err(map_turso)?;
+    Ok(())
+}
+
+pub(crate) async fn record_pin_failure(conn: &Connection, id: SessionId) -> StorageResult<u32> {
+    let mut rows = conn
+        .query(
+            RECORD_PIN_FAILURE,
+            vec![Value::Blob(uuid_to_blob(id.into_uuid()))],
+        )
+        .await
+        .map_err(map_turso)?;
+    match rows.next().await.map_err(map_turso)? {
+        Some(row) => Ok(col_int(&row.get_value(0).map_err(map_turso)?)? as u32),
+        None => Ok(0),
+    }
+}
+
 pub(crate) async fn list_all(conn: &Connection) -> StorageResult<Vec<Session>> {
     let mut rows = conn.query(LIST_ALL, ()).await.map_err(map_turso)?;
     let mut out = Vec::new();
@@ -294,6 +341,7 @@ fn row_to_session(row: &turso::Row) -> StorageResult<Session> {
     let last_seen_at = row.get_value(8).map_err(map_turso)?;
     let expires_at = row.get_value(9).map_err(map_turso)?;
     let refresh_token_hash = row.get_value(10).map_err(map_turso)?;
+    let locked_at = row.get_value(11).map_err(map_turso)?;
     Ok(Session {
         id: SessionId::from_uuid(blob_to_uuid(col_blob(&id)?)?),
         user_id: UserId::from_uuid(blob_to_uuid(col_blob(&user_id)?)?),
@@ -306,5 +354,8 @@ fn row_to_session(row: &turso::Row) -> StorageResult<Session> {
         last_seen_at: text_to_dt(col_text(&last_seen_at)?)?,
         expires_at: text_to_dt(col_text(&expires_at)?)?,
         refresh_token_hash: col_text_opt(&refresh_token_hash)?,
+        locked_at: col_text_opt(&locked_at)?
+            .map(|at| text_to_dt(&at))
+            .transpose()?,
     })
 }

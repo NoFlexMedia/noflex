@@ -29,6 +29,7 @@ async fn seed_with_real_file(
         role: noflex_core::UserRole::User,
         created_at: now,
         avatar_updated_at: None,
+        has_pin: false,
     };
     store.upsert_user(&user).await.expect("upsert user");
 
@@ -297,6 +298,7 @@ async fn worker_marks_missing_media_file_as_failed() {
         role: noflex_core::UserRole::User,
         created_at: now,
         avatar_updated_at: None,
+        has_pin: false,
     };
     store.upsert_user(&user).await.expect("user");
 
@@ -492,6 +494,7 @@ async fn a_second_export_of_the_same_edition_shares_the_first_ones_file() {
         role: noflex_core::UserRole::User,
         created_at: OffsetDateTime::now_utc(),
         avatar_updated_at: None,
+        has_pin: false,
     };
     store.upsert_user(&second).await.expect("second user");
     let job = noflex_storage::domain::ExportJob {

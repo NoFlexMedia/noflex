@@ -296,6 +296,7 @@ async fn refresh_session_rejects_expired_token() {
         last_seen_at: now - time::Duration::days(31),
         expires_at: now - time::Duration::days(1),
         refresh_token_hash: Some(noflex_auth::hash_refresh_token("stale-token")),
+        locked_at: None,
     };
     store
         .create_session(&session)
@@ -526,6 +527,7 @@ async fn refresh_fails_after_the_absolute_session_lifetime() {
         last_seen_at: now,
         expires_at: now + time::Duration::days(1),
         refresh_token_hash: Some(noflex_auth::hash_refresh_token("old-session")),
+        locked_at: None,
     };
     store.create_session(&session).await.expect("create");
 
@@ -566,6 +568,7 @@ async fn rotation_never_extends_past_the_absolute_lifetime() {
         last_seen_at: now,
         expires_at: now + time::Duration::days(1),
         refresh_token_hash: Some(noflex_auth::hash_refresh_token("aging-session")),
+        locked_at: None,
     };
     store.create_session(&session).await.expect("create");
 

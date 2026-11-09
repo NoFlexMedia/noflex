@@ -9,12 +9,18 @@
 // Refresh tokens rotate on every use and the session remembers every
 // hash it rotated away from, so a replayed old token revokes the whole
 // session (RFC 9700 §4.14.2 reuse detection).
+//
+// A device several people share keeps a session each. `lockSession` leaves
+// one waiting for its user's PIN when they step away, and `unlockSession`
+// is the only way back in. The PIN never signs anyone in on its own: it
+// opens a session whose refresh token the device already holds, so a short
+// one can't be guessed from anywhere else.
 
 use std::sync::Arc;
 
 use async_graphql::{Context, ErrorExtensions as _, Object, SimpleObject};
 use noflex_auth::Principal;
-use noflex_core::SessionId;
+use noflex_core::{SessionId, UserId};
 use noflex_storage::{
     Storage,
     canonical::canonical_timestamp,
@@ -43,6 +49,16 @@ const INVALID_REFRESH: &str = "invalid refresh token";
 const REFRESH_INVALID: &str = "REFRESH_TOKEN_INVALID";
 const REFRESH_SUPERSEDED: &str = "REFRESH_TOKEN_SUPERSEDED";
 const REFRESH_REUSED: &str = "REFRESH_TOKEN_REUSED";
+/// The session is waiting for its user's PIN; `unlockSession` opens it.
+const SESSION_LOCKED: &str = "SESSION_LOCKED";
+const PIN_INCORRECT: &str = "PIN_INCORRECT";
+const PIN_ATTEMPTS_EXHAUSTED: &str = "PIN_ATTEMPTS_EXHAUSTED";
+
+/// Wrong PINs a session takes before it's revoked. Few, because a PIN is
+/// short: past them, whoever is trying signs in properly.
+const PIN_ATTEMPTS: u32 = 5;
+/// Tiles a sign-in screen can ask about at once.
+const MAX_REMEMBERED_PROFILES: usize = 16;
 
 /// How long the immediately-previous refresh token is refused without
 /// revoking its session. One client firing two refreshes with the same
@@ -167,6 +183,7 @@ pub(crate) async fn mint_session(
         last_seen_at: now,
         expires_at: jwt.session_expiry(now, now),
         refresh_token_hash: Some(noflex_auth::hash_refresh_token(&refresh_token)),
+        locked_at: None,
     };
     storage
         .create_session(&session)
@@ -175,6 +192,234 @@ pub(crate) async fn mint_session(
     let access_token = noflex_auth::issue_jwt(jwt, user.id, user.is_admin, session.id)
         .map_err(|e| async_graphql::Error::new(format!("jwt: {e}")))?;
     Ok((access_token, refresh_token))
+}
+
+fn storage<'a>(ctx: &'a Context<'a>) -> async_graphql::Result<&'a Arc<dyn Storage>> {
+    ctx.data::<Arc<dyn Storage>>()
+        .map_err(|_| async_graphql::Error::new("storage not configured"))
+}
+
+/// A refresh token that named a live session: its current one, unexpired,
+/// with a user behind it. What `refreshSession` and `unlockSession` share.
+struct PresentedRefreshToken {
+    session: noflex_storage::domain::Session,
+    user: User,
+    hash: String,
+    now: OffsetDateTime,
+}
+
+impl PresentedRefreshToken {
+    /// # Errors
+    ///
+    /// `refreshSession`'s rejections, bar `SESSION_LOCKED`: whether a lock
+    /// matters is the caller's to say. A replayed token revokes its session
+    /// on the way out, and so does finding one expired.
+    async fn resolve(ctx: &Context<'_>, refresh_token: &str) -> async_graphql::Result<Self> {
+        let storage = storage(ctx)?;
+        let jwt = ctx
+            .data::<Arc<noflex_auth::JwtConfig>>()
+            .map_err(|_| async_graphql::Error::new("auth not configured"))?;
+
+        let hash = noflex_auth::hash_refresh_token(refresh_token);
+        let now = OffsetDateTime::now_utc();
+        let session = match storage
+            .session_by_refresh_token(&hash)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+        {
+            RefreshTokenLookup::Current(session) => session,
+            RefreshTokenLookup::Unknown => return Err(refresh_rejected(REFRESH_INVALID)),
+            RefreshTokenLookup::Retired(retired) => {
+                if retired.latest && now - retired.retired_at < REFRESH_REUSE_GRACE {
+                    return Err(refresh_rejected(REFRESH_SUPERSEDED));
+                }
+                revoke_reused_session(ctx, storage, &retired, now).await?;
+                return Err(refresh_rejected(REFRESH_REUSED));
+            }
+        };
+
+        let lifetime_over =
+            session.created_at + time::Duration::seconds(jwt.max_session_lifetime_secs) <= now;
+        if session.expires_at <= now || lifetime_over {
+            storage
+                .revoke_session(session.id)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            return Err(refresh_rejected(REFRESH_INVALID));
+        }
+        let user = match storage
+            .get_user(session.user_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+        {
+            Some(user) => user,
+            // The FK cascade should make this unreachable; if a backend
+            // ever lets it through, the orphaned session dies here.
+            None => {
+                storage
+                    .revoke_session(session.id)
+                    .await
+                    .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+                return Err(refresh_rejected(REFRESH_INVALID));
+            }
+        };
+        Ok(Self {
+            session,
+            user,
+            hash,
+            now,
+        })
+    }
+
+    /// Swap the presented token for a fresh pair on the same session.
+    async fn rotate(self, ctx: &Context<'_>) -> async_graphql::Result<LoginResult> {
+        let storage = storage(ctx)?;
+        let jwt = ctx
+            .data::<Arc<noflex_auth::JwtConfig>>()
+            .map_err(|_| async_graphql::Error::new("auth not configured"))?;
+        let Self {
+            session,
+            user,
+            hash,
+            now,
+        } = self;
+        let new_refresh = noflex_auth::generate_refresh_token();
+        let rotated = storage
+            .rotate_refresh_token(
+                session.id,
+                &hash,
+                &noflex_auth::hash_refresh_token(&new_refresh),
+                jwt.session_expiry(session.created_at, now),
+                now,
+            )
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        if !rotated {
+            // The token was current a moment ago, so this is a lost race
+            // (or a concurrent revocation), never evidence of theft.
+            return Err(refresh_rejected(REFRESH_SUPERSEDED));
+        }
+
+        let token = noflex_auth::issue_jwt(jwt, user.id, user.is_admin, session.id)
+            .map_err(|e| async_graphql::Error::new(format!("jwt: {e}")))?;
+        Ok(LoginResult {
+            token,
+            refresh_token: new_refresh,
+            user,
+        })
+    }
+}
+
+/// Count a wrong PIN against `session` and say what's left, revoking the
+/// session once it has taken [`PIN_ATTEMPTS`].
+async fn wrong_pin(
+    ctx: &Context<'_>,
+    storage: &Arc<dyn Storage>,
+    session: &noflex_storage::domain::Session,
+) -> async_graphql::Result<async_graphql::Error> {
+    let failures = storage
+        .record_pin_failure(session.id)
+        .await
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+    if failures < PIN_ATTEMPTS {
+        let left = PIN_ATTEMPTS - failures;
+        return Ok(
+            async_graphql::Error::new("that PIN isn't right").extend_with(|_, ext| {
+                ext.set("code", PIN_INCORRECT);
+                ext.set("attemptsLeft", left);
+            }),
+        );
+    }
+    storage
+        .revoke_session(session.id)
+        .await
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+    tracing::warn!(
+        target: SECURITY_TARGET,
+        user = %session.user_id,
+        session = %session.id,
+        presented_from = ctx
+            .data_opt::<noflex_auth::ClientAddr>()
+            .map(|addr| addr.0.to_string())
+            .as_deref()
+            .unwrap_or("unknown"),
+        "too many wrong PINs; session revoked"
+    );
+    Ok(
+        async_graphql::Error::new("too many wrong PINs; sign in again")
+            .extend_with(|_, ext| ext.set("code", PIN_ATTEMPTS_EXHAUSTED)),
+    )
+}
+
+/// Someone a device still holds a session for, as its sign-in screen shows
+/// them: enough to draw a tile, and nothing a tile doesn't need.
+#[derive(SimpleObject)]
+pub(crate) struct RememberedProfile {
+    user_id: UserId,
+    /// What to call them, as `User.name`.
+    name: String,
+    /// Whether choosing them takes a PIN, through `unlockSession`.
+    has_pin: bool,
+    /// Their picture, as `User.avatarUrl`. It keeps loading while the
+    /// session is locked, since it's what the lock screen shows.
+    avatar_url: Option<String>,
+}
+
+/// Auth half of the query root; merged into `Query` in `lib.rs`.
+#[derive(Default)]
+pub struct AuthQuery;
+
+#[Object]
+impl AuthQuery {
+    /// Who the sessions behind `refreshTokens` belong to, in the order
+    /// given: what a shared device draws its "Who's watching?" from. Needs
+    /// no authentication, as each token is its own. Null for a token that
+    /// isn't a live session's current one, whose tile then needs signing in
+    /// again; a locked session still answers. Nothing is rotated or revoked.
+    async fn remembered_profiles(
+        &self,
+        ctx: &Context<'_>,
+        refresh_tokens: Vec<String>,
+    ) -> async_graphql::Result<Vec<Option<RememberedProfile>>> {
+        if refresh_tokens.len() > MAX_REMEMBERED_PROFILES {
+            return Err(async_graphql::Error::new(format!(
+                "at most {MAX_REMEMBERED_PROFILES} profiles at a time"
+            )));
+        }
+        let storage = storage(ctx)?;
+        let signer = ctx.data_opt::<Arc<dyn noflex_storage::domain::MediaUrlSigner>>();
+        let now = OffsetDateTime::now_utc();
+        let mut profiles = Vec::with_capacity(refresh_tokens.len());
+        for token in &refresh_tokens {
+            let lookup = storage
+                .session_by_refresh_token(&noflex_auth::hash_refresh_token(token))
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            let RefreshTokenLookup::Current(session) = lookup else {
+                profiles.push(None);
+                continue;
+            };
+            let user = storage
+                .get_user(session.user_id)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            let Some(user) = user.filter(|_| session.expires_at > now) else {
+                profiles.push(None);
+                continue;
+            };
+            profiles.push(Some(RememberedProfile {
+                user_id: user.id,
+                name: user.shown_name().to_string(),
+                has_pin: user.has_pin,
+                // Signed for no session, or a locked one would refuse its
+                // own lock screen the picture.
+                avatar_url: user
+                    .avatar_url_for(signer.map(Arc::as_ref), user.id, None)
+                    .map_err(async_graphql::Error::new)?,
+            }));
+        }
+        Ok(profiles)
+    }
 }
 
 /// Auth half of the mutation root; merged into `Mutation` in `lib.rs`.
@@ -252,8 +497,9 @@ impl AuthMutation {
     /// an `extensions.code`: `REFRESH_TOKEN_INVALID` (unknown, expired,
     /// or revoked), `REFRESH_TOKEN_SUPERSEDED` (a concurrent refresh with
     /// the same token won; the session lives on under the winner's
-    /// token), or `REFRESH_TOKEN_REUSED` (a rotated-away token was
-    /// replayed; the whole session has been revoked).
+    /// token), `REFRESH_TOKEN_REUSED` (a rotated-away token was
+    /// replayed; the whole session has been revoked), or `SESSION_LOCKED`
+    /// (the session waits for its user's PIN; `unlockSession` opens it).
     // Credential checks cost most of the per-operation complexity budget,
     // so aliasing can't batch hundreds of guesses into one request.
     #[graphql(complexity = "crate::CREDENTIAL_COMPLEXITY")]
@@ -262,82 +508,92 @@ impl AuthMutation {
         ctx: &Context<'_>,
         refresh_token: String,
     ) -> async_graphql::Result<LoginResult> {
-        let storage = ctx
-            .data::<Arc<dyn Storage>>()
-            .map_err(|_| async_graphql::Error::new("storage not configured"))?;
-        let jwt = ctx
-            .data::<Arc<noflex_auth::JwtConfig>>()
-            .map_err(|_| async_graphql::Error::new("auth not configured"))?
-            .clone();
+        let presented = PresentedRefreshToken::resolve(ctx, &refresh_token).await?;
+        if presented.session.locked_at.is_some() {
+            return Err(refresh_rejected(SESSION_LOCKED));
+        }
+        presented.rotate(ctx).await
+    }
 
+    /// Leave the session behind `refreshToken` waiting for its user's PIN,
+    /// as a shared device does when someone steps away from their profile.
+    /// Until `unlockSession`, its access token authenticates nothing and it
+    /// can't refresh. Returns whether the session is locked now: `false`
+    /// for a token that isn't a live session's current one, and for a user
+    /// without a PIN, whose session nothing would need to open.
+    async fn lock_session(
+        &self,
+        ctx: &Context<'_>,
+        refresh_token: String,
+    ) -> async_graphql::Result<bool> {
+        let storage = storage(ctx)?;
         let hash = noflex_auth::hash_refresh_token(&refresh_token);
-        let now = OffsetDateTime::now_utc();
-        let session = match storage
+        let RefreshTokenLookup::Current(session) = storage
             .session_by_refresh_token(&hash)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?
-        {
-            RefreshTokenLookup::Current(session) => session,
-            RefreshTokenLookup::Unknown => return Err(refresh_rejected(REFRESH_INVALID)),
-            RefreshTokenLookup::Retired(retired) => {
-                if retired.latest && now - retired.retired_at < REFRESH_REUSE_GRACE {
-                    return Err(refresh_rejected(REFRESH_SUPERSEDED));
-                }
-                revoke_reused_session(ctx, storage, &retired, now).await?;
-                return Err(refresh_rejected(REFRESH_REUSED));
-            }
+        else {
+            return Ok(false);
         };
-
-        let lifetime_over =
-            session.created_at + time::Duration::seconds(jwt.max_session_lifetime_secs) <= now;
-        if session.expires_at <= now || lifetime_over {
-            storage
-                .revoke_session(session.id)
-                .await
-                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-            return Err(refresh_rejected(REFRESH_INVALID));
+        let now = OffsetDateTime::now_utc();
+        if session.expires_at <= now {
+            return Ok(false);
         }
-        let user = match storage
+        if session.locked_at.is_some() {
+            return Ok(true);
+        }
+        let has_pin = storage
             .get_user(session.user_id)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?
-        {
-            Some(user) => user,
-            // The FK cascade should make this unreachable; if a backend
-            // ever lets it through, the orphaned session dies here.
-            None => {
-                storage
-                    .revoke_session(session.id)
-                    .await
-                    .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-                return Err(refresh_rejected(REFRESH_INVALID));
-            }
-        };
-
-        let new_refresh = noflex_auth::generate_refresh_token();
-        let rotated = storage
-            .rotate_refresh_token(
-                session.id,
-                &hash,
-                &noflex_auth::hash_refresh_token(&new_refresh),
-                jwt.session_expiry(session.created_at, now),
-                now,
-            )
+            .is_some_and(|user| user.has_pin);
+        if !has_pin {
+            return Ok(false);
+        }
+        storage
+            .lock_session(session.id, now)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        if !rotated {
-            // The token was current a moment ago, so this is a lost race
-            // (or a concurrent revocation), never evidence of theft.
-            return Err(refresh_rejected(REFRESH_SUPERSEDED));
-        }
+        Ok(true)
+    }
 
-        let token = noflex_auth::issue_jwt(&jwt, user.id, user.is_admin, session.id)
-            .map_err(|e| async_graphql::Error::new(format!("jwt: {e}")))?;
-        Ok(LoginResult {
-            token,
-            refresh_token: new_refresh,
-            user,
-        })
+    /// Open the session behind `refreshToken` with its user's PIN and
+    /// rotate it, as `refreshSession` does. A device checks the PIN this way
+    /// whether or not the session got as far as being locked, and a user
+    /// without a PIN is let straight through.
+    ///
+    /// Rejections are `refreshSession`'s, and two of its own:
+    /// `PIN_INCORRECT`, with `extensions.attemptsLeft`, and
+    /// `PIN_ATTEMPTS_EXHAUSTED` once the fifth wrong PIN in a row has
+    /// revoked the session, leaving a full sign-in as the way back.
+    // Credential checks cost most of the per-operation complexity budget,
+    // so aliasing can't batch hundreds of guesses into one request.
+    #[graphql(complexity = "crate::CREDENTIAL_COMPLEXITY")]
+    async fn unlock_session(
+        &self,
+        ctx: &Context<'_>,
+        refresh_token: String,
+        pin: String,
+    ) -> async_graphql::Result<LoginResult> {
+        let storage = storage(ctx)?;
+        let presented = PresentedRefreshToken::resolve(ctx, &refresh_token).await?;
+        let session = &presented.session;
+        let pin_hash = storage
+            .user_pin_hash(session.user_id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        if let Some(pin_hash) = pin_hash {
+            let correct = crate::profile::valid_pin(&pin)
+                && noflex_auth::verify_password(&pin, &pin_hash).await.is_ok();
+            if !correct {
+                return Err(wrong_pin(ctx, storage, session).await?);
+            }
+        }
+        storage
+            .unlock_session(session.id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        presented.rotate(ctx).await
     }
 
     /// Revoke the session backing the caller's token, killing its access

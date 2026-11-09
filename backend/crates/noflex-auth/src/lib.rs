@@ -693,7 +693,12 @@ async fn principal_from_jwt_checked(
     let Ok(Some(session)) = storage.get_session(session_id).await else {
         return Principal::default();
     };
-    if session.user_id != user.id || session.expires_at <= OffsetDateTime::now_utc() {
+    // A locked session is waiting for its user's PIN: until then what it
+    // issued is worth nothing, however long the access token has left.
+    if session.user_id != user.id
+        || session.expires_at <= OffsetDateTime::now_utc()
+        || session.locked_at.is_some()
+    {
         return Principal::default();
     }
     Principal {
@@ -858,6 +863,7 @@ mod tests {
             },
             created_at: OffsetDateTime::now_utc(),
             avatar_updated_at: None,
+            has_pin: false,
         }
     }
 
@@ -877,6 +883,7 @@ mod tests {
                 last_seen_at: now,
                 expires_at: now + time::Duration::hours(1),
                 refresh_token_hash: None,
+                locked_at: None,
             })
             .await
             .unwrap();
@@ -1234,6 +1241,7 @@ mod tests {
                 last_seen_at: OffsetDateTime::now_utc(),
                 expires_at: OffsetDateTime::now_utc() + time::Duration::hours(1),
                 refresh_token_hash: None,
+                locked_at: None,
             })
             .await
             .unwrap();
@@ -1245,6 +1253,22 @@ mod tests {
         );
         let p = principal_from_headers(&headers, &cfg, &store).await;
         assert_eq!(p.session_id, Some(session_id));
+        // Locked, the token it issued is worth nothing until it's opened again.
+        store
+            .lock_session(session_id, OffsetDateTime::now_utc())
+            .await
+            .unwrap();
+        assert!(
+            !principal_from_headers(&headers, &cfg, &store)
+                .await
+                .is_authenticated()
+        );
+        store.unlock_session(session_id).await.unwrap();
+        assert!(
+            principal_from_headers(&headers, &cfg, &store)
+                .await
+                .is_authenticated()
+        );
         store.revoke_session(session_id).await.unwrap();
         assert!(
             !principal_from_headers(&headers, &cfg, &store)

@@ -122,6 +122,7 @@ fn user(name: &str, is_admin: bool, created_at: OffsetDateTime) -> User {
         },
         created_at,
         avatar_updated_at: None,
+        has_pin: false,
     }
 }
 

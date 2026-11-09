@@ -132,6 +132,7 @@ where
     provider_attribution_lifecycle(store).await;
     session_rotate_refresh_token(store).await;
     session_retired_refresh_tokens_die_with_session(store).await;
+    session_lock_and_pin(store).await;
     api_key_lifecycle(store).await;
     user_delete_cascades_api_keys(store).await;
     device_code_lifecycle(store).await;
@@ -1246,6 +1247,7 @@ fn make_user(name: &str, is_admin: bool) -> User {
         role,
         created_at: now,
         avatar_updated_at: None,
+        has_pin: false,
     }
 }
 
@@ -1265,6 +1267,7 @@ fn make_session(user_id: UserId) -> Session {
         // Unique per call: the UNIQUE index on refresh_token_hash would
         // otherwise collide across sessions coexisting in one test.
         refresh_token_hash: Some(format!("test-hash-{}", SessionId::new())),
+        locked_at: None,
     }
 }
 
@@ -2072,6 +2075,92 @@ async fn provider_attribution_lifecycle<S: Storage + ?Sized>(store: &S) {
             .expect("logo"),
         None
     );
+}
+
+/// A lock is per session and counts its own wrong PINs. A PIN lives apart from
+/// the user row, so saving a copy read earlier keeps it, and clearing it opens
+/// what it locked.
+async fn session_lock_and_pin<S: Storage + ?Sized>(store: &S) {
+    let user = make_user("session-lock-user", false);
+    store.upsert_user(&user).await.expect("upsert user");
+    let locked = make_session(user.id);
+    let open = make_session(user.id);
+    store.create_session(&locked).await.expect("create");
+    store.create_session(&open).await.expect("create");
+
+    assert_eq!(store.user_pin_hash(user.id).await.expect("none"), None);
+    store
+        .set_user_pin(user.id, Some("pin-hash"))
+        .await
+        .expect("set pin");
+    store.upsert_user(&user).await.expect("upsert again");
+    assert!(
+        store
+            .get_user(user.id)
+            .await
+            .expect("get")
+            .expect("user")
+            .has_pin
+    );
+    assert_eq!(
+        store.user_pin_hash(user.id).await.expect("hash").as_deref(),
+        Some("pin-hash")
+    );
+
+    let at = OffsetDateTime::now_utc();
+    assert!(store.lock_session(locked.id, at).await.expect("lock"));
+    assert!(
+        !store.lock_session(locked.id, at).await.expect("relock"),
+        "locking a locked session writes nothing"
+    );
+    assert!(
+        !store
+            .lock_session(SessionId::new(), at)
+            .await
+            .expect("lock unknown")
+    );
+    let lookup = |id| async move { store.get_session(id).await.expect("get").expect("session") };
+    assert!(lookup(locked.id).await.locked_at.is_some());
+    assert!(lookup(open.id).await.locked_at.is_none());
+    let hash = locked.refresh_token_hash.clone().expect("hash");
+    match store.session_by_refresh_token(&hash).await.expect("lookup") {
+        RefreshTokenLookup::Current(session) => assert!(session.locked_at.is_some()),
+        other => panic!("expected the locked session, got {other:?}"),
+    }
+
+    assert_eq!(store.record_pin_failure(locked.id).await.expect("one"), 1);
+    assert_eq!(store.record_pin_failure(locked.id).await.expect("two"), 2);
+    assert_eq!(store.record_pin_failure(open.id).await.expect("other"), 1);
+    assert_eq!(
+        store
+            .record_pin_failure(SessionId::new())
+            .await
+            .expect("unknown"),
+        0
+    );
+    store.unlock_session(locked.id).await.expect("unlock");
+    assert!(lookup(locked.id).await.locked_at.is_none());
+    assert_eq!(
+        store.record_pin_failure(locked.id).await.expect("reset"),
+        1,
+        "opening a session forgets its wrong PINs"
+    );
+
+    assert!(store.lock_session(locked.id, at).await.expect("lock again"));
+    store.set_user_pin(user.id, None).await.expect("clear pin");
+    assert!(
+        !store
+            .get_user(user.id)
+            .await
+            .expect("get")
+            .expect("user")
+            .has_pin
+    );
+    assert!(
+        lookup(locked.id).await.locked_at.is_none(),
+        "clearing a PIN opens the sessions it locked"
+    );
+    store.delete_user(user.id).await.expect("cleanup");
 }
 
 /// Refresh-token lookup resolves a live session by its current hash and

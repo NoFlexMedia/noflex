@@ -48,6 +48,45 @@ async fn viewer(ctx: &Context<'_>) -> async_graphql::Result<User> {
         .ok_or_else(|| async_graphql::Error::new("user not found"))
 }
 
+/// Whether `pin` has the shape of one: 4 to 6 digits, which a remote's number
+/// keys can enter.
+pub(crate) fn valid_pin(pin: &str) -> bool {
+    (4..=6).contains(&pin.len()) && pin.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Check `password` is `user`'s, throttled like a sign-in. An account that only
+/// signs in through a provider has none, and anything passes.
+///
+/// # Errors
+///
+/// "incorrect current password", or the throttle's refusal.
+async fn confirm_password(
+    ctx: &Context<'_>,
+    user: &User,
+    password: &str,
+) -> async_graphql::Result<()> {
+    if password.len() > noflex_auth::MAX_PASSWORD_BYTES {
+        return Err(async_graphql::Error::new("password is too long"));
+    }
+    if user.password_hash.is_empty() {
+        return Ok(());
+    }
+    let throttle = crate::auth::login_throttle(ctx)?;
+    let client_addr = ctx.data_opt::<noflex_auth::ClientAddr>().copied();
+    throttle
+        .check(&user.username, client_addr)
+        .map_err(crate::auth::too_many_attempts)?;
+    if noflex_auth::verify_password(password, &user.password_hash)
+        .await
+        .is_err()
+    {
+        throttle.record_failure(&user.username, client_addr);
+        return Err(async_graphql::Error::new("incorrect current password"));
+    }
+    throttle.record_success(&user.username);
+    Ok(())
+}
+
 /// Why a picture was refused, for showing to whoever chose it.
 #[derive(Debug, thiserror::Error)]
 enum PictureError {
@@ -186,24 +225,7 @@ impl ProfileMutation {
                 "choose a username that fits on one line",
             ));
         }
-        if current_password.len() > noflex_auth::MAX_PASSWORD_BYTES {
-            return Err(async_graphql::Error::new("password is too long"));
-        }
-        if !user.password_hash.is_empty() {
-            let throttle = crate::auth::login_throttle(ctx)?;
-            let client_addr = ctx.data_opt::<noflex_auth::ClientAddr>().copied();
-            throttle
-                .check(&user.username, client_addr)
-                .map_err(crate::auth::too_many_attempts)?;
-            if noflex_auth::verify_password(&current_password, &user.password_hash)
-                .await
-                .is_err()
-            {
-                throttle.record_failure(&user.username, client_addr);
-                return Err(async_graphql::Error::new("incorrect current password"));
-            }
-            throttle.record_success(&user.username);
-        }
+        confirm_password(ctx, &user, &current_password).await?;
         user.username = username.to_string();
         storage(ctx)?
             .upsert_user(&user)
@@ -212,6 +234,55 @@ impl ProfileMutation {
                 StorageError::Constraint(_) => async_graphql::Error::new("that username is taken"),
                 other => gql_err(other),
             })?;
+        Ok(user)
+    }
+
+    /// Set or replace the caller's PIN: 4 to 6 digits that open their profile on
+    /// a device they share, through `unlockSession`. It signs nobody in on its
+    /// own. Takes their password as `changeUsername` does, so someone holding the
+    /// remote can't choose it for them.
+    // Credential checks cost most of the per-operation complexity budget, so
+    // aliasing can't batch hundreds of guesses into one request.
+    #[graphql(complexity = "crate::CREDENTIAL_COMPLEXITY")]
+    async fn set_pin(
+        &self,
+        ctx: &Context<'_>,
+        pin: String,
+        current_password: String,
+    ) -> async_graphql::Result<User> {
+        let mut user = viewer(ctx).await?;
+        if !valid_pin(&pin) {
+            return Err(async_graphql::Error::new("a PIN is 4 to 6 digits"));
+        }
+        confirm_password(ctx, &user, &current_password).await?;
+        let hash = noflex_auth::hash_password(&pin)
+            .await
+            .map_err(|_| async_graphql::Error::new("PIN processing failed"))?;
+        storage(ctx)?
+            .set_user_pin(user.id, Some(&hash))
+            .await
+            .map_err(gql_err)?;
+        user.has_pin = true;
+        Ok(user)
+    }
+
+    /// Remove the caller's PIN, opening any session it had locked. Takes their
+    /// password, as `setPin` does.
+    // Credential checks cost most of the per-operation complexity budget, so
+    // aliasing can't batch hundreds of guesses into one request.
+    #[graphql(complexity = "crate::CREDENTIAL_COMPLEXITY")]
+    async fn remove_pin(
+        &self,
+        ctx: &Context<'_>,
+        current_password: String,
+    ) -> async_graphql::Result<User> {
+        let mut user = viewer(ctx).await?;
+        confirm_password(ctx, &user, &current_password).await?;
+        storage(ctx)?
+            .set_user_pin(user.id, None)
+            .await
+            .map_err(gql_err)?;
+        user.has_pin = false;
         Ok(user)
     }
 

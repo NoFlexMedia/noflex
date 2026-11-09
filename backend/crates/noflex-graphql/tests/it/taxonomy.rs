@@ -92,6 +92,7 @@ async fn seeded() -> Seeded {
         role: noflex_core::UserRole::Admin,
         created_at: OffsetDateTime::now_utc(),
         avatar_updated_at: None,
+        has_pin: false,
     };
     store.upsert_user(&user).await.expect("user");
 

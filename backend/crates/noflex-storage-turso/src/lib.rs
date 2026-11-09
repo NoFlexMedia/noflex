@@ -445,6 +445,15 @@ impl Storage for TursoStore {
             conn, user, image, at
         ))
     }
+    async fn set_user_pin(&self, user: UserId, pin_hash: Option<&str>) -> StorageResult<()> {
+        transact!(self, Lane::Concurrent, |conn| repo::users::set_pin(
+            conn, user, pin_hash
+        ))
+    }
+    async fn user_pin_hash(&self, user: UserId) -> StorageResult<Option<String>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::users::pin_hash(&conn, user).await
+    }
     async fn user_avatar(&self, user: UserId) -> StorageResult<Option<Vec<u8>>> {
         let (_schema, conn) = self.reader().await?;
         repo::users::avatar(&conn, user).await
@@ -548,6 +557,22 @@ impl Storage for TursoStore {
                 new_expires_at,
                 now,
             )
+        })
+    }
+
+    async fn lock_session(&self, id: SessionId, at: OffsetDateTime) -> StorageResult<bool> {
+        transact!(self, Lane::Concurrent, |conn| repo::sessions::lock(
+            conn, id, at
+        ))
+    }
+    async fn unlock_session(&self, id: SessionId) -> StorageResult<()> {
+        transact!(self, Lane::Concurrent, |conn| repo::sessions::unlock(
+            conn, id
+        ))
+    }
+    async fn record_pin_failure(&self, id: SessionId) -> StorageResult<u32> {
+        transact!(self, Lane::Concurrent, |conn| {
+            repo::sessions::record_pin_failure(conn, id)
         })
     }
 
@@ -2139,6 +2164,7 @@ mod concurrency_tests {
             role: UserRole::Admin,
             created_at: now,
             avatar_updated_at: None,
+            has_pin: false,
         };
         store.upsert_user(&admin).await.unwrap();
         let invite = Invite {

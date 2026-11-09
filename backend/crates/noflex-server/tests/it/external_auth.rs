@@ -53,6 +53,7 @@ async fn seed_user(store: &TursoStore, name: &str, is_admin: bool) -> UserId {
         },
         created_at: OffsetDateTime::now_utc(),
         avatar_updated_at: None,
+        has_pin: false,
     };
     store.upsert_user(&user).await.expect("seed user");
     user.id

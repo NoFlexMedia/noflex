@@ -1689,10 +1689,32 @@ type Mutation {
 	an `extensions.code`: `REFRESH_TOKEN_INVALID` (unknown, expired,
 	or revoked), `REFRESH_TOKEN_SUPERSEDED` (a concurrent refresh with
 	the same token won; the session lives on under the winner's
-	token), or `REFRESH_TOKEN_REUSED` (a rotated-away token was
-	replayed; the whole session has been revoked).
+	token), `REFRESH_TOKEN_REUSED` (a rotated-away token was
+	replayed; the whole session has been revoked), or `SESSION_LOCKED`
+	(the session waits for its user's PIN; `unlockSession` opens it).
 	"""
 	refreshSession(refreshToken: String!): LoginResult!
+	"""
+	Leave the session behind `refreshToken` waiting for its user's PIN,
+	as a shared device does when someone steps away from their profile.
+	Until `unlockSession`, its access token authenticates nothing and it
+	can't refresh. Returns whether the session is locked now: `false`
+	for a token that isn't a live session's current one, and for a user
+	without a PIN, whose session nothing would need to open.
+	"""
+	lockSession(refreshToken: String!): Boolean!
+	"""
+	Open the session behind `refreshToken` with its user's PIN and
+	rotate it, as `refreshSession` does. A device checks the PIN this way
+	whether or not the session got as far as being locked, and a user
+	without a PIN is let straight through.
+	
+	Rejections are `refreshSession`'s, and two of its own:
+	`PIN_INCORRECT`, with `extensions.attemptsLeft`, and
+	`PIN_ATTEMPTS_EXHAUSTED` once the fifth wrong PIN in a row has
+	revoked the session, leaving a full sign-in as the way back.
+	"""
+	unlockSession(refreshToken: String!, pin: String!): LoginResult!
 	"""
 	Revoke the session backing the caller's token, killing its access
 	and refresh tokens. Returns `true` when a session was revoked,
@@ -1732,6 +1754,18 @@ type Mutation {
 	through a provider has none, and passes an empty one. Sessions stay signed in.
 	"""
 	changeUsername(username: String!, currentPassword: String!): User!
+	"""
+	Set or replace the caller's PIN: 4 to 6 digits that open their profile on
+	a device they share, through `unlockSession`. It signs nobody in on its
+	own. Takes their password as `changeUsername` does, so someone holding the
+	remote can't choose it for them.
+	"""
+	setPin(pin: String!, currentPassword: String!): User!
+	"""
+	Remove the caller's PIN, opening any session it had locked. Takes their
+	password, as `setPin` does.
+	"""
+	removePin(currentPassword: String!): User!
 	"""
 	Set the caller's picture from a base64 JPEG, PNG, WebP, AVIF or HEIC. It's
 	cropped to a centred square and everything but its pixels is dropped.
@@ -2981,6 +3015,14 @@ type Query {
 	The libraries a user has been explicitly granted. Admin only.
 	"""
 	userLibraryAccess(userId: ID!): [Library!]!
+	"""
+	Who the sessions behind `refreshTokens` belong to, in the order
+	given: what a shared device draws its "Who's watching?" from. Needs
+	no authentication, as each token is its own. Null for a token that
+	isn't a live session's current one, whose tile then needs signing in
+	again; a locked session still answers. Nothing is rotated or revoked.
+	"""
+	rememberedProfiles(refreshTokens: [String!]!): [RememberedProfile]!
 	preferences: [UserPreference!]!
 	"""
 	Collections in a library, ordered by sort title. `first`
@@ -3197,6 +3239,27 @@ enum RecordingStatus {
 }
 
 """
+Someone a device still holds a session for, as its sign-in screen shows
+them: enough to draw a tile, and nothing a tile doesn't need.
+"""
+type RememberedProfile {
+	userId: ID!
+	"""
+	What to call them, as `User.name`.
+	"""
+	name: String!
+	"""
+	Whether choosing them takes a PIN, through `unlockSession`.
+	"""
+	hasPin: Boolean!
+	"""
+	Their picture, as `User.avatarUrl`. It keeps loading while the
+	session is locked, since it's what the lock screen shows.
+	"""
+	avatarUrl: String
+}
+
+"""
 A media file the scanner failed on.
 """
 type ScanFailure {
@@ -3377,6 +3440,13 @@ type Session {
 	session is dead even if nobody explicitly revoked it.
 	"""
 	expiresAt: DateTime!
+	"""
+	When the session was left waiting for its user's PIN; unset while it's
+	open. A locked session authenticates nothing and can't refresh until the
+	PIN opens it. Locking and unlocking change it; saving the session never
+	does.
+	"""
+	lockedAt: DateTime
 }
 
 type SetupResult {
@@ -3994,6 +4064,11 @@ type User {
 	isAdmin: Boolean!
 	role: UserRole!
 	createdAt: DateTime!
+	"""
+	Whether a PIN opens their profile on a device they share. Setting or
+	removing the PIN changes it; saving the user never does.
+	"""
+	hasPin: Boolean!
 	"""
 	What to call them: the name they've chosen, or their username.
 	"""

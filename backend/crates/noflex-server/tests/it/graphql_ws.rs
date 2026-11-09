@@ -42,6 +42,7 @@ async fn server() -> Server {
         role: UserRole::User,
         created_at: OffsetDateTime::now_utc(),
         avatar_updated_at: None,
+        has_pin: false,
     };
     store.upsert_user(&user).await.expect("user");
     let now = OffsetDateTime::now_utc();
@@ -57,6 +58,7 @@ async fn server() -> Server {
         last_seen_at: now,
         expires_at: now + time::Duration::days(1),
         refresh_token_hash: None,
+        locked_at: None,
     };
     store.create_session(&session).await.expect("session");
     let token = issue_jwt(&jwt, user.id, false, session.id).expect("token");

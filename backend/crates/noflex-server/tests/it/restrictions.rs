@@ -182,6 +182,7 @@ fn user(name: &str, admin: bool, now: OffsetDateTime) -> User {
         },
         created_at: now,
         avatar_updated_at: None,
+        has_pin: false,
     }
 }
 
@@ -334,6 +335,7 @@ async fn create_session(store: &dyn Storage, user: &User) {
             last_seen_at: now,
             expires_at: now + time::Duration::days(1),
             refresh_token_hash: None,
+            locked_at: None,
         })
         .await
         .expect("session");

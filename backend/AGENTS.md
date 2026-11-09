@@ -106,6 +106,9 @@ Don't break these without an architecture discussion in the PR description.
 
 - **`User.name` is for showing, `User.username` for signing in.** `name` falls back to `username`, so show `name` everywhere except where someone needs the credential or has to tell two people apart: admin lists show both, as anyone can choose any name. Key on `id`; a username can change.
 - **`setProfilePicture` re-encodes to a 512 px JPEG**, for size and so nothing but pixels survives. The bytes live in `user_avatars`, apart from `users`, which every request reads. AVIF and HEIC go through ffmpeg first, as `image` can't read them: forced to the `mov` demuxer with only the `file` protocol, so an upload can't point it anywhere else, and on a timeout.
+- **A PIN opens a session; it never makes one.** `unlockSession` takes the refresh token a device already holds as well as the PIN, so four digits can't be guessed from anywhere else, and the fifth wrong one revokes the session. `User.hasPin` is all that's readable; the hash is `user_pin_hash`'s.
+- **A locked session is locked on the server.** `lockSession` stamps `sessions.locked_at`, and `principal_from_jwt_checked`, `refreshSession` and the byte routes all refuse it, so the tokens a shared device keeps for whoever stepped away are worth nothing without the PIN. Removing a PIN opens what it locked.
+- **`rememberedProfiles` is the one read a refresh token authenticates**, for a sign-in screen's tiles. It rotates nothing, and signs each picture for no session so a locked one still shows.
 - **`Device.client` and `Session.client` are free text alongside the name**, as a model or hostname often doesn't say what something is. Clients read both through `lib/ts/device.ts`.
 
 ### Connect

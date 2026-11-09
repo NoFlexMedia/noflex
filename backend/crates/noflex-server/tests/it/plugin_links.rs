@@ -43,6 +43,7 @@ async fn seed_user(storage: &Arc<TursoStore>) -> UserId {
             role: noflex_core::UserRole::User,
             created_at: time::OffsetDateTime::now_utc(),
             avatar_updated_at: None,
+            has_pin: false,
         })
         .await
         .expect("seed user");

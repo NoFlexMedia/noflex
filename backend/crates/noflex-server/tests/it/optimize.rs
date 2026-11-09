@@ -127,6 +127,7 @@ async fn fixture(source: &Path, dir: std::path::PathBuf) -> Fixture {
         role: noflex_core::UserRole::Admin,
         created_at: now,
         avatar_updated_at: None,
+        has_pin: false,
     };
     store.upsert_user(&user).await.expect("user");
     let library = Library {

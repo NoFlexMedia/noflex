@@ -100,7 +100,9 @@ pub async fn byte_route_principal(
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .is_some_and(|row| {
-                row.user_id == claims.user && row.expires_at > OffsetDateTime::now_utc()
+                row.user_id == claims.user
+                    && row.expires_at > OffsetDateTime::now_utc()
+                    && row.locked_at.is_none()
             });
         if !live {
             return Err(StatusCode::UNAUTHORIZED);

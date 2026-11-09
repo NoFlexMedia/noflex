@@ -138,11 +138,14 @@ CREATE INDEX IF NOT EXISTS scan_events_library_started ON scan_events(library_id
 -- write the empty string. `is_admin` stays for backward compat; the
 -- `role` column is canonical for the role middleware.
 -- `username` is what they sign in with, `display_name` what they're called.
+-- `pin_hash` is the Argon2id hash of the PIN that unlocks their sessions on a
+-- device they share; NULL without one. It never signs anyone in on its own.
 CREATE TABLE IF NOT EXISTS users (
     id            BLOB PRIMARY KEY,
     username      TEXT NOT NULL UNIQUE,
     display_name  TEXT,
     password_hash TEXT NOT NULL,
+    pin_hash      TEXT,
     is_admin      INTEGER NOT NULL,
     role          TEXT NOT NULL DEFAULT 'user',
     created_at    TEXT NOT NULL
@@ -171,7 +174,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- DB. Nullable so legacy rows and non-token sessions stay valid;
     -- SQLite treats NULLs as distinct under UNIQUE.
     refresh_token_hash TEXT,
-    expires_at         TEXT NOT NULL
+    expires_at         TEXT NOT NULL,
+    -- Set while the session waits for its user's PIN: nothing it issued
+    -- works until then. `pin_failures` counts wrong ones since it last opened.
+    locked_at          TEXT,
+    pin_failures       INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);

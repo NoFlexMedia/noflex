@@ -466,6 +466,7 @@ mod tests {
             role: UserRole::User,
             created_at: OffsetDateTime::now_utc(),
             avatar_updated_at: None,
+            has_pin: false,
         };
         store.upsert_user(&user).await.unwrap();
         let tie = dt_to_text(datetime!(2030-01-01 00:00 UTC)).unwrap();

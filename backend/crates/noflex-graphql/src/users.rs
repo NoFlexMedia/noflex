@@ -138,6 +138,7 @@ impl UsersMutation {
             role,
             created_at: OffsetDateTime::now_utc(),
             avatar_updated_at: None,
+            has_pin: false,
         };
         storage.upsert_user(&user).await.map_err(|e| match e {
             StorageError::Constraint(_) => async_graphql::Error::new("username already taken"),

@@ -14,8 +14,8 @@
   import { deviceId } from "$lib/device.js";
   import { receiving, setReceiving } from "$lib/receiver.svelte.js";
   import { date } from "$lib/format.js";
-  import { refetch, request } from "$lib/graphql.js";
-  import { logout } from "$lib/session.svelte.js";
+  import { fetchQuery, refetch, request } from "$lib/graphql.js";
+  import { app, logout } from "$lib/session.svelte.js";
   import { attempt, confirmAction, poll, toast } from "$lib/ui.svelte.js";
   import Dialog from "$components/ui/Dialog.svelte";
   import Select from "$components/ui/Select.svelte";
@@ -59,7 +59,7 @@
     mutation RevokeApiKey($id: ID!) { revokeApiKey(id: $id) { id revokedAt } }
   `);
   const authorizeDeviceCode = graphql(`
-    mutation AuthorizeDeviceCode($code: String!) { authorizeDeviceCode(code: $code) }
+    mutation AuthorizeDeviceCode($code: String!, $user: ID) { authorizeDeviceCode(code: $code, userId: $user) }
   `);
   const createDeviceCode = graphql(`
     mutation CreateDeviceCode($device: String!) { createDeviceCode(client: "NoFlex Web", device: $device) { code expiresAt } }
@@ -119,16 +119,30 @@
   // A TV's QR code carries the code it's showing.
   let code = $state(page.url.searchParams.get("code")?.toUpperCase() ?? "");
   let authorizing = $state(false);
+  // An administrator can approve for someone with no device of their own to
+  // approve from, a child's profile on the family TV being the usual one.
+  const people = graphql(`
+    query LinkablePeople { users { id name username } }
+  `);
+  $effect(() => { if (app.viewer.isAdmin) fetchQuery(people); });
+  let approveFor = $state(app.viewer.id);
+  let everyoneElse = $derived(($people.data?.users ?? []).filter((user) => user.id !== app.viewer.id));
+  let approveChoices = $derived([
+    { value: app.viewer.id, label: `${app.viewer.name} (you)` },
+    ...everyoneElse.map((user) => ({ value: user.id, label: user.name, hint: user.name === user.username ? undefined : user.username })),
+  ]);
 
   async function authorize(event) {
     event.preventDefault();
+    const other = everyoneElse.find((user) => user.id === approveFor);
     authorizing = true;
-    const result = await attempt(() => authorizeDeviceCode.mutate({ code: code.trim() }));
+    const result = await attempt(() => authorizeDeviceCode.mutate({ code: code.trim(), user: other?.id ?? null }));
     authorizing = false;
     if (!result) return;
     if (result.data.authorizeDeviceCode) {
-      toast("Device approved — it will finish signing in on its own", "success");
+      toast(other ? `Device approved for ${other.name} — it will finish signing in on its own` : "Device approved — it will finish signing in on its own", "success");
       code = "";
+      approveFor = app.viewer.id;
       refetch(account);
     } else {
       toast("That code isn’t right, or it has expired", "error");
@@ -205,6 +219,7 @@
       </header>
       <form class="inline-form" onsubmit={authorize}>
         <label class="field grow">Device code<input class="code-input" bind:value={code} oninput={() => (code = code.toUpperCase())} required autocapitalize="characters" autocomplete="off" placeholder="K7M2QX" spellcheck="false" /></label>
+        {#if everyoneElse.length}<label class="field" for="approve-for">Sign in as<Select id="approve-for" bind:value={approveFor} items={approveChoices} label="Sign in as" /></label>{/if}
         <button class="btn primary sm" disabled={authorizing || !code.trim()}>{#if authorizing}<span class="spinner sm"></span>{/if}Approve</button>
       </form>
       <div class="divider"></div>

@@ -5,6 +5,7 @@
   import CaretRight from "phosphor-svelte/lib/CaretRight";
   import Gear from "phosphor-svelte/lib/Gear";
   import Lock from "phosphor-svelte/lib/Lock";
+  import Numpad from "phosphor-svelte/lib/Numpad";
   import PencilSimple from "phosphor-svelte/lib/PencilSimple";
   import ShieldCheck from "phosphor-svelte/lib/ShieldCheck";
   import Trash from "phosphor-svelte/lib/Trash";
@@ -120,6 +121,31 @@
     const ok = await attempt(() => changePasswordMutation.mutate({ current: password.current, next: password.next }), "Password changed — other devices will need to sign in again");
     changing = false;
     if (ok) { password = { current: "", next: "", confirm: "" }; refetch(account); }
+  }
+
+  // ---- PIN ----
+  const setPinMutation = graphql(`
+    mutation SetPin($pin: String!, $password: String!) { setPin(pin: $pin, currentPassword: $password) { ...UserFields } }
+  `);
+  const removePinMutation = graphql(`
+    mutation RemovePin($password: String!) { removePin(currentPassword: $password) { ...UserFields } }
+  `);
+  let pinOpen = $state(false);
+  let removingPin = $state(false);
+  let pin = $state({ value: "", password: "" });
+  let savingPin = $state(false);
+  let pinFits = $derived(/^\d{4,6}$/.test(pin.value));
+  function openPin(remove) { pin = { value: "", password: "" }; removingPin = remove; pinOpen = true; }
+  async function savePin(event) {
+    event.preventDefault();
+    savingPin = true;
+    const result = removingPin
+      ? await attempt(() => removePinMutation.mutate({ password: pin.password }), "PIN removed")
+      : await attempt(() => setPinMutation.mutate({ pin: pin.value, password: pin.password }), app.viewer.hasPin ? "PIN changed" : "PIN set — it’s asked for when someone switches to you");
+    savingPin = false;
+    if (!result) return;
+    app.viewer = removingPin ? result.data.removePin : result.data.setPin;
+    pinOpen = false;
   }
 
   // ---- Known preferences ----
@@ -256,6 +282,20 @@
 
     <section class="panel wide" style:--i={2}>
       <header class="panel-head">
+        <span class="panel-icon"><Numpad size={19} /></span>
+        <div><h2>Profile PIN</h2><p>{app.viewer.hasPin ? "Asked for when someone switches to you" : "For a TV or tablet you share"}</p></div>
+      </header>
+      <div class="pin">
+        <p>A PIN keeps your profile yours on a TV or tablet you share. It’s asked for when someone switches to you there, and never signs anyone in on its own: your password still does that.</p>
+        <div class="form-actions">
+          {#if app.viewer.hasPin}<button type="button" class="btn ghost sm" onclick={() => openPin(true)}>Remove PIN</button>{/if}
+          <button type="button" class="btn sm" class:primary={!app.viewer.hasPin} onclick={() => openPin(false)}>{app.viewer.hasPin ? "Change PIN" : "Set a PIN"}</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel wide" style:--i={2}>
+      <header class="panel-head">
         <span class="panel-icon"><Books size={19} /></span>
         <div><h2>Browsing</h2><p>NoFlex browses by movies, shows and other content types across your libraries</p></div>
       </header>
@@ -313,6 +353,17 @@
   </div>
 {/if}
 
+<Dialog bind:open={pinOpen} title={removingPin ? "Remove your PIN" : app.viewer.hasPin ? "Change your PIN" : "Set a PIN"} description={removingPin ? "Anyone on a device you share will be able to switch to your profile." : "4 to 6 digits, so it can be typed with a TV remote."} width={440}>
+  <form id="pin-form" class="stack" onsubmit={savePin}>
+    {#if !removingPin}<label class="field">PIN<input class="pin-input" bind:value={pin.value} inputmode="numeric" pattern="[0-9]{'{'}4,6{'}'}" maxlength="6" autocomplete="off" required /></label>{/if}
+    <label class="field">Current password<input type="password" bind:value={pin.password} autocomplete="current-password" /><small>Leave it blank if you only sign in through another service.</small></label>
+  </form>
+  {#snippet footer()}
+    <button class="btn ghost" onclick={() => (pinOpen = false)}>Cancel</button>
+    <button class="btn" class:primary={!removingPin} class:danger={removingPin} form="pin-form" disabled={savingPin || (!removingPin && !pinFits)}>{#if savingPin}<span class="spinner sm"></span>{/if}{removingPin ? "Remove PIN" : "Save PIN"}</button>
+  {/snippet}
+</Dialog>
+
 <Dialog bind:open={renaming} title="Change your username" description="You’ll sign in with the new one from now on. Devices already signed in stay signed in." width={440}>
   <form id="rename-form" class="stack" onsubmit={saveUsername}>
     <label class="field">New username<input bind:value={rename.username} autocomplete="username" autocapitalize="none" spellcheck="false" required /></label>
@@ -333,6 +384,10 @@
   .username span { display: grid; gap: 2px; min-width: 0; }
   .username small { color: var(--text-3); font-size: 0.8rem; }
   .username strong { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  .pin { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+  .pin p { flex: 1 1 320px; color: var(--text-2); font-size: 0.92rem; max-width: 62ch; }
+  .pin .form-actions { margin-top: 0; }
+  .pin-input { font-family: ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.4em; font-size: 1.1rem !important; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 18px; align-items: start; }
   .wide { grid-column: 1 / -1; }
   .skeleton.head { height: 38px; width: 60%; margin-bottom: 22px; border-radius: 11px; }

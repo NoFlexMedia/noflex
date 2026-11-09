@@ -95,6 +95,7 @@ fragment UserFields on User {
   avatarUrl
   isAdmin
   role
+  hasPin
   createdAt
   libraryAccess
 }

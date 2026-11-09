@@ -11,7 +11,7 @@ import {
   ServerInfoStore,
 } from "$houdini";
 import { deviceName, takeExternalCallback } from "$lib/api.js";
-import { registerThisDevice } from "$lib/device.js";
+import { registerThisDevice, useDeviceOf } from "$lib/device.js";
 import { deactivateServer, setLinkedServers, type LinkedServer } from "$lib/servers.svelte.js";
 import { syncWatchState } from "$lib/sync.js";
 import { request } from "$lib/graphql.js";
@@ -58,6 +58,7 @@ function signedOut(authError: string): void {
   unwatchLibraries();
   cache.reset();
   app.viewer = null;
+  useDeviceOf(null);
   app.libraries = [];
   app.categories = [];
   app.showLibraries = false;
@@ -85,6 +86,7 @@ export async function bootstrap(): Promise<void> {
   try {
     const data = await request(new BootstrapStore(), {}, { metadata: { ownServer: true } });
     app.viewer = data.viewer;
+    useDeviceOf(data.viewer.id);
     app.server = data.serverInfo;
     app.categories = [...data.contentCategories];
     setLinkedServers(data.linkedServers as LinkedServer[]);

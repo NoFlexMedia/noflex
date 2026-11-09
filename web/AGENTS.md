@@ -41,6 +41,8 @@ npm run build   # writes build/, which the next noflex-server build embeds
 - Style with the tokens in `app.css`; don't hard-code colors or radii.
 - The CSP is strict (`style-src 'self'`, no `data:`). Never write static `style="…"` attributes — use `style:prop={…}` directives, which Svelte applies through the CSSOM.
 - Auth and refresh tokens live in `sessionStorage`, never `localStorage`, and are sent only to same-origin routes. Linked servers' keys stay in memory and go only to the server that issued them.
+- **No profile switcher here.** A TV and the apps keep a session per person and ask who's watching; a tab's session dies with the tab, so two tabs are already two people, and remembering several would mean `localStorage`. The web's part is the PIN that guards a profile there (Account → Profile) and approving a device's code, as someone else for an administrator (`DevicesTab`).
+- **This browser is a device per user** (`deviceId`, keyed by who's signed in). The server keeps a device per user and refuses an id that's someone else's, so one id shared by two people left the second unregistered.
 - API responses use paths relative to the server that sent them. Pass any URL you render through `mediaUrl` (`$lib/tokens.js`), so it works while a linked server is active.
 - A smart transcode mark is a hard signal to prepare a title next (`markForSmartTranscoding`). "Mark for smart transcoding" is for every device with it on, "Smart transcode for this device" for this browser alone; the queue is Account → Smart transcoding (`SmartTranscodingTab`). An offline copy is different: the original repackaged as one file to save.
 - A dropdown's `SubContent` goes in its own `DropdownMenu.Portal`, or the parent menu's `overflow` clips it to nothing.

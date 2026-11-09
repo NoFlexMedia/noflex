@@ -11,11 +11,24 @@ import { request } from "$lib/graphql.js";
 
 const DEVICE_KEY = "noflex.deviceId";
 
-/** This browser's device id; null where storage is unavailable, as then it couldn't stay stable. */
+let viewer: string | null = null;
+
+/** Whose device this browser is from now on; null once nobody is signed in. */
+export function useDeviceOf(userId: string | null): void { viewer = userId; }
+
+/**
+ * This browser's device id for whoever is signed in. One each, since the server
+ * keeps a device per user and refuses an id that's someone else's: two people
+ * sharing a browser would otherwise leave the second with no device at all.
+ * Null with nobody signed in, and where storage is unavailable, as then it
+ * couldn't stay stable.
+ */
 export function deviceId(): string | null {
+  if (!viewer) return null;
+  const key = `${DEVICE_KEY}.${viewer}`;
   try {
-    let id = localStorage.getItem(DEVICE_KEY);
-    if (!id) { id = crypto.randomUUID(); localStorage.setItem(DEVICE_KEY, id); }
+    let id = localStorage.getItem(key);
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem(key, id); }
     return id;
   } catch { return null; }
 }

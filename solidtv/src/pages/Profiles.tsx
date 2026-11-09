@@ -116,7 +116,7 @@ export default function Profiles() {
                 {(profile, index) => (
                   <Tile
                     label={profile().name}
-                    caption={profile().signedOut ? "Signed out" : ""}
+                    caption={profile().signedOut ? "Sign in again" : ""}
                     badge={profile().signedOut ? undefined : profile().hasPin ? "lock-key" : undefined}
                     onEnter={() => choose(profile(), index)}
                   >

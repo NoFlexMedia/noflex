@@ -157,15 +157,20 @@ export async function start(): Promise<void> {
   try {
     app.server = (await request(SERVER_INFO, {}, { noRefresh: true })).serverInfo;
     if (!app.server?.isConfigured) { app.phase = "setup"; return; }
-    const accounts = listAccounts();
-    // One person's TV goes straight in. A shared one asks, and whoever was
-    // watching last is locked like anyone else who has stepped away.
-    if (accounts.length === 1) {
-      activate(accounts[0]!.id);
-      await bootstrap();
+    const last = activeAccount();
+    // One person, still in their profile, goes straight back to it. Anyone else
+    // starts from who's watching: the TV is shared, or its one viewer stepped
+    // away on purpose. Whoever was last watching is locked like anyone who has.
+    if (last && listAccounts().length === 1) {
+      try {
+        await bootstrap();
+      } catch (cause) {
+        // Out of reach isn't stepping away: the retry goes straight in too.
+        activate(last.id);
+        throw cause;
+      }
       return;
     }
-    const last = activeAccount();
     activate(null);
     if (last) void lock(last);
     settle("");
@@ -279,13 +284,11 @@ function pinRefusal(cause: unknown, account: Account): unknown {
     const left = Number(cause.extensions.attemptsLeft) || 0;
     return new PinRefused(`That PIN isn’t right. ${left} ${left === 1 ? "try" : "tries"} left.`, false);
   }
-  if (cause.codes.indexOf("PIN_ATTEMPTS_EXHAUSTED") >= 0) {
-    removeAccount(account.id);
-    settle("Too many wrong PINs. Sign in again to use this profile.");
-  } else {
-    markSignedOut(account.id);
-    settle(`${account.name} was signed out here. Sign in again to continue.`);
-  }
+  // Either way the session is over, and like any that ends its tile stays.
+  markSignedOut(account.id);
+  settle(cause.codes.indexOf("PIN_ATTEMPTS_EXHAUSTED") >= 0
+    ? "Too many wrong PINs. Sign in again to use this profile."
+    : `${account.name} was signed out here. Sign in again to continue.`);
   return new PinRefused(app.authError, true);
 }
 

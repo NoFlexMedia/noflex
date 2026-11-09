@@ -205,6 +205,10 @@ class _SignInScreenState extends State<SignInScreen> {
   final _code = signal<String?>(null);
   Timer? _poll;
 
+  // As the screen opened. Signing in adds the account a moment before the
+  // shell takes over, and this mustn't turn into "Add someone" on the way.
+  final _adding = getIt<TokenStore>().accounts.value.isNotEmpty;
+
   SessionService get _session => getIt<SessionService>();
 
   Future<void> _run(Future<void> Function() action) async {
@@ -314,7 +318,7 @@ class _SignInScreenState extends State<SignInScreen> {
       // Someone is already signed in here, so this is adding another: there's
       // a "Who's watching?" to go back to, and the server isn't theirs to change.
       final tokens = getIt<TokenStore>();
-      final adding = tokens.accounts.value.isNotEmpty;
+      final adding = _adding;
       // Or bringing back someone whose session ended.
       final returning = tokens.account(_session.signingInFor.value);
       return _AuthFrame(

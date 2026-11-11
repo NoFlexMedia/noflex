@@ -167,7 +167,16 @@
         # `flutter-only`. See CONTRIBUTING.md for pinning a choice under direnv.
 
         # `just` and what its recipes call; see tasks/ and scripts/tasks/.
-        taskPkgs = with pkgs; [just curl jq unzip shellcheck shfmt];
+        taskPkgs = with pkgs; [
+          just
+          curl
+          jq
+          unzip
+          shellcheck
+          shfmt
+          # The server's .deb and .rpm; see packaging/linux/.
+          nfpm
+        ];
 
         rustPkgs = with pkgs; [
           rustToolchain

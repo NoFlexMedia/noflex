@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# A Linux bundle as a .deb and an .rpm, made by packaging/linux/package.sh, which
+# writes in BUNDLE and sets NFPM_ARCH and NFPM_VERSION. The bundle goes to /opt/noflex whole,
+# with its own ffmpeg, so the host only has to provide what that ffmpeg loads.
+
+name: noflex-server
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${NFPM_VERSION}
+version_schema: semver
+section: video
+priority: optional
+# Only because the field wants one: the project's contact is on GitHub.
+maintainer: NoFlex <hello@noflex.dev>
+vendor: NoFlex
+homepage: https://noflex.dev
+license: AGPL-3.0-only
+description: |-
+  Self-hosted media server
+  NoFlex organizes and streams your films, shows and music to a browser and
+  the NoFlex apps, transcoding on the GPU where it can.
+
+contents:
+  - src: ${BUNDLE}/
+    dst: /opt/noflex
+    type: tree
+  - src: ${BUNDLE}/linux/noflex.service
+    dst: /usr/lib/systemd/system/noflex.service
+  - src: ${BUNDLE}/linux/noflex.sysusers
+    dst: /usr/lib/sysusers.d/noflex.conf
+  - src: ${BUNDLE}/linux/config.toml
+    dst: /etc/noflex/config.toml
+    type: config|noreplace
+
+scripts:
+  postinstall: packaging/linux/postinstall.sh
+  preremove: packaging/linux/preremove.sh
+  postremove: packaging/linux/postremove.sh
+
+# ffmpeg loads VAAPI and Vulkan when it finds them and does without otherwise.
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.28)
+      - libstdc++6
+    recommends:
+      - libva-drm2
+      - mesa-va-drivers
+      - libvulkan1
+  rpm:
+    depends:
+      - glibc >= 2.28
+      - libstdc++
+    recommends:
+      - libva
+      - mesa-va-drivers
+      - vulkan-loader

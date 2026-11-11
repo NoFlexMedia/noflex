@@ -10,6 +10,13 @@ export interface VideoSource {
   live: boolean;
   /** Index among the audio streams of a version that lists them all. */
   audioStream?: number | null;
+  /**
+   * Stream time to start at. An encode's playlist covers the whole title, so starting
+   * anywhere else first would have the server encode from the top for nothing.
+   */
+  startSeconds?: number;
+  /** What the last stream measured, for an engine choosing a ladder's first step. */
+  bandwidthBps?: number | null;
 }
 
 export interface AudioTrack { id: number; label: string }
@@ -19,9 +26,13 @@ export type PlayerEvent =
   | { type: "playing" }
   | { type: "paused" }
   | { type: "waiting" }
+  /** Filling the buffer after this isn't a stall. */
+  | { type: "seeking" }
   | { type: "time" }
   | { type: "ended" }
   | { type: "tracks"; tracks: AudioTrack[]; current: number }
+  /** The step of a ladder now playing, where the engine says. */
+  | { type: "level"; height: number; bitrateBps: number }
   | { type: "error"; message: string };
 
 /** Whatever this engine can say about what it's doing. Blank where it can't. */

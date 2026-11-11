@@ -77,6 +77,10 @@ export class AvVideoPlayer implements VideoPlayer {
   private lastPosition = -1;
   private audioGroup: AVMediaSelectionGroup | null = null;
   private rate = 1;
+  private ticks = 0;
+  /** Paused on purpose until the start seek lands, which isn't the viewer pausing. */
+  private holding = false;
+  private lastBitrate = 0;
 
   constructor() {
     this.layer = AVPlayerLayer.playerLayerWithPlayer(this.player);
@@ -107,7 +111,10 @@ export class AvVideoPlayer implements VideoPlayer {
     const item = AVPlayerItem.playerItemWithURL(url);
     this.endObserver = NSNotificationCenter.defaultCenter.addObserverForNameObjectQueueUsingBlock(AVPlayerItemDidPlayToEndTimeNotification, item, NSOperationQueue.mainQueue, () => this.emit({ type: "ended" }));
     this.player.replaceCurrentItemWithPlayerItem(item);
-    this.play();
+    // A seek with a completion handler throws until the item is ready, so a start
+    // elsewhere waits for that before playing.
+    this.holding = !!this.startAt(source);
+    if (!this.holding) this.play();
     this.timer = setInterval(() => this.tick(source), POLL_MS);
   }
 
@@ -121,11 +128,21 @@ export class AvVideoPlayer implements VideoPlayer {
     }
     if (item.status === ITEM_READY && !this.readied) {
       this.readied = true;
+      const start = this.startAt(source);
+      if (start) {
+        this.emit({ type: "seeking" });
+        this.player.seekToTimeCompletionHandler(CMTimeMakeWithSeconds(start, TIMESCALE), () => {
+          this.holding = false;
+          if (!this.disposed) this.play();
+        });
+      }
       this.emit({ type: "ready" });
       this.readTracks(source);
     }
+    // AVPlayer moves along a ladder by itself; the access log says where it is.
+    if (++this.ticks % 4 === 0) this.readLevel(item);
     const control = this.player.timeControlStatus;
-    if (control !== this.lastControl) {
+    if (!this.holding && control !== this.lastControl) {
       this.lastControl = control;
       if (control === CONTROL_PLAYING) this.emit({ type: "playing" });
       else if (control === CONTROL_PAUSED) this.emit({ type: "paused" });
@@ -135,6 +152,21 @@ export class AvVideoPlayer implements VideoPlayer {
     if (position !== this.lastPosition) {
       this.lastPosition = position;
       this.emit({ type: "time" });
+    }
+  }
+
+  /** Where in the stream to start, when that isn't the top. */
+  private startAt(source: VideoSource): number {
+    const start = source.live ? 0 : source.startSeconds ?? 0;
+    return start > 1 ? start : 0;
+  }
+
+  private readLevel(item: AVPlayerItem): void {
+    const log = item.accessLog()?.events?.lastObject as AVPlayerItemAccessLogEvent | undefined;
+    const bitrate = log?.indicatedBitrate ?? 0;
+    if (bitrate > 0 && bitrate !== this.lastBitrate) {
+      this.lastBitrate = bitrate;
+      this.emit({ type: "level", height: item.presentationSize.height, bitrateBps: bitrate });
     }
   }
 
@@ -163,7 +195,10 @@ export class AvVideoPlayer implements VideoPlayer {
     if (this.rate !== 1) this.player.rate = this.rate;
   }
   pause(): void { this.player.pause(); }
-  seek(target: number): void { this.player.seekToTime(CMTimeMakeWithSeconds(target, TIMESCALE)); }
+  seek(target: number): void {
+    this.emit({ type: "seeking" });
+    this.player.seekToTime(CMTimeMakeWithSeconds(target, TIMESCALE));
+  }
   position(): number { return seconds(this.player.currentTime()); }
   duration(): number {
     const item = this.player.currentItem;

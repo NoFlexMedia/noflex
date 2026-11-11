@@ -36,8 +36,9 @@ import Spinner from "$components/Spinner.js";
 const CHROME_MS = 4000;
 const HEARTBEAT_MS = 15_000;
 const HELD_STEP = 30;
-// Within what the transcoder has produced (plus a little it will reach soon) a
-// seek is native; further, a new session starting at the target beats waiting.
+// A linear transcode (copied video) only reaches as far as it has produced: within that,
+// plus a little it will reach soon, a seek is native; further, a new session starting at
+// the target beats waiting. An encode's playlist is the whole title, so every seek on it is native.
 const TRANSCODE_REACH = 30;
 const SCRUB_COMMIT_MS = 600;
 const BAR_WIDTH = SCREEN.width - GUTTER * 2;
@@ -200,10 +201,6 @@ export default function Player(props: { playback: Playback }) {
           case "ready":
             setLength(timeline());
             created.setRate(rate());
-            { // A transcode already starts at the resume point; a file seeks to it.
-              const resume = (playback().resumeMs ?? 0) / 1000 - offset();
-              if (resume > 1 && created.position() < 1) created.seek(resume);
-            }
             break;
           case "playing":
             setRestarting(null);
@@ -260,7 +257,9 @@ export default function Player(props: { playback: Playback }) {
             break;
         }
       });
-      return created.load({ url, hls: playback().route !== "DIRECT", live: live(), audioStream: playback().audioStream });
+      // Stream time: a linear transcode starts near the resume point already, anything else starts there.
+      const startSeconds = Math.max(0, (playback().resumeMs ?? 0) / 1000 - offset());
+      return created.load({ url, hls: playback().route !== "DIRECT", live: live(), audioStream: playback().audioStream, startSeconds });
     }).catch(() => { if (!disposed) setError("This device has no way to play this stream."); });
   }));
 

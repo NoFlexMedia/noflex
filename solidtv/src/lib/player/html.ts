@@ -2,8 +2,8 @@
 //
 // Playback on every host with a browser engine: a <video> under the transparent
 // canvas (see public/styles.css), on hls.js wherever there's MSE, for the same
-// reason as the web client: it retries playlists the transcoder hasn't finished
-// writing, which native HLS won't.
+// reasons as the web client: it retries playlists the transcoder hasn't finished
+// writing, which native HLS won't, and waits as long as an encode takes.
 
 import type { AudioTrack, PlayerEvent, PlayerStats, VideoPlayer, VideoSource } from "$lib/player/types.js";
 import { languageName } from "$lib/format.js";
@@ -13,6 +13,8 @@ export class HtmlVideoPlayer implements VideoPlayer {
   private hls: any = null;
   private listener: (event: PlayerEvent) => void = () => {};
   private disposed = false;
+  /** Where to start once the engine knows the stream, for those that can't be told up front. */
+  private start = 0;
   private readonly handlers: [string, () => void][];
 
   constructor() {
@@ -22,10 +24,15 @@ export class HtmlVideoPlayer implements VideoPlayer {
     // Under the app root, whose canvas shows it through.
     document.body.insertBefore(this.video, document.body.firstChild);
     this.handlers = [
-      ["loadedmetadata", () => this.emit({ type: "ready" })],
+      ["loadedmetadata", () => {
+        if (this.start > 1 && this.video.currentTime < 1) this.video.currentTime = this.start;
+        this.start = 0;
+        this.emit({ type: "ready" });
+      }],
       ["playing", () => this.emit({ type: "playing" })],
       ["pause", () => this.emit({ type: "paused" })],
       ["waiting", () => this.emit({ type: "waiting" })],
+      ["seeking", () => this.emit({ type: "seeking" })],
       ["timeupdate", () => this.emit({ type: "time" })],
       ["ended", () => this.emit({ type: "ended" })],
       ["error", () => { if (!this.hls) this.emit({ type: "error", message: "This stream couldn’t be played." }); }],
@@ -37,6 +44,7 @@ export class HtmlVideoPlayer implements VideoPlayer {
   on(listener: (event: PlayerEvent) => void): void { this.listener = listener; }
 
   async load(source: VideoSource): Promise<void> {
+    this.start = source.live ? 0 : source.startSeconds ?? 0;
     if (!source.hls) {
       this.video.src = source.url;
       this.play();
@@ -55,9 +63,19 @@ export class HtmlVideoPlayer implements VideoPlayer {
     }
     const retry = { maxNumRetry: 8, retryDelayMs: 500, maxRetryDelayMs: 3000, shouldRetry: (config: { maxNumRetry: number }, count: number) => count < config.maxNumRetry };
     const policy = { default: { maxTimeToFirstByteMs: 15_000, maxLoadTimeMs: 30_000, timeoutRetry: retry, errorRetry: retry } };
-    // A transcode's playlist grows as it encodes, which hls.js would take for a
-    // live stream and join at the edge; its time zero is where to start.
-    const hls = new Hls({ enableWorker: false, backBufferLength: 30, maxBufferLength: 30, manifestLoadPolicy: policy, playlistLoadPolicy: policy, ...(source.live ? {} : { startPosition: 0 }) } as any);
+    // The server encodes a segment when it's asked for, and holds the request for up to 45 s.
+    const fragments = { default: { maxTimeToFirstByteMs: 50_000, maxLoadTimeMs: 120_000, timeoutRetry: retry, errorRetry: retry } };
+    // Told where to start, as a linear transcode's growing playlist would otherwise be
+    // taken for a live stream and joined at the edge.
+    const start = this.start;
+    this.start = 0;
+    const hls = new Hls({
+      enableWorker: false, backBufferLength: 30, maxBufferLength: 30,
+      manifestLoadPolicy: policy, playlistLoadPolicy: policy, fragLoadPolicy: fragments,
+      // A ladder starts as high as the last stream held, or at the top: Auto tries the best first.
+      abrEwmaDefaultEstimate: source.bandwidthBps ?? 50_000_000,
+      ...(source.live ? {} : { startPosition: start }),
+    } as any);
     this.hls = hls;
     hls.loadSource(source.url);
     hls.attachMedia(this.video);
@@ -72,6 +90,10 @@ export class HtmlVideoPlayer implements VideoPlayer {
     });
     hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_event: unknown, data: any) => {
       this.emit({ type: "tracks", tracks: hls.audioTracks.map((track: any) => ({ id: track.id, label: languageName(track.lang) || track.name })), current: data.id });
+    });
+    hls.on(Hls.Events.LEVEL_SWITCHED, (_event: unknown, data: any) => {
+      const level = hls.levels?.[data.level];
+      if (level && hls.levels.length > 1) this.emit({ type: "level", height: level.height, bitrateBps: level.bitrate });
     });
     hls.on(Hls.Events.ERROR, (_event: unknown, data: any) => {
       if (!data.fatal) return;

@@ -146,12 +146,13 @@ The transport is one component (`player/Player.tsx`) over `VideoPlayer` (`lib/pl
 - Skip intro floats outside the overlay, and OK on the player takes it. Same for the up-next card.
 - Settings split on who they belong to: the `playback` preference follows the viewer and every client shares it, so save through `savePlaybackPrefs`, which keeps other clients' fields. `lib/settings.ts` is this TV's room and remote.
 - **Streaming quality** lowers `maxHeight` in the capabilities sent to `startPlaybackSession`, and HDR off clears `videoRanges`. Measured: 480p on a 4K VP9 file gets `av1_nvenc` at 1146×480, with the reason in the info panel.
+- **A video encode's playlist is the whole title** (on demand, see `backend/AGENTS.md`), so its `startPositionMs` is `0`, the engine starts at the resume point itself (`VideoSource.startSeconds`), and every seek is native. Only a linear transcode (copied video) still opens a new session for a seek past what it has produced (`TRANSCODE_REACH`). Measured: a 5-minute jump on a 480p encode stayed in its session.
 - **A TV doesn't download:** nothing plays local files here, and tvOS has no persistent storage. Smart Downloads is the phone app's.
 - **Smart transcode marks** (`Title`, Settings) are the hard signal: "Mark for smart transcoding" is for every device with it on, "Smart transcode for this TV" for this one whatever its setting. Both are independent. OK on a row in Settings offers Go to this title or Unmark, never unmarks outright. **Ready to play** beneath it is `preparedVersions`, which outlive their marks.
 
 - **Video sits behind the canvas, which clears to transparent.** `clearColor: 0` plus the renderer's alpha, premultiplied context. On the web hosts it's a `<video>` under `#app`, measured working in Chrome with a 4K stream under the UI. Don't draw video into a GL texture: it loses HDR and hardware composition.
 - Subtitles draw on the canvas (`lib/player/vtt.ts`) on every host: `<track>` doesn't exist on tvOS, and AVPlayer takes no sidecar without a manifest rewrite. Image formats are burned in by the server.
-- Web hosts use hls.js wherever there's MSE, as the web client does: it retries playlists the transcoder hasn't finished writing.
+- Web hosts use hls.js wherever there's MSE, as the web client does: it retries playlists the transcoder hasn't finished writing, and its `fragLoadPolicy` waits 50 s for a segment, as the server holds a request up to 45 s while it encodes.
 - **HDR is only reported where `matchMedia("(dynamic-range: high)")` says so**, which Tizen and older webOS don't implement, so those TVs get tone-mapped SDR for now. Tizen's `webapis.avinfo` is the likely fix.
 
 ### Apple
@@ -167,6 +168,7 @@ Other notes:
 
 - Status is polled at 250 ms, not observed: KVO from NativeScript means subclassing `NSObject` with exposed selectors.
 - `awaitPlaylist` holds until the encoder has written a playlist, as Flutter's `_awaitPlaylist` does: AVPlayer gives up on the first failed fetch.
+- **Whether AVPlayer waits out a held segment** is unknown: the server may take up to 45 s to answer one it's encoding, and AVFoundation's timeout isn't ours to set. If it gives up or drops a step, that's where to look first. A seek with a completion handler throws before the item is ready, so a resume point waits for ready and status events wait for the seek (`holding`).
 - Sessions live in `ApplicationSettings` (`NSUserDefaults`), unencrypted, not the polyfill's `localStorage`, a debounced file in tvOS's purgeable Caches. The Keychain would be better.
 - `webpack` pinned to 5.111 by `overrides`: newer ones moved files `@nativescript/webpack` requires. Packages are npm rather than the demo's pnpm; `npx ns` is unverified with that, so reach for its `nodeLinker: hoisted` setup first if the CLI can't find plugins.
 - iOS has no remote, so `bindTouch` maps swipes to arrows, tap to Enter, long press to Back. It's the TV interface on a phone, in a 16:9 area at the left of a wider screen; Flutter's is the real iOS app.

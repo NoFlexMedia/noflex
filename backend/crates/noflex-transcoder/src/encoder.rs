@@ -94,6 +94,19 @@ impl Encoder {
         self.backend() != HwBackend::Software
     }
 
+    /// What makes `-force_key_frames` cut a segment: NVENC, QSV and AMF
+    /// turn a forced frame into a plain I-frame unless told to make it an
+    /// IDR, and the HLS muxer only cuts on IDRs, leaving the encoder's own
+    /// GOP (250 frames on NVENC) as the segment length. VAAPI and
+    /// VideoToolbox make a forced frame an IDR already.
+    pub fn forced_keyframe_args(self) -> &'static [&'static str] {
+        match self.backend() {
+            HwBackend::Nvenc => &["-forced-idr", "1"],
+            HwBackend::Qsv | HwBackend::Amf => &["-forced_idr", "1"],
+            _ => &[],
+        }
+    }
+
     /// Extra args the encoder needs that aren't in
     /// `-c:v <video_flag>`. VAAPI needs
     /// `-vaapi_device`; VideoToolbox + QSV don't. The detected
@@ -133,6 +146,13 @@ mod tests {
         // Detected render node overrides the default.
         let args = Encoder::Vaapi265.extra_args(Some(std::path::Path::new("/dev/dri/renderD129")));
         assert_eq!(args[1], "/dev/dri/renderD129");
+    }
+
+    #[test]
+    fn forced_keyframes_are_idrs_on_every_backend() {
+        assert_eq!(Encoder::NvencAv1.forced_keyframe_args(), ["-forced-idr", "1"]);
+        assert_eq!(Encoder::Qsv265.forced_keyframe_args(), ["-forced_idr", "1"]);
+        assert!(Encoder::Software264.forced_keyframe_args().is_empty());
     }
 
     #[test]

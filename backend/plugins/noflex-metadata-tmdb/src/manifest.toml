@@ -12,3 +12,9 @@ license = "AGPL-3.0-only"
 [priority]
 metadata = 100
 image    = 80
+
+[[settings]]
+key = "api_key"
+label = "API key"
+description = "Your own read access token or v3 key from themoviedb.org. Without one, NoFlex uses its shared key, which is for non-commercial use only."
+kind = "secret"

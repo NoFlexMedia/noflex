@@ -9,48 +9,29 @@
 use serde::Deserialize;
 use serde_json::json;
 
-/// Parsed `[plugins.per_plugin_config.webhook]` stanza.
+/// Parsed `[plugin.per_plugin_config.webhook]` stanza, with any settings
+/// an administrator made from the admin UI over it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     pub url: String,
-    pub auth_secret_key: Option<String>,
 }
 
-/// Parse the TOML blob `host-config.read` hands over.
-///
-/// The server renders the stanza with `toml::Value::to_string()`, which
-/// produces a bare inline table (`{ url = "..." }`) rather than a TOML
-/// document, so the plain parse is retried with the blob wrapped as a
-/// value. Errors are strings because the guest's only error channel for
-/// operator misconfig is the log.
+/// Parse the TOML document `host-config.read` hands over. Errors are
+/// strings because the guest's only error channel for operator misconfig
+/// is the log.
 pub fn parse_config(raw: &str) -> Result<Config, String> {
     #[derive(Deserialize)]
     struct Stanza {
         url: Option<String>,
-        auth_secret_key: Option<String>,
-    }
-    #[derive(Deserialize)]
-    struct Wrapped {
-        stanza: Stanza,
     }
 
-    let trimmed = raw.trim();
-    let parsed: Stanza = if trimmed.starts_with('{') {
-        toml::from_str::<Wrapped>(&format!("stanza = {trimmed}"))
-            .map(|w| w.stanza)
-            .map_err(|e| format!("invalid TOML: {e}"))
-    } else {
-        toml::from_str::<Stanza>(trimmed).map_err(|e| format!("invalid TOML: {e}"))
-    }?;
+    let parsed: Stanza = toml::from_str(raw).map_err(|e| format!("invalid TOML: {e}"))?;
     let url = parsed
         .url
         .map(|u| u.trim().to_string())
         .filter(|u| !u.is_empty())
         .ok_or_else(|| "missing or empty `url`".to_string())?;
-    Ok(Config {
-        url,
-        auth_secret_key: parsed.auth_secret_key,
-    })
+    Ok(Config { url })
 }
 
 /// One outbound notification. Mirrors the WIT `notify-event` variant
@@ -194,9 +175,9 @@ impl Event {
     }
 }
 
-/// Request headers for the POST. `auth` is the resolved secret value —
-/// its absence (no key configured, or the read failed) just drops the
-/// header rather than failing the notification.
+/// Request headers for the POST. `auth` is the `auth_token` secret — its
+/// absence (none set, or the read failed) just drops the header rather
+/// than failing the notification.
 pub fn headers(auth: Option<&str>) -> Vec<(String, String)> {
     let mut headers = vec![("content-type".to_string(), "application/json".to_string())];
     if let Some(token) = auth {
@@ -217,31 +198,13 @@ mod tests {
 
     #[test]
     fn config_parses_plain_document() {
-        let cfg = parse_config(
-            "url = \"https://ntfy.example.com/noflex\"\nauth_secret_key = \"webhook.auth\"\n",
-        )
-        .expect("valid stanza");
+        let cfg = parse_config("url = \"https://ntfy.example.com/noflex\"\n").expect("valid stanza");
         assert_eq!(cfg.url, "https://ntfy.example.com/noflex");
-        assert_eq!(cfg.auth_secret_key.as_deref(), Some("webhook.auth"));
-    }
-
-    #[test]
-    fn config_parses_server_rendered_inline_table() {
-        // `toml::Value::to_string()` output is what actually arrives at
-        // runtime: a bare inline table, not a document.
-        let cfg = parse_config("{ url = \"http://127.0.0.1:8901/hook\" }").expect("inline table");
-        assert_eq!(cfg.url, "http://127.0.0.1:8901/hook");
-        assert_eq!(cfg.auth_secret_key, None);
     }
 
     #[test]
     fn config_rejects_missing_or_empty_url() {
-        for raw in [
-            "auth_secret_key = \"webhook.auth\"",
-            "url = \"\"",
-            "{ auth_secret_key = \"webhook.auth\" }",
-            "",
-        ] {
+        for raw in ["other = 1", "url = \"\"", ""] {
             let err = parse_config(raw).expect_err("no url, no config");
             assert!(err.contains("url"), "error names the missing key: {err}");
         }

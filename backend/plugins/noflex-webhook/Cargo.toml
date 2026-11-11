@@ -40,4 +40,4 @@ capabilities = ["http.egress", "http.private-network", "secrets.read"]
 # The destination is operator-configured, so the allowlist cannot be
 # enumerated at build time — see src/manifest.toml for the full comment.
 http_egress_hosts = ["*"]
-secrets_read = ["webhook.auth"]
+secrets_read = ["auth_token"]

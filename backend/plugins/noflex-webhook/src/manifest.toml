@@ -12,6 +12,19 @@ capabilities = ["http.egress", "http.private-network", "secrets.read"]
 # audit-logs every request, so the audit log is the record of where
 # events actually went.
 http_egress_hosts = ["*"]
-secrets_read = ["webhook.auth"]
+secrets_read = ["auth_token"]
 license = "AGPL-3.0-only"
 # No `events` key: subscribe to every event kind.
+
+[[settings]]
+key = "url"
+label = "URL"
+description = "Every event is posted here as JSON."
+kind = "url"
+required = true
+
+[[settings]]
+key = "auth_token"
+label = "Bearer token"
+description = "Sent in an Authorization header with every post, if set."
+kind = "secret"

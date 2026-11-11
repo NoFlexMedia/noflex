@@ -8,35 +8,35 @@ the host through the capability-gated `host-net` import.
 
 ## Configuration
 
-In the server's `config.toml`:
-
-```toml
-[plugins.per_plugin_config.webhook]
-url = "https://ntfy.example.com/noflex"   # required
-auth_secret_key = "webhook.auth"          # optional: name of a secrets-read key
-```
+Set both from the admin UI (the Settings button beside the plugin on the
+Plugins tab), or in files:
 
 - `url` — the endpoint every event is POSTed to. Missing or empty, the
   plugin logs an error once and every notify is a no-op (operator
   misconfig never traps the instance).
-- `auth_secret_key` — when set, the plugin reads the secret of that name
-  via `host-secrets` and sends it as `Authorization: Bearer <value>`.
-  The key must be listed in the manifest's `secrets_read` (`webhook.auth`
-  ships declared; use that name unless you re-manifest). If the read
-  fails, the plugin warns and sends **without** the header — a missing
-  secret never fails the notification.
+- `auth_token` — a secret. When set, every POST carries
+  `Authorization: Bearer <token>`. If it can't be read, the plugin warns
+  and sends **without** the header — a missing secret never fails the
+  notification.
 
-Secrets live in the tiered store (`/etc/noflex/secrets/`,
-`/var/lib/noflex/secrets/`, `$XDG_CONFIG_HOME/noflex/secrets/`) as
-`<plugin_id>.toml`. Dotted keys nest in TOML, so quote them:
+In files, `url` goes in the server's `config.toml` and `auth_token` in
+`webhook.toml` in a secret tier (`/etc/noflex/secrets/`,
+`/var/lib/noflex/secrets/`, `$XDG_CONFIG_HOME/noflex/secrets/`). A value
+set from the admin UI wins over both.
+
+```toml
+# config.toml
+[plugin.per_plugin_config.webhook]
+url = "https://ntfy.example.com/noflex"
+```
 
 ```toml
 # $XDG_CONFIG_HOME/noflex/secrets/webhook.toml
-"webhook.auth" = "my-token"
+auth_token = "my-token"
 ```
 
-Config is read once at instantiation; the host re-instantiates the
-plugin when the server config changes.
+Config is read once at instantiation; the host reloads the plugin when a
+setting changes.
 
 ## Payload shape
 

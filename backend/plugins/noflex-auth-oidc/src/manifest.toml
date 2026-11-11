@@ -9,3 +9,36 @@ hooks = ["external-auth"]
 capabilities = ["http.egress", "http.private-network", "secrets.read"]
 http_egress_hosts = ["*"]
 secrets_read = ["client_secret"]
+
+[[settings]]
+key = "issuer"
+label = "Issuer URL"
+description = "Your identity provider's issuer. Register your public URL followed by /auth/oidc/callback with it."
+kind = "url"
+required = true
+
+[[settings]]
+key = "client_id"
+label = "Client ID"
+kind = "text"
+required = true
+
+[[settings]]
+key = "client_secret"
+label = "Client secret"
+kind = "secret"
+required = true
+
+[[settings]]
+key = "scopes"
+label = "Scopes"
+description = "Separated by spaces. Must include openid."
+kind = "text"
+default = "openid profile email"
+
+[[settings]]
+key = "token_endpoint_auth_method"
+label = "Token endpoint authentication"
+description = "Leave unset to pick from what the provider supports, preferring client_secret_basic."
+kind = "choice"
+choices = ["client_secret_basic", "client_secret_post"]

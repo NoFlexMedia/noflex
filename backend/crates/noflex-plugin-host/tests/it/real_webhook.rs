@@ -3,9 +3,9 @@
 // End-to-end test for the real first-party webhook component: the
 // domain-event bus fans events out through the dispatcher, the plugin
 // maps them to JSON and POSTs via `host-net`, and a local axum sink on
-// 127.0.0.1 captures what arrives. The second test provisions the
-// `webhook.auth` secret through the XDG secrets tier and asserts the
-// Bearer header rides along.
+// 127.0.0.1 captures what arrives. The second test sets the URL and the
+// `auth_token` secret as an administrator would, through the plugin's
+// settings, and asserts the Bearer header rides along.
 //
 // Gated on the plugin artifact existing on disk, matching
 // real_plugin.rs conventions: build first with
@@ -13,6 +13,7 @@
 
 use std::{
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -21,7 +22,9 @@ use noflex_core::{
     LibraryId, UserId, WorkId,
     events::{DomainEvent, DomainEventBus},
 };
-use noflex_plugin_host::{EngineConfig, HookKind, PluginRegistry, build_engine};
+use noflex_plugin_host::{EngineConfig, HookKind, PluginId, PluginRegistry, build_engine};
+use noflex_storage::Storage;
+use noflex_storage_turso::TursoStore;
 use tokio::sync::mpsc;
 
 const TIMEOUT: Duration = Duration::from_secs(15);
@@ -124,7 +127,7 @@ async fn posts_domain_events_as_json() {
 
     let first = recv(&mut rx, "work-played POST").await;
     assert_eq!(first.content_type.as_deref(), Some("application/json"));
-    assert_eq!(first.authorization, None, "no auth_secret_key configured");
+    assert_eq!(first.authorization, None, "no auth_token set");
     assert_eq!(first.body["event"], "work-played");
     assert_eq!(
         first.body["data"],
@@ -149,37 +152,38 @@ async fn posts_domain_events_as_json() {
 }
 
 #[tokio::test]
-async fn sends_bearer_header_when_secret_is_provisioned() {
+async fn posts_with_the_url_and_token_an_administrator_set() {
     let Some(wasm) = plugin_wasm_path() else {
         eprintln!("skipping: build the plugin first with `cargo xtask plugin-build webhook`");
         return;
     };
-    // Plugin-global secrets come from on-disk tiers; the XDG tier is the
-    // only one a test can point anywhere, so it carries the provisioned
-    // `webhook.auth` value.
-    let tier = tempfile::tempdir().expect("tempdir");
-    let secrets_dir = tier.path().join("noflex").join("secrets");
-    std::fs::create_dir_all(&secrets_dir).expect("secrets dir");
-    // Dotted keys nest in TOML; the flat `webhook.auth` secret key
-    // must be quoted.
-    std::fs::write(
-        secrets_dir.join("webhook.toml"),
-        "\"webhook.auth\" = \"test-token-123\"\n",
-    )
-    .expect("write secret");
-    // SAFETY: this is the only test in the binary that mutates the env,
-    // and secret reads (the only getenv on this path) happen on this
-    // test's own dispatch. The previous value is restored afterwards.
-    let prior_xdg = std::env::var_os("XDG_CONFIG_HOME");
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", tier.path());
-    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = TursoStore::open(dir.path().join("webhook.db"))
+        .await
+        .expect("open store");
+    store.migrate().await.expect("migrate");
+    let storage: Arc<dyn Storage> = Arc::new(store);
+    let bus = DomainEventBus::default();
+    let engine = build_engine(&EngineConfig::default()).expect("engine builds");
+    let registry = PluginRegistry::new(engine)
+        .expect("registry")
+        .with_storage(storage)
+        .with_event_bus(bus.clone());
+    // No config.toml stanza: the URL comes only from the settings.
+    registry.load_from(&wasm).expect("load webhook plugin");
 
     let (base, mut rx) = spawn_sink().await;
-    let (bus, _registry) = registry_with_plugin(
-        &wasm,
-        format!("url = \"{base}/hook\"\nauth_secret_key = \"webhook.auth\"\n"),
-    );
+    registry
+        .update_settings(
+            &PluginId("webhook".into()),
+            vec![
+                ("url".into(), Some(format!("{base}/hook"))),
+                ("auth_token".into(), Some("test-token-123".into())),
+            ],
+            "admin",
+        )
+        .await
+        .expect("save settings");
     bus.emit(DomainEvent::ScanStarted {
         library: LibraryId::new(),
         library_name: "Movies".into(),
@@ -190,15 +194,7 @@ async fn sends_bearer_header_when_secret_is_provisioned() {
     assert_eq!(captured.body["data"]["library_name"], "Movies");
     assert_eq!(
         captured.authorization.as_deref(),
-        Some("Bearer test-token-123")
+        Some("Bearer test-token-123"),
+        "host-secrets.read answers from the admin's value"
     );
-
-    // Restore before the tempdir drops so no later getenv sees a
-    // dangling path.
-    unsafe {
-        match prior_xdg {
-            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-            None => std::env::remove_var("XDG_CONFIG_HOME"),
-        }
-    }
 }

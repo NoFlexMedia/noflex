@@ -12,3 +12,15 @@ license = "AGPL-3.0-only"
 [priority]
 metadata = 90
 image    = 90
+
+[[settings]]
+key = "api_key"
+label = "API key"
+description = "Your own key from thetvdb.com. Without one, NoFlex uses its shared key."
+kind = "secret"
+
+[[settings]]
+key = "pin"
+label = "Subscriber PIN"
+description = "Only needed with a user-supported key."
+kind = "secret"

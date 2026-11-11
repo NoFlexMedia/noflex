@@ -21,3 +21,16 @@ license = "AGPL-3.0-only"
 [[tasks]]
 name = "poll-link"
 interval_ms = 5000
+
+[[settings]]
+key = "client_id"
+label = "Client ID"
+description = "From the API app you create at trakt.tv/oauth/applications."
+kind = "secret"
+required = true
+
+[[settings]]
+key = "client_secret"
+label = "Client secret"
+kind = "secret"
+required = true

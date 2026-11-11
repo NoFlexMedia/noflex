@@ -30,6 +30,8 @@ static NOFLEX_MANIFEST: [u8; include_bytes!("manifest.toml").len()] =
     *include_bytes!("manifest.toml");
 
 const TIMEOUT_MS: u32 = 10_000;
+/// The secret sent as a bearer token, if set.
+const AUTH_TOKEN: &str = "auth_token";
 
 thread_local! {
     // Config is read once and cached: the host re-instantiates the
@@ -123,22 +125,18 @@ impl notifier::Guest for Webhook {
         };
         let event = payload::Event::from(event);
 
-        // A missing secret downgrades to an unauthenticated POST instead
-        // of failing the notification — webhooks are lossy by design.
-        let auth = match &cfg.auth_secret_key {
-            Some(key) => match host_secrets::read(key.clone()).await {
-                Ok(value) => Some(value),
-                Err(e) => {
-                    log(
-                        host_log::Level::Warn,
-                        &format!(
-                            "webhook: secret `{key}` unreadable, sending without Authorization: {e:?}"
-                        ),
-                    );
-                    None
-                }
-            },
-            None => None,
+        // Most webhooks take no token, so only a failed read is worth a
+        // warning; either way the POST goes out, as webhooks are lossy.
+        let auth = match host_secrets::read(AUTH_TOKEN.into()).await {
+            Ok(token) if !token.is_empty() => Some(token),
+            Ok(_) | Err(PluginError::Unavailable(_)) => None,
+            Err(e) => {
+                log(
+                    host_log::Level::Warn,
+                    &format!("webhook: auth_token unreadable, sending without Authorization: {e:?}"),
+                );
+                None
+            }
         };
 
         let request = host_net::HttpRequest {

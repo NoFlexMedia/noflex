@@ -69,5 +69,8 @@ pub use resource_limits::{PluginLimitState, PluginLimits};
 pub use scrobbler::spawn_scrobble_dispatcher;
 pub use secrets::SecretStore;
 pub use settings::{ConfigStanzas, PluginSetting, SettingSource, SettingsError};
-pub use subtitles::{ProviderError, ProviderFailure, SubtitleSearch};
+pub use subtitles::{
+    ProviderError, ProviderFailure, SubtitleError, SubtitleSearch, SubtitleService, moviehash,
+    spawn_subtitle_sweeper,
+};
 pub use watcher::PluginWatcher;

@@ -21,4 +21,5 @@ mod real_webhook;
 mod remote_embedder;
 mod scrobbler;
 mod subtitle_search;
+mod subtitle_service;
 mod user_link;

@@ -3,14 +3,29 @@
 // Online subtitle search over the `subtitle` hook. A search asks every
 // subtitle plugin at once and keeps whatever each one found, so a provider
 // that's down or out of quota hides nothing the others offer; downloading
-// goes to the one provider that offered the subtitle.
+// goes to the one provider that offered the subtitle. `SubtitleService`
+// keeps what viewers download in the server's own cache, shared by everyone
+// who can see the title, until nobody has used it for a while.
+
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, PoisonError},
+    time::{Duration, Instant},
+};
 
 use noflex_core::{
-    PluginError,
+    DownloadedSubtitleId, MediaFileId, PluginError, SubtitleCodec, UserId,
     model::{ExternalId, ExternalIdKind, WorkKind},
     providers::{SubtitleFile, SubtitleMatch, SubtitleQuery},
     text::canonical_language,
 };
+use noflex_storage::{
+    Storage,
+    domain::{DownloadedSubtitle, MediaFile},
+};
+use noflex_transcoder::subtitles;
+use time::OffsetDateTime;
 
 use crate::{
     HookKind, HostError, PluginId, PluginRegistry,
@@ -165,6 +180,425 @@ impl PluginRegistry {
     }
 }
 
+/// How long a search's matches can be downloaded by handle. A viewer picks
+/// from what they just searched; past this they search again.
+const OFFER_TTL: Duration = Duration::from_secs(60 * 60);
+
+/// Most matches remembered at once, across every search.
+const MAX_OFFERS: usize = 10_000;
+
+/// A file in the cache with no record is left this long before the sweep
+/// takes it, so a download being written isn't.
+const ORPHAN_GRACE: Duration = Duration::from_secs(10 * 60);
+
+/// OpenSubtitles' moviehash reads this much from each end of the file.
+const HASH_CHUNK: u64 = 64 * 1024;
+
+/// Why a subtitle couldn't be found, fetched, kept or removed.
+#[derive(Debug, thiserror::Error)]
+pub enum SubtitleError {
+    /// No such media file or downloaded subtitle.
+    #[error("not found")]
+    NotFound,
+    /// The match wasn't among a recent search's; search again.
+    #[error("that subtitle is no longer on offer; search again")]
+    NotOffered,
+    #[error(transparent)]
+    Provider(#[from] ProviderFailure),
+    /// The provider sent a format the subtitle pipeline can't read.
+    #[error("unsupported subtitle format `{0}`")]
+    UnsupportedFormat(String),
+    /// The provider's file has no cues in it.
+    #[error("the provider's {0} file holds no subtitles")]
+    Empty(&'static str),
+    #[error("storage: {0}")]
+    Storage(#[from] noflex_storage::StorageError),
+    #[error("subtitle cache: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// What recent searches offered, by media file, provider and handle, with
+/// when they offered it.
+type Offers = HashMap<(MediaFileId, String, String), (Instant, SubtitleMatch)>;
+
+/// Searching, downloading and keeping subtitles for media files. Downloads
+/// are files in `dir`, the server's own subtitle cache, named for their
+/// record; nothing is ever written beside the media.
+pub struct SubtitleService {
+    registry: Arc<PluginRegistry>,
+    storage: Arc<dyn Storage>,
+    dir: PathBuf,
+    disabled: Vec<String>,
+    offers: Mutex<Offers>,
+}
+
+impl SubtitleService {
+    /// A service keeping downloads in `dir`, which it creates when it first
+    /// writes one.
+    pub fn new(registry: Arc<PluginRegistry>, storage: Arc<dyn Storage>, dir: PathBuf) -> Self {
+        Self {
+            registry,
+            storage,
+            dir,
+            disabled: Vec::new(),
+            offers: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Leave these plugins out of every search, as the server config's
+    /// `disabled` overrides ask.
+    pub fn with_disabled(mut self, disabled: Vec<String>) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Where `subtitle`'s text is.
+    pub fn path(&self, subtitle: &DownloadedSubtitle) -> PathBuf {
+        self.dir.join(&subtitle.file_name)
+    }
+
+    /// Search every subtitle plugin for `media`'s subtitles in `languages`
+    /// (ISO 639 in any spelling; any language when empty). What's found can
+    /// be downloaded for the next hour.
+    ///
+    /// # Errors
+    ///
+    /// [`SubtitleError::NotFound`] when the media file has no work, and
+    /// storage errors. A provider failing isn't one: it's in
+    /// [`SubtitleSearch::failures`].
+    pub async fn search(
+        &self,
+        media: &MediaFile,
+        languages: &[String],
+    ) -> Result<SubtitleSearch, SubtitleError> {
+        let query = self.query_for(media, languages).await?;
+        let search = self.registry.search_subtitles(&query, &self.disabled).await;
+        let now = Instant::now();
+        let mut offers = self.offers.lock().unwrap_or_else(PoisonError::into_inner);
+        offers.retain(|_, (at, _)| now.duration_since(*at) < OFFER_TTL);
+        for found in &search.matches {
+            if offers.len() >= MAX_OFFERS {
+                break;
+            }
+            offers.insert(
+                (media.id, found.provider.clone(), found.handle.clone()),
+                (now, found.clone()),
+            );
+        }
+        Ok(search)
+    }
+
+    /// Fetch what `provider` offered as `handle` in a recent search for
+    /// `media`, and keep it for everyone who can see the title. Fetching one
+    /// it already has returns that one without asking the provider again.
+    ///
+    /// # Errors
+    ///
+    /// [`SubtitleError::NotOffered`] for a match no recent search found,
+    /// the provider's failure, a format or file the pipeline can't use, and
+    /// storage or cache errors. Nothing is kept on an error.
+    pub async fn download(
+        &self,
+        media: &MediaFile,
+        provider: &str,
+        handle: &str,
+        user: Option<UserId>,
+    ) -> Result<DownloadedSubtitle, SubtitleError> {
+        let kept = self
+            .storage
+            .downloaded_subtitles_for_media(media.id)
+            .await?;
+        if let Some(existing) = kept
+            .into_iter()
+            .find(|s| s.provider == provider && s.handle == handle)
+        {
+            return Ok(existing);
+        }
+        let offer = {
+            let offers = self.offers.lock().unwrap_or_else(PoisonError::into_inner);
+            offers
+                .get(&(media.id, provider.to_string(), handle.to_string()))
+                .filter(|(at, _)| at.elapsed() < OFFER_TTL)
+                .map(|(_, offer)| offer.clone())
+        }
+        .ok_or(SubtitleError::NotOffered)?;
+        let file = self.registry.download_subtitle(provider, handle).await?;
+        let (format, text) = normalize(&file.format, &file.bytes)?;
+
+        let id = DownloadedSubtitleId::new();
+        let file_name = format!("{id}.{}", extension(format));
+        tokio::fs::create_dir_all(&self.dir).await?;
+        let path = self.dir.join(&file_name);
+        let partial = self.dir.join(format!("{file_name}.part"));
+        tokio::fs::write(&partial, text.as_bytes()).await?;
+        tokio::fs::rename(&partial, &path).await?;
+
+        let now = OffsetDateTime::now_utc();
+        let record = DownloadedSubtitle {
+            id,
+            media_file_id: media.id,
+            provider: offer.provider,
+            handle: offer.handle,
+            language: offer.language,
+            format,
+            release: offer.release,
+            hearing_impaired: offer.hearing_impaired,
+            forced: offer.forced,
+            hash_match: offer.hash_match,
+            file_name,
+            downloaded_by: user,
+            created_at: now,
+            last_used_at: now,
+        };
+        match self.storage.insert_downloaded_subtitle(&record).await {
+            Ok(stored) => {
+                // Someone else's download of the same one landed first.
+                if stored.id != id {
+                    remove_quietly(&path).await;
+                }
+                Ok(stored)
+            }
+            Err(error) => {
+                remove_quietly(&path).await;
+                Err(match error {
+                    noflex_storage::StorageError::NotFound => SubtitleError::NotFound,
+                    other => other.into(),
+                })
+            }
+        }
+    }
+
+    /// Remove a downloaded subtitle and its file. Returns what was removed.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; a file already gone is none.
+    pub async fn delete(
+        &self,
+        id: DownloadedSubtitleId,
+    ) -> Result<Option<DownloadedSubtitle>, SubtitleError> {
+        let removed = self.storage.delete_downloaded_subtitle(id).await?;
+        if let Some(subtitle) = &removed {
+            remove_quietly(&self.path(subtitle)).await;
+        }
+        Ok(removed)
+    }
+
+    /// Note that `subtitle` was just served or burned in, which keeps the
+    /// sweep from it. Failing to note it costs nothing but that, so it's
+    /// logged, not returned.
+    pub async fn record_use(&self, subtitle: &DownloadedSubtitle) {
+        if let Err(error) = self
+            .storage
+            .touch_downloaded_subtitle(subtitle.id, OffsetDateTime::now_utc())
+            .await
+        {
+            tracing::warn!(subtitle = %subtitle.id, %error, "downloaded subtitle: use not recorded");
+        }
+    }
+
+    /// Remove every downloaded subtitle nobody has used for `unused_for`,
+    /// and any file in the cache left without a record (its media file went,
+    /// or a download died half way). Returns how many subtitles went.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and failing to read the cache directory.
+    pub async fn sweep(&self, unused_for: Duration) -> Result<usize, SubtitleError> {
+        let cutoff = OffsetDateTime::now_utc() - unused_for;
+        let unused = self
+            .storage
+            .delete_downloaded_subtitles_unused_since(cutoff)
+            .await?;
+        for subtitle in &unused {
+            remove_quietly(&self.path(subtitle)).await;
+        }
+        let mut entries = match tokio::fs::read_dir(&self.dir).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(unused.len()),
+            Err(error) => return Err(error.into()),
+        };
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let fresh = entry
+                .metadata()
+                .await
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_none_or(|age| age < ORPHAN_GRACE);
+            if fresh {
+                continue;
+            }
+            let id = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.split('.').next())
+                .and_then(|stem| stem.parse::<uuid::Uuid>().ok())
+                .map(DownloadedSubtitleId::from_uuid);
+            let kept = match id {
+                Some(id) if path.extension().is_some_and(|ext| ext != "part") => {
+                    self.storage.get_downloaded_subtitle(id).await?.is_some()
+                }
+                _ => false,
+            };
+            if !kept {
+                remove_quietly(&path).await;
+            }
+        }
+        Ok(unused.len())
+    }
+
+    /// Everything the host knows about `media` that a provider might match
+    /// on: the file's moviehash, name and size, its work's title, year and
+    /// ids, and for an episode its series' ids and numbers.
+    async fn query_for(
+        &self,
+        media: &MediaFile,
+        languages: &[String],
+    ) -> Result<SubtitleQuery, SubtitleError> {
+        let work = self
+            .storage
+            .work_for_media_file(media.id)
+            .await?
+            .ok_or(SubtitleError::NotFound)?;
+        let path = Path::new(&media.path);
+        let (file_size, moviehash) = match moviehash(path).await {
+            Ok(hashed) => hashed,
+            Err(error) => {
+                tracing::warn!(media = %media.id, %error, "subtitle search: file not hashed");
+                (media.size_bytes, None)
+            }
+        };
+        let mut query = SubtitleQuery {
+            moviehash,
+            file_size,
+            file_name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            title: work.title.clone(),
+            year: work.year,
+            kind: work.kind,
+            external_ids: work.external_ids.clone(),
+            series_external_ids: Vec::new(),
+            season: None,
+            episode: None,
+            languages: languages.iter().map(|l| canonical_language(l)).collect(),
+        };
+        if work.kind == WorkKind::Episode {
+            query.episode = work.index_number.and_then(|n| u32::try_from(n).ok());
+            let season = match work.parent_id {
+                Some(id) => self.storage.get_work(id).await?,
+                None => None,
+            };
+            query.season = work
+                .parent_index
+                .or_else(|| season.as_ref().and_then(|s| s.index_number))
+                .and_then(|n| u32::try_from(n).ok());
+            let series = match season.as_ref().and_then(|s| s.parent_id) {
+                Some(id) => self.storage.get_work(id).await?,
+                None => None,
+            };
+            if let Some(series) = series {
+                query.series_external_ids = series.external_ids;
+                query.year = query.year.or(series.year);
+            }
+        }
+        Ok(query)
+    }
+}
+
+/// Keep downloaded subtitles from outliving their use: sweep at start and
+/// every six hours, removing those unused for `unused_for`.
+pub fn spawn_subtitle_sweeper(
+    service: Arc<SubtitleService>,
+    unused_for: Duration,
+) -> tokio::task::JoinHandle<()> {
+    const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+    tokio::spawn(async move {
+        loop {
+            match service.sweep(unused_for).await {
+                Ok(0) => {}
+                Ok(removed) => tracing::info!(removed, "swept unused downloaded subtitles"),
+                Err(error) => tracing::warn!(%error, "downloaded subtitle sweep failed"),
+            }
+            tokio::time::sleep(EVERY).await;
+        }
+    })
+}
+
+/// The file's size, and OpenSubtitles' moviehash of it: the size plus the
+/// wrapping sum of the first and last 64 KiB read as little-endian `u64`s,
+/// as 16 lowercase hex digits. No hash for a file under 64 KiB.
+///
+/// # Errors
+///
+/// Failing to open or read the file.
+pub async fn moviehash(path: &Path) -> std::io::Result<(u64, Option<String>)> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+    let mut file = tokio::fs::File::open(path).await?;
+    let size = file.metadata().await?.len();
+    if size < HASH_CHUNK {
+        return Ok((size, None));
+    }
+    let mut hash = size;
+    let mut chunk = vec![0_u8; HASH_CHUNK as usize];
+    for offset in [0, size - HASH_CHUNK] {
+        file.seek(std::io::SeekFrom::Start(offset)).await?;
+        file.read_exact(&mut chunk).await?;
+        for word in chunk.as_chunks::<8>().0 {
+            hash = hash.wrapping_add(u64::from_le_bytes(*word));
+        }
+    }
+    Ok((size, Some(format!("{hash:016x}"))))
+}
+
+/// A provider's subtitle as the pipeline keeps it: one of the text formats
+/// it converts and burns in, decoded to UTF-8 with `\n` line ends.
+///
+/// # Errors
+///
+/// [`SubtitleError::UnsupportedFormat`] for anything but SubRip, WebVTT,
+/// ASS and SSA, and [`SubtitleError::Empty`] for a file without a cue.
+fn normalize(format: &str, bytes: &[u8]) -> Result<(SubtitleCodec, String), SubtitleError> {
+    let codec = match format {
+        "srt" | "subrip" => SubtitleCodec::SubRip,
+        "vtt" | "webvtt" => SubtitleCodec::WebVtt,
+        "ass" => SubtitleCodec::Ass,
+        "ssa" => SubtitleCodec::Ssa,
+        other => return Err(SubtitleError::UnsupportedFormat(other.to_string())),
+    };
+    let text = subtitles::decode_text(bytes)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    if !subtitles::to_webvtt(codec, &text).is_some_and(|vtt| vtt.contains("-->")) {
+        return Err(SubtitleError::Empty(extension(codec)));
+    }
+    Ok((codec, text))
+}
+
+/// The extension ffmpeg recognizes the format by when burning it in.
+fn extension(codec: SubtitleCodec) -> &'static str {
+    match codec {
+        SubtitleCodec::WebVtt => "vtt",
+        SubtitleCodec::Ass => "ass",
+        SubtitleCodec::Ssa => "ssa",
+        _ => "srt",
+    }
+}
+
+async fn remove_quietly(path: &Path) {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "subtitle cache: file not removed");
+        }
+    }
+}
+
 /// Hash matches first, as they're timed for the very file; then the most
 /// downloaded and best rated. Ties keep a stable order by provider and handle.
 fn rank(matches: &mut [SubtitleMatch]) {
@@ -283,6 +717,59 @@ mod tests {
             order,
             ["hash-many", "hash-few", "popular", "some", "unknown"]
         );
+    }
+
+    async fn hash_of(bytes: &[u8]) -> (u64, Option<String>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("film.mkv");
+        std::fs::write(&path, bytes).expect("write");
+        moviehash(&path).await.expect("hash")
+    }
+
+    #[tokio::test]
+    async fn moviehash_sums_both_ends_little_endian_onto_the_size() {
+        let size = 2 * HASH_CHUNK as usize;
+        let mut bytes = vec![0_u8; size];
+        bytes[0] = 1; // 1 as the first little-endian word
+        bytes[size - 8 + 1] = 1; // 256 as the last
+        assert_eq!(
+            hash_of(&bytes).await,
+            (size as u64, Some(format!("{:016x}", size as u64 + 1 + 256)))
+        );
+
+        // The ends overlap in a file under 128 KiB; each is still read whole.
+        let mut short = vec![0_u8; HASH_CHUNK as usize + 8];
+        short[8] = 2;
+        assert_eq!(
+            hash_of(&short).await.1,
+            Some(format!("{:016x}", short.len() as u64 + 2 + 2))
+        );
+
+        // 2 × 8192 words of u64::MAX wrap round to minus 16384.
+        let wraps = vec![0xff_u8; HASH_CHUNK as usize];
+        assert_eq!(hash_of(&wraps).await.1.as_deref(), Some("000000000000c000"));
+
+        assert_eq!(hash_of(b"tiny").await, (4, None), "too small to hash");
+    }
+
+    #[test]
+    fn normalize_decodes_to_utf8_and_keeps_only_readable_formats() {
+        let (codec, text) =
+            normalize("srt", b"1\r\n00:00:01,000 --> 00:00:02,000\r\nCaf\xe9\r\n").expect("SubRip");
+        assert_eq!(codec, SubtitleCodec::SubRip);
+        assert_eq!(text, "1\n00:00:01,000 --> 00:00:02,000\nCafé\n");
+
+        let (codec, _) = normalize("vtt", b"WEBVTT\n\n00:01.000 --> 00:02.000\nHi\n").expect("vtt");
+        assert_eq!(codec, SubtitleCodec::WebVtt);
+
+        assert!(matches!(
+            normalize("sub", b"{1}{25}Hi"),
+            Err(SubtitleError::UnsupportedFormat(f)) if f == "sub"
+        ));
+        assert!(matches!(
+            normalize("srt", b"<html>quota exceeded</html>"),
+            Err(SubtitleError::Empty("srt"))
+        ));
     }
 
     #[test]

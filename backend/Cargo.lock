@@ -2762,6 +2762,7 @@ dependencies = [
  "noflex-plugin-wit",
  "noflex-storage",
  "noflex-storage-turso",
+ "noflex-transcoder",
  "notify",
  "ort",
  "reqwest",

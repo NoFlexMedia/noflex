@@ -251,29 +251,47 @@ export function probeBitrate(res: Resolution, framerate = 30): number {
   return Math.round(res.width * res.height * framerate * 0.13);
 }
 
-// ---- browser probes -------------------------------------------------------
+// ---- probes ---------------------------------------------------------------
 
 type Probe = (type: string) => boolean;
 
-function makeProbes() {
-  const video = document.createElement("video");
-  const canPlay: Probe = (type) => video.canPlayType(type) !== "";
-  // iOS Safari only has ManagedMediaSource; hls.js uses it there too.
-  const Source: any = (window as any).ManagedMediaSource ?? (window as any).MediaSource;
-  const mse: Probe | null = Source?.isTypeSupported ? (type) => !!Source.isTypeSupported(type) : null;
-  return { canPlay, mse, nativeHls: canPlay("application/vnd.apple.mpegurl") };
+/** A `MediaCapabilities.decodingInfo` configuration, as far as the probe uses one. */
+export interface DecodingConfig {
+  type: "media-source" | "file";
+  video?: { contentType: string; width: number; height: number; bitrate: number; framerate: number; transferFunction?: string; colorGamut?: string; hdrMetadataType?: string };
+  audio?: { contentType: string; channels: string; bitrate: number; samplerate: number };
+}
+
+/**
+ * Where a probe's answers come from: this browser's own media stack, or a
+ * device answering for itself (`probeElsewhere`).
+ */
+export interface ProbeEnv {
+  /** What a `<video src>` plays. */
+  canPlay: Probe;
+  /** What Media Source Extensions accept; null without MSE. */
+  mse: Probe | null;
+  /** Plays HLS itself, for a stack without MSE. */
+  nativeHls: boolean;
+  /** `decodingInfo`'s answer, or null where nothing can say. */
+  decodes(config: DecodingConfig): Promise<{ supported: boolean; smooth: boolean } | null>;
+  /** Whether the display path can present HDR at all. */
+  hdrDisplay: boolean;
+  /** Demuxes Matroska for a plain `<video src>`, whatever it answers for the MIME. */
+  matroska: boolean;
+  textTracks: boolean;
 }
 
 const typeFor = (mime: string, codecs: string) => `${mime}; codecs="${codecs}"`;
 
 // decodingInfo is fast where it's backed by a static table but can hit
 // the GPU process elsewhere; never let one probe hold up playback.
-async function decodes(config: any): Promise<{ supported: boolean; smooth: boolean } | null> {
+async function browserDecodes(config: DecodingConfig): Promise<{ supported: boolean; smooth: boolean } | null> {
   const caps = navigator.mediaCapabilities;
   if (!caps?.decodingInfo) return null;
   try {
     const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 400));
-    return await Promise.race([caps.decodingInfo(config).then((r) => ({ supported: r.supported, smooth: r.smooth })), timeout]);
+    return await Promise.race([caps.decodingInfo(config as MediaDecodingConfiguration).then((r) => ({ supported: r.supported, smooth: r.smooth })), timeout]);
   } catch {
     return null;
   }
@@ -288,9 +306,28 @@ export function displayHasHdr(): boolean {
   }
 }
 
-async function maxResolution(mime: string, codecs: string, type: "media-source" | "file"): Promise<{ standard: Resolution; widest: Resolution } | null> {
+function browserEnv(): ProbeEnv {
+  const video = document.createElement("video");
+  const canPlay: Probe = (type) => video.canPlayType(type) !== "";
+  // iOS Safari only has ManagedMediaSource; hls.js uses it there too.
+  const Source: any = (window as any).ManagedMediaSource ?? (window as any).MediaSource;
+  const track = document.createElement("track");
+  return {
+    canPlay,
+    mse: Source?.isTypeSupported ? (type) => !!Source.isTypeSupported(type) : null,
+    nativeHls: canPlay("application/vnd.apple.mpegurl"),
+    decodes: browserDecodes,
+    hdrDisplay: displayHasHdr(),
+    // Chromium answers "" for Matroska MIME types yet demuxes Matroska for
+    // `<video src>` with every codec it decodes elsewhere.
+    matroska: canPlay("video/x-matroska") || !!(navigator as any).userAgentData?.brands?.some((b: any) => b.brand === "Chromium"),
+    textTracks: "track" in track || "kind" in track,
+  };
+}
+
+async function maxResolution(env: ProbeEnv, mime: string, codecs: string, type: "media-source" | "file"): Promise<{ standard: Resolution; widest: Resolution } | null> {
   const probe = (res: Resolution) =>
-    decodes({ type, video: { contentType: typeFor(mime, codecs), width: res.width, height: res.height, bitrate: probeBitrate(res), framerate: 30 } })
+    env.decodes({ type, video: { contentType: typeFor(mime, codecs), width: res.width, height: res.height, bitrate: probeBitrate(res), framerate: 30 } })
       // `supported` alone is true for anything software can grind
       // through; above 1080p also demand realtime.
       .then((r) => (r ? r.supported && (r.smooth || res.height <= 1080) : null));
@@ -307,12 +344,12 @@ async function maxResolution(mime: string, codecs: string, type: "media-source" 
   return { standard: max, widest: alternatives[passed.findIndex(Boolean)] ?? max };
 }
 
-async function videoRanges(codec: VideoCodec, profile: VideoProfile | undefined, level: number, supports: Probe, type: "media-source" | "file"): Promise<VideoRange[]> {
+async function videoRanges(env: ProbeEnv, codec: VideoCodec, profile: VideoProfile | undefined, level: number, supports: Probe, type: "media-source" | "file"): Promise<VideoRange[]> {
   const ranges = new Set<VideoRange>(["SDR"]);
   const mime = mimeFor(codec);
   const base = codecString(codec, profile, level, 10);
   const tenBit = codec === "H265" ? profile === "HEVC_MAIN10" : codec === "AV1" || (codec === "VP9" && (profile === "VP9_PROFILE2" || profile === "VP9_PROFILE3"));
-  if (tenBit && displayHasHdr()) {
+  if (tenBit && env.hdrDisplay) {
     // AV1 and VP9 codec strings carry colour fields, so the transfer
     // function is part of the type itself; HEVC has none and relies on
     // decodingInfo alone. The helper's AV1 form omits the monochrome
@@ -322,7 +359,7 @@ async function videoRanges(codec: VideoCodec, profile: VideoProfile | undefined,
     const colour = (tc: string) => codec === "AV1" ? `${base}.0.110.09.${tc}.09.0` : codec === "VP9" ? `${base}.01.09.${tc}.09.00` : base;
     const hdr = (tc: string, transferFunction: string, hdrMetadataType?: string) =>
       (codec === "H265" || supports(typeFor(mime, colour(tc))))
-        ? decodes({ type, video: { contentType: typeFor(mime, colour(tc)), width: 3840, height: 2160, bitrate: 25_000_000, framerate: 24, transferFunction, colorGamut: "rec2020", ...(hdrMetadataType ? { hdrMetadataType } : {}) } })
+        ? env.decodes({ type, video: { contentType: typeFor(mime, colour(tc)), width: 3840, height: 2160, bitrate: 25_000_000, framerate: 24, transferFunction, colorGamut: "rec2020", ...(hdrMetadataType ? { hdrMetadataType } : {}) } })
           .then((r) => r?.supported ?? codec !== "H265")
         : Promise.resolve(false);
     const [pq, pqPlus, hlg] = await Promise.all([hdr("16", "pq", "smpteSt2086"), hdr("16", "pq", "smpteSt2094-40"), hdr("18", "hlg")]);
@@ -346,7 +383,7 @@ async function videoRanges(codec: VideoCodec, profile: VideoProfile | undefined,
   return [...ranges];
 }
 
-async function codecSupport(codec: VideoCodec, supports: Probe, type: "media-source" | "file"): Promise<VideoCodecSupport | null> {
+async function codecSupport(env: ProbeEnv, codec: VideoCodec, supports: Probe, type: "media-source" | "file"): Promise<VideoCodecSupport | null> {
   const mime = mimeFor(codec);
   const ok = (codecs: string) => supports(typeFor(mime, codecs));
   const profiles = supportedProfiles(codec, ok);
@@ -358,8 +395,8 @@ async function codecSupport(codec: VideoCodec, supports: Probe, type: "media-sou
   const bitDepth = highestBitDepth(codec, top, level, ok);
   const codecs = codecString(codec, top, level, bitDepth);
   const [resolution, ranges] = await Promise.all([
-    maxResolution(mime, codecs, type),
-    videoRanges(codec, top, level ?? levelTable(codec).at(-1) ?? 0, ok, type),
+    maxResolution(env, mime, codecs, type),
+    videoRanges(env, codec, top, level ?? levelTable(codec).at(-1) ?? 0, ok, type),
   ]);
   return {
     codec,
@@ -379,16 +416,17 @@ const AUDIO: [AudioCodec, string][] = [
   ["AAC", "mp4a.40.2"], ["MP3", "mp4a.6B"], ["AC3", "ac-3"], ["EAC3", "ec-3"], ["OPUS", "opus"], ["FLAC", "fLaC"],
 ];
 
-async function maxChannels(contentType: string): Promise<number> {
+async function maxChannels(env: ProbeEnv, contentType: string): Promise<number> {
   for (const channels of ["8", "6"]) {
-    const r = await decodes({ type: "file", audio: { contentType, channels, bitrate: 640_000, samplerate: 48_000 } });
+    const r = await env.decodes({ type: "file", audio: { contentType, channels, bitrate: 640_000, samplerate: 48_000 } });
     if (r?.supported) return Number(channels);
   }
   return 2;
 }
 
-async function probe(): Promise<ClientCapabilities> {
-  const { canPlay, mse, nativeHls } = makeProbes();
+/** What the media stack `env` describes can decode, as the server's `ClientCapabilities`. */
+export async function probeCapabilities(env: ProbeEnv): Promise<ClientCapabilities> {
+  const { canPlay, mse, nativeHls } = env;
   const either: Probe = (type) => canPlay(type) || !!mse?.(type);
   const mp4Video = (["H264", "H265", "AV1", "VP9"] as VideoCodec[]).filter((c) => canPlay(typeFor("video/mp4", codecString(c))));
   const webmVideo = (["VP8", "VP9", "AV1"] as VideoCodec[]).filter((c) => canPlay(typeFor("video/webm", codecString(c))));
@@ -401,10 +439,7 @@ async function probe(): Promise<ClientCapabilities> {
   if (mp4Video.length || mp4Audio.length) directPlay.push({ container: "mp4", videoCodecs: mp4Video, audioCodecs: mp4Audio });
   if (webmVideo.length || webmAudio.length) directPlay.push({ container: "webm", videoCodecs: webmVideo, audioCodecs: webmAudio });
   const anyAudio = [...new Set([...mp4Audio, ...webmAudio])];
-  // Chromium answers "" for Matroska MIME types yet demuxes Matroska for
-  // `<video src>` with every codec it decodes elsewhere.
-  const chromium = !!(navigator as any).userAgentData?.brands?.some((b: any) => b.brand === "Chromium");
-  if (canPlay("video/x-matroska") || chromium) {
+  if (env.matroska) {
     const mkvVideo = [...new Set([...mp4Video, ...webmVideo])];
     directPlay.push({ container: "mkv", videoCodecs: mkvVideo, audioCodecs: anyAudio });
   }
@@ -431,11 +466,11 @@ async function probe(): Promise<ClientCapabilities> {
   }
 
   const videoCodecs = [...new Set([...mp4Video, ...webmVideo, ...hls.flatMap((h) => h.videoCodecs)])];
-  const support = await Promise.all(videoCodecs.map((c) => codecSupport(c, either, mse ? "media-source" : "file")));
+  const support = await Promise.all(videoCodecs.map((c) => codecSupport(env, c, either, mse ? "media-source" : "file")));
   const audioCodecs = await Promise.all(
     [...new Set([...anyAudio, ...hls.flatMap((h) => h.audioCodecs)])].map(async (codec) => {
       const s = AUDIO.find(([c]) => c === codec)?.[1];
-      return { codec, maxChannels: s ? await maxChannels(typeFor("audio/mp4", s)) : 2 };
+      return { codec, maxChannels: s ? await maxChannels(env, typeFor("audio/mp4", s)) : 2 };
     }),
   );
   return {
@@ -443,7 +478,7 @@ async function probe(): Promise<ClientCapabilities> {
     hls,
     videoCodecs: support.filter((s): s is VideoCodecSupport => !!s),
     audioCodecs,
-    subtitleCodecs: "track" in document.createElement("track") || "kind" in document.createElement("track") ? ["WEB_VTT"] : [],
+    subtitleCodecs: env.textTracks ? ["WEB_VTT"] : [],
     maxHeight: null,
     maxBitrateBps: null,
   };
@@ -456,6 +491,82 @@ let cached: Promise<ClientCapabilities> | null = null;
  * is retried on the next call rather than cached.
  */
 export function clientCapabilities(): Promise<ClientCapabilities> {
-  cached ??= probe().catch((cause) => { cached = null; throw cause; });
+  cached ??= probeCapabilities(browserEnv()).catch((cause) => { cached = null; throw cause; });
   return cached;
+}
+
+// ---- a device answering for itself ----------------------------------------
+
+/**
+ * One question for a device that probes itself: whether it decodes `codecs`
+ * in `mime`, at that size, rate and channel count where given, and presents
+ * it in `hdr` where set. A Cast receiver's `canDisplayType` answers this.
+ */
+export interface MediaQuestion {
+  mime: string;
+  codecs?: string;
+  width?: number;
+  height?: number;
+  framerate?: number;
+  channels?: number;
+  /** `pq-dynamic` is PQ with HDR10+ metadata. */
+  hdr?: "pq" | "pq-dynamic" | "hlg";
+}
+
+function question(contentType: string, rest: Omit<MediaQuestion, "mime" | "codecs"> = {}): MediaQuestion {
+  const [, mime, codecs] = /^([^;]+)(?:;\s*codecs="([^"]*)")?/.exec(contentType) ?? [, contentType];
+  // A fixed key order, as questions are told apart by their JSON.
+  return { mime: mime!.trim(), codecs, width: rest.width, height: rest.height, framerate: rest.framerate, channels: rest.channels, hdr: rest.hdr };
+}
+
+/** Questions per message: a Cast message tops out at 64 KiB. */
+const BATCH = 200;
+
+/**
+ * `probeCapabilities` for a device that answers `MediaQuestion`s in batches,
+ * such as a Cast receiver. Each step of the walk depends on earlier answers,
+ * so it reruns against what's known, taking anything unknown as a yes to see
+ * what it would ask next, until a run asks nothing new: a few round trips
+ * rather than one per question. `hdr` is whether the device's display path
+ * presents HDR at all.
+ */
+export async function probeElsewhere(ask: (questions: MediaQuestion[]) => Promise<boolean[]>, hdr: boolean): Promise<ClientCapabilities> {
+  const known = new Map<string, boolean>();
+  for (let round = 0; ; round++) {
+    // A 4K HDR device settles in six runs; past ten, an unknown is a no.
+    const last = round >= 10;
+    const asked = new Map<string, MediaQuestion>();
+    const answer = (q: MediaQuestion): boolean => {
+      const key = JSON.stringify(q);
+      const found = known.get(key);
+      if (found !== undefined) return found;
+      asked.set(key, q);
+      return !last;
+    };
+    const probe: Probe = (type) => answer(question(type));
+    const caps = await probeCapabilities({
+      canPlay: probe,
+      mse: probe,
+      nativeHls: false,
+      decodes: async (config) => {
+        const supported = config.video
+          ? answer(question(config.video.contentType, {
+            width: config.video.width, height: config.video.height, framerate: config.video.framerate,
+            hdr: config.video.transferFunction === "hlg" ? "hlg" : config.video.transferFunction === "pq" ? (config.video.hdrMetadataType === "smpteSt2094-40" ? "pq-dynamic" : "pq") : undefined,
+          }))
+          : config.audio ? answer(question(config.audio.contentType, { channels: Number(config.audio.channels) })) : false;
+        return { supported, smooth: supported };
+      },
+      hdrDisplay: hdr,
+      matroska: false,
+      textTracks: true,
+    });
+    if (!asked.size || last) return caps;
+    const questions = [...asked.values()];
+    for (let start = 0; start < questions.length; start += BATCH) {
+      const batch = questions.slice(start, start + BATCH);
+      const results = await ask(batch);
+      batch.forEach((q, i) => known.set(JSON.stringify(q), results[i] === true));
+    }
+  }
 }

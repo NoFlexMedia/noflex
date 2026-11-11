@@ -8,7 +8,8 @@
 // place and reports progress, for as long as the session lasts.
 
 import { MarkPlayedStore, ReportProgressStore } from "$houdini";
-import { castCapabilities } from "$lib/castProfile.js";
+import type { ClientCapabilities } from "$codecs";
+import { castCapabilities, probeCast, type CastDevice } from "$lib/castProfile.js";
 import { connect, type Control, type RemoteDevice } from "$lib/connect.svelte.js";
 import { request, writeUserData } from "$lib/graphql.js";
 import { pickImage } from "$lib/images.js";
@@ -18,8 +19,11 @@ import { mediaUrl } from "$lib/tokens.js";
 import { toast } from "$lib/ui.svelte.js";
 
 const SDK = "https://www.gstatic.com/cast/sdk/libs/sender/1.0/cast_framework.js?loadCastFramework=1";
+const DEFAULT_RECEIVER = "CC1AD845";
 /** Google's Default Media Receiver until a published NoFlex receiver's id is built in. */
-const APP_ID = (import.meta.env.VITE_CAST_APP_ID as string | undefined) || "CC1AD845";
+const APP_ID = (import.meta.env.VITE_CAST_APP_ID as string | undefined) || DEFAULT_RECEIVER;
+/** Where NoFlex's receiver answers what its device decodes (cast/receiver). */
+const NAMESPACE = "urn:x-cast:dev.noflex.cast";
 /** The dialect `cast/receiver` is told this sender speaks. */
 const PROTOCOL = 1;
 const REPORT_MS = 15_000;
@@ -65,6 +69,10 @@ class Cast {
   #started = false;
   /** A title being started, which the Cast device hasn't answered for yet. */
   #preparing: { work: any; positionMs: number } | null = null;
+  /** What each device decodes, probed once per page. */
+  #profiles = new Map<string, Promise<ClientCapabilities>>();
+  #replies = new Map<number, (message: any) => void>();
+  #nextMessage = 0;
 
   /** Load Google's script once, if the server admits it. Returns the disposer. */
   run(): () => void {
@@ -95,8 +103,19 @@ class Cast {
     context.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, (event: any) => {
       const { SessionState } = cast.framework;
       if (event.sessionState === SessionState.SESSION_STARTED || event.sessionState === SessionState.SESSION_RESUMED) {
-        const device = this.#session()?.getCastDevice();
+        const session = this.#session();
+        const device = session?.getCastDevice();
         if (device && event.sessionState === SessionState.SESSION_STARTED) connect.setTarget(this.#id(device));
+        if (session && APP_ID !== DEFAULT_RECEIVER) {
+          session.addMessageListener(NAMESPACE, (_namespace: string, data: string) => {
+            try {
+              const message = JSON.parse(data);
+              this.#replies.get(message.id)?.(message);
+            } catch { /* not ours to read */ }
+          });
+          // Probe while the viewer picks a title, so loading doesn't wait on it.
+          void this.#profile(session);
+        }
       }
       if (event.sessionState === SessionState.SESSION_ENDED) void this.#finish(false);
       this.#publish();
@@ -107,6 +126,36 @@ class Cast {
   }
 
   #session(): any { return sdk().cast.framework.CastContext.getInstance().getCurrentSession(); }
+
+  /** Send the receiver `message` and wait for its reply. */
+  #ask(session: any, message: object, timeoutMs: number): Promise<any> {
+    const id = ++this.#nextMessage;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.#replies.delete(id); reject(new Error("The Cast device didn’t answer.")); }, timeoutMs);
+      this.#replies.set(id, (reply) => { clearTimeout(timer); this.#replies.delete(id); resolve(reply); });
+      session.sendMessage(NAMESPACE, { ...message, id }).catch((cause: unknown) => { clearTimeout(timer); this.#replies.delete(id); reject(cause); });
+    });
+  }
+
+  /** What the session's device decodes: asked of NoFlex's receiver, or looked up by model for Google's. */
+  #profile(session: any): Promise<ClientCapabilities> {
+    const device = session.getCastDevice();
+    const id = this.#id(device);
+    const fallback = () => castCapabilities(device.modelName ?? "");
+    if (APP_ID === DEFAULT_RECEIVER) return Promise.resolve(fallback());
+    let profile = this.#profiles.get(id);
+    if (!profile) {
+      profile = this.#ask(session, { type: "device" }, 3000)
+        .then((info: CastDevice) => probeCast(info, (questions) => this.#ask(session, { type: "probe", questions }, 5000).then((reply) => reply.answers ?? [])))
+        .catch((cause) => {
+          console.warn("Cast device probe failed; going by its model", cause);
+          this.#profiles.delete(id);
+          return fallback();
+        });
+      this.#profiles.set(id, profile);
+    }
+    return profile;
+  }
   #id(device: any): string { return `cast:${device.friendlyName}`; }
 
   /** Source time now, in milliseconds. */
@@ -179,13 +228,12 @@ class Cast {
     }
     const { chrome } = sdk();
     try {
-      const model: string = session.getCastDevice().modelName ?? "";
       const playable = await resolvePlayable(work, options);
       await this.#finish(false);
       // From here the bar shows it loading, through opening the session and the encoder's first segments.
       this.#preparing = { work: playable.detail.work ?? work, positionMs: playable.resume };
       this.#publish();
-      const stream = await startSession(playable.mediaFileId, playable.burnedSubtitle, playable.resume, playable.audioStream, castCapabilities(model));
+      const stream = await startSession(playable.mediaFileId, playable.burnedSubtitle, playable.resume, playable.audioStream, await this.#profile(session));
       const url = absolute(stream.url);
       const transcode = stream.route === "TRANSCODE";
       if (stream.route !== "DIRECT") await playlistReady(url);

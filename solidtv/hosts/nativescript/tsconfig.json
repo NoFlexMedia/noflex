@@ -17,7 +17,8 @@
       "$components/*": ["../../src/components/*"],
       "$pages/*": ["../../src/pages/*"],
       "$codecs": ["../../../lib/ts/codecSupport.ts"],
-      "$devices": ["../../../lib/ts/device.ts"]
+      "$devices": ["../../../lib/ts/device.ts"],
+      "$quality": ["../../../lib/ts/quality.ts"]
     }
   },
   "include": ["app/**/*"],

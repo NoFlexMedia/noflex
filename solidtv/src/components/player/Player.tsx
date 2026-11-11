@@ -12,20 +12,21 @@ import { MARK_PLAYED, REPORT_PROGRESS } from "$lib/graphql/documents.js";
 import { request } from "$lib/graphql.js";
 import { host } from "$lib/host.js";
 import { pickImage, sized } from "$lib/images.js";
-import { closePlayer, isAudioOnly, nextSibling, type Playback, playWork, restartSession, stopSession } from "$lib/playback.js";
+import { closePlayer, isAudioOnly, measured, nextSibling, type Playback, playWork, rememberQuality, restartSession, type SessionChange, stopSession } from "$lib/playback.js";
 import { clearTransport, reportNow, setTransport, type Transport } from "$lib/remote.js";
 import { chapterStops, thumbAt, type Stop } from "$lib/player/trickplay.js";
 import type { AudioTrack, VideoPlayer } from "$lib/player/types.js";
 import { cueAt, parseVtt, type Cue } from "$lib/player/vtt.js";
 import { app } from "$lib/session.js";
 import { CAPTION_BACKGROUNDS, CAPTION_SIZES, settings } from "$lib/settings.js";
-import { audioChoices, isImageSubtitle, subtitleChoices } from "$lib/tracks.js";
-import type { Work } from "$lib/types.js";
-import { toast } from "$lib/ui.js";
+import { audioChoices, type Choice, isImageSubtitle, subtitleChoices } from "$lib/tracks.js";
+import type { StreamSummary, Work } from "$lib/types.js";
+import { poll, toast } from "$lib/ui.js";
+import { AutoQuality, decodeChoice, encodeChoice, frameLabel, megabits, ORIGINAL, sameChoice, type QualityChoice } from "$quality";
 import { setUserData } from "$lib/watch.js";
 import { color, gradient, GUTTER, motion, radius, SCREEN, toward, type, weight } from "../../theme.js";
 import Artwork from "$components/Artwork.js";
-import Button from "$components/Button.js";
+import Button, { labelWidth } from "$components/Button.js";
 import Icon from "$components/Icon.js";
 import ChapterRail, { CHAPTER_HEIGHT } from "$components/player/ChapterRail.js";
 import PlaybackInfo from "$components/player/PlaybackInfo.js";
@@ -48,7 +49,9 @@ const CAPTION_PAD = 10;
 const LIFT = CHAPTER_HEIGHT + 92;
 const SCRIM = 460;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-const ROUTE: Record<string, string> = { DIRECT: "Direct", OPTIMIZED: "Optimized", TRANSCODE: "Adaptive" };
+const PILL_PAD = 24;
+
+const sourceText = (source: StreamSummary | null | undefined) => [frameLabel(source?.width, source?.height), megabits(source?.bitrateBps)].filter(Boolean).join(" · ");
 
 export default function Player(props: { playback: Playback }) {
   const playback = () => props.playback;
@@ -62,6 +65,7 @@ export default function Player(props: { playback: Playback }) {
   let scrubTimer: ReturnType<typeof setTimeout> | undefined;
   let finalized = false;
   let closing = false;
+  let switching = false;
   let cueIndex = 0;
 
   const [position, setPosition] = createSignal(0);
@@ -76,7 +80,7 @@ export default function Player(props: { playback: Playback }) {
   const [countdown, setCountdown] = createSignal<number | null>(null);
   const [tracks, setTracks] = createSignal<AudioTrack[]>([]);
   const [audioTrack, setAudioTrack] = createSignal(-1);
-  const [sheet, setSheet] = createSignal<"audio" | "subtitle" | "speed" | null>(null);
+  const [sheet, setSheet] = createSignal<"audio" | "subtitle" | "speed" | "quality" | null>(null);
   const [info, setInfo] = createSignal(false);
   const [rate, setRate] = createSignal(1);
   const [buffered, setBuffered] = createSignal(0);
@@ -86,12 +90,34 @@ export default function Player(props: { playback: Playback }) {
   const [subtitleIndex, setSubtitleIndex] = createSignal<number | null>(untrack(() => props.playback.subtitleIndex ?? null));
   const [cues, setCues] = createSignal<Cue[]>([]);
   const [caption, setCaption] = createSignal("");
+  /** The step of a ladder the engine is playing. */
+  const [level, setLevel] = createSignal<{ height: number; bitrateBps: number } | null>(null);
+  const [routeWidth, setRouteWidth] = createSignal(0);
 
   const live = () => !!playback().live || !playback().workId;
   const edition = () => playback().edition;
   const transcoding = () => playback().route === "TRANSCODE";
   const offset = () => (transcoding() ? (playback().startPositionMs ?? 0) / 1000 : 0);
   const sessionId = () => playback().sessionId ?? playback().jobId;
+  // A restart is a new `playback` with the same file; a memo is what tells the two apart.
+  const mediaFileId = createMemo(() => playback().mediaFileId);
+  const choice = (): QualityChoice => playback().quality ?? ORIGINAL;
+  // One per title, so leaving the original holds across the sessions Auto opens.
+  const auto = createMemo(on(mediaFileId, () => new AutoQuality()));
+  const stepName = () => {
+    const step = playback().adaptive ? level() : null;
+    return step ? playback().qualities?.find((quality) => quality.height === step.height)?.label ?? `${step.height}p` : null;
+  };
+  const routeLabel = () => {
+    const current = playback();
+    if (current.route === "OPTIMIZED") return "Optimized";
+    // A remux, or a transcode of the audio alone, still shows the original picture.
+    if (current.route !== "TRANSCODE" || ["REMUX", "TRANSCODE_AUDIO"].indexOf(current.decision?.plan ?? "") >= 0) return choice().kind === "auto" ? "Auto · original" : "Direct";
+    if (current.adaptive) return stepName() ? `Auto · ${stepName()}` : "Auto";
+    const pinned = choice();
+    return (pinned.kind === "pinned" && current.qualities?.find((quality) => quality.bitrateBps === pinned.bitrateBps)?.label) || "Transcoding";
+  };
+  const routeBox = () => Math.max(120, (routeWidth() || labelWidth(routeLabel(), 22)) + PILL_PAD * 2);
   const mediaTime = () => restarting() ?? offset() + (video?.position() ?? 0);
   const positionMs = () => Math.max(0, Math.round(mediaTime() * 1000));
   // The growing HLS duration would make the timeline creep; the runtime is the real length.
@@ -184,11 +210,15 @@ export default function Player(props: { playback: Playback }) {
     finalized = false;
     setError("");
     setWaiting(true);
+    setLevel(null);
+    untrack(() => auto().settle());
     let disposed = false;
     let current: VideoPlayer | null = null;
     onCleanup(() => {
       disposed = true;
       clearInterval(heartbeat);
+      const estimate = current?.stats().bandwidthBps;
+      if (estimate) measured.bandwidthBps = estimate;
       current?.destroy();
       if (video === current) video = null;
     });
@@ -204,6 +234,7 @@ export default function Player(props: { playback: Playback }) {
             break;
           case "playing":
             setRestarting(null);
+            auto().resumed();
             setWaiting(false);
             setPaused(false);
             clearInterval(heartbeat);
@@ -221,7 +252,14 @@ export default function Player(props: { playback: Playback }) {
             break;
           case "waiting":
             setWaiting(true);
+            if (restarting() == null) auto().stalled();
             reportNow();
+            break;
+          case "seeking":
+            auto().settle();
+            break;
+          case "level":
+            setLevel({ height: event.height, bitrateBps: event.bitrateBps });
             break;
           case "time":
             if (restarting() != null) break;
@@ -259,12 +297,12 @@ export default function Player(props: { playback: Playback }) {
       });
       // Stream time: a linear transcode starts near the resume point already, anything else starts there.
       const startSeconds = Math.max(0, (playback().resumeMs ?? 0) / 1000 - offset());
-      return created.load({ url, hls: playback().route !== "DIRECT", live: live(), audioStream: playback().audioStream, startSeconds });
+      return created.load({ url, hls: playback().route !== "DIRECT", live: live(), audioStream: playback().audioStream, startSeconds, bandwidthBps: measured.bandwidthBps });
     }).catch(() => { if (!disposed) setError("This device has no way to play this stream."); });
   }));
 
   // The next episode: this component stays mounted, and starts over.
-  createEffect(on(() => playback().mediaFileId, () => {
+  createEffect(on(mediaFileId, () => {
     setSubtitleIndex(playback().subtitleIndex ?? null);
     setPosition((playback().resumeMs ?? 0) / 1000);
     setTracks([]);
@@ -464,7 +502,7 @@ export default function Player(props: { playback: Playback }) {
   const pickAudio = (value: string) => {
     if (tracks().length > 1) { video?.setAudioTrack(Number(value)); return; }
     // A transcode carries one track; another means a new session.
-    void restartSession(playback().burnedSubtitle ?? null, positionMs(), Number(value));
+    void restartSession(playback().burnedSubtitle ?? null, positionMs(), { audioStream: Number(value) });
   };
   const pickSubtitle = (value: string) => {
     const index = value === "off" ? null : Number(value);
@@ -474,7 +512,57 @@ export default function Player(props: { playback: Playback }) {
     // Text tracks switch in place; entering or leaving burn-in needs a new session.
     if (needsBurn || playback().burnedSubtitle != null) void restartSession(needsBurn ? index : null, positionMs());
   };
+  // ---- quality --------------------------------------------------------------
+  async function changeQuality(change: SessionChange, message?: string): Promise<void> {
+    if (switching) return;
+    switching = true;
+    const at = positionMs();
+    // Held where it was, as for a far seek, until the new session plays.
+    setRestarting(at / 1000);
+    setWaiting(true);
+    clearInterval(heartbeat);
+    if (await restartSession(playback().burnedSubtitle ?? null, at, change)) {
+      if (message) toast(message);
+    } else {
+      setRestarting(null);
+      setWaiting(false);
+    }
+    switching = false;
+  }
+  const pickQuality = (value: string) => {
+    const next = decodeChoice(value);
+    rememberQuality(next);
+    if (!sameChoice(next, choice())) void changeQuality({ quality: next });
+  };
+  const qualityOptions = (): Choice[] => [
+    { value: "original", label: "Original", hint: sourceText(playback().decision?.source) },
+    { value: "auto", label: "Auto", hint: "Adapts to your connection" },
+    ...(playback().qualities ?? []).map((quality) => ({ value: encodeChoice({ kind: "pinned", bitrateBps: quality.bitrateBps }), label: quality.label, hint: megabits(quality.bitrateBps) })),
+  ];
+  const qualityInfo = () => {
+    const chosen = choice();
+    const name = chosen.kind === "auto" ? "Auto" : chosen.kind === "original" ? "Original" : "Pinned";
+    const step = stepName() ?? (chosen.kind === "pinned" ? playback().qualities?.find((quality) => quality.bitrateBps === chosen.bitrateBps)?.label : null);
+    return step ? `${name} · ${step}${level()?.bitrateBps ? ` at ${megabits(level()!.bitrateBps)}` : ""}` : name;
+  };
+  // Auto moves between the original and the ladder; along the ladder, the engine adapts.
+  createEffect(() => {
+    if (choice().kind !== "auto" || live()) return;
+    onCleanup(poll(() => {
+      if (switching || restarting() != null || !video || video.paused()) return;
+      const current = playback();
+      // Once the original has been left, a session that still isn't a ladder had none to give.
+      if (!current.adaptive && !current.leftOriginal && auto().struggling()) {
+        auto().leftOriginal();
+        void changeQuality({ leftOriginal: true }, "Lowered the quality to keep up with your connection");
+      } else if (current.adaptive && current.leftOriginal && auto().recovered(video.stats().bandwidthBps, current.decision?.source?.bitrateBps)) {
+        void changeQuality({ leftOriginal: false }, "Back to the original quality");
+      }
+    }, 1000));
+  });
+
   const canPickAudio = () => !live() && audioOptions().length > 1;
+  const canPickQuality = () => !live() && (playback().qualities?.length ?? 0) > 0;
   const canPickSubtitles = () => !live() && (playback().subtitleTracks?.length ?? 0) > 0;
   const art = () => (isAudioOnly(playback().work) ? pickImage(playback().work?.images, "poster") : null);
 
@@ -530,8 +618,8 @@ export default function Player(props: { playback: Playback }) {
           <Show when={live()}>
             <view x={GUTTER} y={150} width={16} height={16} borderRadius={8} color={color.live} />
           </Show>
-          <view x={SCREEN.width - GUTTER - 170} y={56} width={170} height={48} borderRadius={24} color={color.clear} border={{ width: 2, color: 0xffffff4d }}>
-            <text width={170} height={48} lineHeight={48} contain="both" textAlign="center" fontSize={22} fontWeight={weight.semibold} color={color.text2}>{ROUTE[playback().route] ?? playback().route}</text>
+          <view x={SCREEN.width - GUTTER - routeBox()} y={56} width={routeBox()} height={48} borderRadius={24} color={color.clear} border={{ width: 2, color: 0xffffff4d }}>
+            <text x={(routeBox() - (routeWidth() || labelWidth(routeLabel(), 22))) / 2} height={48} lineHeight={48} verticalAlign="middle" fontSize={22} fontWeight={weight.semibold} color={color.text2} onEvent={{ loaded: (_node: ElementNode, event: any) => { if (event) setRouteWidth(event.dimensions.w); } }}>{routeLabel()}</text>
           </view>
         </view>
         <view y={lift()} width={SCREEN.width} height={SCREEN.height} transition={{ y: motion.out }} forwardFocus={1}>
@@ -583,6 +671,9 @@ export default function Player(props: { playback: Playback }) {
             <Show when={canPickSubtitles()}>
               <Button icon="subtitles" size="lg" label="Subtitles" onEnter={() => { setSheet("subtitle"); return true; }} />
             </Show>
+            <Show when={canPickQuality()}>
+              <Button icon="sliders-horizontal" size="lg" label="Quality" onEnter={() => { setSheet("quality"); return true; }} />
+            </Show>
             <Show when={!live()}>
               <Button icon="gauge" size="lg" label={rate() === 1 ? "Speed" : `${rate()}×`} onEnter={() => { setSheet("speed"); return true; }} />
             </Show>
@@ -630,7 +721,7 @@ export default function Player(props: { playback: Playback }) {
       </Show>
 
       <Show when={info()}>
-        <PlaybackInfo x={GUTTER} y={160} playback={playback()} stats={() => video?.stats() ?? null} buffered={() => (video ? video.buffered() - video.position() : 0)} live={live()} />
+        <PlaybackInfo x={GUTTER} y={160} playback={playback()} quality={live() ? undefined : qualityInfo()} stats={() => video?.stats() ?? null} buffered={() => (video ? video.buffered() - video.position() : 0)} live={live()} />
       </Show>
 
       <Show when={sheet() === "audio"}>
@@ -638,6 +729,9 @@ export default function Player(props: { playback: Playback }) {
       </Show>
       <Show when={sheet() === "subtitle"}>
         <Sheet title="Subtitles" choices={subtitleChoices(playback().subtitleTracks)} value={subtitleIndex() == null ? "off" : String(subtitleIndex())} onPick={(value) => { pickSubtitle(value); setSheet(null); showChrome(); }} onClose={() => setSheet(null)} />
+      </Show>
+      <Show when={sheet() === "quality"}>
+        <Sheet title="Quality" choices={qualityOptions()} value={encodeChoice(choice())} onPick={(value) => { pickQuality(value); setSheet(null); showChrome(); }} onClose={() => setSheet(null)} />
       </Show>
       <Show when={sheet() === "speed"}>
         <Sheet title="Speed" choices={SPEEDS.map((value) => ({ value: String(value), label: value === 1 ? "Normal" : `${value}×` }))} value={String(rate())} onPick={(value) => { pickSpeed(value); setSheet(null); showChrome(); }} onClose={() => setSheet(null)} />

@@ -22,7 +22,7 @@ One `src/`. A Vite mode per way a browser engine loads it, `__TARGET__` folding 
 
 | Target | Host | Build | Plays through | Verified |
 | ------ | ---- | ----- | ------------- | -------- |
-| `browser` | any page, including TV browsers (Vizio, Hisense, Titan OS, Xbox) as a hosted app | modern + legacy | `<video>`, hls.js | Chrome, against the demo server: browse, direct play, HLS, seek |
+| `browser` | any page, including TV browsers (Vizio, Hisense, Titan OS, Xbox) as a hosted app | modern + legacy | `<video>`, hls.js | Chrome, against the demo server: browse, direct play, HLS, seek, quality and Auto |
 | `tizen` | `hosts/tizen`: Samsung, 2017 on (Tizen 3+) | one classic bundle | same | The bundle from `file://` in Chrome. No TV yet |
 | `webos` | `hosts/webos`: LG, 2016 on (webOS 3+) | one classic bundle | same | The bundle from `file://` in Chrome; `.ipk` builds. No TV yet |
 | `android` | `hosts/android`: Android TV, Google TV, Fire TV | modern + legacy | same, in the system WebView | APK on an Android 16 phone emulator, against the demo server: browse, direct play, D-pad, Back, exit. No TV yet |
@@ -69,6 +69,7 @@ Everything that differs goes through `host` (`lib/host.ts`): storage, capabiliti
 Signals only, no stores. Solid's stores are Proxies, and webOS 3's Chrome 38 has none.
 
 - `reactive({...})` (`lib/state.ts`) is the web's `$state`: an object of signals read and written as plain properties. `app`, `player` and `ui` are these.
+- **`on(() => obj().field)` runs whenever `obj` changes, not when `field` does.** A restarted session is a new `playback` for the same file, so `Player` keys per-title state on a memo (`mediaFileId`), which only notifies when the value differs.
 - `createQuery` paints from the cache, then the network. `preload` warms it, from a card holding focus.
 - `userDataOf(work)` reads play state. The cache holds whole responses, so changes live beside it (`lib/watch.ts`).
 - `latest(work)` is the same for a title still indexing (`lib/indexing.ts`). `Artwork` watches what it shows, so one `worksById` every 4 s covers the screen, and stops when nothing's left.
@@ -145,14 +146,24 @@ The transport is one component (`player/Player.tsx`) over `VideoPlayer` (`lib/pl
 - **Chapters are `chapterStops`:** the file's, or evenly spaced scenes where it has none but trickplay can show them. `web/src/lib/chapters.ts` is the same logic.
 - Skip intro floats outside the overlay, and OK on the player takes it. Same for the up-next card.
 - Settings split on who they belong to: the `playback` preference follows the viewer and every client shares it, so save through `savePlaybackPrefs`, which keeps other clients' fields. `lib/settings.ts` is this TV's room and remote.
-- **Streaming quality** lowers `maxHeight` in the capabilities sent to `startPlaybackSession`, and HDR off clears `videoRanges`. Measured: 480p on a 4K VP9 file gets `av1_nvenc` at 1146×480, with the reason in the info panel.
+- **Streaming quality** in Settings is the viewer's ceiling, from the shared `playback` preference: it lowers `maxHeight` in the capabilities sent to `startPlaybackSession`, and HDR off clears `videoRanges`. Measured: 480p on a 4K VP9 file gets `av1_nvenc` at 1146×480, with the reason in the info panel.
+- **Quality** in the player is this TV's choice, as on the web: Original until the viewer picks, then kept in `settings.quality` (`encodeChoice`). A step is its `bitrateBps` as `maxBitrateBps`. Auto asks for `adaptive` sessions and feeds `AutoQuality` (`$quality`) the engine's `waiting`, `seeking` and `playing`: stalls on the original reopen the session at the same place on the ladder, below the original's bitrate, and the engine adapts along it from there. A connection comfortably above the original for a minute, three minutes on, goes back. Measured in Chrome throttled to 1.2 Mb/s: the 1080p H.264 original stalled, Auto reopened on the ladder at the same second and hls.js settled on 360p; unthrottled, it was back on the original 178 s after leaving it.
 - **A video encode's playlist is the whole title** (on demand, see `backend/AGENTS.md`), so its `startPositionMs` is `0`, the engine starts at the resume point itself (`VideoSource.startSeconds`), and every seek is native. Only a linear transcode (copied video) still opens a new session for a seek past what it has produced (`TRANSCODE_REACH`). Measured: a 5-minute jump on a 480p encode stayed in its session.
+- `qualities` is kept from a title's first session: a later one, asked with a lower limit, offers less.
 - **A TV doesn't download:** nothing plays local files here, and tvOS has no persistent storage. Smart Downloads is the phone app's.
 - **Smart transcode marks** (`Title`, Settings) are the hard signal: "Mark for smart transcoding" is for every device with it on, "Smart transcode for this TV" for this one whatever its setting. Both are independent. OK on a row in Settings offers Go to this title or Unmark, never unmarks outright. **Ready to play** beneath it is `preparedVersions`, which outlive their marks.
 
 - **Video sits behind the canvas, which clears to transparent.** `clearColor: 0` plus the renderer's alpha, premultiplied context. On the web hosts it's a `<video>` under `#app`, measured working in Chrome with a 4K stream under the UI. Don't draw video into a GL texture: it loses HDR and hardware composition.
 - Subtitles draw on the canvas (`lib/player/vtt.ts`) on every host: `<track>` doesn't exist on tvOS, and AVPlayer takes no sidecar without a manifest rewrite. Image formats are burned in by the server.
 - Web hosts use hls.js wherever there's MSE, as the web client does: it retries playlists the transcoder hasn't finished writing, and its `fragLoadPolicy` waits 50 s for a segment, as the server holds a request up to 45 s while it encodes.
+
+Every engine moves along a ladder by itself; what Auto gets from each differs:
+
+| Engine | Start | Waits for a segment | Step and estimate | Auto |
+| ------ | ----- | ------------------- | ----------------- | ---- |
+| hls.js | `startPosition` | 50 s, set | `LEVEL_SWITCHED`, `bandwidthEstimate` | Leaves the original and comes back. Measured |
+| native HLS in `<video>` (no MSE) | seek on `loadedmetadata`, after the first fetch | the engine's, not settable | none | Leaves the original, never comes back: no estimate |
+| AVPlayer | seek once ready, holding play | the engine's, not settable | access log, polled | Both, unverified |
 - **HDR is only reported where `matchMedia("(dynamic-range: high)")` says so**, which Tizen and older webOS don't implement, so those TVs get tone-mapped SDR for now. Tizen's `webapis.avinfo` is the likely fix.
 
 ### Apple

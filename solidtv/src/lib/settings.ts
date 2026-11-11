@@ -18,6 +18,8 @@ const DEFAULTS = {
   /** Seconds the next episode waits, from when the credits start. */
   upNextSeconds: 10,
   allowHdr: true,
+  /** The player's quality choice, as `encodeChoice` keeps it: `original`, `auto` or a step's bitrate. */
+  quality: "original",
 };
 
 export type DeviceSettings = typeof DEFAULTS;

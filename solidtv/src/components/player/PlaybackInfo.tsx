@@ -27,7 +27,7 @@ function videoText(stream: StreamSummary): string {
 }
 const audioText = (stream: StreamSummary) => (stream.audioCodec ? [stream.audioCodec.toUpperCase(), stream.audioChannels && `${stream.audioChannels} ch`].filter(Boolean).join(" · ") : "none");
 
-export default function PlaybackInfo(props: NodeProps & { playback: Playback; stats: () => PlayerStats | null; buffered: () => number; live: boolean }) {
+export default function PlaybackInfo(props: NodeProps & { playback: Playback; quality?: string; stats: () => PlayerStats | null; buffered: () => number; live: boolean }) {
   const [stats, setStats] = createSignal<PlayerStats | null>(props.stats());
   const [ahead, setAhead] = createSignal(0);
   onMount(() => {
@@ -47,6 +47,7 @@ export default function PlaybackInfo(props: NodeProps & { playback: Playback; st
       if (decision.encoder) list.push(["Encoder", [`${decision.encoder}${decision.hardware ? " (hardware)" : ""}`, decision.audioEncoder && `audio ${decision.audioEncoder}`, decision.tonemap && "HDR → SDR tonemap"].filter(Boolean).join(" · ")]);
       if (decision.target.bitrateBps) list.push(["Bitrate", rate(decision.target.bitrateBps)]);
     }
+    if (props.quality) list.push(["Quality", props.quality]);
     if (live) {
       list.push(["Decoded", live.width ? `${live.width}×${live.height}` : "—"]);
       if (live.droppedFrames != null) list.push(["Dropped", `${live.droppedFrames}${live.totalFrames != null ? ` / ${live.totalFrames}` : ""}`]);

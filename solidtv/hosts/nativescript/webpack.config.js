@@ -23,6 +23,7 @@ module.exports = (env) => {
         $pages: path.join(SRC, "pages"),
         $codecs: path.join(ROOT, "../lib/ts/codecSupport.ts"),
         $devices: path.join(ROOT, "../lib/ts/device.ts"),
+        $quality: path.join(ROOT, "../lib/ts/quality.ts"),
         // Web hosts' players, and a Firebolt transport: never opened here, but their chunks still bundle.
         "hls.js": EMPTY,
         "@firebolt-js/sdk": EMPTY,

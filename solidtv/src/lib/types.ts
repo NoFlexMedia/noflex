@@ -3,6 +3,8 @@
 // What the client reads from the API. Generated types would need a codegen step
 // on every target's build; `graphql.test.ts` holds the documents to the schema.
 
+import type { StreamQuality } from "$quality";
+
 export interface Image { kind: string; url: string }
 export interface UserData { played: boolean; positionMs?: number | null; favorite?: boolean | null }
 export type IndexingStage = "ADDING" | "FINDING_DETAILS";
@@ -72,6 +74,10 @@ export interface PlaybackSession {
   startPositionMs?: number;
   subtitles?: SubtitleDelivery[];
   decision?: PlaybackDecision | null;
+  /** The ladder this file is offered at, best first, for the quality picker. */
+  qualities?: StreamQuality[];
+  /** `url` is a ladder the player adapts along. */
+  adaptive?: boolean;
 }
 export interface StreamSummary {
   container?: string | null;

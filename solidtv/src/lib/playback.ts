@@ -5,9 +5,10 @@
 import { CHILD_PAGE, MEDIA_FILES, START_LIVE, START_PLAYBACK, STOP_PLAYBACK, WORK_DETAIL } from "$lib/graphql/documents.js";
 import { cached, request } from "$lib/graphql.js";
 import type { ClientCapabilities } from "$codecs";
+import { decodeChoice, encodeChoice, sessionQuality, type QualityChoice } from "$quality";
 import { host } from "$lib/host.js";
 import { app } from "$lib/session.js";
-import { QUALITY_HEIGHTS, settings } from "$lib/settings.js";
+import { changeSetting, QUALITY_HEIGHTS, settings } from "$lib/settings.js";
 import { reactive } from "$lib/state.js";
 import { mediaUrl } from "$lib/tokens.js";
 import { isImageSubtitle, preferredAudio, preferredSubtitle } from "$lib/tracks.js";
@@ -31,9 +32,22 @@ export interface Playback extends PlaybackSession {
   /** The subtitle track to start with, as text or burned in. */
   subtitleIndex?: number | null;
   burnedSubtitle?: number | null;
+  quality?: QualityChoice;
+  /** Auto moved this title off the original because it struggled. */
+  leftOriginal?: boolean;
 }
 
 export const player = reactive({ current: null as Playback | null, preparing: null as string | null });
+
+/** The last stream's bandwidth estimate, so the next one starts at a quality it can hold. */
+export const measured: { bandwidthBps: number | null } = { bandwidthBps: null };
+
+/** The quality this TV plays at, Original until the viewer picks another. */
+export const qualityChoice = (): QualityChoice => decodeChoice(settings.quality);
+export const rememberQuality = (choice: QualityChoice) => changeSetting("quality", encodeChoice(choice));
+
+/** What a session asks the server for; see `sessionQuality`. */
+export type QualityRequest = ReturnType<typeof sessionQuality>;
 
 export const isContainer = (work: Pick<Work, "kind"> | null | undefined) => ["SERIES", "SEASON", "ARTIST", "ALBUM"].indexOf(work?.kind ?? "") >= 0;
 export const isPlayable = (work: Pick<Work, "kind"> | null | undefined) => !!work && !isContainer(work) && work.kind !== "PHOTO";
@@ -53,10 +67,14 @@ function limited(capabilities: ClientCapabilities): ClientCapabilities {
   };
 }
 
-/** Open a session; a transcode starts at `startPositionMs` so far seeks don't wait on ffmpeg. */
-export async function startSession(mediaFileId: string, subtitle: number | null = null, startPositionMs = 0, audioStream: number | null = null): Promise<PlaybackSession> {
-  const capabilities = limited(await host.capabilities());
-  const data = await request(START_PLAYBACK, { media: mediaFileId, capabilities, subtitle, start: Math.max(0, Math.round(startPositionMs)), audio: audioStream });
+/**
+ * Open a session. A linear transcode (copied video) starts at `startPositionMs`, which
+ * comes back as its offset; a video encode covers the whole title and comes back at 0.
+ */
+export async function startSession(mediaFileId: string, subtitle: number | null = null, startPositionMs = 0, audioStream: number | null = null, quality: QualityRequest = sessionQuality(qualityChoice(), null)): Promise<PlaybackSession> {
+  const allowed = limited(await host.capabilities());
+  const capabilities = quality.maxBitrateBps ? { ...allowed, maxBitrateBps: quality.maxBitrateBps } : allowed;
+  const data = await request(START_PLAYBACK, { media: mediaFileId, capabilities, subtitle, start: Math.max(0, Math.round(startPositionMs)), audio: audioStream, adaptive: quality.adaptive });
   return absolute(data.startPlaybackSession);
 }
 
@@ -88,7 +106,8 @@ export async function playWork(work: Work, options: PlayOptions = {}): Promise<b
     const burnedSubtitle = subtitleIndex != null && isImageSubtitle(file.subtitleTracks?.[subtitleIndex]) ? subtitleIndex : null;
     const known = userDataOf(detail.work ?? work);
     const resume = options.positionMs ?? (options.fromStart || known?.played ? 0 : known?.positionMs ?? 0);
-    const session = await startSession(file.id, burnedSubtitle, resume, audioStream);
+    const quality = qualityChoice();
+    const session = await startSession(file.id, burnedSubtitle, resume, audioStream, sessionQuality(quality, null));
     player.current = {
       ...session,
       workId: work.id,
@@ -103,6 +122,7 @@ export async function playWork(work: Work, options: PlayOptions = {}): Promise<b
       subtitleTracks: file.subtitleTracks ?? [],
       subtitleIndex,
       burnedSubtitle,
+      quality,
     };
     return true;
   } catch (cause) {
@@ -126,15 +146,26 @@ export async function playChannel(channel: { id: string; name: string }): Promis
   }
 }
 
-/** Replace the current session with one starting at `positionMs`: to burn in a subtitle, or seek a transcode far from its offset. */
-export async function restartSession(subtitle: number | null, positionMs: number, audioStream?: number | null): Promise<boolean> {
+export interface SessionChange { audioStream?: number | null; quality?: QualityChoice; leftOriginal?: boolean }
+
+/**
+ * Replace the current session with one starting at `positionMs`: to burn in a subtitle,
+ * change the audio of a transcode, seek a linear one far from its offset, or play at
+ * another quality.
+ */
+export async function restartSession(subtitle: number | null, positionMs: number, change: SessionChange = {}): Promise<boolean> {
   const current = player.current;
   if (!current?.mediaFileId) return false;
+  const quality = change.quality ?? current.quality ?? qualityChoice();
+  // A new choice starts over on the original, if that's where it starts.
+  const leftOriginal = change.leftOriginal ?? (change.quality ? false : current.leftOriginal ?? false);
   try {
     await stopSession(current.sessionId);
-    const audio = audioStream !== undefined ? audioStream : current.audioStream ?? null;
-    const session = await startSession(current.mediaFileId, subtitle, positionMs, audio);
-    player.current = { ...current, ...session, resumeMs: positionMs, audioStream: audio, burnedSubtitle: subtitle };
+    const audio = change.audioStream !== undefined ? change.audioStream : current.audioStream ?? null;
+    const session = await startSession(current.mediaFileId, subtitle, positionMs, audio, sessionQuality(quality, current.decision?.source ?? null, leftOriginal));
+    // The ladder a session offers depends on the limit it was asked with; the first one's is the whole of it.
+    const qualities = current.qualities?.length ? current.qualities : session.qualities;
+    player.current = { ...current, ...session, qualities, resumeMs: positionMs, audioStream: audio, burnedSubtitle: subtitle, quality, leftOriginal };
     return true;
   } catch (cause) {
     toast(cause instanceof Error ? cause.message : String(cause), "error");

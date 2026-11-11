@@ -58,6 +58,8 @@ fragment SessionFields on PlaybackSession {
   url
   jobId
   startPositionMs
+  adaptive
+  qualities { label width height bitrateBps }
   subtitles { index language title forced default url }
   decision {
     plan
@@ -223,8 +225,8 @@ query Collections($library: ID!, $after: String) {
 // ---- playback ---------------------------------------------------------------
 
 export const START_PLAYBACK = gql(`
-mutation StartPlayback($media: ID!, $capabilities: ClientCapabilities!, $subtitle: Int, $start: Int, $audio: Int) {
-  startPlaybackSession(mediaFileId: $media, capabilities: $capabilities, burnSubtitle: $subtitle, startPositionMs: $start, audioStream: $audio) { ...SessionFields }
+mutation StartPlayback($media: ID!, $capabilities: ClientCapabilities!, $subtitle: Int, $start: Int, $audio: Int, $adaptive: Boolean! = false) {
+  startPlaybackSession(mediaFileId: $media, capabilities: $capabilities, burnSubtitle: $subtitle, startPositionMs: $start, audioStream: $audio, adaptive: $adaptive) { ...SessionFields }
 }`, SESSION_FIELDS);
 
 export const STOP_PLAYBACK = `mutation StopPlayback($session: ID!) { stopPlaybackSession(sessionId: $session) }`;

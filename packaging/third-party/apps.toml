@@ -1,0 +1,548 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Third-party code the apps ship that their package managers don't track: the
+# libraries media_kit downloads prebuilt for each platform, and the bundled font.
+# Kept by reading each build, not generated from it; packaging/AGENTS.md says how.
+# `cargo xtask third-party sync` turns it into flutter/assets/licenses/.
+
+# The media_kit commit this describes, as flutter/pubspec.lock resolves it.
+media_kit = "c533e446755f51cf53c7e57aea873f2aa5355f81"
+
+# Full license texts that notices refer to.
+[text."LGPL-2.1"]
+url = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n6.0/COPYING.LGPLv2.1"
+sha256 = "b634ab5640e258563c536e658cad87080553df6f34f62269a21d554844e58bfe"
+
+[text."LGPL-3.0"]
+url = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n6.0/COPYING.LGPLv3"
+sha256 = "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768"
+
+# LGPL-3.0 supplements it, so the two go together.
+[text."GPL-3.0"]
+url = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n6.0/COPYING.GPLv3"
+sha256 = "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+
+[text."Apache-2.0"]
+url = "https://raw.githubusercontent.com/Mbed-TLS/mbedtls/v3.4.1/LICENSE"
+sha256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+
+# Each library's license as SPDX, and where its text comes from: a `notice` in
+# notices/ (with any `texts` it names), `files` copied from its first pinned
+# source, or `license_urls` when no build pins its source.
+
+[library.mpv]
+name = "mpv"
+license = "LGPL-2.1-or-later"
+notice = "mpv.txt"
+texts = ["LGPL-2.1"]
+
+[library.ffmpeg]
+name = "FFmpeg"
+license = "LGPL-3.0-or-later"
+notice = "ffmpeg.txt"
+texts = ["LGPL-3.0", "GPL-3.0"]
+
+[library.libass]
+name = "libass"
+license = "ISC"
+files = ["COPYING"]
+
+[library.freetype]
+name = "FreeType"
+license = "FTL"
+files = ["LICENSE.TXT", "docs/FTL.TXT"]
+
+[library.fribidi]
+name = "GNU FriBidi"
+license = "LGPL-2.1-or-later"
+notice = "fribidi.txt"
+texts = ["LGPL-2.1"]
+
+[library.harfbuzz]
+name = "HarfBuzz"
+license = "MIT-Modern-Variant"
+files = ["COPYING"]
+
+[library.mbedtls]
+name = "Mbed TLS"
+license = "Apache-2.0"
+notice = "mbedtls.txt"
+texts = ["Apache-2.0"]
+
+[library.dav1d]
+name = "dav1d"
+license = "BSD-2-Clause"
+files = ["COPYING"]
+
+[library.libpng]
+name = "libpng"
+license = "libpng-2.0"
+files = ["LICENSE"]
+
+[library.uchardet]
+name = "uchardet"
+license = "LGPL-2.1-or-later"
+notice = "uchardet.txt"
+texts = ["LGPL-2.1"]
+
+[library.libxml2]
+name = "libxml2"
+license = "MIT"
+files = ["Copyright"]
+
+[library.mimalloc]
+name = "mimalloc"
+license = "MIT"
+files = ["LICENSE"]
+
+[library.inter]
+name = "Inter"
+license = "OFL-1.1"
+notice = "inter.txt"
+
+[library.fontconfig]
+name = "Fontconfig"
+license = "HPND-sell-variant"
+license_urls = ["https://gitlab.freedesktop.org/fontconfig/fontconfig/-/raw/main/COPYING"]
+
+[library.expat]
+name = "Expat"
+license = "MIT"
+license_urls = ["https://raw.githubusercontent.com/libexpat/libexpat/master/expat/COPYING"]
+
+[library.libunibreak]
+name = "libunibreak"
+license = "Zlib"
+license_urls = ["https://raw.githubusercontent.com/adah1972/libunibreak/master/LICENCE"]
+
+[library.libiconv]
+name = "GNU libiconv"
+license = "LGPL-2.1-or-later"
+notice = "libiconv.txt"
+texts = ["LGPL-2.1"]
+
+[library.libplacebo]
+name = "libplacebo"
+license = "LGPL-2.1-or-later"
+notice = "libplacebo.txt"
+texts = ["LGPL-2.1"]
+
+[library.shaderc]
+name = "Shaderc"
+license = "Apache-2.0"
+notice = "shaderc.txt"
+texts = ["Apache-2.0"]
+
+[library.glslang]
+name = "glslang"
+license = "BSD-3-Clause AND Apache-2.0 AND MIT"
+license_urls = ["https://raw.githubusercontent.com/KhronosGroup/glslang/main/LICENSE.txt"]
+
+[library.spirv-tools]
+name = "SPIRV-Tools"
+license = "Apache-2.0"
+notice = "spirv-tools.txt"
+texts = ["Apache-2.0"]
+
+[library.spirv-cross]
+name = "SPIRV-Cross"
+license = "Apache-2.0"
+notice = "spirv-cross.txt"
+texts = ["Apache-2.0"]
+
+[library.vulkan-loader]
+name = "Vulkan Loader"
+license = "Apache-2.0"
+license_urls = ["https://raw.githubusercontent.com/KhronosGroup/Vulkan-Loader/main/LICENSE.txt"]
+
+[library.lcms2]
+name = "Little CMS"
+license = "MIT"
+license_urls = ["https://raw.githubusercontent.com/mm2/Little-CMS/master/LICENSE"]
+
+[library.libjpeg-turbo]
+name = "libjpeg-turbo"
+license = "IJG AND BSD-3-Clause AND Zlib"
+license_urls = ["https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/main/LICENSE.md"]
+
+[library.zlib]
+name = "zlib"
+license = "Zlib"
+license_urls = ["https://raw.githubusercontent.com/madler/zlib/master/LICENSE"]
+
+[library.libarchive]
+name = "libarchive"
+license = "BSD-2-Clause"
+license_urls = ["https://raw.githubusercontent.com/libarchive/libarchive/master/COPYING"]
+
+[library.xz]
+name = "XZ Utils"
+license = "0BSD"
+license_urls = ["https://raw.githubusercontent.com/tukaani-project/xz/master/COPYING.0BSD"]
+
+[library.zstd]
+name = "Zstandard"
+license = "BSD-3-Clause"
+license_urls = ["https://raw.githubusercontent.com/facebook/zstd/dev/LICENSE"]
+
+[library.bzip2]
+name = "bzip2"
+license = "bzip2-1.0.6"
+license_urls = ["https://gitlab.com/bzip2/bzip2/-/raw/master/COPYING"]
+
+[library.openssl]
+name = "OpenSSL"
+license = "Apache-2.0"
+notice = "openssl.txt"
+texts = ["Apache-2.0"]
+
+[library.libssh]
+name = "libssh"
+license = "LGPL-2.1-only"
+notice = "libssh.txt"
+texts = ["LGPL-2.1"]
+
+[library.libjxl]
+name = "libjxl"
+license = "BSD-3-Clause"
+license_urls = [
+  "https://raw.githubusercontent.com/libjxl/libjxl/main/LICENSE",
+  "https://raw.githubusercontent.com/libjxl/libjxl/main/PATENTS",
+]
+
+[library.highway]
+name = "Highway"
+license = "Apache-2.0 OR BSD-3-Clause"
+license_urls = ["https://raw.githubusercontent.com/google/highway/master/LICENSE"]
+
+[library.brotli]
+name = "Brotli"
+license = "MIT"
+license_urls = ["https://raw.githubusercontent.com/google/brotli/master/LICENSE"]
+
+[library.libbluray]
+name = "libbluray"
+license = "LGPL-2.1-or-later"
+notice = "libbluray.txt"
+texts = ["LGPL-2.1"]
+
+[library.libudfread]
+name = "libudfread"
+license = "LGPL-2.1-or-later"
+notice = "libudfread.txt"
+texts = ["LGPL-2.1"]
+
+[library.zimg]
+name = "zimg"
+license = "WTFPL"
+license_urls = ["https://raw.githubusercontent.com/sekrit-twc/zimg/master/COPYING"]
+
+[library.libdovi]
+name = "libdovi"
+license = "MIT"
+license_urls = ["https://raw.githubusercontent.com/quietvoid/dovi_tool/main/LICENSE"]
+
+[library.xxhash]
+name = "xxHash"
+license = "BSD-2-Clause"
+license_urls = ["https://raw.githubusercontent.com/Cyan4973/xxHash/dev/LICENSE"]
+
+[library.fast_float]
+name = "fast_float"
+license = "MIT OR Apache-2.0 OR BSL-1.0"
+license_urls = ["https://raw.githubusercontent.com/fastfloat/fast_float/main/LICENSE-MIT"]
+
+[library.angle]
+name = "ANGLE"
+license = "BSD-3-Clause"
+license_urls = ["https://raw.githubusercontent.com/google/angle/main/LICENSE"]
+
+# What each platform's build carries. `source` is the build's own scripts and
+# patches; each library's `url` and `sha256` pin the source it was built from,
+# which a release publishes beside its builds. A library without them was built
+# from a branch head, and its exact source can't be named.
+
+# Everywhere: bundled with the app itself.
+[build.app]
+platforms = ["android", "ios", "macos", "windows", "linux"]
+
+[[build.app.library]]
+id = "inter"
+
+# libmpv-darwin-build v0.7.2, video-default flavor: media_kit_libs_ios_video and
+# media_kit_libs_macos_video. The frameworks are those their Package.swift lists;
+# versions, URLs and hashes are its packages.lock.nix.
+[build.darwin]
+platforms = ["ios", "macos"]
+source = { url = "https://github.com/media-kit/libmpv-darwin-build/archive/refs/tags/v0.7.2.tar.gz", sha256 = "f5fa68ce2e04772c7a5fc0cec63544b23d90bcfd571731fa78398221ad5b8c1f" }
+
+[[build.darwin.library]]
+id = "mpv"
+version = "0.36.0"
+url = "https://github.com/mpv-player/mpv/archive/refs/tags/v0.36.0.tar.gz"
+sha256 = "29abc44f8ebee013bb2f9fe14d80b30db19b534c679056e4851ceadf5a5e8bf6"
+
+[[build.darwin.library]]
+id = "ffmpeg"
+version = "6.0"
+url = "https://ffmpeg.org/releases/ffmpeg-6.0.tar.xz"
+sha256 = "57be87c22d9b49c112b6d24bc67d42508660e6b718b3db89c44e47e289137082"
+
+[[build.darwin.library]]
+id = "libass"
+version = "0.17.1"
+url = "https://github.com/libass/libass/releases/download/0.17.1/libass-0.17.1.tar.xz"
+sha256 = "f0da0bbfba476c16ae3e1cfd862256d30915911f7abaa1b16ce62ee653192784"
+
+[[build.darwin.library]]
+id = "freetype"
+version = "2.13.2"
+url = "https://downloads.sourceforge.net/project/freetype/freetype2/2.13.2/freetype-2.13.2.tar.xz"
+sha256 = "12991c4e55c506dd7f9b765933e62fd2be2e06d421505d7950a132e4f1bb484d"
+
+[[build.darwin.library]]
+id = "fribidi"
+version = "1.0.13"
+url = "https://github.com/fribidi/fribidi/releases/download/v1.0.13/fribidi-1.0.13.tar.xz"
+sha256 = "7fa16c80c81bd622f7b198d31356da139cc318a63fc7761217af4130903f54a2"
+
+[[build.darwin.library]]
+id = "harfbuzz"
+version = "8.1.1"
+url = "https://github.com/harfbuzz/harfbuzz/archive/8.1.1.tar.gz"
+sha256 = "b16e6bc0fc7e6a218583f40c7d201771f2e3072f85ef6e9217b36c1dc6b2aa25"
+
+[[build.darwin.library]]
+id = "mbedtls"
+version = "3.4.1"
+url = "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v3.4.1.tar.gz"
+sha256 = "a420fcf7103e54e775c383e3751729b8fb2dcd087f6165befd13f28315f754f5"
+
+[[build.darwin.library]]
+id = "dav1d"
+version = "1.2.1"
+url = "https://code.videolan.org/videolan/dav1d/-/archive/1.2.1/dav1d-1.2.1.tar.bz2"
+sha256 = "a4003623cdc0109dec3aac8435520aa3fb12c4d69454fa227f2658cdb6dab5fa"
+
+[[build.darwin.library]]
+id = "libpng"
+version = "1.6.40"
+url = "https://github.com/pnggroup/libpng/archive/v1.6.40.tar.gz"
+sha256 = "62d25af25e636454b005c93cae51ddcd5383c40fa14aa3dae8f6576feb5692c2"
+
+[[build.darwin.library]]
+id = "uchardet"
+version = "0.0.8"
+url = "https://www.freedesktop.org/software/uchardet/releases/uchardet-0.0.8.tar.xz"
+sha256 = "e97a60cfc00a1c147a674b097bb1422abd9fa78a2d9ce3f3fdcc2e78a34ac5f0"
+
+[[build.darwin.library]]
+id = "libxml2"
+version = "2.11.5"
+url = "https://download.gnome.org/sources/libxml2/2.11/libxml2-2.11.5.tar.xz"
+sha256 = "3727b078c360ec69fa869de14bd6f75d7ee8d36987b071e6928d4720a28df3a6"
+
+# libmpv-android-video-build v1.1.7, default flavor: media_kit_libs_android_video.
+# One libmpv.so, holding mpv's dependency tree from include/depinfo.sh. The build
+# clones tags; these are the same versions as release tarballs where there are
+# some, since GitLab's generated archives don't hash the same for ever.
+[build.android]
+platforms = ["android"]
+source = { url = "https://github.com/media-kit/libmpv-android-video-build/archive/refs/tags/v1.1.7.tar.gz", sha256 = "6624ea32232f7a8d6d07ab7a7bc7b42c16f85fc50c4e3ecfd174b52636d9252a" }
+
+[[build.android.library]]
+id = "mpv"
+version = "78d4374"
+url = "https://github.com/mpv-player/mpv/archive/78d43740f52db817d98bcf24fb30a76ab6fa13ff.tar.gz"
+sha256 = "678889728708141e97d283b2a7ef9953aa3102127a4c2aacefaf1adcb211915d"
+
+[[build.android.library]]
+id = "ffmpeg"
+version = "6.0"
+url = "https://ffmpeg.org/releases/ffmpeg-6.0.tar.xz"
+sha256 = "57be87c22d9b49c112b6d24bc67d42508660e6b718b3db89c44e47e289137082"
+
+[[build.android.library]]
+id = "libass"
+version = "0.17.1"
+url = "https://github.com/libass/libass/releases/download/0.17.1/libass-0.17.1.tar.xz"
+sha256 = "f0da0bbfba476c16ae3e1cfd862256d30915911f7abaa1b16ce62ee653192784"
+
+[[build.android.library]]
+id = "freetype"
+version = "2.13.0"
+url = "https://downloads.sourceforge.net/project/freetype/freetype2/2.13.0/freetype-2.13.0.tar.xz"
+sha256 = "5ee23abd047636c24b2d43c6625dcafc66661d1aca64dec9e0d05df29592624c"
+
+[[build.android.library]]
+id = "fribidi"
+version = "1.0.12"
+url = "https://github.com/fribidi/fribidi/releases/download/v1.0.12/fribidi-1.0.12.tar.xz"
+sha256 = "0cd233f97fc8c67bb3ac27ce8440def5d3ffacf516765b91c2cc654498293495"
+
+[[build.android.library]]
+id = "harfbuzz"
+version = "7.2.0"
+url = "https://github.com/harfbuzz/harfbuzz/archive/7.2.0.tar.gz"
+sha256 = "a58446480a2216b0f01f897c635e18e75faf3d40a3b8ee953ce72cf77c9118ac"
+
+[[build.android.library]]
+id = "mbedtls"
+version = "3.4.0"
+url = "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v3.4.0.tar.gz"
+sha256 = "1b899f355022e8d02c4d313196a0a16af86c5a692456fa99d302915b8cf0320a"
+
+[[build.android.library]]
+id = "dav1d"
+version = "1.2.0"
+url = "https://code.videolan.org/videolan/dav1d/-/archive/1.2.0/dav1d-1.2.0.tar.bz2"
+sha256 = "05cedc43127e00a86c68b8a49a5f68e2dc22b9baa10b1e12a5e3bc5b37876a6b"
+
+[[build.android.library]]
+id = "libxml2"
+version = "2.10.3"
+url = "https://download.gnome.org/sources/libxml2/2.10/libxml2-2.10.3.tar.xz"
+sha256 = "5d2cc3d78bec3dbe212a9d7fa629ada25a7da928af432c93060ff5c17ee28a9c"
+
+# media_kit_libs_linux: the system's libmpv, which the app doesn't ship, and
+# mimalloc linked in statically from its CMakeLists.txt.
+[build.linux]
+platforms = ["linux"]
+
+[[build.linux.library]]
+id = "mimalloc"
+version = "2.1.2"
+url = "https://github.com/microsoft/mimalloc/archive/refs/tags/v2.1.2.tar.gz"
+sha256 = "2b1bff6f717f9725c70bf8d79e4786da13de8a270059e4ba0bdd262ae7be46eb"
+
+# libmpv-win32-video-cmake 20241021: media_kit_libs_windows_video, with ANGLE
+# beside it. One DLL; its libraries were read from the DLL itself (mpv's list of
+# enabled features, and what each links), as the build doesn't say. Most build
+# from a branch head, so only mpv and libbluray can be pinned. libarchive is
+# configured with LZO, which is GPL, but none of it is in the DLL.
+[build.windows]
+platforms = ["windows"]
+source = { url = "https://github.com/media-kit/libmpv-win32-video-cmake/archive/refs/tags/20241021.tar.gz", sha256 = "453e7eb90c706ed044577c844af191a1a292a2c70b5c6ead832492c9525204c1" }
+
+[[build.windows.library]]
+id = "mpv"
+version = "0.39.0-179-g0f78584"
+url = "https://github.com/mpv-player/mpv/archive/0f7858451817c5fd5ebdb74a807a7c997662c390.tar.gz"
+sha256 = "ddaf6302020b57e3363108b1518cd5d0103a9034db97c73e77ccf03e362a5565"
+
+[[build.windows.library]]
+id = "ffmpeg"
+
+[[build.windows.library]]
+id = "libass"
+
+[[build.windows.library]]
+id = "freetype"
+
+[[build.windows.library]]
+id = "fribidi"
+
+[[build.windows.library]]
+id = "harfbuzz"
+
+[[build.windows.library]]
+id = "fontconfig"
+
+[[build.windows.library]]
+id = "expat"
+
+[[build.windows.library]]
+id = "libunibreak"
+
+[[build.windows.library]]
+id = "libiconv"
+
+[[build.windows.library]]
+id = "libplacebo"
+
+[[build.windows.library]]
+id = "shaderc"
+
+[[build.windows.library]]
+id = "glslang"
+
+[[build.windows.library]]
+id = "spirv-tools"
+
+[[build.windows.library]]
+id = "spirv-cross"
+
+[[build.windows.library]]
+id = "vulkan-loader"
+
+[[build.windows.library]]
+id = "lcms2"
+
+[[build.windows.library]]
+id = "libjpeg-turbo"
+
+[[build.windows.library]]
+id = "libpng"
+
+[[build.windows.library]]
+id = "zlib"
+
+[[build.windows.library]]
+id = "uchardet"
+
+[[build.windows.library]]
+id = "libarchive"
+
+[[build.windows.library]]
+id = "xz"
+
+[[build.windows.library]]
+id = "zstd"
+
+[[build.windows.library]]
+id = "bzip2"
+
+[[build.windows.library]]
+id = "libxml2"
+
+[[build.windows.library]]
+id = "openssl"
+
+[[build.windows.library]]
+id = "libssh"
+
+[[build.windows.library]]
+id = "libjxl"
+
+[[build.windows.library]]
+id = "highway"
+
+[[build.windows.library]]
+id = "brotli"
+
+[[build.windows.library]]
+id = "libbluray"
+version = "1.3.4"
+url = "https://download.videolan.org/pub/videolan/libbluray/1.3.4/libbluray-1.3.4.tar.bz2"
+sha256 = "478ffd68a0f5dde8ef6ca989b7f035b5a0a22c599142e5cd3ff7b03bbebe5f2b"
+
+[[build.windows.library]]
+id = "libudfread"
+
+[[build.windows.library]]
+id = "zimg"
+
+[[build.windows.library]]
+id = "libdovi"
+
+[[build.windows.library]]
+id = "xxhash"
+
+[[build.windows.library]]
+id = "fast_float"
+
+[[build.windows.library]]
+id = "dav1d"
+
+[[build.windows.library]]
+id = "angle"

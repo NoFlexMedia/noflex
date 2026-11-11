@@ -1,0 +1,3 @@
+Copyright © Arm Limited, The Khronos Group Inc. and the SPIRV-Cross contributors.
+
+Available under the Apache License 2.0.

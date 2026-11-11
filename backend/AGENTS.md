@@ -13,6 +13,7 @@ cargo fmt --all                                        # Format (nightly rustfmt
 cargo clippy --workspace --all-targets -- -D warnings  # Lint
 cargo xtask plugin-build <name>                        # Build a plugin + embed its manifest
 cargo xtask plugin-dev <name>                          # ...and symlink it into the local plugin dir
+cargo xtask third-party check|sync|source <out>        # Third-party code the apps ship; see packaging/AGENTS.md
 ```
 
 The dev shell routes `rustc` through a shared `sccache`; see [`docs/GIT_WORKTREES.md`](../docs/GIT_WORKTREES.md).

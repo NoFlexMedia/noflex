@@ -198,4 +198,3 @@ fontconfig/src/ftglue.[ch]
  *
  * PS: This "glue" code is explicitely put in the public domain
  */
-

@@ -1,0 +1,3 @@
+Copyright © the mpv developers, and the MPlayer and mplayer2 developers before them.
+
+This build of mpv is configured with -Dgpl=false, which makes it available under the GNU Lesser General Public License, version 2.1 or later. The app loads it as a shared library, libmpv.

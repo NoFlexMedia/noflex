@@ -15,9 +15,13 @@
 //   - `ffmpeg-verify <target> <dir>` — check an ffmpeg has what we require.
 //   - `model-fetch <assets_dir>` — download the pinned embedding model.
 //   - `bundle <target>` — assemble a release bundle under `dist/`.
+//   - `third-party check|sync|source <out>` — the third-party code the apps
+//     ship, as `packaging/third-party/apps.toml` records it.
 
 mod bundle;
+mod download;
 mod ffmpeg;
+mod third_party;
 
 use std::{
     env,
@@ -42,6 +46,7 @@ fn main() -> ExitCode {
         }),
         Some("model-fetch") => model_fetch(&args[1..]),
         Some("bundle") => bundle_command(&args[1..]),
+        Some("third-party") => third_party_command(&args[1..]),
         Some(other) => {
             eprintln!("xtask: unknown command `{other}`");
             print_help();
@@ -86,10 +91,24 @@ COMMANDS:
                                Assemble dist/noflex-<target>/ and its archive:
                                the server, plugins, ffmpeg, ONNX Runtime and the
                                model. --ffmpeg reuses a finished ffmpeg-build.
+    third-party check          Check packaging/third-party/apps.toml against
+                               the app's media_kit and the license assets.
+    third-party sync           Write the apps' license assets from it.
+    third-party source <out>   Gather the pinned sources it names into <out>.
 
 Requires the `wasm32-wasip2` rustc target and `wasm-tools` on PATH (both
 provided by `nix develop`)."#
     );
+}
+
+fn third_party_command(args: &[String]) -> Result<()> {
+    let root = checkout_root()?;
+    match args {
+        [command] if command == "check" => third_party::check(&root),
+        [command] if command == "sync" => third_party::sync(&root),
+        [command, out] if command == "source" => third_party::source(&root, Path::new(out)),
+        _ => bail!("expected check, sync, or source <out>"),
+    }
 }
 
 /// Runs an ffmpeg subcommand taking `<target> <dir>`.

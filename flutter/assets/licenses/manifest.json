@@ -1,0 +1,536 @@
+{
+  "generated": "by `cargo xtask third-party sync` from packaging/third-party/apps.toml",
+  "platforms": {
+    "android": [
+      {
+        "name": "mpv",
+        "version": "78d4374",
+        "files": [
+          "mpv.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "FFmpeg",
+        "version": "6.0",
+        "files": [
+          "ffmpeg.txt",
+          "LGPL-3.0.txt",
+          "GPL-3.0.txt"
+        ]
+      },
+      {
+        "name": "libass",
+        "version": "0.17.1",
+        "files": [
+          "libass.txt"
+        ]
+      },
+      {
+        "name": "FreeType",
+        "version": "2.13.0",
+        "files": [
+          "freetype.txt"
+        ]
+      },
+      {
+        "name": "GNU FriBidi",
+        "version": "1.0.12",
+        "files": [
+          "fribidi.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "HarfBuzz",
+        "version": "7.2.0",
+        "files": [
+          "harfbuzz.txt"
+        ]
+      },
+      {
+        "name": "Mbed TLS",
+        "version": "3.4.0",
+        "files": [
+          "mbedtls.txt",
+          "Apache-2.0.txt"
+        ]
+      },
+      {
+        "name": "dav1d",
+        "version": "1.2.0",
+        "files": [
+          "dav1d.txt"
+        ]
+      },
+      {
+        "name": "libxml2",
+        "version": "2.10.3",
+        "files": [
+          "libxml2.txt"
+        ]
+      },
+      {
+        "name": "Inter",
+        "files": [
+          "inter.txt"
+        ]
+      }
+    ],
+    "ios": [
+      {
+        "name": "Inter",
+        "files": [
+          "inter.txt"
+        ]
+      },
+      {
+        "name": "mpv",
+        "version": "0.36.0",
+        "files": [
+          "mpv.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "FFmpeg",
+        "version": "6.0",
+        "files": [
+          "ffmpeg.txt",
+          "LGPL-3.0.txt",
+          "GPL-3.0.txt"
+        ]
+      },
+      {
+        "name": "libass",
+        "version": "0.17.1",
+        "files": [
+          "libass.txt"
+        ]
+      },
+      {
+        "name": "FreeType",
+        "version": "2.13.2",
+        "files": [
+          "freetype.txt"
+        ]
+      },
+      {
+        "name": "GNU FriBidi",
+        "version": "1.0.13",
+        "files": [
+          "fribidi.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "HarfBuzz",
+        "version": "8.1.1",
+        "files": [
+          "harfbuzz.txt"
+        ]
+      },
+      {
+        "name": "Mbed TLS",
+        "version": "3.4.1",
+        "files": [
+          "mbedtls.txt",
+          "Apache-2.0.txt"
+        ]
+      },
+      {
+        "name": "dav1d",
+        "version": "1.2.1",
+        "files": [
+          "dav1d.txt"
+        ]
+      },
+      {
+        "name": "libpng",
+        "version": "1.6.40",
+        "files": [
+          "libpng.txt"
+        ]
+      },
+      {
+        "name": "uchardet",
+        "version": "0.0.8",
+        "files": [
+          "uchardet.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "libxml2",
+        "version": "2.11.5",
+        "files": [
+          "libxml2.txt"
+        ]
+      }
+    ],
+    "linux": [
+      {
+        "name": "Inter",
+        "files": [
+          "inter.txt"
+        ]
+      },
+      {
+        "name": "mimalloc",
+        "version": "2.1.2",
+        "files": [
+          "mimalloc.txt"
+        ]
+      }
+    ],
+    "macos": [
+      {
+        "name": "Inter",
+        "files": [
+          "inter.txt"
+        ]
+      },
+      {
+        "name": "mpv",
+        "version": "0.36.0",
+        "files": [
+          "mpv.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "FFmpeg",
+        "version": "6.0",
+        "files": [
+          "ffmpeg.txt",
+          "LGPL-3.0.txt",
+          "GPL-3.0.txt"
+        ]
+      },
+      {
+        "name": "libass",
+        "version": "0.17.1",
+        "files": [
+          "libass.txt"
+        ]
+      },
+      {
+        "name": "FreeType",
+        "version": "2.13.2",
+        "files": [
+          "freetype.txt"
+        ]
+      },
+      {
+        "name": "GNU FriBidi",
+        "version": "1.0.13",
+        "files": [
+          "fribidi.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "HarfBuzz",
+        "version": "8.1.1",
+        "files": [
+          "harfbuzz.txt"
+        ]
+      },
+      {
+        "name": "Mbed TLS",
+        "version": "3.4.1",
+        "files": [
+          "mbedtls.txt",
+          "Apache-2.0.txt"
+        ]
+      },
+      {
+        "name": "dav1d",
+        "version": "1.2.1",
+        "files": [
+          "dav1d.txt"
+        ]
+      },
+      {
+        "name": "libpng",
+        "version": "1.6.40",
+        "files": [
+          "libpng.txt"
+        ]
+      },
+      {
+        "name": "uchardet",
+        "version": "0.0.8",
+        "files": [
+          "uchardet.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "libxml2",
+        "version": "2.11.5",
+        "files": [
+          "libxml2.txt"
+        ]
+      }
+    ],
+    "windows": [
+      {
+        "name": "Inter",
+        "files": [
+          "inter.txt"
+        ]
+      },
+      {
+        "name": "mpv",
+        "version": "0.39.0-179-g0f78584",
+        "files": [
+          "mpv.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "FFmpeg",
+        "files": [
+          "ffmpeg.txt",
+          "LGPL-3.0.txt",
+          "GPL-3.0.txt"
+        ]
+      },
+      {
+        "name": "libass",
+        "files": [
+          "libass.txt"
+        ]
+      },
+      {
+        "name": "FreeType",
+        "files": [
+          "freetype.txt"
+        ]
+      },
+      {
+        "name": "GNU FriBidi",
+        "files": [
+          "fribidi.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "HarfBuzz",
+        "files": [
+          "harfbuzz.txt"
+        ]
+      },
+      {
+        "name": "Fontconfig",
+        "files": [
+          "fontconfig.txt"
+        ]
+      },
+      {
+        "name": "Expat",
+        "files": [
+          "expat.txt"
+        ]
+      },
+      {
+        "name": "libunibreak",
+        "files": [
+          "libunibreak.txt"
+        ]
+      },
+      {
+        "name": "GNU libiconv",
+        "files": [
+          "libiconv.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "libplacebo",
+        "files": [
+          "libplacebo.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "Shaderc",
+        "files": [
+          "shaderc.txt",
+          "Apache-2.0.txt"
+        ]
+      },
+      {
+        "name": "glslang",
+        "files": [
+          "glslang.txt"
+        ]
+      },
+      {
+        "name": "SPIRV-Tools",
+        "files": [
+          "spirv-tools.txt",
+          "Apache-2.0.txt"
+        ]
+      },
+      {
+        "name": "SPIRV-Cross",
+        "files": [
+          "spirv-cross.txt",
+          "Apache-2.0.txt"
+        ]
+      },
+      {
+        "name": "Vulkan Loader",
+        "files": [
+          "vulkan-loader.txt"
+        ]
+      },
+      {
+        "name": "Little CMS",
+        "files": [
+          "lcms2.txt"
+        ]
+      },
+      {
+        "name": "libjpeg-turbo",
+        "files": [
+          "libjpeg-turbo.txt"
+        ]
+      },
+      {
+        "name": "libpng",
+        "files": [
+          "libpng.txt"
+        ]
+      },
+      {
+        "name": "zlib",
+        "files": [
+          "zlib.txt"
+        ]
+      },
+      {
+        "name": "uchardet",
+        "files": [
+          "uchardet.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "libarchive",
+        "files": [
+          "libarchive.txt"
+        ]
+      },
+      {
+        "name": "XZ Utils",
+        "files": [
+          "xz.txt"
+        ]
+      },
+      {
+        "name": "Zstandard",
+        "files": [
+          "zstd.txt"
+        ]
+      },
+      {
+        "name": "bzip2",
+        "files": [
+          "bzip2.txt"
+        ]
+      },
+      {
+        "name": "libxml2",
+        "files": [
+          "libxml2.txt"
+        ]
+      },
+      {
+        "name": "OpenSSL",
+        "files": [
+          "openssl.txt",
+          "Apache-2.0.txt"
+        ]
+      },
+      {
+        "name": "libssh",
+        "files": [
+          "libssh.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "libjxl",
+        "files": [
+          "libjxl.txt"
+        ]
+      },
+      {
+        "name": "Highway",
+        "files": [
+          "highway.txt"
+        ]
+      },
+      {
+        "name": "Brotli",
+        "files": [
+          "brotli.txt"
+        ]
+      },
+      {
+        "name": "libbluray",
+        "version": "1.3.4",
+        "files": [
+          "libbluray.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "libudfread",
+        "files": [
+          "libudfread.txt",
+          "LGPL-2.1.txt"
+        ]
+      },
+      {
+        "name": "zimg",
+        "files": [
+          "zimg.txt"
+        ]
+      },
+      {
+        "name": "libdovi",
+        "files": [
+          "libdovi.txt"
+        ]
+      },
+      {
+        "name": "xxHash",
+        "files": [
+          "xxhash.txt"
+        ]
+      },
+      {
+        "name": "fast_float",
+        "files": [
+          "fast_float.txt"
+        ]
+      },
+      {
+        "name": "dav1d",
+        "files": [
+          "dav1d.txt"
+        ]
+      },
+      {
+        "name": "ANGLE",
+        "files": [
+          "angle.txt"
+        ]
+      }
+    ]
+  }
+}

@@ -143,6 +143,11 @@ Don't break these without an architecture discussion in the PR description.
 - **Credit follows the data.** `metadata.attribution()` is stored per plugin in `provider_attributions` when it loads and outlives the plugin. `Work.metadata_provider` and `Image.provider` say who to credit; every provider-written row sets them.
 - **TMDb and TheTVDB ship shared API keys** (`SHARED_API_KEY`), so metadata needs no setup. An operator's `api_key` secret overrides them.
 - **Trust by default** for now: plugins in the search path load immediately, every capability use audit-logged.
+- **Disabled means not loaded.** `[plugin.overrides.<id>] disabled` reaches `PluginRegistry::with_disabled`, which refuses the load, and the watcher treats the file as absent: no hook, task, event or link reaches it. It isn't a priority of `0`.
+- **Artwork candidates and person photos go through plugins too.** `artworkCandidates` asks every image provider's `list-candidates`; clients only ever name the host's offer ids (`OFFER_TTL`), never a plugin's handle, and `fetch-candidate` fetches the pick.
+- **Picked artwork survives refresh.** `setWorkArtwork` locks the kind's `*_IMAGE` work field, which `fetch_artwork` (and so `backfill_artwork`) skips like any locked field.
+- **Person photos land on `ImageTarget::Tag`**, the person tag's `Primary`. After an apply, the crediting plugin's `image.fetch` is asked off the request path for the first `MAX_PHOTOS` billed without one, through the ids that payload gave; a failure never fails the apply. The tag's metadata keeps every provider's ids under `PERSON_IDS_KEY`, merged by `merge_tag_metadata`.
+- **A background chain belongs to one user.** Each user a task's enqueues act for gets their own `more(cursor)` chain beside the unbound one, persisted with that binding, so a restart resumes it as them. Unlinking runs `cancel_user_tasks` before the plugin's `unlink` and the secrets' deletion.
 - Args and returns are owned, serializable, and `Send` — they cross the WIT boundary. No `&dyn Trait`, no host-pinned lifetimes.
 - Plugins may use any license; see [`docs/PLUGIN_LICENSING.md`](../docs/PLUGIN_LICENSING.md).
 

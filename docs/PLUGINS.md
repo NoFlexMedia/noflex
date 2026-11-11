@@ -16,25 +16,25 @@ They live in `backend/plugins/`, outside the main Cargo workspace because they b
 | `noflex-auth-oidc/`            | `oidc`           | OpenID Connect login and local-account linking                           |
 | `noflex-embeddings/`           | `embeddings`     | Local Model2Vec embeddings that fill the vector search index             |
 | `noflex-webhook/`              | `webhook`        | Outbound webhooks for domain events (Gotify, ntfy, Discord, Slack, ...)  |
-| `noflex-trakt/`                | `trakt`          | Trakt scrobbling and watch-history sync, linked per user by device flow  |
+| `noflex-trakt/`                | `trakt`          | Trakt scrobbling, linked per user by device flow                         |
 | `noflex-intro-chapters/`       | `intro-chapters` | Intro and credits markers from chapter titles ("Opening", "End Credits") |
 
 Some have their own README with setup steps (`noflex-embeddings`, `noflex-webhook`).
 
 ## Hooks
 
-| Hook             | When it fires                                          | Returns                                     |
-| ---------------- | ------------------------------------------------------ | ------------------------------------------- |
-| `metadata`       | Identifying and refreshing works                       | `MetadataMatch`es, a full `MetadataPayload` |
-| `image`          | Artwork for a work with a known external ID            | `(ImageMeta, stream<u8>)`                   |
-| `post-scan`      | After a library scan completes                         | unit                                        |
-| `notifier`       | Library events and plugin lifecycle                    | unit                                        |
-| `user-link`      | A user links an upstream account (OAuth, device flow)  | `LinkChallenge`; per-user secrets           |
-| `external-auth`  | Interactive login through an external IdP              | authorization URL; `VerifiedIdentity`       |
-| `scrobbler`      | Playback start/stop, progress at stop, mark played     | unit                                        |
-| `intro-detector` | A host sweep over editions a detector hasn't scanned  | `IntroDetection` or none; the most confident wins |
-| `embedder`       | Work texts at scan time, queries at search time        | one vector per text                         |
-| `background`     | A manifest `[[tasks]]` schedule or `host-tasks.enqueue`| `done` / `more(cursor)`                     |
+| Hook             | When it fires                                                    | Returns                                      |
+| ---------------- | ---------------------------------------------------------------- | -------------------------------------------- |
+| `metadata`       | Identifying and refreshing works                                 | `MetadataMatch`es, a full `MetadataPayload`  |
+| `image`          | A work's artwork, a credited person's photo, a hand-picked image | `(ImageMeta, stream<u8>)`; `ImageCandidate`s |
+| `post-scan`      | After a library scan completes                                   | unit                                         |
+| `notifier`       | Library events and plugin lifecycle                              | unit                                         |
+| `user-link`      | A user links or unlinks an upstream account (OAuth, device flow) | `LinkChallenge`; per-user secrets            |
+| `external-auth`  | Interactive login through an external IdP                        | authorization URL; `VerifiedIdentity`        |
+| `scrobbler`      | Playback start, progress at stop, mark played                    | unit                                         |
+| `intro-detector` | A host sweep over editions a detector hasn't scanned             | `IntroDetection` or none; most confident wins |
+| `embedder`       | Work texts at scan time, queries at search time                  | one vector per text                          |
+| `background`     | A manifest `[[tasks]]` schedule or `host-tasks.enqueue`          | `done` / `more(cursor)`                      |
 
 A plugin implements any subset. Every world exports `background`; stub it if you register no tasks. The host checks the manifest's `hooks` against the component's actual exports at load and rejects a plugin claiming a hook it doesn't export. `subtitle` exists in the WIT but isn't served; a manifest declaring it is rejected.
 
@@ -155,6 +155,8 @@ NoFlex searches three directories at startup and watches all three. Later tiers 
 
 Secrets follow the same tiers under `secrets/`, one flat `<plugin-id>.toml` per plugin.
 
+`[plugin.overrides.<id>] disabled = true` in the server config keeps a plugin from loading at all, whichever tier it's in: no hook, task, event or account link reaches it (see [`CONFIGURATION.md`](CONFIGURATION.md#pluginoverridesid)).
+
 ## Manifest
 
 The manifest is TOML embedded in the `.wasm` as a custom section named `noflex:manifest`. `cargo xtask plugin-build` derives it from `[package.metadata.noflex-plugin]`.
@@ -202,6 +204,29 @@ When several plugins implement the same hook, the host:
 
 `image` has its own priority axis, so one plugin can lead for metadata while another leads for artwork. A library's provider order (set per library in the admin UI) and `[plugin.overrides]` in the server config both reorder candidates.
 
+## Artwork and people
+
+- **`image.fetch(id, kind, language)`** answers with the best `kind` image of the record `id` names. The host calls it after applying a payload, for each kind the payload's `images` named (or the work kind's defaults), trying the winning provider first and then the library's other image providers.
+- **`list-candidates(id, kind)`** lists every image a provider has, best first, for an administrator picking artwork by hand. Each `ImageCandidate` carries a `handle` the host hands back unchanged to **`fetch-candidate(handle, preview)`**: `preview` asks for a picker-sized rendition, otherwise the original. The handle is the plugin's own; clients only ever see an id the host made for it, valid for half an hour.
+- A picked image is locked on the work (`*_IMAGE` fields), so refreshes and backfills leave it alone until it's unlocked.
+- **People.** Each `metadata-person` carries `external-ids`, the provider's own ids for them, in the same path style as its work ids (TMDb `person/<id>`, TheTVDB `people/<id>`). After applying a payload, the host asks the plugin that supplied it for the photos of the first 20 people billed who don't have one yet: `image.fetch` with one of those ids and kind `primary`. It runs in the background and never fails the payload; answer `not-found` for someone with no photo. The host keeps every provider's ids on the person's tag.
+
+## Account linking
+
+- **`link-start(user)`** returns a `LinkChallenge`: the `auth-url` the user opens, the `state` the host echoes back, and for a device flow the `user-code` they enter there, which clients show beside the link.
+- **`link-complete(user, state, callback-query)`** finishes a redirect flow with the query string the provider sent the host's callback route. A device flow returns an empty list here and polls from a `background` task instead (`host-tasks.enqueue` from `link-start`), handing tokens over with `host-secrets.write-for-user`.
+- **`unlink(user)`** abandons a link in progress and, best effort, revokes the grant upstream. The host first stops the user's background chains and waits for any run in flight; their secrets are still readable during the call and deleted once it returns, whatever it returns.
+- Anyone signed in can link a plugin that exports `user-link` once its operator secrets are all set.
+
+## Scrobbling
+
+The host turns the domain bus into `scrobble-event`s and enriches each from storage, so a scrobbler needs no library lookups. Users who never linked are skipped.
+
+- `action` is `started` when playback starts, and `stopped` with `position-ms` for the progress reported when it stops; the session's own end isn't scrobbled apart from that. A `stopped` without a position is a title marked played.
+- `external-ids` are the work's provider ids, without the scanner's own keys. Match on these, never on titles.
+- For an episode, `series-external-ids`, `season-number` and `episode-number` name it by its show, since an episode's provider ids are paths through its series.
+- `runtime-ms` is the edition's runtime when known; the plugin derives its own progress percent and watched threshold.
+
 ## Attribution
 
 A provider's terms often require crediting it wherever its data shows, so `metadata` plugins answer `attribution()`, or `None` to ask for no credit:
@@ -244,7 +269,7 @@ interval_ms = 60_000
 - **Registration is declarative.** The schedule is read from the manifest before the plugin ever runs, so it's auditable from the artifact and a malformed entry is rejected without starting a guest. There is no `register()` import.
 - **Long work chunks.** Return `more(cursor)` and the host reschedules promptly with that cursor rather than waiting for the interval. Background calls get no deadline exception, so chunk anything long.
 - **State survives.** Cursors and `host-tasks.enqueue` payloads are persisted host-side across instance recycling and restarts. The enqueue queue is FIFO per task and drains before the scheduled payload.
-- **User binding.** A payload enqueued from a user-bound call (`user-link`, `scrobbler`, or a run that is itself bound) runs bound to that user, as does its `more(...)` chain. The binding lives in memory, so a chain resumed after a host restart runs unbound.
+- **User binding.** A payload enqueued from a user-bound call (`user-link`, `scrobbler`, or a run that is itself bound) runs bound to that user, as does its `more(...)` chain. Each user gets a chain of their own beside the task's unbound one, which its schedule and unbound enqueues drive: a user's payload only continues or replaces their own chain, and every chain that's due runs together. Chains are persisted with the user they're bound to, so a user's chain resumes at once, still bound, after a restart.
 - **Supervision.** A trap recycles the instance with exponential backoff; five consecutive traps open the circuit breaker until the plugin is reloaded. Health is on the GraphQL `plugins` query (`instanceRestarts`, `circuitOpen`, and per-task `lastRun`, `consecutiveFailures`, `totalRuns`).
 
 ## Trust

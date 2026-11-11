@@ -221,7 +221,9 @@ Root directory served to plugins through the `host-assets.read-file` import
 - **Default:** empty
 - **Env:** not supported (use TOML)
 
-Per-plugin overrides. `disabled = true` keeps the plugin from loading.
+Per-plugin overrides. `disabled = true` keeps the plugin from loading at all,
+from whichever plugin directory it's in, so no hook, task, event or account
+link reaches it.
 `priorities` overrides the priorities declared in the plugin's manifest; this
 layer wins. A priority of `0` excludes the plugin for that work kind. Both
 fields are optional.

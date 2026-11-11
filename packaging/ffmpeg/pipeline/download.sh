@@ -3,6 +3,9 @@ set -xe
 cd "$(dirname "$0")"
 source util/vars.sh dl only
 
+# Whichever engine build-images.sh built the base image with.
+engine=$(command -v podman || command -v docker)
+
 # Podman has no such template, and root in a rootless container is the caller.
 if command -v podman >/dev/null || docker info -f "{{println .SecurityOptions}}" | grep rootless >/dev/null 2>&1; then
     UIDARGS=()
@@ -60,5 +63,5 @@ for STAGE in scripts.d/*.sh scripts.d/*/*.sh; do
 	EOF
 done
 
-docker run -i $TTY_ARG --rm "${UIDARGS[@]}" -v "${DL_SCRIPT_DIR}":/stages -v "${PWD}/.cache/downloads":/dldir -v "${PWD}/scripts.d":/scripts.d -v "${PWD}/util/dl_functions.sh":/dl_functions.sh "${REGISTRY}/${REPO}/base:latest${DOCKER_TAG_SUFFIX:-}" \
+"$engine" run -i $TTY_ARG --rm "${UIDARGS[@]}" -v "${DL_SCRIPT_DIR}":/stages -v "${PWD}/.cache/downloads":/dldir -v "${PWD}/scripts.d":/scripts.d -v "${PWD}/util/dl_functions.sh":/dl_functions.sh "${REGISTRY}/${REPO}/base:latest${DOCKER_TAG_SUFFIX:-}" \
 	bash -c 'set -xe && for STAGE in /stages/*.sh; do bash $STAGE; done'

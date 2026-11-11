@@ -17,8 +17,8 @@ license rather than NoFlex's. Run it through `cargo xtask ffmpeg-build`; see
   Buildah doesn't reuse layers across `RUN --mount` steps the way BuildKit does,
   so that hash is what makes rebuilds cheap.
 - `../build.sh` replaces `build.sh`, and fails if the image's NVENC SDK isn't the pinned one.
-- `download.sh` and `generate.sh` find bash through `env`, and `download.sh` handles
-  rootless Podman.
+- `download.sh` and `generate.sh` find bash through `env`, and `download.sh` runs
+  whichever engine `build-images.sh` used, Podman first, and handles it rootless.
 - Only `linux64`, `linuxarm64` and `win64` are kept, in the `gpl-shared` variant.
 
 ## Still floating

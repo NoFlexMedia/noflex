@@ -1062,6 +1062,8 @@ impl PlaybackSessionService for StubPlaybackSessions {
                 None,
             ),
             subtitles: Vec::new(),
+            qualities: Vec::new(),
+            adaptive: false,
         })
     }
 

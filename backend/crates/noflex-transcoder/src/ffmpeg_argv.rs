@@ -144,7 +144,18 @@ impl LadderEntry {
 pub struct SegmentConfig {
     pub duration_secs: u32,
     pub playlist_type: PlaylistType,
+    /// Set for one run of an on-demand session (`crate::segmented`): the
+    /// first segment's index on the session's grid. Segments are numbered
+    /// from it and carry source time (plus [`PTS_PAD_SECS`]), and the init
+    /// segment comes out the same whichever segment a run starts at, so
+    /// runs' segments splice.
+    pub start_number: Option<u32>,
 }
+
+/// Added to every on-demand run's timestamps. A run from the very start
+/// would otherwise begin with negative decode times (B-frames, audio
+/// priming), which the muxer shifts for that run alone.
+pub const PTS_PAD_SECS: f64 = 1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaylistType {
@@ -159,6 +170,7 @@ impl Default for SegmentConfig {
         Self {
             duration_secs: 4,
             playlist_type: PlaylistType::Event,
+            start_number: None,
         }
     }
 }
@@ -199,6 +211,9 @@ pub struct TranscodeRequest {
     /// What the master playlist announces for this job, carried here so
     /// the playlist route renders from the job registry alone.
     pub variant: HlsVariant,
+    /// Segment files are `<stem>_00000.m4s` and the init `<stem>_init.mp4`,
+    /// so several variants share a directory; `None` is `segment_…`/`init.mp4`.
+    pub segment_stem: Option<String>,
 }
 
 impl TranscodeRequest {
@@ -232,6 +247,7 @@ impl TranscodeRequest {
                 video_range: None,
                 path: "index.m3u8".to_string(),
             },
+            segment_stem: None,
         }
     }
 }
@@ -275,6 +291,20 @@ pub fn build_ffmpeg_argv(req: &TranscodeRequest) -> Vec<String> {
     ]);
 
     push_streams(&mut argv, req);
+    if req.segment.start_number.is_some() {
+        let start = req.start_secs.unwrap_or(0.0);
+        argv.extend([
+            "-output_ts_offset".to_string(),
+            format!("{}", start + PTS_PAD_SECS),
+            "-use_editlist".to_string(),
+            "0".to_string(),
+        ]);
+        if req.plan.segment_container == HlsSegmentContainer::Fmp4 {
+            // Each fragment's decode time from its own packets, not from
+            // zero at the run's start.
+            argv.extend(["-hls_segment_options", "movflags=+frag_discont"].map(String::from));
+        }
+    }
     push_hls(&mut argv, req);
     argv.push(req.output.display().to_string());
     argv
@@ -552,20 +582,27 @@ fn push_hls(argv: &mut Vec<String>, req: &TranscodeRequest) {
             .map(String::from),
         ),
     }
+    if let Some(start) = req.segment.start_number {
+        // Another run may be reading a segment this one rewrites.
+        argv.extend([
+            "-start_number".to_string(),
+            start.to_string(),
+            "-hls_flags".to_string(),
+            "temp_file".to_string(),
+        ]);
+    }
+    let stem = req.segment_stem.as_deref();
     let pattern = match req.plan.segment_container {
         HlsSegmentContainer::Fmp4 => {
-            argv.extend(
-                [
-                    "-hls_segment_type",
-                    "fmp4",
-                    "-hls_fmp4_init_filename",
-                    "init.mp4",
-                ]
-                .map(String::from),
-            );
-            "segment_%05d.m4s"
+            argv.extend([
+                "-hls_segment_type".to_string(),
+                "fmp4".to_string(),
+                "-hls_fmp4_init_filename".to_string(),
+                stem.map_or_else(|| "init.mp4".to_string(), |stem| format!("{stem}_init.mp4")),
+            ]);
+            format!("{}_%05d.m4s", stem.unwrap_or("segment"))
         }
-        HlsSegmentContainer::Ts => "segment_%05d.ts",
+        HlsSegmentContainer::Ts => format!("{}_%05d.ts", stem.unwrap_or("segment")),
     };
     argv.extend([
         "-hls_segment_filename".to_string(),

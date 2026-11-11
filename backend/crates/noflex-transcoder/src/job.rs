@@ -12,7 +12,11 @@ use tokio::{
     sync::{Mutex, watch},
 };
 
-use crate::{JobHandle, TranscodeRequest, Transcoder};
+use crate::{
+    JobHandle, TranscodeRequest, Transcoder,
+    hls::HlsVariant,
+    segmented::{Artifact, FetchError, Fetched, SegmentedJob, SegmentedRequest},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -54,11 +58,17 @@ pub struct JobProgress {
 pub struct TranscodeJob {
     pub id: String,
     pub media: MediaFileId,
+    /// For an on-demand session, its first variant's.
     pub request: TranscodeRequest,
     pub status: JobStatus,
     pub progress: Option<JobProgress>,
     pub error: Option<String>,
     pub output_dir: PathBuf,
+    /// What the master playlist announces, best first.
+    pub variants: Vec<HlsVariant>,
+    /// Encoded segment by segment as players ask (`crate::segmented`), and
+    /// running until stopped.
+    pub on_demand: bool,
 }
 
 #[derive(Default, Clone)]
@@ -106,66 +116,34 @@ impl TranscodeJobRegistry {
     }
 }
 
-pub struct FfmpegJobManager {
+/// Starts and stops ffmpeg processes, each a registered job.
+#[derive(Clone)]
+pub(crate) struct Launcher {
     ffmpeg_path: PathBuf,
-    cache_dir: PathBuf,
-    registry: TranscodeJobRegistry,
+    pub(crate) registry: TranscodeJobRegistry,
     cancellations: Arc<Mutex<HashMap<String, watch::Sender<bool>>>>,
 }
 
-impl FfmpegJobManager {
-    pub fn new(ffmpeg_path: impl Into<PathBuf>, cache_dir: impl Into<PathBuf>) -> Self {
-        Self {
-            ffmpeg_path: ffmpeg_path.into(),
-            cache_dir: cache_dir.into(),
-            registry: TranscodeJobRegistry::new(),
-            cancellations: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    pub fn registry(&self) -> &TranscodeJobRegistry {
-        &self.registry
-    }
-
-    /// The ffmpeg binary jobs spawn; other one-shot ffmpeg work (e.g.
-    /// subtitle extraction) reuses it so overrides apply everywhere.
-    pub fn ffmpeg_path(&self) -> &std::path::Path {
-        &self.ffmpeg_path
-    }
-
-    fn next_id() -> String {
-        uuid::Uuid::now_v7().to_string()
-    }
-}
-
-#[async_trait]
-impl Transcoder for FfmpegJobManager {
-    async fn start_job(
+impl Launcher {
+    /// Register `request` as job `id` writing under `output_dir`, and start it.
+    pub(crate) async fn launch(
         &self,
+        id: String,
         media: MediaFileId,
         request: TranscodeRequest,
+        output_dir: PathBuf,
     ) -> anyhow::Result<JobHandle> {
-        let id = Self::next_id();
-        let output_dir = self.cache_dir.join(&id);
-        tokio::fs::create_dir_all(&output_dir)
-            .await
-            .with_context(|| format!("create job dir {}", output_dir.display()))?;
-        // A relative output resolves inside the job's own dir so
-        // stream endpoints can pass "index.m3u8" without knowing
-        // the cache layout; absolute paths stay caller-owned.
-        let mut request = request;
-        if request.output.is_relative() {
-            request.output = output_dir.join(&request.output);
-        }
         self.registry
             .register(TranscodeJob {
                 id: id.clone(),
                 media,
+                variants: vec![request.variant.clone()],
                 request: request.clone(),
                 status: JobStatus::Running,
                 progress: None,
                 error: None,
                 output_dir: output_dir.clone(),
+                on_demand: false,
             })
             .await;
         let handle = JobHandle {
@@ -201,17 +179,171 @@ impl Transcoder for FfmpegJobManager {
         Ok(handle)
     }
 
-    async fn stop_job(&self, job: &JobHandle) -> anyhow::Result<()> {
+    /// Kill job `id` if it's running. The driver flips its status to
+    /// Cancelled once the process is actually dead; terminal jobs keep theirs.
+    pub(crate) async fn cancel(&self, id: &str) {
         let running = self
             .registry
-            .get(&job.id)
+            .get(id)
             .await
             .is_some_and(|j| j.status == JobStatus::Running);
-        if running && let Some(tx) = self.cancellations.lock().await.get(&job.id) {
-            // The driver flips the status to Cancelled once the
-            // process is actually dead; terminal jobs keep theirs.
+        if running && let Some(tx) = self.cancellations.lock().await.get(id) {
             let _ = tx.send(true);
         }
+    }
+}
+
+pub struct FfmpegJobManager {
+    cache_dir: PathBuf,
+    launcher: Launcher,
+    segmented: Mutex<HashMap<String, Arc<SegmentedJob>>>,
+}
+
+impl FfmpegJobManager {
+    pub fn new(ffmpeg_path: impl Into<PathBuf>, cache_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            cache_dir: cache_dir.into(),
+            launcher: Launcher {
+                ffmpeg_path: ffmpeg_path.into(),
+                registry: TranscodeJobRegistry::new(),
+                cancellations: Arc::new(Mutex::new(HashMap::new())),
+            },
+            segmented: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub fn registry(&self) -> &TranscodeJobRegistry {
+        &self.launcher.registry
+    }
+
+    /// The ffmpeg binary jobs spawn; other one-shot ffmpeg work (e.g.
+    /// subtitle extraction) reuses it so overrides apply everywhere.
+    pub fn ffmpeg_path(&self) -> &std::path::Path {
+        &self.launcher.ffmpeg_path
+    }
+
+    fn next_id() -> String {
+        uuid::Uuid::now_v7().to_string()
+    }
+
+    /// Start an on-demand session (`crate::segmented`) with its first
+    /// variant encoding from segment `first`. The handle's id is the
+    /// session's, registered as a job that runs until stopped; its runs are
+    /// jobs of their own.
+    pub async fn start_segmented(
+        &self,
+        media: MediaFileId,
+        request: SegmentedRequest,
+        first: u32,
+    ) -> anyhow::Result<JobHandle> {
+        let id = Self::next_id();
+        let output_dir = self.cache_dir.join(&id);
+        tokio::fs::create_dir_all(&output_dir)
+            .await
+            .with_context(|| format!("create job dir {}", output_dir.display()))?;
+        let lead = request
+            .variants
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("an on-demand session needs a variant"))?;
+        self.launcher
+            .registry
+            .register(TranscodeJob {
+                id: id.clone(),
+                media,
+                variants: request
+                    .variants
+                    .iter()
+                    .map(|variant| variant.variant.clone())
+                    .collect(),
+                request: lead,
+                status: JobStatus::Running,
+                progress: None,
+                error: None,
+                output_dir: output_dir.clone(),
+                on_demand: true,
+            })
+            .await;
+        let job = match SegmentedJob::start(
+            id.clone(),
+            media,
+            output_dir.clone(),
+            request,
+            first,
+            self.launcher.clone(),
+        )
+        .await
+        {
+            Ok(job) => job,
+            Err(error) => {
+                self.launcher
+                    .registry
+                    .finish(&id, JobStatus::Failed, Some(error.to_string()))
+                    .await;
+                return Err(error);
+            }
+        };
+        self.segmented.lock().await.insert(id.clone(), job);
+        Ok(JobHandle { id, output_dir })
+    }
+
+    /// Answer a request for `filename` of on-demand session `id`, waiting
+    /// for its encode if need be. `None` when `id` isn't an on-demand session.
+    pub async fn fetch_segmented(
+        &self,
+        id: &str,
+        filename: &str,
+    ) -> Option<Result<Fetched, FetchError>> {
+        let job = self.segmented.lock().await.get(id).cloned()?;
+        Some(match Artifact::parse(filename) {
+            Some(artifact) => job.fetch(artifact).await,
+            None => Err(FetchError::NotFound),
+        })
+    }
+}
+
+#[async_trait]
+impl Transcoder for FfmpegJobManager {
+    async fn start_job(
+        &self,
+        media: MediaFileId,
+        request: TranscodeRequest,
+    ) -> anyhow::Result<JobHandle> {
+        let id = Self::next_id();
+        let output_dir = self.cache_dir.join(&id);
+        tokio::fs::create_dir_all(&output_dir)
+            .await
+            .with_context(|| format!("create job dir {}", output_dir.display()))?;
+        // A relative output resolves inside the job's own dir so
+        // stream endpoints can pass "index.m3u8" without knowing
+        // the cache layout; absolute paths stay caller-owned.
+        let mut request = request;
+        if request.output.is_relative() {
+            request.output = output_dir.join(&request.output);
+        }
+        self.launcher.launch(id, media, request, output_dir).await
+    }
+
+    async fn stop_job(&self, job: &JobHandle) -> anyhow::Result<()> {
+        let segmented = self.segmented.lock().await.remove(&job.id);
+        let Some(segmented) = segmented else {
+            self.launcher.cancel(&job.id).await;
+            return Ok(());
+        };
+        segmented.stop().await;
+        self.launcher
+            .registry
+            .finish(&job.id, JobStatus::Cancelled, None)
+            .await;
+        // What it encoded is only ever this session's.
+        let dir = segmented.dir().to_path_buf();
+        tokio::spawn(async move {
+            // Let the runs it just killed let go of their files.
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if let Err(error) = tokio::fs::remove_dir_all(&dir).await {
+                tracing::debug!(%error, dir = %dir.display(), "on-demand session cleanup failed");
+            }
+        });
         Ok(())
     }
 }

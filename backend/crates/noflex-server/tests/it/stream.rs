@@ -590,14 +590,7 @@ async fn session_start_transcode_spawns_hls_job() {
     assert!(text.contains("index.m3u8?token=tok"), "master: {text}");
 
     // Segments don't exist yet mid-transcode: 404, not an error.
-    let resp = serve_job_file(
-        transcoder.registry(),
-        &cache_root,
-        &job_id,
-        "segment_00000.ts",
-        None,
-    )
-    .await;
+    let resp = serve_job_file(&transcoder, &cache_root, &job_id, "segment_00000.ts", None).await;
     assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
 
     // Write one manually, as ffmpeg would.
@@ -607,14 +600,7 @@ async fn session_start_transcode_spawns_hls_job() {
         .await
         .expect("job registered");
     std::fs::write(job.output_dir.join("segment_00000.ts"), b"ts-payload").expect("segment");
-    let resp = serve_job_file(
-        transcoder.registry(),
-        &cache_root,
-        &job_id,
-        "segment_00000.ts",
-        None,
-    )
-    .await;
+    let resp = serve_job_file(&transcoder, &cache_root, &job_id, "segment_00000.ts", None).await;
     assert_eq!(resp.status(), axum::http::StatusCode::OK);
     assert_eq!(
         resp.headers()
@@ -630,14 +616,7 @@ async fn session_start_transcode_spawns_hls_job() {
         "#EXTM3U\n#EXTINF:4.0,\nsegment_00000.ts\n",
     )
     .expect("playlist");
-    let resp = serve_job_file(
-        transcoder.registry(),
-        &cache_root,
-        &job_id,
-        "index.m3u8",
-        Some("tok"),
-    )
-    .await;
+    let resp = serve_job_file(&transcoder, &cache_root, &job_id, "index.m3u8", Some("tok")).await;
     assert_eq!(resp.status(), axum::http::StatusCode::OK);
     let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
         .await
@@ -651,7 +630,7 @@ async fn session_start_transcode_spawns_hls_job() {
 
     // Path traversal / wrong extensions are rejected.
     for bad in ["../secret.ts", "a/b.m3u8", "index.m3u8.exe", "..ts"] {
-        let resp = serve_job_file(transcoder.registry(), &cache_root, &job_id, bad, None).await;
+        let resp = serve_job_file(&transcoder, &cache_root, &job_id, bad, None).await;
         assert_eq!(
             resp.status(),
             axum::http::StatusCode::BAD_REQUEST,
@@ -690,7 +669,7 @@ async fn unknown_job_errors_on_all_job_surfaces() {
     let resp = master_playlist(transcoder.registry(), "nope", None).await;
     assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
     let resp = serve_job_file(
-        transcoder.registry(),
+        &transcoder,
         &ffmpeg_dir.join("cache"),
         "nope",
         "index.m3u8",
@@ -1236,7 +1215,7 @@ async fn hevc_hdr_mkv_copies_video_into_fmp4_for_hevc_client() {
     // fMP4 artifacts are servable.
     std::fs::write(job.output_dir.join("init.mp4"), b"init").expect("init");
     let resp = serve_job_file(
-        transcoder.registry(),
+        &transcoder,
         &ffmpeg_dir.join("cache"),
         &job_id,
         "init.mp4",
@@ -1272,4 +1251,135 @@ async fn live_start_refuses_non_http_inputs() {
         assert!(err.to_string().contains("http or https"), "{bad}: {err}");
     }
     assert!(service.active_streams().await.expect("streams").is_empty());
+}
+
+// ---- on-demand sessions ---------------------------------------------------
+
+/// The source time of the first frame `segment` holds, read back through
+/// ffprobe with its variant's init segment in front.
+fn segment_start(init: &[u8], segment: &[u8], dir: &std::path::Path) -> f64 {
+    let joined = dir.join(format!("probe-{}.mp4", uuid::Uuid::now_v7()));
+    std::fs::write(&joined, [init, segment].concat()).expect("joined segment");
+    let out = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0"])
+        .args(["-show_entries", "stream=start_time", "-of", "csv=p=0"])
+        .arg(&joined)
+        .output()
+        .expect("ffprobe");
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .expect("start time")
+}
+
+async fn body_of(resp: axum::response::Response) -> (axum::http::StatusCode, Vec<u8>) {
+    let status = resp.status();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    (status, body.to_vec())
+}
+
+#[tokio::test]
+async fn adaptive_session_encodes_whatever_segment_and_variant_is_asked_for() {
+    let dir = temp_dir("on-demand");
+    let source = dir.join("source.mkv");
+    let made = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y"])
+        .args(["-f", "lavfi", "-i", "testsrc2=s=1280x720:r=24:d=30"])
+        .args(["-f", "lavfi", "-i", "sine=f=440:d=30"])
+        .args(["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac"])
+        .arg(&source)
+        .status()
+        .is_ok_and(|status| status.success());
+    if !made {
+        eprintln!("skipping: no ffmpeg to make a source with");
+        return;
+    }
+    let probe = noflex_scanner::ffprobe::probe_media_file(&source, None)
+        .await
+        .expect("probe");
+    assert!(probe.duration_ms.is_some());
+    let (store, edition, user) = seed_store().await;
+    let payload = std::fs::read(&source).expect("source");
+    let (id, _path) = insert_media_file(
+        &store,
+        edition,
+        &dir,
+        &payload,
+        serde_json::to_value(&probe).expect("probe json"),
+    )
+    .await;
+    let cache_root = dir.join("cache");
+    let transcoder = Arc::new(FfmpegJobManager::new("ffmpeg", cache_root.clone()));
+    let service = session_service(&store, &transcoder);
+
+    // Under its size, so it has to be encoded.
+    let mut caps = ClientCapabilities::web();
+    caps.max_height = Some(480);
+    let session = service
+        .start(
+            user,
+            None,
+            PlaybackStart {
+                start_position_ms: Some(9_000),
+                adaptive: true,
+                ..PlaybackStart::new(id, caps)
+            },
+        )
+        .await
+        .expect("start");
+    assert_eq!(session.route, PlaybackRouteKind::Transcode);
+    assert!(session.adaptive);
+    // The playlist covers the whole title, so the player seeks to the start itself.
+    assert_eq!(session.start_position_ms, 0);
+    let labels: Vec<&str> = session.qualities.iter().map(|q| q.label.as_str()).collect();
+    assert_eq!(labels, ["480p", "360p"]);
+    let job_id = session.job_id.expect("job_id").to_string();
+
+    let (_, master) = body_of(master_playlist(transcoder.registry(), &job_id, None).await).await;
+    let master = String::from_utf8_lossy(&master).to_string();
+    assert!(
+        master.find("v0.m3u8") < master.find("v1.m3u8"),
+        "best first: {master}"
+    );
+    let fetch = |name: &'static str| serve_job_file(&transcoder, &cache_root, &job_id, name, None);
+    let (status, playlist) = body_of(fetch("v1.m3u8").await).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let playlist = String::from_utf8_lossy(&playlist).to_string();
+    assert!(
+        playlist.contains("v1_00007.m4s\n#EXT-X-ENDLIST"),
+        "{playlist}"
+    );
+
+    // The segment it resumes in, already encoding since the session started.
+    let (status, segment) = body_of(fetch("v0_00002.m4s").await).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let (status, init) = body_of(fetch("v0_init.mp4").await).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let start = segment_start(&init, &segment, &dir) - noflex_transcoder::PTS_PAD_SECS;
+    assert!((start - 8.0).abs() < 0.1, "segment 2 starts at {start}");
+
+    // A seek far ahead, and a switch to the other variant, each start a run there.
+    let (status, segment) = body_of(fetch("v1_00006.m4s").await).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let (_, init) = body_of(fetch("v1_init.mp4").await).await;
+    let start = segment_start(&init, &segment, &dir) - noflex_transcoder::PTS_PAD_SECS;
+    assert!((start - 24.0).abs() < 0.1, "segment 6 starts at {start}");
+
+    let (status, _) = body_of(fetch("v0_99999.m4s").await).await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+    let (status, _) = body_of(fetch("v0_run.m3u8").await).await;
+    assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
+
+    stop_and_wait(&service, &transcoder, user, &job_id).await;
+    let session_dir = cache_root.join(&job_id);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while session_dir.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "segments outlived the session"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }

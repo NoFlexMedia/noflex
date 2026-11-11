@@ -70,7 +70,7 @@ pub use external_auth::{ExternalAuthChallenge, ExternalAuthError, ExternalAuthSe
 pub use live_tv::{LiveTvService, LiveTvServiceError};
 pub use playback_session::{
     ActiveStream, ActiveStreamRecord, PlaybackRouteKind, PlaybackSession, PlaybackSessionService,
-    PlaybackStart, SmartDownloadFile, SubtitleDelivery, TranscodeProgress,
+    PlaybackStart, SmartDownloadFile, StreamQuality, SubtitleDelivery, TranscodeProgress,
 };
 pub use plugin_links::{PluginLink, PluginLinkChallenge, PluginLinkService};
 pub use subscriptions::{ExportEvent, ExportEventBroadcaster};

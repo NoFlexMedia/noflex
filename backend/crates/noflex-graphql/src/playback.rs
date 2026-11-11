@@ -343,7 +343,11 @@ impl PlaybackMutation {
     /// out of band through `subtitles`. `decision` explains the route.
     /// `startPositionMs` starts a transcode at that source position, so
     /// resuming or seeking far ahead doesn't wait for ffmpeg to catch
-    /// up; the session's `startPositionMs` is the offset actually used.
+    /// up; the session's `startPositionMs` is the offset actually used:
+    /// `0` for a video encode, whose playlist covers the whole title from
+    /// the start and which the player seeks in itself.
+    // Each parameter is one GraphQL field argument.
+    #[allow(clippy::too_many_arguments)]
     async fn start_playback_session(
         &self,
         ctx: &Context<'_>,
@@ -353,6 +357,11 @@ impl PlaybackMutation {
         start_position_ms: Option<i64>,
         #[graphql(desc = "Index among the file's audio streams to play instead of its default.")]
         audio_stream: Option<u32>,
+        #[graphql(
+            default,
+            desc = "Transcode to a ladder the player adapts along, from the chosen quality down."
+        )]
+        adaptive: bool,
     ) -> async_graphql::Result<PlaybackSession> {
         let user = authed_user(ctx)?;
         let service = ctx
@@ -378,6 +387,7 @@ impl PlaybackMutation {
                     device,
                     start_position_ms,
                     audio_stream,
+                    adaptive,
                 },
             )
             .await

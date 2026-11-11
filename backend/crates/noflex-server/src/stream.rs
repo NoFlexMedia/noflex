@@ -27,19 +27,25 @@ use noflex_core::{
 };
 use noflex_graphql::{
     ActiveStreamRecord, PlaybackRouteKind, PlaybackSession, PlaybackSessionService, PlaybackStart,
-    SmartDownloadFile, SubtitleDelivery, TranscodeProgress,
+    SmartDownloadFile, StreamQuality, SubtitleDelivery, TranscodeProgress,
 };
 use noflex_storage::{
     Storage,
     domain::{MediaFile, OptimizedVersion, OptimizedVersionStatus},
 };
 use noflex_transcoder::{
-    AudioPlan, ClientCapabilities, DecideOptions, EncodedVideo, Encoder, FfmpegJobManager,
-    HlsSegmentContainer, HwBackend, JobHandle, JobStatus, LadderEntry, PlaybackDecisionInfo,
-    PlaybackRoute, PlaylistType, SegmentConfig, SubtitleBurnSource, TonemapOptions, TranscodeInput,
+    AudioPlan, ClientCapabilities, DecideOptions, EncodedVideo, Encoder, FetchError, Fetched,
+    FfmpegJobManager, HlsSegmentContainer, HwBackend, JobHandle, JobStatus, LadderEntry,
+    PlaybackDecision, PlaybackDecisionInfo, PlaybackRoute, PlaylistType, SegmentConfig,
+    SegmentGrid, SegmentedRequest, SubtitleBurnSource, TonemapOptions, TranscodeInput,
     TranscodeJobRegistry, TranscodePlan, TranscodeReasons, TranscodeRequest, Transcoder, VideoPlan,
-    decide, fit_pixels, hls::HlsVariant, optimize::version_plays, probe::ProbeReport,
-    scaled_bitrate_kbps, subtitles,
+    decide, fit_pixels,
+    hls::HlsVariant,
+    optimize::version_plays,
+    probe::ProbeReport,
+    scaled_bitrate_kbps,
+    segmented::{audio_for_runs, variant_playlist},
+    subtitles,
 };
 use time::OffsetDateTime;
 use tokio::io::AsyncReadExt;
@@ -504,6 +510,10 @@ const DIRECT_SESSION_IDLE: time::Duration = time::Duration::minutes(3);
 /// still fetching segments from it.
 const FINISHED_TRANSCODE_IDLE: time::Duration = time::Duration::minutes(5);
 
+/// An on-demand session runs until stopped; one nobody has fetched from in
+/// this long was left paused or abandoned, and goes with its segments.
+const ON_DEMAND_IDLE: time::Duration = time::Duration::minutes(30);
+
 /// One registered playback, keyed by session id.
 #[derive(Debug, Clone)]
 struct ActiveSession {
@@ -776,9 +786,30 @@ impl ServerPlaybackSessions {
             let idle = now - last;
             let alive = match job {
                 None => idle < DIRECT_SESSION_IDLE,
-                Some(job) => match self.transcoder.registry().get(&job).await.map(|j| j.status) {
-                    Some(JobStatus::Running) => true,
-                    Some(JobStatus::Completed) => idle < FINISHED_TRANSCODE_IDLE,
+                Some(job) => match self
+                    .transcoder
+                    .registry()
+                    .get(&job)
+                    .await
+                    .map(|j| (j.status, j.on_demand))
+                {
+                    Some((JobStatus::Running, true)) => {
+                        let alive = idle < ON_DEMAND_IDLE;
+                        if !alive
+                            && let Err(error) = self
+                                .transcoder
+                                .stop_job(&JobHandle {
+                                    id: job,
+                                    output_dir: PathBuf::new(),
+                                })
+                                .await
+                        {
+                            tracing::warn!(%error, "stopping an idle on-demand session failed");
+                        }
+                        alive
+                    }
+                    Some((JobStatus::Running, false)) => true,
+                    Some((JobStatus::Completed, _)) => idle < FINISHED_TRANSCODE_IDLE,
                     _ => false,
                 },
             };
@@ -818,6 +849,49 @@ impl ServerPlaybackSessions {
             encode_audio,
             audio_stream: None,
         }
+    }
+
+    /// Every step `probe` could be transcoded to for this client, best first:
+    /// toward what `decision` encodes to, or else what a forced encode would.
+    /// Above the file's own bitrate a step isn't one down from the original.
+    fn ladder_for(
+        &self,
+        probe: &ProbeReport,
+        decision: &PlaybackDecision,
+        capabilities: &ClientCapabilities,
+        options: &DecideOptions,
+        max_bitrate_bps: Option<u64>,
+    ) -> Vec<LadderStep> {
+        let encode = |decision: &PlaybackDecision| match &decision.route {
+            PlaybackRoute::Transcoding { plan, .. } => match plan.video {
+                VideoPlan::Encode {
+                    codec,
+                    width,
+                    height,
+                    ..
+                } => Some((codec, width, height)),
+                _ => None,
+            },
+            _ => None,
+        };
+        let (target, original) = match encode(decision) {
+            Some(target) => (Some(target), false),
+            None => {
+                let forced = DecideOptions {
+                    burn_subtitle: true,
+                    ..options.clone()
+                };
+                (encode(&decide(probe, capabilities, &forced)), true)
+            }
+        };
+        let Some((codec, width, height)) = target else {
+            return Vec::new();
+        };
+        let mut steps = ladder_steps(&self.cfg.ladder, codec, width, height, max_bitrate_bps);
+        if original && let Some(source) = probe.format_bit_rate {
+            steps.retain(|step| step.bitrate_bps < source);
+        }
+        steps
     }
 
     /// Sidecar text tracks the client can render once converted to a
@@ -924,8 +998,8 @@ impl ServerPlaybackSessions {
         let mut request = TranscodeRequest::new(input, "index.m3u8", plan, encoder, ladder);
         request.reasons = TranscodeReasons::LiveSource;
         request.segment = SegmentConfig {
-            duration_secs: 4,
             playlist_type: PlaylistType::Live,
+            ..SegmentConfig::default()
         };
         request.vaapi_device = self.vaapi_device.clone();
         request.variant = HlsVariant::for_plan(
@@ -977,6 +1051,8 @@ impl ServerPlaybackSessions {
             start_position_ms: 0,
             decision,
             subtitles: Vec::new(),
+            qualities: Vec::new(),
+            adaptive: false,
         })
     }
 }
@@ -1040,6 +1116,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
             device,
             start_position_ms,
             audio_stream,
+            adaptive: request_adaptive,
         } = request;
         let start_offset_ms = start_position_ms.filter(|ms| *ms > 0);
         let media = self
@@ -1128,31 +1205,32 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                     .ok_or_else(|| anyhow::anyhow!("audio track not found"))
             })
             .transpose()?;
-        let mut decision = decide(
+        let options = DecideOptions {
+            audio_stream,
+            ..self.decide_options(burn_source.is_some())
+        };
+        let mut decision = decide(&probe, &capabilities, &options);
+        let ladder = self.ladder_for(
             &probe,
+            &decision,
             &capabilities,
-            &DecideOptions {
-                audio_stream,
-                ..self.decide_options(burn_source.is_some())
-            },
+            &options,
+            policy.max_stream_bitrate_bps,
         );
+        let qualities: Vec<StreamQuality> = ladder.iter().map(LadderStep::quality).collect();
+        // Up to the quality asked for: a pinned one is its bitrate as the limit.
+        let steps = within(&ladder, capabilities.max_bitrate_bps);
         if let PlaybackRoute::Transcoding { plan, .. } = &mut decision.route
             && let VideoPlan::Encode {
-                codec,
                 width,
                 height,
                 profile,
                 ..
             } = &mut plan.video
+            && let Some(top) = steps.first()
         {
-            let rung = pick_ladder(
-                &self.cfg.ladder,
-                *codec,
-                u64::from(*width) * u64::from(*height),
-                capabilities.max_bitrate_bps,
-            );
-            (*width, *height) = fit_pixels(*width, *height, rung.max_pixels);
-            *profile = rung.cap_profile(*profile);
+            (*width, *height) = (top.width, top.height);
+            *profile = top.rung.cap_profile(*profile);
         }
         let subtitles = if burn_source.is_some() {
             Vec::new()
@@ -1195,6 +1273,8 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                     start_position_ms: 0,
                     decision: active.decision,
                     subtitles,
+                    qualities: qualities.clone(),
+                    adaptive: false,
                 }
             }
             (PlaybackRoute::Direct, None) => {
@@ -1210,102 +1290,191 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                     start_position_ms: 0,
                     decision: active.decision,
                     subtitles,
+                    qualities: qualities.clone(),
+                    adaptive: false,
                 }
             }
             (PlaybackRoute::Transcoding { plan, reasons }, None) => {
                 self.reserve_transcode(user, policy.max_concurrent_transcodes)
                     .await?;
-                let (encoder, encoded, ladder) = match plan.video {
-                    VideoPlan::Encode {
-                        codec,
-                        width,
-                        height,
-                        ..
-                    } => {
-                        let pixels = u64::from(width) * u64::from(height);
-                        let ladder = pick_ladder(
-                            &self.cfg.ladder,
-                            codec,
-                            pixels,
-                            capabilities.max_bitrate_bps,
-                        );
-                        let encoded = EncodedVideo {
-                            width: even(width),
-                            height,
-                            bitrate_bps: u64::from(scaled_bitrate_kbps(&ladder, pixels)) * 1000,
-                        };
-                        (pick_encoder(self.backend, codec), Some(encoded), ladder)
+                let tonemap = match plan.video {
+                    VideoPlan::Encode { tonemap: true, .. } => TonemapOptions {
+                        gpu: self.gpu_tonemap,
+                        curve: match self.storage.tonemap_curve().await {
+                            Ok(curve) => curve.unwrap_or(self.cfg.tonemap_curve),
+                            Err(e) => {
+                                self.finish_reservation(user, None).await;
+                                anyhow::bail!("storage error: {e}");
+                            }
+                        },
+                    },
+                    _ => TonemapOptions::default(),
+                };
+                let request = |plan: TranscodePlan, encoder: Encoder, ladder: LadderEntry| {
+                    let mut req = TranscodeRequest::new(
+                        TranscodeInput::File(PathBuf::from(&media.path)),
+                        "index.m3u8",
+                        plan,
+                        encoder,
+                        ladder,
+                    );
+                    req.reasons = *reasons;
+                    req.vaapi_device = self.vaapi_device.clone();
+                    req.tonemap = tonemap;
+                    req.audio_stream = decision.audio_stream;
+                    req.subtitle_burn = burn_source.clone();
+                    req
+                };
+                // A video encode with a known length goes on a grid of
+                // segments the player can seek anywhere in.
+                let grid = probe
+                    .duration_ms
+                    .filter(|ms| *ms > 0)
+                    .map(|ms| SegmentGrid {
+                        duration_secs: ms as f64 / 1000.0,
+                        segment_secs: SegmentConfig::default().duration_secs,
+                    });
+                let started = match (plan.video, grid) {
+                    (VideoPlan::Encode { codec, .. }, Some(grid)) if !steps.is_empty() => {
+                        let encoder = pick_encoder(self.backend, codec);
+                        let channels = probe
+                            .audio
+                            .get(decision.audio_stream.unwrap_or(0))
+                            .map_or(2, |track| track.channels);
+                        let taken = if request_adaptive { steps.len() } else { 1 };
+                        let variants: Vec<(TranscodeRequest, EncodedVideo)> = steps[..taken]
+                            .iter()
+                            .enumerate()
+                            .map(|(index, step)| {
+                                let mut plan = *plan;
+                                plan.audio = audio_for_runs(plan.audio, channels);
+                                if let VideoPlan::Encode {
+                                    width,
+                                    height,
+                                    profile,
+                                    ..
+                                } = &mut plan.video
+                                {
+                                    (*width, *height) = (step.width, step.height);
+                                    *profile = step.rung.cap_profile(*profile);
+                                }
+                                let encoded = step.encoded();
+                                let mut req = request(plan, encoder, step.rung.clone());
+                                req.variant = HlsVariant::for_plan(
+                                    &probe,
+                                    &plan,
+                                    decision.audio_stream,
+                                    Some(encoded),
+                                    variant_playlist(index),
+                                );
+                                (req, encoded)
+                            })
+                            .collect();
+                        let encoded = variants.first().map(|(_, encoded)| *encoded);
+                        let first = grid.index_at(start_offset_ms.unwrap_or(0) as f64 / 1000.0);
+                        let adaptive = variants.len() > 1;
+                        self.transcoder
+                            .start_segmented(
+                                media.id,
+                                SegmentedRequest {
+                                    grid,
+                                    variants: variants.into_iter().map(|(req, _)| req).collect(),
+                                },
+                                first,
+                            )
+                            .await
+                            .map(|handle| {
+                                let audio = audio_for_runs(plan.audio, channels);
+                                (handle, encoder, encoded, 0, adaptive, Some(audio))
+                            })
                     }
                     _ => {
-                        let pixels = probe
-                            .video
-                            .as_ref()
-                            .map_or(0, |v| u64::from(v.width) * u64::from(v.height));
-                        let ladder = pick_ladder(
-                            &self.cfg.ladder,
-                            VideoCodec::H264,
-                            pixels,
-                            capabilities.max_bitrate_bps,
-                        );
-                        (pick_encoder(self.backend, ladder.video_codec), None, ladder)
-                    }
-                };
-                let mut req = TranscodeRequest::new(
-                    TranscodeInput::File(PathBuf::from(&media.path)),
-                    "index.m3u8",
-                    *plan,
-                    encoder,
-                    ladder,
-                );
-                req.reasons = *reasons;
-                req.vaapi_device = self.vaapi_device.clone();
-                if matches!(plan.video, VideoPlan::Encode { tonemap: true, .. }) {
-                    req.tonemap = TonemapOptions {
-                        gpu: self.gpu_tonemap,
-                        curve: self
-                            .storage
-                            .tonemap_curve()
-                            .await
-                            .map_err(|e| anyhow::anyhow!("storage error: {e}"))?
-                            .unwrap_or(self.cfg.tonemap_curve),
-                    };
-                }
-                req.audio_stream = decision.audio_stream;
-                req.subtitle_burn = burn_source;
-                // A copied video stream can only start on a keyframe, so
-                // snap to it and report that offset; otherwise the player's
-                // timeline (offset + stream time) would run up to a GOP
-                // ahead of the picture.
-                let start_offset_ms = match (start_offset_ms, &plan.video) {
-                    (Some(ms), VideoPlan::Copy { .. }) => {
-                        let target = ms as f64 / 1000.0;
-                        match noflex_scanner::ffprobe::keyframe_at_or_before(
-                            Path::new(&media.path),
-                            target,
-                            None,
-                        )
-                        .await
-                        {
-                            Ok(Some(keyframe)) => Some((keyframe * 1000.0).round() as i64),
-                            Ok(None) => Some(ms),
-                            Err(error) => {
-                                tracing::debug!(%error, "keyframe lookup failed; seeking unsnapped");
-                                Some(ms)
+                        let (encoder, encoded, ladder) = match plan.video {
+                            VideoPlan::Encode {
+                                codec,
+                                width,
+                                height,
+                                ..
+                            } => {
+                                let pixels = u64::from(width) * u64::from(height);
+                                let ladder = pick_ladder(
+                                    &self.cfg.ladder,
+                                    codec,
+                                    pixels,
+                                    capabilities.max_bitrate_bps,
+                                );
+                                let encoded = EncodedVideo {
+                                    width: even(width),
+                                    height,
+                                    bitrate_bps: u64::from(scaled_bitrate_kbps(&ladder, pixels))
+                                        * 1000,
+                                };
+                                (pick_encoder(self.backend, codec), Some(encoded), ladder)
                             }
-                        }
+                            _ => {
+                                let pixels = probe
+                                    .video
+                                    .as_ref()
+                                    .map_or(0, |v| u64::from(v.width) * u64::from(v.height));
+                                let ladder = pick_ladder(
+                                    &self.cfg.ladder,
+                                    VideoCodec::H264,
+                                    pixels,
+                                    capabilities.max_bitrate_bps,
+                                );
+                                (pick_encoder(self.backend, ladder.video_codec), None, ladder)
+                            }
+                        };
+                        let mut req = request(*plan, encoder, ladder);
+                        // A copied video stream can only start on a keyframe, so
+                        // snap to it and report that offset; otherwise the player's
+                        // timeline (offset + stream time) would run up to a GOP
+                        // ahead of the picture.
+                        let start_offset_ms = match (start_offset_ms, &plan.video) {
+                            (Some(ms), VideoPlan::Copy { .. }) => {
+                                let target = ms as f64 / 1000.0;
+                                match noflex_scanner::ffprobe::keyframe_at_or_before(
+                                    Path::new(&media.path),
+                                    target,
+                                    None,
+                                )
+                                .await
+                                {
+                                    Ok(Some(keyframe)) => Some((keyframe * 1000.0).round() as i64),
+                                    Ok(None) => Some(ms),
+                                    Err(error) => {
+                                        tracing::debug!(%error, "keyframe lookup failed; seeking unsnapped");
+                                        Some(ms)
+                                    }
+                                }
+                            }
+                            (offset, _) => offset,
+                        };
+                        req.start_secs = start_offset_ms.map(|ms| ms as f64 / 1000.0);
+                        req.variant = HlsVariant::for_plan(
+                            &probe,
+                            plan,
+                            decision.audio_stream,
+                            encoded,
+                            "index.m3u8",
+                        );
+                        self.transcoder
+                            .start_job(media.id, req)
+                            .await
+                            .map(|handle| {
+                                (
+                                    handle,
+                                    encoder,
+                                    encoded,
+                                    start_offset_ms.unwrap_or(0),
+                                    false,
+                                    None,
+                                )
+                            })
                     }
-                    (offset, _) => offset,
                 };
-                req.start_secs = start_offset_ms.map(|ms| ms as f64 / 1000.0);
-                req.variant = HlsVariant::for_plan(
-                    &probe,
-                    plan,
-                    decision.audio_stream,
-                    encoded,
-                    "index.m3u8",
-                );
-                let handle = match self.transcoder.start_job(media.id, req).await {
-                    Ok(handle) => handle,
+                let (handle, encoder, encoded, start_position_ms, adaptive, audio) = match started {
+                    Ok(started) => started,
                     Err(e) => {
                         self.finish_reservation(user, None).await;
                         tracing::error!(error = %e, "transcode job start failed");
@@ -1318,6 +1487,12 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                 )
                 .await;
                 let token = self.media_token(user, login, &format!("job:{}", handle.id))?;
+                let mut decision = decision.clone();
+                if let Some(audio) = audio
+                    && let PlaybackRoute::Transcoding { plan, .. } = &mut decision.route
+                {
+                    plan.audio = audio;
+                }
                 active.decision = PlaybackDecisionInfo::new(&probe, &decision, encoder, encoded);
                 active.job = Some(handle.id.clone());
                 self.register(handle.id.clone(), active.clone()).await;
@@ -1327,9 +1502,11 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                     url: format!("/stream/job/{}/master.m3u8?token={token}", handle.id),
                     file_url: None,
                     job_id: Some(ID::from(handle.id)),
-                    start_position_ms: start_offset_ms.unwrap_or(0),
+                    start_position_ms,
                     decision: active.decision,
                     subtitles,
+                    qualities,
+                    adaptive,
                 }
             }
         };
@@ -1550,6 +1727,137 @@ fn pick_ladder(
         })
 }
 
+/// One step of the transcode ladder a file is offered at.
+#[derive(Debug, Clone)]
+struct LadderStep {
+    rung: LadderEntry,
+    width: u32,
+    height: u32,
+    bitrate_bps: u64,
+    label: &'static str,
+}
+
+/// The 16:9 frames steps are named after and fitted to, largest first.
+const FRAMES: [(&str, u32, u32); 6] = [
+    ("4K", 3840, 2160),
+    ("1440p", 2560, 1440),
+    ("1080p", 1920, 1080),
+    ("720p", 1280, 720),
+    ("480p", 854, 480),
+    ("360p", 640, 360),
+];
+
+impl LadderStep {
+    fn encoded(&self) -> EncodedVideo {
+        EncodedVideo {
+            width: self.width,
+            height: self.height,
+            bitrate_bps: self.bitrate_bps,
+        }
+    }
+
+    fn quality(&self) -> StreamQuality {
+        StreamQuality {
+            label: self.label.to_string(),
+            width: self.width,
+            height: self.height,
+            bitrate_bps: self.bitrate_bps,
+        }
+    }
+}
+
+/// The smallest frame `width`×`height` fits, a little over allowed so a
+/// 1920×1088 encode is still 1080p.
+fn frame_label(width: u32, height: u32) -> &'static str {
+    FRAMES
+        .iter()
+        .rev()
+        .find(|(_, w, h)| width * 20 <= w * 21 && height * 20 <= h * 21)
+        .map_or("4K", |(label, ..)| label)
+}
+
+/// What `codec` at `width`×`height` steps down through on `ladder`: the
+/// rung for that size, then each smaller frame on its own rung, rated by
+/// area, skipping a step that saves less than a fifth. Rungs over
+/// `max_bitrate_bps` are out, as for [`pick_ladder`].
+fn ladder_steps(
+    ladder: &[LadderEntry],
+    codec: VideoCodec,
+    width: u32,
+    height: u32,
+    max_bitrate_bps: Option<u64>,
+) -> Vec<LadderStep> {
+    let top = pick_ladder(
+        ladder,
+        codec,
+        u64::from(width) * u64::from(height),
+        max_bitrate_bps,
+    );
+    let (width, height) = fit_pixels(width, height, top.max_pixels);
+    let mut sizes = vec![(even(width), even(height))];
+    for (_, frame_width, frame_height) in FRAMES {
+        let scale = (f64::from(frame_width) / f64::from(width))
+            .min(f64::from(frame_height) / f64::from(height));
+        if scale >= 1.0 {
+            continue;
+        }
+        let size = (
+            even((f64::from(width) * scale).round() as u32),
+            even((f64::from(height) * scale).round() as u32),
+        );
+        if sizes.last().is_some_and(|last| size.1 < last.1) {
+            sizes.push(size);
+        }
+    }
+    let mut steps: Vec<LadderStep> = Vec::new();
+    for (width, height) in sizes {
+        let pixels = u64::from(width) * u64::from(height);
+        let rung = pick_ladder(ladder, codec, pixels, max_bitrate_bps);
+        let bitrate_bps = u64::from(scaled_bitrate_kbps(&rung, pixels)) * 1000;
+        if steps
+            .last()
+            .is_some_and(|last| bitrate_bps * 5 > last.bitrate_bps * 4)
+        {
+            continue;
+        }
+        steps.push(LadderStep {
+            rung,
+            width,
+            height,
+            bitrate_bps,
+            label: frame_label(width, height),
+        });
+    }
+    steps
+}
+
+/// The steps at or under `max_bitrate_bps`. Below the smallest, that step
+/// at the limit, so a stream can still start.
+fn within(steps: &[LadderStep], max_bitrate_bps: Option<u64>) -> Vec<LadderStep> {
+    let Some(max) = max_bitrate_bps else {
+        return steps.to_vec();
+    };
+    let under: Vec<LadderStep> = steps
+        .iter()
+        .filter(|step| step.bitrate_bps <= max)
+        .cloned()
+        .collect();
+    if !under.is_empty() {
+        return under;
+    }
+    steps
+        .last()
+        .map(|smallest| {
+            let mut step = smallest.clone();
+            step.rung.bitrate_kbps = u32::try_from(max / 1000).unwrap_or(u32::MAX).max(1);
+            step.rung.max_pixels = u64::from(step.width) * u64::from(step.height);
+            step.bitrate_bps = u64::from(step.rung.bitrate_kbps) * 1000;
+            step
+        })
+        .into_iter()
+        .collect()
+}
+
 /// Map the resolved backend + target codec onto an `Encoder`.
 /// VideoToolbox and MediaFoundation have no AV1 encoder, so AV1
 /// falls back to software there; codecs outside h264/hevc/av1 have
@@ -1614,7 +1922,7 @@ pub async fn master_playlist(
     let Some(job) = registry.get(job_id).await else {
         return (StatusCode::NOT_FOUND, "job not found").into_response();
     };
-    let body = noflex_transcoder::hls::render_master(std::slice::from_ref(&job.request.variant));
+    let body = noflex_transcoder::hls::render_master(&job.variants);
     let body = match token {
         Some(token) => propagate_token_to_playlist(&body, token),
         None => body,
@@ -1643,10 +1951,11 @@ fn is_hls_artifact(filename: &str) -> bool {
 }
 
 /// Serve one artifact (playlist or segment) out of a job's output dir.
-/// Segments may not exist yet mid-transcode — clients poll, so a
-/// missing file is a plain 404, not an error.
+/// A linear job's segments may not exist yet mid-transcode — clients
+/// poll, so a missing file is a plain 404, not an error. An on-demand
+/// session's are encoded for the request, which waits for them.
 pub async fn serve_job_file(
-    registry: &TranscodeJobRegistry,
+    transcoder: &FfmpegJobManager,
     cache_root: &Path,
     job_id: &str,
     filename: &str,
@@ -1657,6 +1966,33 @@ pub async fn serve_job_file(
     if !is_hls_artifact(filename) || filename.contains('/') || filename.contains("..") {
         return (StatusCode::BAD_REQUEST, "invalid filename").into_response();
     }
+    if let Some(fetched) = transcoder.fetch_segmented(job_id, filename).await {
+        return match fetched {
+            Ok(Fetched::Playlist(body)) => playlist_response(match token {
+                Some(token) => propagate_token_to_playlist(&body, token),
+                None => body,
+            }),
+            Ok(Fetched::File(path)) => match RootCapability::new(cache_root).await {
+                Ok(root) => match root.open(&path).await {
+                    Ok(opened) => serve_file(opened, None, ServeOpts::default()).await,
+                    Err(error) => {
+                        tracing::warn!(%error, path = %path.display(), "on-demand segment unreadable");
+                        (StatusCode::NOT_FOUND, "file not found").into_response()
+                    }
+                },
+                Err(error) => {
+                    tracing::error!(%error, job_id, "transcode output directory unavailable");
+                    (StatusCode::INTERNAL_SERVER_ERROR, "file unavailable").into_response()
+                }
+            },
+            Err(FetchError::NotFound) => (StatusCode::NOT_FOUND, "file not found").into_response(),
+            // Players retry a 503 as they would a slow segment.
+            Err(FetchError::Unavailable) => {
+                (StatusCode::SERVICE_UNAVAILABLE, "segment not ready").into_response()
+            }
+        };
+    }
+    let registry = transcoder.registry();
     let Some(job) = registry.get(job_id).await else {
         return (StatusCode::NOT_FOUND, "job not found").into_response();
     };
@@ -1698,17 +2034,21 @@ pub async fn serve_job_file(
             tracing::error!(%error, path = %path.display(), "read playlist failed");
             return (StatusCode::INTERNAL_SERVER_ERROR, "read failed").into_response();
         }
-        return (
-            StatusCode::OK,
-            [(
-                axum::http::header::CONTENT_TYPE,
-                "application/vnd.apple.mpegurl",
-            )],
-            propagate_token_to_playlist(&body, token),
-        )
-            .into_response();
+        return playlist_response(propagate_token_to_playlist(&body, token));
     }
     serve_file(opened, None, ServeOpts::default()).await
+}
+
+fn playlist_response(body: String) -> Response {
+    (
+        StatusCode::OK,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/vnd.apple.mpegurl",
+        )],
+        body,
+    )
+        .into_response()
 }
 
 #[cfg(test)]

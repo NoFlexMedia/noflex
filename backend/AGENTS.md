@@ -118,6 +118,13 @@ Don't break these without an architecture discussion in the PR description.
 - **The last administrator's account only goes with the server**, with `eraseServer` (else `LAST_ADMINISTRATOR`). `request_server_reset` revokes every session, key, device code and invite, and `Erasure` has `ResetGuard` refuse everything but `serverInfo` (`SERVER_RESETTING`). Then `main` restarts `run` in process, and a start with a `server_reset` row erases before anything else opens: `erase_all_data`, then `ResetPaths`, then the row. A server with no users is first-run setup.
 - **`erase_all_data` empties every table but `schema_meta` and `server_reset`**, found in `sqlite_schema`, so a new table needs nothing. One that must survive an erasure goes in `KEPT` (`repo/erasure.rs`). On disk, the caches, downloads and recordings are emptied whole, optimized-version folders lose only `version_file` names, and `jwt.key` goes.
 
+### Playback
+
+- **A video encode with a known length is on demand** (`noflex-transcoder/src/segmented.rs`). Its media playlists are whole VOD playlists on a 4 s grid from the start, and a segment is encoded when a player asks for it: a run of ffmpeg starts there and is waited for while the request is within `AHEAD` segments of it. So `startPositionMs` is `0` and the player seeks itself. A copied video stream and live TV stay linear: one ffmpeg from the offset, its own growing playlist.
+- **Runs splice because they agree**: timestamps are source time plus `PTS_PAD_SECS` (`-output_ts_offset`, `-use_editlist 0`, `frag_discont`), which gives every run the same init segment. Audio is encoded in runs (`audio_for_runs`), as copied audio ignores the input seek, and `-copyts` misplaces streams of a source that doesn't start at zero.
+- **`adaptive` makes the master a ladder**, best first: `ladder_steps` takes the encode's rung, then each smaller 16:9 frame on its own rung, rated by area. `PlaybackSession.qualities` is that ladder for any route, and pinning a quality is asking again with its `bitrateBps` as `maxBitrateBps`, which `within` lands on exactly. The original still plays when the client can play it; leaving it is a new session.
+- A session's files are `v<n>.m3u8`, `v<n>_init.mp4` and `v<n>_<index>.m4s`; ffmpeg's own `v<n>_run.m3u8` is how a run says what it finished, and is never served. A variant nobody asks for in 12 s stops encoding, a session in 2 min, and one untouched in 30 min goes with its files.
+
 ### Connect
 
 - **NoFlex Connect is in memory.** `ConnectHub` (`noflex-graphql/src/connect.rs`) holds who is listening and what they last said. A command is for a device listening now: none is queued and nothing survives a restart.

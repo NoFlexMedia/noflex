@@ -51,6 +51,25 @@ pub struct PlaybackSession {
     /// Empty when the client declared no subtitle format the server
     /// can convert to, or a subtitle is burned in.
     pub subtitles: Vec<SubtitleDelivery>,
+    /// What this file can be transcoded to for this client, best first: the
+    /// steps a quality menu offers. Pinning one is asking again with its
+    /// `bitrateBps` as `capabilities.maxBitrateBps`. Empty for a file with no
+    /// video.
+    pub qualities: Vec<StreamQuality>,
+    /// Whether `url` is a ladder of every quality up to the one chosen, which
+    /// the player's own adaptive bitrate moves along.
+    pub adaptive: bool,
+}
+
+/// One step of the transcode ladder a session offers.
+#[derive(SimpleObject, Debug, Clone, PartialEq, Eq)]
+pub struct StreamQuality {
+    /// `4K`, `1440p`, `1080p`, `720p`, `480p` or `360p`: the 16:9 frame it fits.
+    pub label: String,
+    pub width: u32,
+    pub height: u32,
+    /// Video and audio together.
+    pub bitrate_bps: u64,
 }
 
 /// Live state of a transcode job.
@@ -135,6 +154,9 @@ pub struct PlaybackStart {
     /// Index into the media file's audio streams to play instead of its
     /// default.
     pub audio_stream: Option<u32>,
+    /// Transcode to the whole ladder up to the chosen quality rather than to
+    /// that quality alone. The original still plays when the client can play it.
+    pub adaptive: bool,
 }
 
 impl PlaybackStart {
@@ -147,6 +169,7 @@ impl PlaybackStart {
             device: None,
             start_position_ms: None,
             audio_stream: None,
+            adaptive: false,
         }
     }
 }

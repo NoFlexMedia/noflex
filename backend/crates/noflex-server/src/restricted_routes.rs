@@ -397,7 +397,7 @@ async fn stream_job_file(
         return status.into_response();
     }
     stream::serve_job_file(
-        state.transcoder.registry(),
+        &state.transcoder,
         &state.transcode_cache_dir,
         &job_id,
         &filename,

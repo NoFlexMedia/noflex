@@ -99,6 +99,8 @@ impl LiveTvService for FakeLiveTvService {
                 None,
             ),
             subtitles: Vec::new(),
+            qualities: Vec::new(),
+            adaptive: false,
         })
     }
 

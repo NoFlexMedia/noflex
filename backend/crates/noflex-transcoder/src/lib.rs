@@ -26,6 +26,7 @@ pub mod optimize;
 pub mod package;
 pub mod probe;
 pub mod reasons;
+pub mod segmented;
 pub mod spawn;
 pub mod subtitles;
 
@@ -39,9 +40,9 @@ pub use explain::{
     PlaybackDecisionInfo, PlaybackPlanKind, PlaybackReason, PlaybackRouteKind, StreamSummary,
 };
 pub use ffmpeg_argv::{
-    InputError, LadderEntry, NETWORK_INPUT_SCHEMES, NETWORK_PROTOCOL_WHITELIST, PlaylistType,
-    SegmentConfig, SubtitleBurnSource, TonemapOptions, TranscodeInput, TranscodeRequest,
-    build_ffmpeg_argv, is_network_url, scaled_bitrate_kbps,
+    InputError, LadderEntry, NETWORK_INPUT_SCHEMES, NETWORK_PROTOCOL_WHITELIST, PTS_PAD_SECS,
+    PlaylistType, SegmentConfig, SubtitleBurnSource, TonemapOptions, TranscodeInput,
+    TranscodeRequest, build_ffmpeg_argv, is_network_url, scaled_bitrate_kbps,
 };
 pub use hls::EncodedVideo;
 pub use hwdetect::HwDetect;
@@ -52,6 +53,7 @@ pub use probe::{
     map_video_profile_for_codec,
 };
 pub use reasons::{TranscodeReason, TranscodeReasons};
+pub use segmented::{FetchError, Fetched, SegmentGrid, SegmentedRequest};
 pub use spawn::{SpawnedJob, spawn};
 
 #[async_trait]

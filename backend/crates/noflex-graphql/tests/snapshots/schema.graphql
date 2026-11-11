@@ -1580,13 +1580,19 @@ type Mutation {
 	out of band through `subtitles`. `decision` explains the route.
 	`startPositionMs` starts a transcode at that source position, so
 	resuming or seeking far ahead doesn't wait for ffmpeg to catch
-	up; the session's `startPositionMs` is the offset actually used.
+	up; the session's `startPositionMs` is the offset actually used:
+	`0` for a video encode, whose playlist covers the whole title from
+	the start and which the player seeks in itself.
 	"""
 	startPlaybackSession(		mediaFileId: ID!,		capabilities: ClientCapabilities!,		burnSubtitle: Int,		startPositionMs: Int,
 		"""
 		Index among the file's audio streams to play instead of its default.
 		"""
-		audioStream: Int
+		audioStream: Int,
+		"""
+		Transcode to a ladder the player adapts along, from the chosen quality down.
+		"""
+		adaptive: Boolean! = false
 	): PlaybackSession!
 	"""
 	End a session started by `startPlaybackSession`, stopping its
@@ -2466,6 +2472,18 @@ type PlaybackSession {
 	can convert to, or a subtitle is burned in.
 	"""
 	subtitles: [SubtitleDelivery!]!
+	"""
+	What this file can be transcoded to for this client, best first: the
+	steps a quality menu offers. Pinning one is asking again with its
+	`bitrateBps` as `capabilities.maxBitrateBps`. Empty for a file with no
+	video.
+	"""
+	qualities: [StreamQuality!]!
+	"""
+	Whether `url` is a ladder of every quality up to the one chosen, which
+	the player's own adaptive bitrate moves along.
+	"""
+	adaptive: Boolean!
 }
 
 """
@@ -3714,6 +3732,22 @@ enum StorageLocationKind {
 	EMBED_CACHE
 	RECORDINGS
 	LIBRARY_ROOT
+}
+
+"""
+One step of the transcode ladder a session offers.
+"""
+type StreamQuality {
+	"""
+	`4K`, `1440p`, `1080p`, `720p`, `480p` or `360p`: the 16:9 frame it fits.
+	"""
+	label: String!
+	width: Int!
+	height: Int!
+	"""
+	Video and audio together.
+	"""
+	bitrateBps: Int!
 }
 
 """

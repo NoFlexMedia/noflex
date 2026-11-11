@@ -36,7 +36,7 @@ NoFlex is a self-hosted media server for movies, shows, music, live TV and photo
 
 ### Sandboxed plugins
 
-- **Every integration is a WebAssembly plugin**, first-party ones included: TMDB, TheTVDB, MusicBrainz, OpenID Connect, Trakt, webhooks, local embeddings and intro markers.
+- **Every integration is a WebAssembly plugin**, first-party ones included: TMDB, TheTVDB, MusicBrainz, OpenID Connect, Trakt, webhooks and local embeddings.
 - **Capability-gated and audit-logged.** A plugin declares what it needs up front, reaches only the hosts it names, never touches the database, and has every call logged. Plugins may use any license.
 
 ### And the rest

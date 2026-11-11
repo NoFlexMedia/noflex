@@ -8,33 +8,31 @@ First-party plugins get no special treatment: they ship as `.wasm` and cross the
 
 They live in `backend/plugins/`, outside the main Cargo workspace because they build for `wasm32-wasip2`.
 
-| Path                           | Plugin ID        | Purpose                                                                  |
-| ------------------------------ | ---------------- | ------------------------------------------------------------------------ |
-| `noflex-metadata-tmdb/`        | `tmdb`           | The Movie Database — movies and series metadata and artwork              |
-| `noflex-metadata-tvdb/`        | `tvdb`           | TheTVDB — series and movie metadata and artwork                          |
-| `noflex-metadata-musicbrainz/` | `musicbrainz`    | MusicBrainz — albums, artists, tracks                                    |
-| `noflex-auth-oidc/`            | `oidc`           | OpenID Connect login and local-account linking                           |
-| `noflex-embeddings/`           | `embeddings`     | Local Model2Vec embeddings that fill the vector search index             |
-| `noflex-webhook/`              | `webhook`        | Outbound webhooks for domain events (Gotify, ntfy, Discord, Slack, ...)  |
-| `noflex-trakt/`                | `trakt`          | Trakt scrobbling, linked per user by device flow                         |
-| `noflex-intro-chapters/`       | `intro-chapters` | Intro and credits markers from chapter titles ("Opening", "End Credits") |
+| Path                           | Plugin ID     | Purpose                                                                 |
+| ------------------------------ | ------------- | ----------------------------------------------------------------------- |
+| `noflex-metadata-tmdb/`        | `tmdb`        | The Movie Database — movies and series metadata and artwork             |
+| `noflex-metadata-tvdb/`        | `tvdb`        | TheTVDB — series and movie metadata and artwork                         |
+| `noflex-metadata-musicbrainz/` | `musicbrainz` | MusicBrainz — albums, artists, tracks                                   |
+| `noflex-auth-oidc/`            | `oidc`        | OpenID Connect login and local-account linking                          |
+| `noflex-embeddings/`           | `embeddings`  | Local Model2Vec embeddings that fill the vector search index            |
+| `noflex-webhook/`              | `webhook`     | Outbound webhooks for domain events (Gotify, ntfy, Discord, Slack, ...) |
+| `noflex-trakt/`                | `trakt`       | Trakt scrobbling, linked per user by device flow                        |
 
 Some have their own README with setup steps (`noflex-embeddings`, `noflex-webhook`).
 
 ## Hooks
 
-| Hook             | When it fires                                                    | Returns                                      |
-| ---------------- | ---------------------------------------------------------------- | -------------------------------------------- |
-| `metadata`       | Identifying and refreshing works                                 | `MetadataMatch`es, a full `MetadataPayload`  |
-| `image`          | A work's artwork, a credited person's photo, a hand-picked image | `(ImageMeta, stream<u8>)`; `ImageCandidate`s |
-| `post-scan`      | After a library scan completes                                   | unit                                         |
-| `notifier`       | Library events and plugin lifecycle                              | unit                                         |
-| `user-link`      | A user links or unlinks an upstream account (OAuth, device flow) | `LinkChallenge`; per-user secrets            |
-| `external-auth`  | Interactive login through an external IdP                        | authorization URL; `VerifiedIdentity`        |
-| `scrobbler`      | Playback start, progress at stop, mark played                    | unit                                         |
-| `intro-detector` | A host sweep over editions a detector hasn't scanned             | `IntroDetection` or none; most confident wins |
-| `embedder`       | Work texts at scan time, queries at search time                  | one vector per text                          |
-| `background`     | A manifest `[[tasks]]` schedule or `host-tasks.enqueue`          | `done` / `more(cursor)`                      |
+| Hook            | When it fires                                                    | Returns                                      |
+| --------------- | ---------------------------------------------------------------- | -------------------------------------------- |
+| `metadata`      | Identifying and refreshing works                                 | `MetadataMatch`es, a full `MetadataPayload`  |
+| `image`         | A work's artwork, a credited person's photo, a hand-picked image | `(ImageMeta, stream<u8>)`; `ImageCandidate`s |
+| `post-scan`     | After a library scan completes                                   | unit                                         |
+| `notifier`      | Library events and plugin lifecycle                              | unit                                         |
+| `user-link`     | A user links or unlinks an upstream account (OAuth, device flow) | `LinkChallenge`; per-user secrets            |
+| `external-auth` | Interactive login through an external IdP                        | authorization URL; `VerifiedIdentity`        |
+| `scrobbler`     | Playback start, progress at stop, mark played                    | unit                                         |
+| `embedder`      | Work texts at scan time, queries at search time                  | one vector per text                          |
+| `background`    | A manifest `[[tasks]]` schedule or `host-tasks.enqueue`          | `done` / `more(cursor)`                      |
 
 A plugin implements any subset. Every world exports `background`; stub it if you register no tasks. The host checks the manifest's `hooks` against the component's actual exports at load and rejects a plugin claiming a hook it doesn't export. `subtitle` exists in the WIT but isn't served; a manifest declaring it is rejected.
 

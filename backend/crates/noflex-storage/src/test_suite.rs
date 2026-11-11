@@ -9412,6 +9412,25 @@ async fn imported_user_state_only_adds<S: Storage + ?Sized>(store: &S) {
     assert_eq!(film_entry.rating_source.as_deref(), Some("trakt"));
     assert_eq!(film_entry.play_count, 3);
 
+    let scrobbled = crate::domain::UserStateImport {
+        played_at: Some(OffsetDateTime::now_utc() - time::Duration::minutes(10)),
+        ..item(film.id)
+    };
+    assert_eq!(
+        store
+            .import_user_state(user.id, "trakt", &[scrobbled])
+            .await
+            .expect("same play"),
+        [film.id]
+    );
+    let all = entries(None).await;
+    let film_entry = all.iter().find(|e| e.work == film.id).expect("film entry");
+    assert_eq!(
+        film_entry.played_source.as_deref(),
+        Some("trakt"),
+        "a play the source reports within the hour is the one it already has"
+    );
+
     let first = store
         .user_state_history(user.id, None, 1, None)
         .await

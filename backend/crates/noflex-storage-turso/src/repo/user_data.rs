@@ -483,6 +483,10 @@ ON CONFLICT(user_id, target_kind, target_id) DO UPDATE SET \
 
 const WORK_EXISTS: &str = "SELECT 1 FROM works WHERE id = ?1";
 
+/// Plays of one title this close together are one viewing reported twice,
+/// as a scrobble and this server's own mark are, a clock apart.
+const SAME_PLAY: time::Duration = time::Duration::hours(1);
+
 /// Every column an import reads and writes.
 #[derive(Debug, Clone, Default, PartialEq)]
 struct ImportRow {
@@ -504,7 +508,11 @@ impl ImportRow {
     fn apply(&mut self, item: &UserStateImport, source: &str) {
         if let Some(at) = item.played_at {
             let newer = self.played_at.is_none_or(|played_at| at > played_at);
-            if !self.played || newer {
+            let same_play = self.played
+                && self
+                    .played_at
+                    .is_some_and(|played_at| (at - played_at).abs() <= SAME_PLAY);
+            if !self.played || newer || same_play {
                 self.played = true;
                 self.played_at = Some(self.played_at.map_or(at, |played_at| played_at.max(at)));
                 self.played_source = Some(source.to_string());

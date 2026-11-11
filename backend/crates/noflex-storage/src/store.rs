@@ -1298,7 +1298,9 @@ pub trait Storage: Send + Sync + 'static {
 
     /// Apply `items` to `user`'s state as `source` saw it, in one
     /// transaction. Imports only add: a play counts when it's newer than
-    /// the one recorded (or none was), a rating when its time is newer than
+    /// the one recorded (or none was), and one within an hour of it is the
+    /// same viewing reported twice, so it becomes the import's; a rating
+    /// when its time is newer than
     /// the recorded one's, and a favorite when `true`. A newer play clears
     /// a saved position, and the play count becomes the larger of the
     /// recorded one and the item's (at least one). Whatever an item changes

@@ -104,7 +104,7 @@
             ];
           };
           sourceRoot = "source/site";
-          npmDepsHash = "sha256-7lvtU2hvQjsGZYgTdUEjroH4VcuGGQnePVRJqReE5wA=";
+          npmDepsHash = "sha256-dc9A7mkp6mhj1gEfHrbj3WGAa8aDki1vaATD1mCYEwM=";
           npmBuildScript = "build";
           installPhase = ''
             runHook preInstall

@@ -27,6 +27,7 @@ world plugin {
 
     // ----- All hook exports (only useful for "everything-plugins") -----
     export metadata;
+    export ratings;
     export image;
     export subtitle;
     export post-scan;
@@ -76,6 +77,20 @@ world metadata-image-plugin {
     import host-net;
     export metadata;
     export image;
+    export background;
+}
+
+/// Convenience world for providers that only add ratings to works another
+/// provider described (the OMDb pattern).
+world ratings-plugin {
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    export ratings;
     export background;
 }
 

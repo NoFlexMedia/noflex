@@ -14,6 +14,7 @@ members = [
     "notifier",
     "notifier-events",
     "post-scan",
+    "ratings",
     "scrobbler",
     "subtitle",
     "subtitle-quota",

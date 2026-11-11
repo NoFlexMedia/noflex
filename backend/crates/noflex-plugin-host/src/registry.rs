@@ -308,7 +308,7 @@ impl PluginRegistry {
             guard.insert(id.clone(), Arc::clone(&plugin));
             self.embedder_changed.notify_one();
         }
-        if plugin.exports(HookKind::Metadata)
+        if (plugin.exports(HookKind::Metadata) || plugin.exports(HookKind::Ratings))
             && let Some(storage) = self.storage.clone()
         {
             let plugin = Arc::clone(&plugin);

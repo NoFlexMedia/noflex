@@ -1,0 +1,8 @@
+manifest_version = 1
+plugin_id = "ratings-fixture"
+display_name = "Ratings Test Fixture"
+version = "0.0.1"
+noflex_api_version = "0.2"
+hooks = ["ratings"]
+capabilities = []
+license = "AGPL-3.0-only"

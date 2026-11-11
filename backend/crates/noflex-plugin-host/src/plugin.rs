@@ -49,6 +49,7 @@ use crate::{
         },
         notifier::{NotifierPlugin, noflex::plugin::types as notifier_types},
         post_scan::{PostScanPlugin, noflex::plugin::types as post_scan_types},
+        ratings::{RatingsPlugin, noflex::plugin::types as ratings_types},
         scrobbler::{ScrobblerPlugin, noflex::plugin::types as scrobbler_types},
         subtitle::{
             SubtitlePlugin, exports::noflex::plugin::subtitle as subtitle_exports,
@@ -152,6 +153,10 @@ type ExternalAuthCompleteOutcome = Result<
 /// `call_embed`'s wire result: dispatch error outside, plugin error inside.
 type EmbedOutcome = Result<Result<Vec<Vec<f32>>, embedder_types::PluginError>, HostError>;
 
+/// `call_ratings`'s wire result: dispatch error outside, plugin error inside.
+type RatingsOutcome =
+    Result<Result<Vec<ratings_types::Rating>, ratings_types::PluginError>, HostError>;
+
 /// `call_scrobble`'s wire result: dispatch error outside, plugin error inside.
 type ScrobbleOutcome = Result<Result<(), scrobbler_types::PluginError>, HostError>;
 
@@ -220,6 +225,15 @@ impl From<embedder_types::TaskOutcome> for TaskOutcome {
     }
 }
 
+impl From<ratings_types::TaskOutcome> for TaskOutcome {
+    fn from(o: ratings_types::TaskOutcome) -> Self {
+        match o {
+            ratings_types::TaskOutcome::Done => TaskOutcome::Done,
+            ratings_types::TaskOutcome::More(cursor) => TaskOutcome::More(cursor),
+        }
+    }
+}
+
 impl From<post_scan_types::TaskOutcome> for TaskOutcome {
     fn from(o: post_scan_types::TaskOutcome) -> Self {
         match o {
@@ -284,6 +298,7 @@ impl_plugin_error_from!(notifier_types::PluginError);
 impl_plugin_error_from!(post_scan_types::PluginError);
 impl_plugin_error_from!(user_link_types::PluginError);
 impl_plugin_error_from!(embedder_types::PluginError);
+impl_plugin_error_from!(ratings_types::PluginError);
 impl_plugin_error_from!(scrobbler_types::PluginError);
 impl_plugin_error_from!(external_auth_types::PluginError);
 impl_plugin_error_from!(subtitle_types::PluginError);
@@ -423,6 +438,11 @@ enum HookCall {
         inputs: Vec<EmbedInput>,
         respond: oneshot::Sender<EmbedOutcome>,
     },
+    Ratings {
+        ids: Vec<ratings_types::ExternalId>,
+        kind: ratings_types::WorkKind,
+        respond: oneshot::Sender<RatingsOutcome>,
+    },
     Scrobble {
         event: scrobbler_types::ScrobbleEvent,
         respond: oneshot::Sender<ScrobbleOutcome>,
@@ -456,6 +476,7 @@ impl HookCall {
             Self::ExternalAuthStart { respond, .. } => respond.is_closed(),
             Self::ExternalAuthComplete { respond, .. } => respond.is_closed(),
             Self::Embed { respond, .. } => respond.is_closed(),
+            Self::Ratings { respond, .. } => respond.is_closed(),
             Self::Scrobble { respond, .. } => respond.is_closed(),
             Self::SubtitleSearch { respond, .. } => respond.is_closed(),
             Self::SubtitleDownload { respond, .. } => respond.is_closed(),
@@ -515,6 +536,9 @@ impl HookCall {
             HookCall::Embed { respond, .. } => {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
+            HookCall::Ratings { respond, .. } => {
+                let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
+            }
             HookCall::Scrobble { respond, .. } => {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
@@ -541,6 +565,7 @@ struct BoundHooks {
     user_link: Option<UserLinkPlugin>,
     external_auth: Option<ExternalAuthPlugin>,
     embedder: Option<EmbedderPluginBinding>,
+    ratings: Option<RatingsPlugin>,
     scrobbler: Option<ScrobblerPlugin>,
     subtitle: Option<SubtitlePlugin>,
 }
@@ -554,6 +579,7 @@ impl BoundHooks {
             || self.user_link.is_some()
             || self.external_auth.is_some()
             || self.embedder.is_some()
+            || self.ratings.is_some()
             || self.scrobbler.is_some()
             || self.subtitle.is_some()
     }
@@ -675,8 +701,9 @@ impl LoadedPlugin {
             .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
     }
 
-    /// Ask the plugin's `metadata.attribution()` export how to credit it.
-    /// Errors when the plugin exports no metadata hook or the call fails.
+    /// Ask the plugin's `metadata.attribution()` export how to credit it, or
+    /// `ratings.attribution()` for a plugin with no metadata hook. Errors
+    /// when it exports neither or the call fails.
     pub async fn call_attribution(&self) -> AttributionOutcome {
         let (respond, answer) = oneshot::channel();
         self.instance
@@ -951,6 +978,21 @@ impl LoadedPlugin {
             validate_embed_result(claim, inputs_len, vectors)?;
         }
         outcome
+    }
+
+    /// Run the plugin's `ratings.fetch()` export for the `kind` work `ids`
+    /// name.
+    pub async fn call_ratings(
+        &self,
+        ids: Vec<ratings_types::ExternalId>,
+        kind: ratings_types::WorkKind,
+    ) -> RatingsOutcome {
+        let (respond, answer) = oneshot::channel();
+        self.instance
+            .enqueue(&self.id, HookCall::Ratings { ids, kind, respond })?;
+        answer
+            .await
+            .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
     }
 
     /// Run the plugin's `scrobbler.scrobble()` export with one enriched
@@ -1534,6 +1576,7 @@ async fn serve_instance(
             user_link: UserLinkPlugin::new(&mut store, &instance).ok(),
             external_auth: ExternalAuthPlugin::new(&mut store, &instance).ok(),
             embedder: EmbedderPluginBinding::new(&mut store, &instance).ok(),
+            ratings: RatingsPlugin::new(&mut store, &instance).ok(),
             scrobbler: ScrobblerPlugin::new(&mut store, &instance).ok(),
             subtitle: SubtitlePlugin::new(&mut store, &instance).ok(),
         };
@@ -1821,8 +1864,8 @@ fn dispatch_call<'a>(
             ),
             None => missing_export(respond, "metadata"),
         },
-        HookCall::Attribution { respond } => match &hooks.metadata {
-            Some(metadata) => env.track(
+        HookCall::Attribution { respond } => match (&hooks.metadata, &hooks.ratings) {
+            (Some(metadata), _) => env.track(
                 inflight,
                 HookKind::Metadata,
                 respond,
@@ -1833,7 +1876,24 @@ fn dispatch_call<'a>(
                         .map(|(r,)| r)
                 },
             ),
-            None => missing_export(respond, "metadata"),
+            (None, Some(ratings)) => env.track(
+                inflight,
+                HookKind::Ratings,
+                respond,
+                move |deadline| async move {
+                    let func = ratings.noflex_plugin_ratings().func_attribution();
+                    invoke(accessor, calls, deadline, func, (), None, "attribution")
+                        .await
+                        .map(|(r,)| {
+                            r.map(|a| WitProviderAttribution {
+                                text: a.text,
+                                url: a.url,
+                                logo: a.logo,
+                            })
+                        })
+                },
+            ),
+            (None, None) => missing_export(respond, "metadata"),
         },
         HookCall::FetchMetadata { id, respond } => match &hooks.metadata {
             Some(metadata) => env.track(
@@ -2108,6 +2168,28 @@ fn dispatch_call<'a>(
             ),
             None => missing_export(respond, "embedder"),
         },
+        HookCall::Ratings { ids, kind, respond } => match &hooks.ratings {
+            Some(ratings) => env.track(
+                inflight,
+                HookKind::Ratings,
+                respond,
+                move |deadline| async move {
+                    let func = ratings.noflex_plugin_ratings().func_fetch();
+                    invoke(
+                        accessor,
+                        calls,
+                        deadline,
+                        func,
+                        (ids, kind),
+                        None,
+                        "ratings",
+                    )
+                    .await
+                    .map(|(r,)| r)
+                },
+            ),
+            None => missing_export(respond, "ratings"),
+        },
         HookCall::Scrobble { event, respond } => match &hooks.scrobbler {
             Some(scrobbler) => env.track(
                 inflight,
@@ -2228,6 +2310,7 @@ async fn run_task_on(
         user_link,
         external_auth,
         embedder,
+        ratings,
         scrobbler,
         subtitle,
     );

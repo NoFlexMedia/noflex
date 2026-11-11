@@ -309,6 +309,7 @@ pub enum HookKind {
     Auth,
     Scrobbler,
     Embedder,
+    Ratings,
     Background,
 }
 
@@ -323,6 +324,7 @@ impl HookKind {
         HookKind::Auth,
         HookKind::Scrobbler,
         HookKind::Embedder,
+        HookKind::Ratings,
         HookKind::Background,
     ];
 
@@ -337,6 +339,7 @@ impl HookKind {
             HookKind::Auth => "external-auth",
             HookKind::Scrobbler => "scrobbler",
             HookKind::Embedder => "embedder",
+            HookKind::Ratings => "ratings",
             HookKind::Background => "background",
         }
     }
@@ -352,6 +355,7 @@ impl HookKind {
             "external-auth" | "external_auth" => Some(HookKind::Auth),
             "scrobbler" => Some(HookKind::Scrobbler),
             "embedder" => Some(HookKind::Embedder),
+            "ratings" => Some(HookKind::Ratings),
             "background" => Some(HookKind::Background),
             _ => None,
         }

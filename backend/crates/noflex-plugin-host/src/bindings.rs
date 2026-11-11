@@ -8,11 +8,12 @@
 // cover the event-consumer and account-linking surfaces, and
 // `post-scan-plugin` the scan-following surface.
 // `embedder-plugin` serves local embedding providers; it is also the
-// only convenience world importing `host-assets`. `scrobbler-plugin`
-// pairs the scrobble event stream with `user-link` (the Trakt pattern),
-// and `subtitle-plugin` serves online subtitle providers.
-// The host attempts every world at instantiation and keeps whichever
-// bindings succeed, so a component exporting any hook subset is served.
+// only convenience world importing `host-assets`. `ratings-plugin` serves
+// providers that only add ratings. `scrobbler-plugin` pairs the scrobble
+// event stream with `user-link` (the Trakt pattern), and `subtitle-plugin`
+// serves online subtitle providers. The host attempts every world at
+// instantiation and keeps whichever bindings succeed, so a component
+// exporting any hook subset is served.
 //
 // Each `bindgen!` emits a `plugin` module; wrapping them in inline
 // modules avoids the name collision on the shared host imports.
@@ -69,6 +70,14 @@ pub mod embedder {
     wasmtime::component::bindgen!({
         path: "../noflex-plugin-wit/wit",
         world: "embedder-plugin",
+        imports: { default: trappable },
+    });
+}
+
+pub mod ratings {
+    wasmtime::component::bindgen!({
+        path: "../noflex-plugin-wit/wit",
+        world: "ratings-plugin",
         imports: { default: trappable },
     });
 }

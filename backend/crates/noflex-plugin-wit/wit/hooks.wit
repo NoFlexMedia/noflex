@@ -306,3 +306,24 @@ interface embedder {
     /// Batch size is host-capped.
     embed: async func(inputs: list<embed-input>) -> result<list<list<f32>>, plugin-error>;
 }
+
+/// Ratings provider — adds ratings to works another provider described
+/// (OMDb's IMDb, Rotten Tomatoes and Metacritic scores, ...). After applying
+/// a work's metadata, whichever provider supplied it, the host asks every
+/// ratings plugin at once with the ids that metadata left the work with,
+/// and keeps each plugin's answer apart: one that fails keeps what it
+/// reported last time and changes nothing else. A metadata provider reports
+/// its own ratings in `metadata-payload.ratings` and needs no such export.
+interface ratings {
+    use types.{external-id, work-kind, rating, provider-attribution, plugin-error};
+
+    /// How to credit this provider, as `metadata.attribution`. Read once per
+    /// load; pure and non-blocking.
+    attribution: func() -> option<provider-attribution>;
+
+    /// Every rating the provider has for the `kind` work `ids` name, one per
+    /// source; the answer replaces this provider's last. Empty when none of
+    /// `ids` is one it can look up, or it has no rating of the work.
+    fetch: async func(ids: list<external-id>, kind: work-kind)
+        -> result<list<rating>, plugin-error>;
+}

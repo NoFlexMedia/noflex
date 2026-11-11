@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // Host-side metadata application: choosing provider candidates for a
-// work, applying a provider payload (fields, tags, external ids), pulling
-// the matching artwork through the winning provider's `image` hook, and
+// work, applying a provider payload (fields, tags, external ids, its
+// ratings), pulling the matching artwork through the winning provider's
+// `image` hook, asking every ratings plugin for its ratings, and
 // matching unidentified works automatically. GraphQL's refresh/identify
 // mutations and the background metadata worker both drive this, so the
 // rules live in one place.
@@ -36,6 +37,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     HookKind, HostError, LoadedPlugin, PluginId, PluginRegistry, PriorityTable, WorkKindFilter,
+    bindings::ratings::noflex::plugin::types as ratings_types,
     metadata_and_image::noflex::plugin::types as image_types,
     metadata_fetch, metadata_payload_from_wit, plugin_types,
     registry::{from_wit_kind_id, to_wit_kind, to_wit_kind_id},
@@ -152,6 +154,18 @@ struct Offer {
     provider: PluginId,
     handle: String,
     expires: Instant,
+}
+
+/// What came of asking one ratings plugin about one work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RatingsFetch {
+    /// Its answer, empty or not, is the work's ratings from it now.
+    Stored,
+    /// It can't answer anything for now (rate-limited, unavailable, its
+    /// queue full); asking about another work won't go better.
+    Unavailable,
+    /// It failed for this work alone, or its answer couldn't be stored.
+    Failed,
 }
 
 /// What [`MetadataService::auto_identify`] did with one work.
@@ -374,9 +388,11 @@ impl MetadataService {
     }
 
     /// Persist `payload` onto `work` from `provider`: fields (locks win),
-    /// provider-sourced tags, external ids, then artwork, with the credited
-    /// people's photos following in the background. Artwork failures are
-    /// logged, never returned — the metadata is already saved.
+    /// provider-sourced tags, external ids and `provider`'s ratings, then
+    /// every ratings plugin's ([`Self::fetch_ratings`]), then artwork, with
+    /// the credited people's photos following in the background. Ratings and
+    /// artwork failures are logged, never returned — the metadata is
+    /// already saved. Returns the work as stored.
     async fn apply(
         &self,
         mut work: Work,
@@ -404,6 +420,7 @@ impl MetadataService {
         {
             tracing::warn!(work = %work.id, plugin = %provider.0, %error, "metadata: ratings not stored");
         }
+        self.fetch_ratings(&work).await;
 
         let mut kinds: Vec<(ImageKind, Option<String>)> = Vec::new();
         for image in &payload.images {
@@ -429,6 +446,81 @@ impl MetadataService {
         tracing::debug!(work = %work.id, provider = %provider.0, written, "metadata applied");
         // The store derived its rating from what was stored above.
         Ok(self.storage.get_work(work.id).await?.unwrap_or(work))
+    }
+
+    /// Ask every loaded ratings plugin about `work` at once, through its
+    /// provider ids, and store each answer as that plugin's ratings of it.
+    /// One plugin failing changes nothing of its own or anyone else's; every
+    /// failure is logged. A no-op without provider ids.
+    pub async fn fetch_ratings(&self, work: &Work) {
+        let plugins = self.ratings_plugins();
+        futures::future::join_all(plugins.iter().map(|plugin| self.rate(plugin, work))).await;
+    }
+
+    /// Every loaded plugin exporting `ratings`, by id.
+    pub fn ratings_plugins(&self) -> Vec<Arc<LoadedPlugin>> {
+        let mut ids = self.registry.exporters_of(HookKind::Ratings);
+        ids.sort();
+        ids.iter()
+            .filter_map(|id| self.registry.get_plugin(id))
+            .collect()
+    }
+
+    /// Ask `plugin` alone about `work` and store its answer, as
+    /// [`Self::fetch_ratings`] does for each.
+    pub async fn rate(&self, plugin: &LoadedPlugin, work: &Work) -> RatingsFetch {
+        let ids: Vec<ratings_types::ExternalId> = provider_ids(work)
+            .map(|id| ratings_types::ExternalId {
+                kind: ratings_kind_id(id.kind),
+                value: id.value.clone(),
+            })
+            .collect();
+        if ids.is_empty() {
+            return RatingsFetch::Failed;
+        }
+        let answer = match plugin.call_ratings(ids, ratings_work_kind(work.kind)).await {
+            Ok(Ok(answer)) => answer,
+            Ok(Err(
+                error @ (ratings_types::PluginError::RateLimited(_)
+                | ratings_types::PluginError::Unavailable(_)),
+            )) => {
+                tracing::debug!(work = %work.id, plugin = %plugin.id.0, ?error, "ratings: plugin can't answer");
+                return RatingsFetch::Unavailable;
+            }
+            Ok(Err(error)) => {
+                tracing::debug!(work = %work.id, plugin = %plugin.id.0, ?error, "ratings: refused");
+                return RatingsFetch::Failed;
+            }
+            Err(error @ HostError::Overloaded { .. }) => {
+                tracing::debug!(work = %work.id, plugin = %plugin.id.0, %error, "ratings: plugin busy");
+                return RatingsFetch::Unavailable;
+            }
+            Err(error) => {
+                tracing::warn!(work = %work.id, plugin = %plugin.id.0, %error, "ratings: dispatch failed");
+                return RatingsFetch::Failed;
+            }
+        };
+        let answer: Vec<Rating> = answer
+            .into_iter()
+            .map(|r| Rating {
+                source: r.source,
+                value: r.value,
+                scale: r.scale,
+                votes: r.votes,
+            })
+            .collect();
+        let ratings = usable_ratings(&plugin.id.0, &answer);
+        match self
+            .storage
+            .replace_work_ratings(work.id, &plugin.id.0, &ratings)
+            .await
+        {
+            Ok(()) => RatingsFetch::Stored,
+            Err(error) => {
+                tracing::warn!(work = %work.id, plugin = %plugin.id.0, %error, "ratings: not stored");
+                RatingsFetch::Failed
+            }
+        }
     }
 
     /// Fetch each of `kinds` for `work` through the `image` hook and record
@@ -1334,6 +1426,35 @@ fn image_kind_id(kind: ExternalIdKind) -> image_types::ExternalIdKind {
         ExternalIdKind::MusicBrainzRecording => K::MusicBrainzRecording,
         ExternalIdKind::AniDb => K::AniDb,
         ExternalIdKind::Custom => K::Custom,
+    }
+}
+
+fn ratings_kind_id(kind: ExternalIdKind) -> ratings_types::ExternalIdKind {
+    use ratings_types::ExternalIdKind as K;
+    match kind {
+        ExternalIdKind::Tmdb => K::Tmdb,
+        ExternalIdKind::Tvdb => K::Tvdb,
+        ExternalIdKind::Imdb => K::Imdb,
+        ExternalIdKind::MusicBrainzReleaseGroup => K::MusicBrainzReleaseGroup,
+        ExternalIdKind::MusicBrainzArtist => K::MusicBrainzArtist,
+        ExternalIdKind::MusicBrainzRecording => K::MusicBrainzRecording,
+        ExternalIdKind::AniDb => K::AniDb,
+        ExternalIdKind::Custom => K::Custom,
+    }
+}
+
+fn ratings_work_kind(kind: WorkKind) -> ratings_types::WorkKind {
+    use ratings_types::WorkKind as K;
+    match kind {
+        WorkKind::Movie => K::Movie,
+        WorkKind::Series => K::Series,
+        WorkKind::Season => K::Season,
+        WorkKind::Episode => K::Episode,
+        WorkKind::Album => K::Album,
+        WorkKind::Track => K::Track,
+        WorkKind::Artist => K::Artist,
+        WorkKind::AudioBook => K::AudioBook,
+        WorkKind::Photo => K::Photo,
     }
 }
 

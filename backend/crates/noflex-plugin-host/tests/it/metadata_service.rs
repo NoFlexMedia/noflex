@@ -5,10 +5,11 @@
 // application with image-hook fallback and language preference, and
 // automatic identification including series → season → episode chains.
 //
-// `tests/fixtures/artwork` answers deterministically (see its header);
+// `tests/fixtures/artwork` answers deterministically (see its header), as
+// `tests/fixtures/ratings` does for the ratings fan-out;
 // `tests/fixtures/concurrency` (the concurrency fixture) serves an image hook whose
 // bytes are not an image, which exercises fallback to the next provider.
-// Both are built on demand; the tests self-skip without the toolchain.
+// All are built on demand; the tests self-skip without the toolchain.
 
 use std::sync::Arc;
 
@@ -30,6 +31,7 @@ use tokio::{sync::RwLock, time::Duration};
 
 const ART: &str = "artwork-fixture";
 const CONCURRENCY: &str = "concurrency-fixture";
+const RATINGS: &str = "ratings-fixture";
 
 struct Harness {
     registry: Arc<PluginRegistry>,
@@ -53,6 +55,7 @@ impl Harness {
             let wasm = match *plugin {
                 ART => crate::fixtures::wasm("artwork")?,
                 CONCURRENCY => crate::fixtures::wasm("concurrency")?,
+                RATINGS => crate::fixtures::wasm("ratings")?,
                 other => panic!("unknown fixture {other}"),
             };
             registry.load_from(&wasm).expect("load fixture");
@@ -156,6 +159,13 @@ impl Harness {
 fn tmdb(value: &str) -> ExternalId {
     ExternalId {
         kind: ExternalIdKind::Tmdb,
+        value: value.into(),
+    }
+}
+
+fn imdb(value: &str) -> ExternalId {
+    ExternalId {
+        kind: ExternalIdKind::Imdb,
         value: value.into(),
     }
 }
@@ -718,4 +728,115 @@ async fn indexing_follows_a_scan_into_the_sweep_and_ends_with_its_answer() {
         .expect("indexing ends");
     assert_eq!(fresh.metadata_status, MetadataStatus::Confirmed);
     worker.abort();
+}
+
+/// `(source, value, provider)` of each of `work`'s ratings, in order.
+async fn ratings_of(h: &Harness, work: WorkId) -> Vec<(String, f32, String)> {
+    h.storage
+        .work_ratings(work)
+        .await
+        .expect("ratings")
+        .into_iter()
+        .map(|r| (r.source, r.value, r.provider))
+        .collect()
+}
+
+fn rated(source: &str, value: f32, provider: &str) -> (String, f32, String) {
+    (source.into(), value, provider.into())
+}
+
+#[tokio::test]
+async fn ratings_plugins_rate_what_a_refresh_identified() {
+    let h = harness!(CONCURRENCY, RATINGS);
+    let library = h.library(&[CONCURRENCY], &[]).await;
+    let mut work = h.work(&library, WorkKind::Movie, "Rated").await;
+    work.external_ids.push(tmdb("movie/rated"));
+    work.external_ids.push(imdb("tt0000001-junk"));
+    h.save(&work).await;
+
+    let refreshed = h.service().refresh(work.id, false).await.expect("refresh");
+    assert_eq!(
+        ratings_of(&h, work.id).await,
+        vec![
+            rated("imdb", 8.0, RATINGS),
+            rated("tmdb", 7.5, CONCURRENCY),
+            rated("rotten-tomatoes", 91.0, RATINGS),
+        ],
+        "the metadata provider's own and the ratings plugin's, its unusable ones dropped"
+    );
+    assert_eq!(
+        refreshed.community_rating,
+        Some(8.0),
+        "IMDb's comes first among the default sources"
+    );
+
+    // A rate-limited plugin keeps what it reported, and the refresh still lands.
+    let mut work = refreshed;
+    work.external_ids.push(tmdb("movie/limited"));
+    h.save(&work).await;
+    let refreshed = h.service().refresh(work.id, false).await.expect("refresh");
+    assert_eq!(refreshed.community_rating, Some(8.0));
+    assert_eq!(ratings_of(&h, work.id).await.len(), 3);
+
+    let credit = h
+        .storage
+        .list_provider_attributions()
+        .await
+        .expect("credits")
+        .into_iter()
+        .find(|c| c.provider == RATINGS)
+        .expect("a ratings plugin is credited as a metadata one is");
+    assert_eq!(credit.text, "Ratings from the fixture.");
+}
+
+#[tokio::test]
+async fn worker_sweep_rates_what_a_ratings_plugin_has_not() {
+    let h = harness!(RATINGS);
+    let library = h.library(&[], &[]).await;
+    let mut known = h.work(&library, WorkKind::Movie, "Known").await;
+    known.external_ids.push(imdb("tt0000002"));
+    known.metadata_status = MetadataStatus::Confirmed;
+    h.save(&known).await;
+    let mut unrateable = h.work(&library, WorkKind::Movie, "No IMDb id").await;
+    unrateable.external_ids.push(tmdb("movie/unrateable"));
+    unrateable.metadata_status = MetadataStatus::Confirmed;
+    h.save(&unrateable).await;
+    let mut broken = h.work(&library, WorkKind::Movie, "Broken").await;
+    broken.external_ids.push(imdb("tt0000003-broken"));
+    broken.metadata_status = MetadataStatus::Confirmed;
+    h.save(&broken).await;
+
+    let worker = MetadataWorker::new(Arc::new(h.service()));
+    let first = worker.run_sweep().await;
+    assert_eq!(first.rated, 2, "an empty answer is an answer");
+    assert_eq!(
+        ratings_of(&h, known.id).await,
+        vec![
+            rated("imdb", 8.0, RATINGS),
+            rated("rotten-tomatoes", 91.0, RATINGS)
+        ]
+    );
+    assert!(ratings_of(&h, unrateable.id).await.is_empty());
+    assert_eq!(
+        worker.run_sweep().await,
+        Default::default(),
+        "rated works are done; the failure is parked"
+    );
+
+    // Rate-limited: it waits for a later sweep rather than being parked.
+    let mut limited = h.work(&library, WorkKind::Movie, "Limited").await;
+    limited.external_ids.push(imdb("tt0000004-limited"));
+    limited.metadata_status = MetadataStatus::Confirmed;
+    h.save(&limited).await;
+    assert_eq!(worker.run_sweep().await.rated, 0);
+    assert!(
+        h.storage
+            .identified_works_unrated_by(RATINGS, 10, None)
+            .await
+            .expect("unrated")
+            .items
+            .iter()
+            .any(|w| w.id == limited.id),
+        "still waiting to be rated"
+    );
 }

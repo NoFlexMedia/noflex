@@ -55,7 +55,7 @@ pub use manifest::{
     SettingSpec, TaskRegistration, WorkKindFilter,
 };
 pub use metadata_service::{
-    ArtworkCandidate, AutoIdentify, MetadataError, MetadataService, ServableImage,
+    ArtworkCandidate, AutoIdentify, MetadataError, MetadataService, RatingsFetch, ServableImage,
 };
 pub use metadata_worker::{MetadataWorker, SweepReport, spawn_metadata_worker};
 pub use plugin::{LoadedPlugin, PluginHealth, PluginId, TaskHealth, TaskOutcome};

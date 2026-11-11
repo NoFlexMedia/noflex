@@ -208,6 +208,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "noflex-fixture-ratings"
+version = "0.0.1"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "noflex-fixture-scrobbler"
 version = "0.0.1"
 dependencies = [

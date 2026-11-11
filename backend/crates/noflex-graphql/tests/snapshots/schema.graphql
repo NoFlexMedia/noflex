@@ -1077,6 +1077,7 @@ enum HookKind {
 	AUTH
 	SCROBBLER
 	EMBEDDER
+	RATINGS
 	BACKGROUND
 }
 
@@ -4841,6 +4842,11 @@ type Work {
 	overview: String
 	tagline: String
 	originalTitle: String
+	"""
+	Out of 10: the rating of the first of the server's rating sources
+	the work has (see [`WorkRating`]), or an administrator's own while
+	[`WorkField::CommunityRating`] is locked.
+	"""
 	communityRating: Float
 	externalIds: [ExternalId!]!
 	indexNumber: Int

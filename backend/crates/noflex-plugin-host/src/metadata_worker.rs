@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // Background metadata worker: after every scan (and at startup and
-// hourly) it matches unidentified works against the metadata providers
-// and backfills provider artwork for identified works that have none,
-// so scans never wait on provider round trips. Works that found no
-// match or no art are parked in memory for a day rather than re-asked
-// every sweep.
+// hourly) it matches unidentified works against the metadata providers,
+// backfills provider artwork for identified works that have none, and asks
+// each ratings plugin about the identified works it hasn't rated, which a
+// plugin loaded after they were identified otherwise never would. It runs
+// apart from the scan, so scans never wait on provider round trips. Works
+// that found no match or no art are parked in memory for a day rather than
+// re-asked every sweep; a ratings plugin that can't answer for now
+// (rate-limited, no key) is left until the next.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -25,8 +28,8 @@ use tokio::{
 };
 
 use crate::{
-    HookKind,
-    metadata_service::{AutoIdentify, MetadataService},
+    HookKind, PluginId,
+    metadata_service::{AutoIdentify, MetadataService, RatingsFetch},
 };
 
 const SWEEP_PAGE: u32 = 200;
@@ -122,6 +125,8 @@ pub struct SweepReport {
     pub unmatched: u32,
     /// Provider images stored by the artwork backfill.
     pub artwork_written: u32,
+    /// Works a ratings plugin rated for the first time, once per plugin.
+    pub rated: u32,
 }
 
 /// One sweep's logic, separate from the scheduling so tests can drive it.
@@ -129,6 +134,7 @@ pub struct MetadataWorker {
     service: Arc<MetadataService>,
     identify_backoff: std::sync::Mutex<HashMap<WorkId, Instant>>,
     art_backoff: std::sync::Mutex<HashMap<WorkId, Instant>>,
+    rating_backoff: std::sync::Mutex<HashMap<(PluginId, WorkId), Instant>>,
 }
 
 impl MetadataWorker {
@@ -138,11 +144,13 @@ impl MetadataWorker {
             service,
             identify_backoff: Default::default(),
             art_backoff: Default::default(),
+            rating_backoff: Default::default(),
         }
     }
 
-    /// Identify what can be identified, then backfill missing provider
-    /// art. Storage errors end the affected pass early and are logged.
+    /// Identify what can be identified, then backfill missing provider art,
+    /// then ratings. Storage errors end the affected pass early and are
+    /// logged.
     pub async fn run_sweep(&self) -> SweepReport {
         let mut report = SweepReport::default();
         if self.service.has_exporters(HookKind::Metadata) {
@@ -153,11 +161,15 @@ impl MetadataWorker {
         if self.service.has_exporters(HookKind::Image) {
             self.artwork_pass(&mut report).await;
         }
+        if self.service.has_exporters(HookKind::Ratings) {
+            self.ratings_pass(&mut report).await;
+        }
         if report != SweepReport::default() {
             tracing::info!(
                 identified = report.identified,
                 unmatched = report.unmatched,
                 artwork = report.artwork_written,
+                rated = report.rated,
                 "metadata sweep finished"
             );
         }
@@ -208,7 +220,7 @@ impl MetadataWorker {
     }
 
     async fn identify_one(&self, work: &Work, report: &mut SweepReport) {
-        if backed_off(&self.identify_backoff, work.id) {
+        if backed_off(&self.identify_backoff, &work.id) {
             return;
         }
         let answer = self.service.auto_identify(work.id).await;
@@ -248,7 +260,7 @@ impl MetadataWorker {
                 }
             };
             for work in &page.items {
-                if backed_off(&self.art_backoff, work.id) {
+                if backed_off(&self.art_backoff, &work.id) {
                     continue;
                 }
                 match self.service.backfill_artwork(work).await {
@@ -266,24 +278,71 @@ impl MetadataWorker {
             }
         }
     }
+
+    async fn ratings_pass(&self, report: &mut SweepReport) {
+        for plugin in self.service.ratings_plugins() {
+            self.rate_unrated(&plugin, report).await;
+        }
+    }
+
+    /// Ask `plugin` about every identified work it hasn't rated, until it
+    /// can't answer for now.
+    async fn rate_unrated(&self, plugin: &crate::LoadedPlugin, report: &mut SweepReport) {
+        let storage = self.service.storage().clone();
+        let mut cursor = None;
+        loop {
+            let page = match storage
+                .identified_works_unrated_by(&plugin.id.0, SWEEP_PAGE, cursor)
+                .await
+            {
+                Ok(page) => page,
+                Err(error) => {
+                    tracing::warn!(plugin = %plugin.id.0, %error, "ratings sweep listing failed");
+                    return;
+                }
+            };
+            for work in &page.items {
+                let key = (plugin.id.clone(), work.id);
+                if backed_off(&self.rating_backoff, &key) {
+                    continue;
+                }
+                match self.service.rate(plugin, work).await {
+                    RatingsFetch::Stored => report.rated += 1,
+                    RatingsFetch::Failed => park(&self.rating_backoff, key),
+                    RatingsFetch::Unavailable => {
+                        tracing::info!(plugin = %plugin.id.0,
+                            "ratings sweep: plugin can't answer for now; the rest waits for the next sweep");
+                        return;
+                    }
+                }
+            }
+            match page.next_cursor {
+                Some(next) => cursor = Some(next),
+                None => return,
+            }
+        }
+    }
 }
 
-fn backed_off(map: &std::sync::Mutex<HashMap<WorkId, Instant>>, work: WorkId) -> bool {
+fn backed_off<K: Eq + std::hash::Hash>(
+    map: &std::sync::Mutex<HashMap<K, Instant>>,
+    key: &K,
+) -> bool {
     let Ok(mut map) = map.lock() else {
         return false;
     };
-    match map.get(&work) {
+    match map.get(key) {
         Some(until) if *until > Instant::now() => true,
         Some(_) => {
-            map.remove(&work);
+            map.remove(key);
             false
         }
         None => false,
     }
 }
 
-fn park(map: &std::sync::Mutex<HashMap<WorkId, Instant>>, work: WorkId) {
+fn park<K: Eq + std::hash::Hash>(map: &std::sync::Mutex<HashMap<K, Instant>>, key: K) {
     if let Ok(mut map) = map.lock() {
-        map.insert(work, Instant::now() + FAILURE_BACKOFF);
+        map.insert(key, Instant::now() + FAILURE_BACKOFF);
     }
 }

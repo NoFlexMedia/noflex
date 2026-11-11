@@ -36,7 +36,7 @@
     }
   `);
 
-  const HOOKS = ["METADATA", "IMAGE", "SUBTITLE", "POST_SCAN", "NOTIFIER", "USER_LINK", "AUTH", "SCROBBLER", "INTRO_DETECTOR", "EMBEDDER", "BACKGROUND"];
+  const HOOKS = ["METADATA", "IMAGE", "SUBTITLE", "POST_SCAN", "NOTIFIER", "USER_LINK", "AUTH", "SCROBBLER", "EMBEDDER", "BACKGROUND"];
   const KINDS = ["MOVIE", "SERIES", "SEASON", "EPISODE", "ALBUM", "TRACK", "ARTIST", "AUDIO_BOOK", "PHOTO"];
   const hookLabel = (hook) => (hook === "POST_SCAN" ? "Post-scan" : hook === "USER_LINK" ? "Account link" : titleCase(hook));
 

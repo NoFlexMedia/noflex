@@ -103,6 +103,9 @@ heavy IO; not backed up.
 
 Move one cache onto a different volume, e.g. transcodes onto fast scratch
 storage. The image cache holds downloaded artwork and generated thumbnails.
+Give each a folder of its own: erasing the server, when its last
+administrator deletes their account, empties them whole. A configured
+transcode cache also holds offline copies.
 
 ### `backup.dir`
 - **Type:** path

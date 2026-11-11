@@ -56,6 +56,14 @@ Turso database.
 
 Backups include each user's keys for the other servers they've linked, and those keys aren't encrypted in the database, so store backups as you would passwords. Optimized versions in `data_dir/optimized/` can be left out: the server prepares them again as needed.
 
+## Deleted accounts
+
+Anyone can delete their own account, from Account in the web client or You in the apps, and an administrator can delete anyone else's.
+
+- The account goes at once with everything that's theirs: sessions and API keys, watch history, devices, playlists, invites, linked services and servers, picture. Their entries in the activity log, their offline copies and their recordings are cleared in the background, at the next start if the server stops first.
+- Backups and log files made before keep what they held until they're pruned or rotated. Nothing rewrites them.
+- **The last administrator deleting their account erases the server.** The apps and the web warn twice before it happens. Everyone is signed out, and the server restarts itself to empty its database, the transcode, image and embed caches, `data_dir/downloads/` and `data_dir/recordings/`, and the optimized versions it made, then waits at first-run setup. Media files, the configuration file and backups stay. An erasure interrupted by a stop is finished at the next start, before anything else runs. Point the cache directories only at folders that hold nothing else: they're emptied whole.
+
 ## Hardware transcoding
 
 The `hwaccel` option takes `none` (software only), `auto`

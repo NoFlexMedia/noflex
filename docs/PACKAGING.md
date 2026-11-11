@@ -16,19 +16,62 @@ the whole install. A plugin, `FFMPEG_BIN`, or `search.onnxruntime_library` on th
 host overrides what's in the bundle.
 
 ```sh
-cargo xtask bundle x86_64-unknown-linux-gnu
+cargo xtask bundle x86_64-unknown-linux-gnu [--ffmpeg <dir>] [--web <dir>]
 ```
 
+`--ffmpeg` and `--web` reuse a finished ffmpeg build and web client, as the
+release does. A Linux bundle also carries `linux/`: the systemd unit, its
+account for sysusers, and the service's config. Windows bundles are zips.
 NixOS doesn't use bundles: the flake's package pins all of this through nixpkgs.
 
 ## Status
 
-| Target                      | Server | ffmpeg | ONNX Runtime | State |
-| --------------------------- | ------ | ------ | ------------ | ----- |
-| `x86_64-unknown-linux-gnu`  | yes    | yes    | yes          | Built and run |
-| `aarch64-unknown-linux-gnu` | yes    | scripted | to pin     | Pipeline target not yet built |
-| `x86_64-pc-windows-msvc`    | ?      | scripted | to pin     | Pipeline target not yet built, nor the server |
-| `aarch64-apple-darwin`      | CI     | CI     | yes          | Native recipe, not yet run on a Mac |
+| Target                      | Server | ffmpeg | ONNX Runtime | Packaged as | State |
+| --------------------------- | ------ | ------ | ------------ | ----------- | ----- |
+| `x86_64-unknown-linux-gnu`  | yes    | yes    | yes          | tar.zst, .deb, .rpm, image | Built and run; packages installed on Debian 13 and Fedora 43 |
+| `aarch64-unknown-linux-gnu` | yes    | release | yes         | tar.zst, .deb, .rpm, image | Release workflow not yet run |
+| `x86_64-pc-windows-msvc`    | yes    | release | yes         | zip, installer | GNU build run under Wine, as a service and through the installer; MSVC build not yet run |
+| `aarch64-apple-darwin`      | CI     | CI     | yes          | tar.zst     | Native recipe, not yet run on a Mac |
+
+The release workflow, `.github/workflows/release.yml`, builds every target but
+macOS's on a tag: ffmpeg once per target, cached on a hash of the pipeline, then a
+bundle on each target's own runner, smoke-tested there outside any Nix shell
+(`packaging/smoke/`), then packaged. It attaches everything to a draft release with
+`SHA256SUMS` and a provenance attestation, and pushes the container image.
+
+## Linux packages
+
+`packaging/linux/package.sh` turns a bundle into a .deb and an .rpm with
+[nfpm](https://nfpm.goreleaser.com/), from `packaging/linux/nfpm.yaml`: the bundle
+in `/opt/noflex`, the unit, the account, and the config as a conffile. The
+bundle's ffmpeg brings its own libraries, so the packages depend only on glibc
+2.28 and libstdc++, and recommend what ffmpeg loads when it finds it: libva, Mesa's
+VAAPI drivers and a Vulkan loader. They're attached to the release; there's no
+apt or dnf repository yet.
+
+## Container image
+
+`packaging/container/Containerfile` wraps the Linux bundles for amd64 and arm64
+in `debian:trixie-slim`, with what the bundle's ffmpeg looks for on a host: VAAPI
+with Mesa's and Intel's drivers, the oneVPL runtime for QSV on x86, Vulkan for
+tone-mapping, and the NVIDIA Container Toolkit's variables for Nvidia's. It's
+about 430 MB before the bundle, mostly Mesa. tini is PID 1, to reap.
+
+## Windows
+
+The server runs as a service (`noflex-server service install|uninstall|run`,
+`noflex-server/src/service.rs`), and keeps its system tier in `%ProgramData%\NoFlex`
+(`noflex_core::system_dirs`). `packaging/windows/noflex.iss` is the installer,
+compiled with Inno Setup 6 by `packaging/windows/installer.sh`. Inno Setup 7's
+compiler calls itself non-commercial, so the release pins 6.7.4, checked against
+its hash. Release builds use rustup and MSVC on a Windows runner, the other
+exception to the flake being the only toolchain.
+
+Checking a change without Windows: `cargo zigbuild --target x86_64-pc-windows-gnu
+-p noflex-server` builds the server with a toolchain that has that target and
+`windres` on `PATH` (Turso's build script compiles a version resource with it), and
+Wine runs the result, the service and the installer included. Wine can't set a
+service to restart after a non-crash failure, which `service install` warns about.
 
 ## ffmpeg
 
@@ -83,8 +126,9 @@ ffmpeg loads these at runtime, and does without them when they're absent:
 
 The `gpl` variant is required for libx264 and libx265, so a bundle ships GPL-3.0
 software alongside AGPL-3.0 NoFlex, as separate programs. Distributing our own build
-means offering its source: `ffmpeg.toml` and `pipeline/` identify it, and a release
-should publish the corresponding source with the binaries.
+means offering its source: `cargo xtask ffmpeg-source <out>` gathers ffmpeg at the
+pinned commit, every dependency as `pipeline/` fetches it, and the build scripts,
+about 2 GiB, and the release attaches it in parts: `cat noflex-*-ffmpeg-source.tar.* | tar -x`.
 
 ## macOS
 
@@ -193,9 +237,16 @@ for the others.
 - **The Windows app's exact third-party source.** media_kit's Windows libmpv builds most of
   its libraries from branch heads, so the archive can only name them. Building that DLL
   from pinned inputs, as the server's ffmpeg is, would close it.
-- **Linux and Windows CI.** `ffmpeg-build` compiles from pinned inputs, so a release
-  workflow can cache on the hash of `pipeline/`. It needs writing, along with a place to
-  publish the corresponding source.
+- **The first release run.** No tag has run the server jobs yet: the cold ffmpeg
+  builds, the arm64 runner, the MSVC build and the installer on a real Windows.
+- **Windows signing.** The installer and server aren't signed, so SmartScreen warns.
+- **An apt and dnf repository**, so packages update with the system.
+- **Windows: one Wine-only failure to look into.** Started by the installer under
+  Wine, the service logs `smart transcoding: planning failed error=background task
+  failed`, a `tokio::fs` task that never ran, without a panic. Run in the
+  foreground, it doesn't. Check on a real Windows.
+- **Publishing a winget manifest** after the first release, with `wingetcreate new`
+  on the installer's URL.
 
 ## TV app
 

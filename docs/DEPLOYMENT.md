@@ -1,11 +1,114 @@
 # Deployment
 
-This guide assumes NixOS: the flake's module (`nix/module.nix`) covers
-the common production knobs. Below is the quick path; for every option,
-read the module source. Server settings are documented in
-[`CONFIGURATION.md`](CONFIGURATION.md).
+Every release has the server for Linux, on x86_64 and arm64, and for Windows on
+x86_64, each with its own ffmpeg, plugins and search model. Pick the install
+that suits the machine; the sections after them apply to all. Server settings
+are documented in [`CONFIGURATION.md`](CONFIGURATION.md), and what each hardware
+accelerator needs from the host in [`PACKAGING.md`](PACKAGING.md#what-the-host-still-provides).
 
-## Minimal NixOS host
+| Install | For | Config | Data |
+| --- | --- | --- | --- |
+| [Container](#container) | Docker, Podman, a NAS's app store, Unraid, TrueNAS | `/config/noflex/config.toml` | `/data`, `/cache` |
+| [.deb or .rpm](#debian-ubuntu-fedora) | Debian, Ubuntu, Fedora, RHEL and their relatives | `/etc/noflex/config.toml` | `/var/lib/noflex`, `/var/cache/noflex` |
+| [Bundle](#any-linux-from-the-bundle) | any Linux with glibc 2.28 or newer | `/etc/noflex/config.toml` | as you set it |
+| [Installer](#windows) | Windows 10 and 11 | `%ProgramData%\NoFlex\config.toml` | `%ProgramData%\NoFlex` |
+| [NixOS module](#nixos) | NixOS | the module's options | `/var/lib/noflex`, `/var/cache/noflex` |
+
+Each listens on port 28793. Open `http://<the server>:28793` once it's running:
+the first visit creates the administrator's account, then a library.
+
+## Container
+
+`ghcr.io/noflexmedia/noflex`, for amd64 and arm64, tagged with each release's
+version, its `major.minor`, and `latest` for the newest that isn't a pre-release. [`packaging/container/compose.yaml`](../packaging/container/compose.yaml)
+is a starting point: copy it, point the media volume at your library, then:
+
+```sh
+docker compose up -d
+```
+
+| Volume | Holds |
+| --- | --- |
+| `/config` | `noflex/config.toml`, `noflex/plugins/`, `noflex/secrets/` |
+| `/data` | the database, optimized versions, recordings |
+| `/cache` | transcodes, images and embeddings, all made again as needed |
+| `/media` | your library, mounted read-only |
+
+The image runs as root unless given `user:`, which should own the volumes. For
+hardware transcoding, uncomment the GPU section for your card in `compose.yaml`:
+Intel and AMD pass `/dev/dri` and the group that owns it, and Nvidia needs the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)
+on the host.
+
+## Debian, Ubuntu, Fedora
+
+Download the package for your architecture from the
+[latest release](https://github.com/NoFlexMedia/noflex/releases), then:
+
+```sh
+sudo apt install ./noflex-server_<version>_amd64.deb     # or arm64
+sudo dnf install ./noflex-server-<version>-1.x86_64.rpm  # or aarch64
+sudo systemctl enable --now noflex
+```
+
+The server goes in `/opt/noflex` and runs as the `noflex` account, which the
+package creates, with a hardened unit: it reads media anywhere, home directories
+included, and writes only to `/var/lib/noflex` and `/var/cache/noflex`. Settings
+go in `/etc/noflex/config.toml`, which upgrades leave alone. A directory the
+server should also write to, such as a backup folder, goes in an override:
+
+```sh
+sudo systemctl edit noflex
+# [Service]
+# ReadWritePaths=/srv/backups
+```
+
+Upgrading is installing the next package, which restarts the server if it was
+running. Removing it stops the server and leaves its data.
+
+## Any Linux, from the bundle
+
+`noflex-<version>-server-<target>.tar.zst` unpacks into a directory that runs as
+it is, from anywhere: `./noflex-server`. To run it as a service the way the
+packages do, unpack it into `/opt/noflex` and install the files in its `linux/`:
+
+```sh
+sudo mkdir -p /opt/noflex
+sudo tar --zstd -xf noflex-<version>-server-x86_64-unknown-linux-gnu.tar.zst -C /opt/noflex --strip-components=1
+cd /opt/noflex/linux
+sudo install -Dm644 noflex.service /etc/systemd/system/noflex.service
+sudo install -Dm644 noflex.sysusers /etc/sysusers.d/noflex.conf
+sudo install -Dm644 config.toml /etc/noflex/config.toml
+sudo systemd-sysusers && sudo systemctl daemon-reload && sudo systemctl enable --now noflex
+```
+
+## Windows
+
+`noflex-<version>-server-windows-x64-setup.exe` installs the server under
+Program Files and runs it as the `NoFlex` service, which starts with Windows and
+restarts after a failure. It opens port 28793 to the server in the firewall, and
+adds NoFlex to the Start menu. The installer isn't signed yet, so SmartScreen
+asks before running it.
+
+- Config is `%ProgramData%\NoFlex\config.toml`, which upgrades leave alone, and
+  the log is `%ProgramData%\NoFlex\logs\noflex.log`. Restart the service after
+  editing the config: `sc stop NoFlex`, then `sc start NoFlex`.
+- `%ProgramData%\NoFlex` is open only to SYSTEM and Administrators, as the
+  database holds keys to the servers people link.
+- The service runs as LocalSystem, which reads local drives but not network
+  shares, nor drive letters someone mapped. For a library on a share, use its
+  `\\server\share` path and set the service to log on as an account that can
+  reach it, in Services.
+- Uninstalling removes the service and the program, and leaves `%ProgramData%\NoFlex`.
+
+The `.zip` is the same bundle without an installer: `noflex-server.exe` runs in
+the foreground, and `noflex-server.exe service install` registers it as the
+service from wherever it is, as an administrator.
+
+## NixOS
+
+The flake's module (`nix/module.nix`) covers the common production knobs; for
+every option, read the module source.
 
 ```nix
 {
@@ -29,22 +132,32 @@ The systemd unit is hardened: `ProtectSystem=strict`, `PrivateTmp`,
 `cacheDir`, and `ReadOnlyPaths` covering `mediaPaths` (so the
 process can read but not modify your media library).
 
+The Nix package doesn't carry the first-party plugins the other installs do;
+add them as below.
+
 ## Adding a plugin
 
+A plugin is a `.wasm` file in one of the server's plugin directories, which it
+loads as soon as it appears. Later tiers shadow earlier ones:
+
+| Tier | Linux | Windows | Container |
+| --- | --- | --- | --- |
+| Bundled | `plugins/` beside the server | the same | the same |
+| System | `/etc/noflex/plugins` | `%ProgramData%\NoFlex\plugins` | |
+| State | `/var/lib/noflex/plugins` | | |
+| User | `$XDG_CONFIG_HOME/noflex/plugins` | | `/config/noflex/plugins` |
+
+`NOFLEX_PLUGIN_SEARCH_PATH`, or the NixOS module's `pluginPath`, replaces the
+list. Plugin API keys go in `<plugin-id>.toml` in a `secrets/` folder beside the
+system, state or user tier's `plugins/`. To build a first-party plugin from source:
+
 ```sh
-# Build the first-party TMDb plugin
 nix develop --command sh -c 'cd backend && cargo xtask plugin-build tmdb'
-# Copy it into the state tier
 install -Dm644 backend/plugins/noflex-metadata-tmdb/target/wasm32-wasip2/release/noflex_metadata_tmdb.wasm \
   /var/lib/noflex/plugins/tmdb.wasm
 ```
 
-The plugin host scans three tiers, higher-shadowing-lower:
-`/etc/noflex/plugins` (system), `/var/lib/noflex/plugins` (state),
-`$XDG_CONFIG_HOME/noflex/plugins` (user). Each tier is overridable
-in the NixOS module via `pluginPath` (a `:`-separated env var). Plugin
-API keys go in `/var/lib/noflex/secrets/<plugin-id>.toml`. See
-[`PLUGINS.md`](PLUGINS.md).
+See [`PLUGINS.md`](PLUGINS.md).
 
 ## Backups
 
@@ -155,10 +268,11 @@ the plain-HTTP port to the internet.
 
 ## Updating
 
-```sh
-nix flake update --update-input noflex
-nixos-rebuild switch
-```
+- **Container:** `docker compose pull && docker compose up -d`.
+- **.deb or .rpm:** install the new release's package.
+- **Windows:** run the new release's installer over the old one.
+- **Bundle:** stop the server, unpack the new bundle over the old, start it.
+- **NixOS:** `nix flake update --update-input noflex`, then `nixos-rebuild switch`.
 
 Backups made before an upgrade are forward-compatible across
 patch versions; major upgrades may need a clean restore.
@@ -169,4 +283,6 @@ patch versions; major upgrades may need a clean restore.
 - `/healthz/deep` — storage + plugin host + ffmpeg presence;
   503 if anything's wrong.
 - `/graphql` — the canonical API (GraphiQL in dev).
-- `journalctl -u noflex` — logs.
+- Logs: `journalctl -u noflex` under systemd, `docker compose logs` in a
+  container, `%ProgramData%\NoFlex\logs\noflex.log` on Windows, and the Logs
+  tab in the web client's administration everywhere.

@@ -5,12 +5,26 @@
 ## Layout
 
 ```
-ffmpeg/          # ffmpeg.toml and the pipeline behind `cargo xtask ffmpeg-build`
+ffmpeg/          # ffmpeg.toml and the pipeline behind `cargo xtask ffmpeg-build` and `ffmpeg-source`
 flutter/build.sh # one Flutter target into dist/, as the release workflow runs it
+linux/           # the systemd unit, account and config every Linux bundle carries; nfpm.yaml for .deb and .rpm
+container/       # the image around the Linux bundles, and compose.yaml for the docs
+windows/         # the Inno Setup installer and installer.sh, which compiles it
 macos/           # the server bundle on Apple Silicon
+smoke/           # what every bundle has to pass on its own platform
 third-party/     # apps.toml and notices/: third-party code the apps ship
 model.toml, onnxruntime.toml  # what a server bundle downloads, by hash
 ```
+
+## The server's installs
+
+- **Configure the server in its config file, not its environment,** wherever an operator can edit it: a `NOFLEX_*` variable outranks the file, so a unit that sets one silently overrides what's written there. The container is the exception, as its paths are fixed.
+- **Every `NOFLEX_*` variable in `nix/`, `linux/`, `container/` and `windows/` must be one the server reads.** `packaging_sets_only_variables_the_server_reads` in noflex-server's `config.rs` fails otherwise, which is the bug that left the NixOS module's settings ignored. That includes comments, so don't name a variable for anything else there.
+- Linux bundles install to `/opt/noflex`; the unit, the packages and the docs all assume it.
+- Port 28793 is in the installer's firewall rule and Start menu link, the container's `EXPOSE` and compose file, and each config: change them together with the server's default.
+- `.sh` files stay LF (`.gitattributes`), since Windows runners run them in Git Bash.
+- Windows: Inno Setup **6** (`is-6_7_4`, by hash in `release.yml`). 7's compiler calls itself non-commercial. The installer's `AppId` never changes; Windows matches upgrades by it.
+- Windows has no Nix: its release build uses rustup and MSVC. `docs/PACKAGING.md` says how to check a change with zig and Wine instead.
 
 ## Third-party code in the apps
 
@@ -46,4 +60,4 @@ Flutter's license registry covers Dart packages and the engine by itself. `third
 ### Gaps
 
 - **Windows has no exact source** for most of its libraries, so `source` can only list them. Building that DLL ourselves from pinned inputs is the fix.
-- The server's ffmpeg isn't in the source archive yet. Its pipeline already pins every dependency (`SCRIPT_REPO`, `SCRIPT_COMMIT`) and `pipeline/download.sh` packs them, so it belongs with the bundle CI that `docs/PACKAGING.md` lists as unwritten.
+- The server's ffmpeg has its own source archive, `cargo xtask ffmpeg-source`, separate from the apps'. At about 2 GiB it goes up in parts.

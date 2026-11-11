@@ -102,7 +102,7 @@ just           # every other command
 - [noflex.dev](https://noflex.dev): what NoFlex does and where each app stands, with the [privacy policy](https://noflex.dev/privacy) and [terms](https://noflex.dev/terms).
 - [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md): build, run, and test from source.
 - [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md): every server setting, in TOML and environment variables.
-- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md): NixOS, remote access, backups, hardware transcoding.
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md): installing in a container, from a .deb or .rpm, on Windows or NixOS; remote access, backups, hardware transcoding.
 - [`docs/PACKAGING.md`](docs/PACKAGING.md): release bundles, client builds, and why we build our own ffmpeg.
 - [`docs/PLUGINS.md`](docs/PLUGINS.md): the plugin model, and how to write your own.
 - [`docs/PLUGIN_LICENSING.md`](docs/PLUGIN_LICENSING.md): how AGPL applies (and doesn't) to plugins.

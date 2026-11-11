@@ -37,8 +37,12 @@
 			<key>NSAllowsLocalNetworking</key>
 			<true/>
 		</dict>
+		<key>NSBonjourServices</key>
+		<array>
+			<string>_googlecast._tcp</string>
+		</array>
 		<key>NSLocalNetworkUsageDescription</key>
-		<string>NoFlex connects to your media server on your local network.</string>
+		<string>NoFlex connects to your media server on your local network, and finds Cast devices to play on.</string>
 		<key>UIApplicationSceneManifest</key>
 		<dict>
 			<key>UIApplicationSupportsMultipleScenes</key>

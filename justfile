@@ -22,6 +22,9 @@ mod app "tasks/app.just"
 # SolidTV app for TVs: Samsung, LG, Android TV, RDK, Apple TV, and any browser.
 mod tv "tasks/tv.just"
 
+# The website at noflex.dev, which also hosts the Cast receiver.
+mod site "tasks/site.just"
+
 # The sample library of Blender open movies, on one server or several.
 mod demo "tasks/demo.just"
 

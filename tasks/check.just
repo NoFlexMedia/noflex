@@ -23,6 +23,12 @@ backend:
 web:
     npm run check
 
+# Check the website and build it, which also checks every internal link.
+[working-directory('../site')]
+site:
+    npm run check
+    npm run build
+
 # Check the TV app and build every web-based target.
 tv:
     just tv check
@@ -48,4 +54,4 @@ nix:
     nix flake check
 
 # Run every client and backend gate; `just check nix` is the one left out.
-all: tasks backend web tv app
+all: tasks backend web site tv app

@@ -85,6 +85,32 @@
           '';
         };
 
+        # The marketing site at noflex.dev, with the Cast receiver it hosts.
+        site = pkgs.buildNpmPackage {
+          pname = "noflex-site";
+          version = "0.0.1";
+          src = pkgs.lib.fileset.toSource {
+            root = ./.;
+            fileset = pkgs.lib.fileset.unions [
+              (pkgs.lib.fileset.difference ./site (pkgs.lib.fileset.unions (map pkgs.lib.fileset.maybeMissing [
+                ./site/node_modules
+                ./site/build
+                ./site/.svelte-kit
+              ])))
+              ./cast/receiver
+            ];
+          };
+          sourceRoot = "source/site";
+          npmDepsHash = "sha256-7lvtU2hvQjsGZYgTdUEjroH4VcuGGQnePVRJqReE5wA=";
+          npmBuildScript = "build";
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out
+            cp -r build/. $out/
+            runHook postInstall
+          '';
+        };
+
         # The Cargo workspace lives in backend/; the flake root is the
         # monorepo-wide dev shell, not a crate source.
         # cleanCargoSource drops non-Cargo files, but the build needs
@@ -327,6 +353,7 @@
         packages.default = noflex;
         packages.noflex = noflex;
         packages.web = web;
+        packages.site = site;
 
         apps.default = flake-utils.lib.mkApp {
           drv = noflex;
@@ -378,7 +405,7 @@
         };
 
         checks = {
-          inherit noflex;
+          inherit noflex site;
           fmt = craneLib.cargoFmt {inherit src;};
         };
       }

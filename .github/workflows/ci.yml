@@ -48,6 +48,15 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - run: nix develop .#no-flutter --command sh -c 'cd solidtv && npm ci && npm run check && for target in browser tizen webos android firebolt; do npx vite build --mode "$target" || exit 1; done'
 
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v24
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - run: nix develop .#no-flutter --command sh -c 'cd site && npm ci && npm run check && npm run build'
+
   flutter:
     runs-on: ubuntu-latest
     steps:

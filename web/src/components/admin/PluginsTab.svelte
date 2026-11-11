@@ -3,6 +3,7 @@
   import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
   import ArrowsDownUp from "phosphor-svelte/lib/ArrowsDownUp";
   import ClockCounterClockwise from "phosphor-svelte/lib/ClockCounterClockwise";
+  import GearSix from "phosphor-svelte/lib/GearSix";
   import PencilSimple from "phosphor-svelte/lib/PencilSimple";
   import Play from "phosphor-svelte/lib/Play";
   import Plug from "phosphor-svelte/lib/Plug";
@@ -18,6 +19,7 @@
   import { ago, interval } from "$components/account/relative.js";
   import { stamp } from "./status/fmt.js";
   import { liveStatus, useLiveStatus } from "./status/live.svelte.js";
+  import PluginSettings from "./PluginSettings.svelte";
 
   /** `admin` is the page's Admin store. */
   let { admin } = $props();
@@ -49,6 +51,11 @@
     if (plugin.instanceRestarts > 0) return { dot: "warn", label: "Recovered", detail: `Restarted ${plugin.instanceRestarts} ${plugin.instanceRestarts === 1 ? "time" : "times"} after a crash.` };
     return { dot: "on", label: "Healthy", detail: "" };
   }
+
+  // ---- Settings ----
+  let settingsOpen = $state(false);
+  let settingsId = $state(null);
+  let settingsPlugin = $derived(plugins.find((plugin) => plugin.id === settingsId) ?? null);
 
   // ---- Run task ----
   let run = $state({ open: false, plugin: null, task: null, payload: "" });
@@ -176,7 +183,12 @@
           </div>
         {/if}
 
-        {#if webUrl(plugin.homepage)}<a class="home" href={webUrl(plugin.homepage)} target="_blank" rel="noopener noreferrer"><ArrowSquareOut size={14} />Homepage</a>{/if}
+        {#if plugin.settings.length || webUrl(plugin.homepage)}
+          <div class="foot">
+            {#if plugin.settings.length}<button class="btn sm" onclick={() => { settingsId = plugin.id; settingsOpen = true; }}><GearSix size={15} />Settings</button>{/if}
+            {#if webUrl(plugin.homepage)}<a class="home" href={webUrl(plugin.homepage)} target="_blank" rel="noopener noreferrer"><ArrowSquareOut size={14} />Homepage</a>{/if}
+          </div>
+        {/if}
       </article>
     {/each}
   </div>
@@ -259,6 +271,8 @@
   </section>
 {/if}
 
+<PluginSettings bind:open={settingsOpen} plugin={settingsPlugin} />
+
 <Dialog bind:open={run.open} title="Run {run.task?.name ?? 'task'} now" description="Queues one extra run of {run.plugin?.displayName ?? 'this plugin'}’s task, outside its regular schedule." width={480}>
   <form id="task-form" class="stack" onsubmit={runTask}>
     <label class="field">Payload<textarea class="mono" bind:value={run.payload} rows="4" placeholder="Optional — a string or JSON the task understands" spellcheck="false"></textarea><small>Leave empty for a normal run.</small></label>
@@ -296,7 +310,8 @@
   .what { flex: 1; display: grid; gap: 1px; min-width: 0; }
   .what strong { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.86rem; }
   .fail { color: var(--warning); }
-  .home { display: inline-flex; align-items: center; gap: 6px; font-size: 0.84rem; color: var(--text-2); margin-top: auto; align-self: flex-start; }
+  .foot { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: auto; }
+  .home { display: inline-flex; align-items: center; gap: 6px; font-size: 0.84rem; color: var(--text-2); }
   .home:hover { color: var(--text); }
   .table-wrap { overflow-x: auto; margin: 0 -6px 18px; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }

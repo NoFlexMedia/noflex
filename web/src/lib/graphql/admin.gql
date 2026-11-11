@@ -18,6 +18,7 @@ query Admin {
     tasks { name intervalMs lastRunAt consecutiveFailures totalRuns }
     instanceRestarts
     circuitOpen
+    settings { ...PluginSettingFields }
   }
   pluginOverrides { pluginId hook workKind priority adminSet }
 }

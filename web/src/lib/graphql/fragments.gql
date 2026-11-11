@@ -88,6 +88,19 @@ fragment LibraryFields on Library {
   config { preferredLanguages preferredProviders excludedFolders watchEnabled scanSchedule artworkPreference contentCategory }
 }
 
+fragment PluginSettingFields on PluginSetting {
+  key
+  label
+  description
+  kind
+  required
+  choices
+  default
+  value
+  isSet
+  source
+}
+
 fragment UserFields on User {
   id
   name

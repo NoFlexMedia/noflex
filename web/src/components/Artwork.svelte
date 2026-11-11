@@ -20,11 +20,14 @@
   import { pickImage, sized, srcset } from "$lib/images.js";
   import { INDEXING_LABEL, watchIndexing } from "$lib/indexing.svelte.js";
 
-  /** `width` is the rendered CSS width, used to pick srcset candidates. */
-  let { work, kind = "poster", width = 220, eager = false, rounded = true, vt = null, fallback = null } = $props();
+  /**
+   * `width` is the rendered CSS width, used to pick srcset candidates. `children`
+   * replaces the placeholder drawn until the art loads and when there is none.
+   */
+  let { work, kind = "poster", width = 220, eager = false, rounded = true, vt = null, fallback = null, children = null } = $props();
   let Glyph = $derived(KIND_ICON[work?.kind] ?? FilmStrip);
 
-  const RATIO = { poster: 1.5, backdrop: 0.5625, thumb: 0.5625, logo: undefined };
+  const RATIO = { poster: 1.5, backdrop: 0.5625, thumb: 0.5625, logo: undefined, photo: 1 };
   // `fallback` lends its art (e.g. a show's) to children that have none.
   let url = $derived(pickImage(work?.images, kind) ?? pickImage(fallback?.images, kind === "thumb" ? "backdrop" : kind));
   let ratio = $derived(RATIO[kind]);
@@ -55,8 +58,10 @@
     />
   {/if}
   {#if !url || failed || !loaded}
-    <div class="fallback" class:pending={url && !failed} aria-hidden="true">
-      {#if kind !== "logo" && !indexing}
+    <div class="fallback" class:pending={url && !failed} class:custom={children} aria-hidden="true">
+      {#if children}
+        {@render children()}
+      {:else if kind !== "logo" && !indexing}
         <Glyph size={kind === "poster" ? 22 : 28} weight="light" />
         {#if kind === "poster" && work?.title}<span>{work.title}</span>{/if}
       {/if}
@@ -75,6 +80,7 @@
   .art.rounded { border-radius: var(--r); }
   .art.poster { aspect-ratio: 2 / 3; }
   .art.backdrop, .art.thumb { aspect-ratio: 16 / 9; }
+  .art.photo { aspect-ratio: 1; }
   .art.logo { background: none; }
   .art { container-type: inline-size; }
   .indexing { position: absolute; inset: 0; z-index: 1; display: grid; place-content: center; justify-items: center; gap: 10px; padding: 8px; overflow: hidden; color: hsl(var(--h) 40% 88%); font-size: 0.78rem; font-weight: 600; text-align: center; animation: index-in 320ms var(--ease-out); }
@@ -112,6 +118,7 @@
     transition: opacity 400ms var(--ease-out);
   }
   .fallback.pending { opacity: 0.6; }
+  .fallback.custom { display: block; padding: 0; background: none; }
   .fallback span { font-weight: 700; font-size: clamp(0.8rem, 1.1vw, 1rem); line-height: 1.12; letter-spacing: -0.02em; color: hsl(var(--h) 30% 92% / 0.92); display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
   .backdrop .fallback, .thumb .fallback { align-items: center; justify-content: center; }
 </style>

@@ -6,13 +6,14 @@
 
 import { mediaUrl } from "$lib/tokens.js";
 
-export type ArtKind = "poster" | "backdrop" | "thumb" | "logo";
+export type ArtKind = "poster" | "backdrop" | "thumb" | "logo" | "photo";
 
 const PREFERENCE: Record<ArtKind, string[]> = {
   poster: ["PRIMARY", "BOX", "THUMB", "ART"],
   backdrop: ["BACKDROP", "ART", "BANNER", "THUMB", "PRIMARY"],
   thumb: ["THUMB", "BACKDROP", "PRIMARY"],
   logo: ["LOGO"],
+  photo: ["PRIMARY"],
 };
 
 export function pickImage(images: { kind: string; url: string }[] | null | undefined, kind: ArtKind): string | null {

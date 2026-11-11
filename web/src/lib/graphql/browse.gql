@@ -29,7 +29,7 @@ query LibraryWorks($library: ID!, $filter: WorkFilterInput, $sort: SortOrder) {
 query WorkDetail($id: ID!) {
   work(id: $id) {
     ...WorkFull
-    credits { personId name role character }
+    credits { personId name role character photo { kind url } }
     tags(namespaces: ["parental", "genre"]) { id namespace display }
     attributions { provider name text url logoUrl }
   }

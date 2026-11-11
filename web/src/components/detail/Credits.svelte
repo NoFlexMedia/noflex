@@ -1,5 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
+  import Artwork from "$components/Artwork.svelte";
+
   /** `credits`: one entry per part, in billing order. */
   let { credits = [] } = $props();
 
@@ -33,7 +35,11 @@
         {#each cast as person (person.personId + (person.character ?? ""))}
           <li>
             <a href={searchFor(person.name)}>
-              <span class="face" style:--h={hue(person.name)} aria-hidden="true">{initials(person.name)}</span>
+              <div class="face" aria-hidden="true">
+                <Artwork work={{ title: person.name, images: person.photo ? [person.photo] : [] }} kind="photo" width={84} rounded={false}>
+                  <span class="initials" style:--h={hue(person.name)}>{initials(person.name)}</span>
+                </Artwork>
+              </div>
               <strong>{person.name}</strong>
               {#if person.character || person.role}<small>{person.character ?? person.role}</small>{/if}
             </a>
@@ -53,7 +59,8 @@
   .cast { display: grid; grid-auto-flow: column; grid-auto-columns: 112px; gap: 14px; overflow-x: auto; padding: 4px 2px 10px; scroll-snap-type: x proximity; scrollbar-width: none; list-style: none; margin: 0; }
   .cast li { scroll-snap-align: start; min-width: 0; }
   .cast a { display: grid; justify-items: center; gap: 2px; text-align: center; }
-  .face { display: grid; place-items: center; width: 84px; height: 84px; margin-bottom: 8px; border-radius: 50%; background: hsl(var(--h) 24% 18%); color: hsl(var(--h) 40% 82%); font-size: 1.3rem; font-weight: 650; letter-spacing: -0.02em; box-shadow: 0 0 0 1px rgb(255 255 255 / 0.07); transition: transform var(--t) var(--ease-out), box-shadow var(--t); }
+  .face { width: 84px; height: 84px; margin-bottom: 8px; overflow: hidden; border-radius: 50%; box-shadow: 0 0 0 1px rgb(255 255 255 / 0.07); transition: transform var(--t) var(--ease-out), box-shadow var(--t); }
+  .initials { display: grid; place-items: center; height: 100%; background: hsl(var(--h) 24% 18%); color: hsl(var(--h) 40% 82%); font-size: 1.3rem; font-weight: 650; letter-spacing: -0.02em; }
   .cast a:hover .face { transform: translateY(-2px); box-shadow: 0 0 0 1px rgb(255 255 255 / 0.2); }
   strong { font-size: 0.84rem; font-weight: 600; line-height: 1.25; max-width: 100%; }
   small { color: var(--text-3); font-size: 0.78rem; line-height: 1.25; max-width: 100%; }

@@ -63,6 +63,7 @@ NoFlex has one design language, and every client designs around it rather than a
 - `just demo up [--servers N]` starts throwaway servers with a real library and linked to each other. Use it to see a change working, rather than building a library by hand.
 - Shell scripts pass `shfmt --indent 2` and `shellcheck`, justfiles `just --fmt` (`just check tasks`).
 - License is AGPL-3.0-only. Every source file starts with an SPDX header (`// SPDX-License-Identifier: AGPL-3.0-only`, or the file type's comment equivalent).
+- Contributions come in under [`CLA.md`](CLA.md), which is what lets the apps ship on app stores. Code from elsewhere goes in a commit of its own, keeps its notice, and names its source and license in the message.
 - Comments explain **why**, not what. Keep them minimal.
 - No back-compat shims for hypothetical changes. Pre-1.0, breaking changes land cleanly.
 - Only write high quality tests. Do not test trivial, noisy, or common behavior; match the testing conventions of the surrounding code.

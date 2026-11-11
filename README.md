@@ -73,4 +73,4 @@ Read [`docs/GIT_WORKTREES.md`](docs/GIT_WORKTREES.md).
 
 ## License
 
-[AGPL-3.0-only](LICENSE). Plugins may use any license; see [`docs/PLUGIN_LICENSING.md`](docs/PLUGIN_LICENSING.md).
+[AGPL-3.0-only](LICENSE). Contributions come in under a [Contributor License Agreement](CLA.md); [`CONTRIBUTING.md`](CONTRIBUTING.md#licensing-and-the-cla) says why. Plugins may use any license; see [`docs/PLUGIN_LICENSING.md`](docs/PLUGIN_LICENSING.md).

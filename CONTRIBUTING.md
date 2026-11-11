@@ -40,9 +40,55 @@ The plugin ABI is the WIT world in `backend/crates/noflex-plugin-wit/`; each pro
 
 User-visible plugin API changes update [`docs/PLUGINS.md`](docs/PLUGINS.md).
 
-## Licensing
+## Licensing and the CLA
 
-NoFlex is [AGPL-3.0-only](LICENSE). By contributing, you agree your contribution is licensed the same way. Every source file carries an SPDX header:
+NoFlex is [AGPL-3.0-only](LICENSE), and so is everything contributed to it. **Before a pull request can merge, everyone who wrote its commits signs the [Contributor License Agreement](CLA.md).** You sign once, and that covers every contribution after it.
+
+### What the CLA does
+
+- **You keep your copyright.** The CLA grants the maintainer a license to your contribution. It doesn't transfer ownership.
+- **It lets the maintainer license NoFlex, your contribution included, under terms besides the AGPL.** App stores are the first reason. Apple's terms put restrictions on users that the AGPL forbids, so AGPL code can only ship on the App Store if every one of its authors allows it. The same permission covers commercial licenses: the maintainer may sell NoFlex under proprietary terms, or build a commercial edition on it, and may change its license later.
+- **Your contribution stays free software.** Whatever else it's licensed under, your contribution itself is always also licensed under the license NoFlex had on the day you submitted it: AGPL-3.0-only today. See section 4 of the CLA.
+- **It includes a patent license**, as Apache-2.0 does.
+
+### How to sign
+
+1. Open your pull request. The `cla` check names everyone on it who hasn't signed yet.
+2. Each of them comments on the pull request:
+
+   ```
+   I have read the NoFlex CLA and I agree to its terms.
+   ```
+
+3. The check records the signature and passes. Comment `recheck` to run it again.
+
+When the CLA changes, its version number goes up, and the check asks everyone to sign the new version.
+
+### Who signs
+
+- **Every author of every commit in the pull request.** The check finds people by the email on each commit, so that email must belong to your GitHub account (Settings → Emails). The check fails on a commit it can't match to an account.
+- **Co-authors too.** The check doesn't read `Co-authored-by:` trailers. Only credit a co-author who has signed, and ask them to comment on the pull request if they haven't.
+- **If you write code as part of your job**, your employer may own it. Get your employer's permission before you sign, because the CLA has you confirm that you have it.
+- Bots, such as Dependabot, don't sign.
+
+### What you can contribute
+
+- **Your own work.** That includes what you write with tools such as AI assistants: you're responsible for being entitled to contribute it.
+- **Someone else's code only with its license.** Put it in a commit of its own, keep its copyright and license notice, and say in the pull request where it came from and what its license is. Its license must allow distribution as part of AGPL-3.0-only software.
+
+### Signed commits
+
+`main` only accepts signed commits. Sign with an SSH, GPG or S/MIME key that's added to your GitHub account, so your commits show as Verified. For an SSH key:
+
+```sh
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519.pub
+git config --global commit.gpgsign true
+```
+
+### File headers
+
+Every source file carries an SPDX header:
 
 ```rust
 // SPDX-License-Identifier: AGPL-3.0-only

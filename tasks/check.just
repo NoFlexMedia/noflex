@@ -39,8 +39,8 @@ app:
 tasks:
     just --fmt --check
     for file in tasks/*.just; do just --fmt --check --justfile "$file" || exit 1; done
-    shfmt --diff --indent 2 scripts/tasks
-    shellcheck scripts/tasks/*.sh
+    shfmt --diff --indent 2 scripts/tasks scripts/ci
+    shellcheck scripts/tasks/*.sh scripts/ci/*.sh
 
 # Build the release package and check formatting through the flake, as CI does (slowest).
 [working-directory('..')]

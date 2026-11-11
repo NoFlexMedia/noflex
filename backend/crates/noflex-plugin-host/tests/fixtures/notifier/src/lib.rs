@@ -44,10 +44,9 @@ fn encode(event: &NotifyEvent) -> String {
             "scan-completed:{}:{}:{}:{}",
             e.library_name, e.added, e.updated, e.removed
         ),
-        NotifyEvent::Favorite(e) => format!(
-            "favorite:{}:{}:{}:{}",
-            e.user, e.work, e.title, e.favorite
-        ),
+        NotifyEvent::Favorite(e) => {
+            format!("favorite:{}:{}:{}:{}", e.user, e.work, e.title, e.favorite)
+        }
         NotifyEvent::ProgressAtStop(e) => format!(
             "progress-at-stop:{}:{}:{}:{}",
             e.user, e.work, e.title, e.position_ms
@@ -70,10 +69,7 @@ impl notifier::Guest for Fixture {
         if line.contains("boom") {
             panic!("fixture-notifier: boom");
         }
-        RECEIVED
-            .lock()
-            .expect("received log poisoned")
-            .push(line);
+        RECEIVED.lock().expect("received log poisoned").push(line);
         Ok(())
     }
 }

@@ -277,7 +277,7 @@ mod tests {
             plugin_id: id.to_string(),
             display_name: id.to_string(),
             version: "0.1.0".into(),
-            noflex_api_version: "0.1".into(),
+            noflex_api_version: "0.2".into(),
             hooks: vec![hook.to_string()],
             capabilities: vec![],
             events: vec![],

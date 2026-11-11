@@ -216,6 +216,9 @@ async fn enrich(storage: &Arc<dyn Storage>, work: &Work, occ: &Occurrence) -> wi
                 value: id.value.clone(),
             })
             .collect(),
+        series_external_ids: Vec::new(),
+        season_number: None,
+        episode_number: None,
         action: occ.action,
         position_ms: occ.position_ms,
         runtime_ms,

@@ -11,11 +11,12 @@
 //   series   `series/{id}`
 //   season   `series/{id}/season/{n}`
 //   episode  `series/{id}/season/{n}/episode/{m}`
+//   person   `people/{id}`, which only the image hook answers (a photo)
 // Seasons and episodes count in the series' default order.
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// TVDB v4 API root.
 pub const API_BASE: &str = "https://api4.thetvdb.com/v4";
@@ -120,7 +121,8 @@ pub enum IdKind {
 }
 
 /// The image kinds this plugin serves, named after the WIT `image-kind` they map to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ArtKind {
     Primary,
     Backdrop,
@@ -144,7 +146,10 @@ pub struct Person {
     pub name: String,
     pub role: Option<String>,
     pub character: Option<String>,
-    pub photo_url: Option<String>,
+    /// TVDB's id for them, named `people/{id}` as an external id.
+    pub id: Option<u64>,
+    /// Their photo's URL, when the credit carries one.
+    pub photo: Option<String>,
 }
 
 /// A parsed record in WIT-payload shape; empty fields mean TVDB had none. TVDB's
@@ -193,6 +198,74 @@ pub struct Chosen {
     pub language: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+}
+
+/// One image offered to an administrator choosing artwork by hand.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Candidate {
+    /// [`CandidateHandle`] as JSON.
+    pub handle: String,
+    /// ISO 639-1, when TVDB's code has one.
+    pub language: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    /// TVDB's score for the image.
+    pub score: f32,
+}
+
+/// What a candidate's opaque handle carries: enough to fetch it again
+/// without another listing request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateHandle {
+    #[serde(rename = "k")]
+    pub kind: ArtKind,
+    /// The image's URL on the artwork CDN.
+    #[serde(rename = "i")]
+    pub image: String,
+    /// Its thumbnail's, when TVDB has one.
+    #[serde(rename = "t", default, skip_serializing_if = "Option::is_none")]
+    pub thumbnail: Option<String>,
+    #[serde(rename = "l", default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(rename = "w", default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(rename = "h", default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+}
+
+impl CandidateHandle {
+    /// Parses a handle [`candidates`] made. Both URLs must be plain paths on
+    /// the artwork CDN, so a handle can only ever name an image there.
+    pub fn decode(handle: &str) -> Result<Self, String> {
+        let decoded: Self =
+            serde_json::from_str(handle).map_err(|e| format!("tvdb: bad image handle: {e}"))?;
+        let on_cdn = |url: &str| {
+            url.strip_prefix(ART_BASE)
+                .and_then(|rest| rest.strip_prefix('/'))
+                .is_some_and(|path| {
+                    !path.is_empty()
+                        && !path
+                            .split('/')
+                            .any(|seg| seg.is_empty() || seg.starts_with('.'))
+                        && path.bytes().all(|b| {
+                            b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-')
+                        })
+                })
+        };
+        if !on_cdn(&decoded.image) || !decoded.thumbnail.as_deref().is_none_or(on_cdn) {
+            return Err("tvdb: bad image handle URL".into());
+        }
+        Ok(decoded)
+    }
+
+    /// The URL to fetch: the thumbnail for a preview when there is one,
+    /// else the full image.
+    pub fn url(&self, preview: bool) -> &str {
+        match (&self.thumbnail, preview) {
+            (Some(thumbnail), true) => thumbnail,
+            _ => &self.image,
+        }
+    }
 }
 
 /// NoFlex's own key, so metadata works without any setup. Anyone holding the
@@ -258,6 +331,16 @@ pub fn episode_lookup_url(series: u64, season: u32, episode: u32) -> String {
 /// `id` is TVDB's own number for the episode, from [`parse_episode_lookup`].
 pub fn episode_url(id: u64) -> String {
     format!("{API_BASE}/episodes/{id}/extended?meta=translations")
+}
+
+/// The number in a `people/{id}` external id.
+pub fn person_id(value: &str) -> Option<u64> {
+    value.trim().strip_prefix("people/")?.parse().ok()
+}
+
+/// A person's base record, which carries their photo.
+pub fn person_url(id: u64) -> String {
+    format!("{API_BASE}/people/{id}")
 }
 
 /// The number TVDB files a TMDb id under: `tv/1399` and `movie/603` are the
@@ -461,6 +544,8 @@ struct CharacterRecord {
     people_type: String,
     #[serde(rename = "personImgURL")]
     photo: Option<String>,
+    #[serde(rename = "peopleId")]
+    people_id: Option<u64>,
     #[serde(default, deserialize_with = "nullable")]
     sort: i64,
 }
@@ -478,6 +563,8 @@ struct ContentRating {
 pub struct ArtEntry {
     #[serde(default, deserialize_with = "nullable")]
     image: String,
+    #[serde(default, deserialize_with = "nullable")]
+    thumbnail: String,
     #[serde(default, rename = "type", deserialize_with = "nullable")]
     kind: u32,
     language: Option<String>,
@@ -1181,6 +1268,62 @@ pub fn choose(
         })
 }
 
+/// Every `kind` image of `id` in `art`, best scored first (then widest).
+/// Empty when `id`'s record type has no such kind. The record's own image
+/// stands in only when the listing has nothing of the kind.
+pub fn candidates(art: &[ArtEntry], id: TvdbId, kind: ArtKind) -> Vec<Candidate> {
+    let Some(wanted) = art_type(id, kind) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<&ArtEntry> = art
+        .iter()
+        .filter(|e| e.kind == wanted && !e.image.is_empty())
+        .collect();
+    if entries.iter().any(|e| !e.last_resort) {
+        entries.retain(|e| !e.last_resort);
+    }
+    entries.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then(b.width.unwrap_or(0).cmp(&a.width.unwrap_or(0)))
+    });
+    entries
+        .into_iter()
+        .filter_map(|e| {
+            let language = e.language.as_deref().and_then(two_letter_language);
+            let handle = CandidateHandle {
+                kind,
+                image: art_url(&e.image),
+                thumbnail: non_empty_str(&e.thumbnail).map(art_url),
+                language: language.clone(),
+                width: e.width,
+                height: e.height,
+            };
+            Some(Candidate {
+                handle: serde_json::to_string(&handle).ok()?,
+                language,
+                width: e.width,
+                height: e.height,
+                score: e.score,
+            })
+        })
+        .collect()
+}
+
+#[derive(Debug, Deserialize)]
+struct PersonRecord {
+    image: Option<String>,
+}
+
+/// The photo URL in a [`person_url`] response; `None` when they have none.
+///
+/// # Errors
+/// The body is not a person record.
+pub fn parse_person_photo(body: &[u8]) -> Result<Option<String>, String> {
+    let person: PersonRecord = data(body, "person")?;
+    Ok(non_empty(person.image).map(|image| art_url(&image)))
+}
+
 /// One entry per kind with art, chosen for English; the host re-requests through
 /// the `image` hook in its own preferred language.
 fn payload_art(art: &[ArtEntry], id: TvdbId) -> Vec<Art> {
@@ -1238,7 +1381,8 @@ fn people(characters: Vec<CharacterRecord>) -> Vec<Person> {
             name: c.person,
             role: Some(role.into()),
             character: if actor { non_empty(c.name) } else { None },
-            photo_url: non_empty(c.photo).map(|photo| art_url(&photo)),
+            id: c.people_id,
+            photo: non_empty(c.photo).map(|photo| art_url(&photo)),
         });
     }
     out
@@ -1572,6 +1716,78 @@ mod tests {
         assert!(choose(&art, id, ArtKind::Thumb, None).is_none());
         let kinds: Vec<ArtKind> = payload.images.iter().map(|i| i.kind).collect();
         assert_eq!(kinds, [ArtKind::Primary, ArtKind::Backdrop, ArtKind::Logo]);
+    }
+
+    #[test]
+    fn candidates_rank_by_score_and_preview_through_thumbnails() {
+        let (_, art) = parse_series(include_bytes!("../fixtures/live_series_276116.json")).unwrap();
+        let series = TvdbId::Series(276116);
+        let posters = candidates(&art, series, ArtKind::Primary);
+        assert_eq!(
+            posters.len(),
+            3,
+            "the record's own image is no extra poster"
+        );
+        assert!(posters.windows(2).all(|w| w[0].score >= w[1].score));
+        assert_eq!(posters[0].language.as_deref(), Some("en"));
+        let best = CandidateHandle::decode(&posters[0].handle).unwrap();
+        assert_eq!(
+            best.url(false),
+            "https://artworks.thetvdb.com/banners/posters/276116-1.jpg"
+        );
+        assert_eq!(
+            best.url(true),
+            "https://artworks.thetvdb.com/banners/posters/276116-1_t.jpg"
+        );
+        assert!(candidates(&art, series, ArtKind::Thumb).is_empty());
+
+        let (_, art) = parse_series(SERIES).unwrap();
+        let without_thumbnail = CandidateHandle::decode(
+            &candidates(&art, TvdbId::Series(121361), ArtKind::Primary)[0].handle,
+        )
+        .unwrap();
+        assert_eq!(without_thumbnail.url(true), without_thumbnail.url(false));
+    }
+
+    #[test]
+    fn handles_name_only_artwork_cdn_files() {
+        for bad in [
+            r#"{"k":"primary","i":"https://evil.example/x.jpg"}"#,
+            r#"{"k":"primary","i":"https://artworks.thetvdb.com.evil.example/x.jpg"}"#,
+            r#"{"k":"primary","i":"https://artworks.thetvdb.com/../x.jpg"}"#,
+            r#"{"k":"primary","i":"https://artworks.thetvdb.com/x.jpg?y=1"}"#,
+            r#"{"k":"primary","i":"https://artworks.thetvdb.com/x.jpg","t":"https://evil.example/t.jpg"}"#,
+            "not json",
+        ] {
+            assert!(CandidateHandle::decode(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn people_are_named_by_their_tvdb_id() {
+        let (movie, _) = parse_movie(include_bytes!("../fixtures/live_movie_9413.json")).unwrap();
+        let halina = movie
+            .people
+            .iter()
+            .find(|p| p.name == "Halina Reijn")
+            .unwrap();
+        assert_eq!(halina.id, Some(296500));
+        assert_eq!(
+            halina.photo.as_deref(),
+            Some("https://artworks.thetvdb.com/banners/v4/actor/296500/photo/6223afc48a6ce.jpg")
+        );
+        assert_eq!(person_id("people/296500"), Some(296500));
+        assert_eq!(person_id("series/1"), None);
+        assert_eq!(
+            parse_person_photo(br#"{"data": {"id": 1, "image": "/banners/person/1.jpg"}}"#)
+                .unwrap()
+                .as_deref(),
+            Some("https://artworks.thetvdb.com/banners/person/1.jpg")
+        );
+        assert_eq!(
+            parse_person_photo(br#"{"data": {"id": 1, "image": null}}"#).unwrap(),
+            None
+        );
     }
 
     #[test]

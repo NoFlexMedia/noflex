@@ -7,26 +7,23 @@
 // socket access):
 //
 //   * `user-link` implements Trakt's OAuth device-authorization flow.
-//     `link-start` requests a device code, stashes it in instance state,
-//     enqueues a `poll-link` background run, and returns the activation
-//     URL. `poll-link` polls `/oauth/device/token` until the user
-//     authorizes, then hands the token pair to the host via
-//     `host-secrets.write-for-user` — plugins never persist per-user
-//     tokens themselves.
+//     `link-start` requests a device code, enqueues a `poll-link`
+//     background run, and returns the activation URL and the code to
+//     enter there. `poll-link` polls `/oauth/device/token` at Trakt's
+//     interval until the user authorizes or the code expires, then hands
+//     the token pair to the host via `host-secrets.write-for-user` —
+//     plugins never persist per-user tokens themselves. `unlink` stops a
+//     link in progress and revokes the user's token at Trakt.
 //   * `scrobbler` maps each host-enriched `scrobble-event` onto Trakt's
 //     `/scrobble/start|pause|stop`, refreshing the access token once on
 //     a 401. Delivery is lossy like the webhook notifier: failures are
 //     logged, never propagated, so a dead upstream or expired grant
 //     can't error the host's dispatch loop.
 //
-// Known warts (deliberate, documented rather than redesigned):
-//   * The WIT `link-challenge` carries only a URL plus opaque state —
-//     there is no field for the user code Trakt shows at
-//     https://trakt.tv/activate. The code is therefore surfaced via
-//     `host-log` at link-start time; the URL alone is returned.
-//   * Matching is external-ids only (tmdb/tvdb/imdb). No title
-//     matching, no show-level fallback lookups — a work without usable
-//     ids is skipped.
+// Matching is external ids only (tmdb/tvdb/imdb), with an episode named
+// by its series' ids and its numbers; no title matching, and a work
+// without usable ids is skipped. Nothing is read back from Trakt: this is
+// scrobbling, not history sync.
 //
 // The Trakt request/response mapping and the poll-cursor codec live in
 // `api` — pure Rust with no WIT bindings, so `cargo test` exercises

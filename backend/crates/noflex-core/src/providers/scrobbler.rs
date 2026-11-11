@@ -21,9 +21,10 @@ pub enum ScrobbleAction {
 
 /// One scrobble occurrence, enriched by the host from storage so scrobbler
 /// plugins need no library lookups of their own. `position_ms` is present
-/// only for progress-at-stop; `runtime_ms` is the edition runtime when the
-/// host could resolve one — the plugin derives its own progress percent and
-/// watched threshold from the pair.
+/// only for progress-at-stop, and a `Stopped` without it is a title marked
+/// played; `runtime_ms` is the edition runtime when the host could resolve
+/// one — the plugin derives its own progress percent and watched threshold
+/// from the pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrobbleEvent {
     pub user: UserId,
@@ -34,12 +35,17 @@ pub struct ScrobbleEvent {
     /// Provider ids the work carries (tmdb, tvdb, imdb, ...) — scrobblers
     /// match on these, never on titles.
     pub external_ids: Vec<ExternalId>,
+    /// For an episode, its series' provider ids; empty otherwise.
+    pub series_external_ids: Vec<ExternalId>,
+    /// For an episode, its season's number and its own within it.
+    pub season_number: Option<u32>,
+    pub episode_number: Option<u32>,
     pub action: ScrobbleAction,
     pub position_ms: Option<u64>,
     pub runtime_ms: Option<u64>,
 }
 
-/// Per-user watch-history sync (Trakt, ...). The host derives events from
+/// Per-user scrobbling (Trakt, ...). The host derives events from
 /// the domain bus and skips users who never linked an account.
 #[async_trait]
 pub trait Scrobbler: Send + Sync {

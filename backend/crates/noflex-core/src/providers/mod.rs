@@ -29,7 +29,7 @@ pub mod user_link;
 pub use auth::{AuthCredentials, AuthProvider, AuthVerdict};
 pub use embedder::{EmbedRequest, EmbedResult, Embedder};
 pub use external_auth::{ExternalAuthProvider, VerifiedIdentity};
-pub use image::ImageProvider;
+pub use image::{ImageCandidate, ImageProvider};
 pub use intro::{IntroDetection, IntroDetector};
 pub use metadata::{MetadataMatch, MetadataPayload, MetadataProvider, SearchQuery};
 pub use notifier::{Notifier, NotifyEvent};

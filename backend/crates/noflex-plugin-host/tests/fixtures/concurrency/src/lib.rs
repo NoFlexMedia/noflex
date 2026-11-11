@@ -96,7 +96,7 @@ impl metadata::Guest for Fixture {
                 name: "Fixture Director".into(),
                 role: Some("Director".into()),
                 character: None,
-                photo_url: None,
+                external_ids: vec![],
             }],
             images: vec![MetadataImage {
                 kind: ImageKind::Primary,
@@ -145,6 +145,20 @@ impl image::Guest for Fixture {
             },
             reader,
         ))
+    }
+
+    async fn list_candidates(
+        _id: image::ExternalId,
+        _kind: image::ImageKind,
+    ) -> Result<Vec<image::ImageCandidate>, image::PluginError> {
+        Ok(Vec::new())
+    }
+
+    async fn fetch_candidate(
+        _handle: String,
+        _preview: bool,
+    ) -> Result<(image::ImageMeta, wit_bindgen::StreamReader<u8>), image::PluginError> {
+        Err(image::PluginError::NotFound)
     }
 }
 

@@ -41,7 +41,9 @@ use crate::{
             exports::noflex::plugin::intro_detector::IntroDetection as WitIntroDetection,
             noflex::plugin::types as intro_detector_types,
         },
-        metadata_and_image::MetadataImagePlugin as ImagePlugin,
+        metadata_and_image::{
+            MetadataImagePlugin as ImagePlugin, exports::noflex::plugin::image as image_exports,
+        },
         metadata_only::{
             MetadataPlugin,
             noflex::plugin::types::{
@@ -116,6 +118,10 @@ type AttributionOutcome = Result<Option<WitProviderAttribution>, HostError>;
 type FetchImageOutcome =
     Result<Result<(image_types::ImageMeta, Vec<u8>), image_types::PluginError>, HostError>;
 
+/// `call_list_images`'s wire result: dispatch error outside, plugin error inside.
+type ListImagesOutcome =
+    Result<Result<Vec<image_exports::ImageCandidate>, image_types::PluginError>, HostError>;
+
 /// `call_fetch`'s wire result: dispatch error outside, plugin error inside.
 type FetchOutcome = Result<Result<WitMetadataPayload, WitPluginError>, HostError>;
 
@@ -132,6 +138,9 @@ type LinkStartOutcome =
 /// `call_link_complete`'s wire result: dispatch error outside, plugin error inside.
 type LinkCompleteOutcome =
     Result<Result<Vec<user_link_exports::UserSecret>, user_link_types::PluginError>, HostError>;
+
+/// `call_unlink`'s wire result: dispatch error outside, plugin error inside.
+type UnlinkOutcome = Result<Result<(), user_link_types::PluginError>, HostError>;
 type ExternalAuthStartOutcome = Result<Result<String, external_auth_types::PluginError>, HostError>;
 type ExternalAuthCompleteOutcome = Result<
     Result<external_auth_exports::VerifiedIdentity, external_auth_types::PluginError>,
@@ -346,6 +355,16 @@ enum HookCall {
         language: Option<String>,
         respond: oneshot::Sender<FetchImageOutcome>,
     },
+    ListImages {
+        id: image_types::ExternalId,
+        kind: image_types::ImageKind,
+        respond: oneshot::Sender<ListImagesOutcome>,
+    },
+    FetchCandidate {
+        handle: String,
+        preview: bool,
+        respond: oneshot::Sender<FetchImageOutcome>,
+    },
     FetchMetadata {
         id: WitExternalId,
         respond: oneshot::Sender<FetchOutcome>,
@@ -377,6 +396,10 @@ enum HookCall {
         state: String,
         callback_query: String,
         respond: oneshot::Sender<LinkCompleteOutcome>,
+    },
+    Unlink {
+        user_id: String,
+        respond: oneshot::Sender<UnlinkOutcome>,
     },
     ExternalAuthStart {
         callback_uri: String,
@@ -411,12 +434,15 @@ impl HookCall {
             Self::Supports { respond, .. } => respond.is_closed(),
             Self::Attribution { respond } => respond.is_closed(),
             Self::FetchImage { respond, .. } => respond.is_closed(),
+            Self::ListImages { respond, .. } => respond.is_closed(),
+            Self::FetchCandidate { respond, .. } => respond.is_closed(),
             Self::FetchMetadata { respond, .. } => respond.is_closed(),
             Self::RunTask { respond, .. } => respond.is_closed(),
             Self::Notify { respond, .. } => respond.is_closed(),
             Self::PostScan { respond, .. } => respond.is_closed(),
             Self::LinkStart { respond, .. } => respond.is_closed(),
             Self::LinkComplete { respond, .. } => respond.is_closed(),
+            Self::Unlink { respond, .. } => respond.is_closed(),
             Self::ExternalAuthStart { respond, .. } => respond.is_closed(),
             Self::ExternalAuthComplete { respond, .. } => respond.is_closed(),
             Self::Embed { respond, .. } => respond.is_closed(),
@@ -442,6 +468,12 @@ impl HookCall {
             HookCall::FetchImage { respond, .. } => {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
+            HookCall::ListImages { respond, .. } => {
+                let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
+            }
+            HookCall::FetchCandidate { respond, .. } => {
+                let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
+            }
             HookCall::FetchMetadata { respond, .. } => {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
@@ -458,6 +490,9 @@ impl HookCall {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
             HookCall::LinkComplete { respond, .. } => {
+                let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
+            }
+            HookCall::Unlink { respond, .. } => {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
             HookCall::ExternalAuthStart { respond, .. } => {
@@ -671,6 +706,45 @@ impl LoadedPlugin {
             .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
     }
 
+    /// Run the plugin's `image.list-candidates()` export: every `kind` image the
+    /// provider has for `external_id`, best first.
+    pub async fn call_list_images(
+        &self,
+        external_id: image_types::ExternalId,
+        kind: image_types::ImageKind,
+    ) -> ListImagesOutcome {
+        let (respond, answer) = oneshot::channel();
+        self.instance.enqueue(
+            &self.id,
+            HookCall::ListImages {
+                id: external_id,
+                kind,
+                respond,
+            },
+        )?;
+        answer
+            .await
+            .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
+    }
+
+    /// Run the plugin's `image.fetch-candidate()` export for a handle its
+    /// `list-candidates` returned, read to completion like [`Self::call_fetch_image`].
+    /// `preview` asks for a small rendition.
+    pub async fn call_fetch_candidate(&self, handle: String, preview: bool) -> FetchImageOutcome {
+        let (respond, answer) = oneshot::channel();
+        self.instance.enqueue(
+            &self.id,
+            HookCall::FetchCandidate {
+                handle,
+                preview,
+                respond,
+            },
+        )?;
+        answer
+            .await
+            .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
+    }
+
     /// Run the plugin's `background.run-task()` export with no user bound.
     /// Only the task scheduler (and tests) call this — foreground hook
     /// callers never see background invocations, though both overlap on
@@ -781,6 +855,18 @@ impl LoadedPlugin {
                 respond,
             },
         )?;
+        answer
+            .await
+            .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
+    }
+
+    /// Run the plugin's `user-link.unlink()` export, acting for `user_id`:
+    /// the user is unlinking, so the plugin abandons their link in progress
+    /// and revokes their grant upstream if it can.
+    pub async fn call_unlink(&self, user_id: String) -> UnlinkOutcome {
+        let (respond, answer) = oneshot::channel();
+        self.instance
+            .enqueue(&self.id, HookCall::Unlink { user_id, respond })?;
         answer
             .await
             .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
@@ -1193,7 +1279,7 @@ fn detect_exported_hooks(_component: &Component, manifest: &PluginManifest) -> V
 }
 
 /// The component's export names as strings (e.g.
-/// `noflex:plugin/metadata@0.1.0`). Gathered once at load time so
+/// `noflex:plugin/metadata@0.2.0`). Gathered once at load time so
 /// validation never instantiates.
 fn component_export_names(component: &Component) -> Vec<String> {
     component
@@ -1719,6 +1805,46 @@ fn dispatch_call<'a>(
             }),
             None => missing_export(respond, "image"),
         },
+        HookCall::ListImages { id, kind, respond } => match &hooks.image {
+            Some(image) => env.track(
+                inflight,
+                HookKind::Image,
+                respond,
+                move |deadline| async move {
+                    let func = image.noflex_plugin_image().func_list_candidates();
+                    invoke(
+                        accessor,
+                        calls,
+                        deadline,
+                        func,
+                        (id, kind),
+                        None,
+                        "image.list-candidates",
+                    )
+                    .await
+                    .map(|(r,)| r)
+                },
+            ),
+            None => missing_export(respond, "image"),
+        },
+        HookCall::FetchCandidate {
+            handle,
+            preview,
+            respond,
+        } => match &hooks.image {
+            Some(image) => env.track(inflight, HookKind::Image, respond, move |deadline| {
+                fetch_candidate_buffered(
+                    accessor,
+                    calls,
+                    deadline,
+                    image,
+                    &env.plugin_id,
+                    handle,
+                    preview,
+                )
+            }),
+            None => missing_export(respond, "image"),
+        },
         HookCall::RunTask {
             user,
             task,
@@ -1818,6 +1944,29 @@ fn dispatch_call<'a>(
                         params,
                         principal,
                         "link-complete",
+                    )
+                    .await
+                    .map(|(r,)| r)
+                },
+            ),
+            None => missing_export(respond, "user-link"),
+        },
+        HookCall::Unlink { user_id, respond } => match &hooks.user_link {
+            Some(user_link) => env.track(
+                inflight,
+                HookKind::UserLink,
+                respond,
+                move |deadline| async move {
+                    let principal = principal_of(&user_id);
+                    let func = user_link.noflex_plugin_user_link().func_unlink();
+                    invoke(
+                        accessor,
+                        calls,
+                        deadline,
+                        func,
+                        (user_id,),
+                        principal,
+                        "unlink",
                     )
                     .await
                     .map(|(r,)| r)
@@ -2008,6 +2157,37 @@ async fn fetch_image_buffered(
     Ok(Ok((meta, bytes)))
 }
 
+/// Invoke `image.fetch-candidate` and read the returned payload stream to
+/// completion, as [`fetch_image_buffered`] does.
+async fn fetch_candidate_buffered(
+    accessor: &Accessor<PluginCtx>,
+    calls: &CallTable,
+    deadline: Instant,
+    image: &ImagePlugin,
+    plugin_id: &PluginId,
+    handle: String,
+    preview: bool,
+) -> FetchImageOutcome {
+    let func = image.noflex_plugin_image().func_fetch_candidate();
+    let params = (handle, preview);
+    let (result,) = invoke(
+        accessor,
+        calls,
+        deadline,
+        func,
+        params,
+        None,
+        "image.fetch-candidate",
+    )
+    .await?;
+    let (meta, stream) = match result {
+        Ok(ok) => ok,
+        Err(e) => return Ok(Err(e)),
+    };
+    let bytes = read_stream_to_end(accessor, plugin_id, stream).await?;
+    Ok(Ok((meta, bytes)))
+}
+
 /// Drain a guest-produced byte stream into one buffer. Completion is
 /// signaled by the guest dropping its write end, which drops the
 /// collector and closes the channel.
@@ -2150,8 +2330,8 @@ mod tests {
     #[test]
     fn validation_accepts_versioned_interface_names() {
         let names = vec![
-            "noflex:plugin/metadata@0.1.0".to_string(),
-            "noflex:plugin/background@0.1.0".to_string(),
+            "noflex:plugin/metadata@0.2.0".to_string(),
+            "noflex:plugin/background@0.2.0".to_string(),
             "component:adapted/plugin".to_string(),
         ];
         let id = PluginId("p".into());
@@ -2166,7 +2346,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_a_claimed_but_missing_export() {
-        let names = vec!["noflex:plugin/metadata@0.1.0".to_string()];
+        let names = vec!["noflex:plugin/metadata@0.2.0".to_string()];
         let err = validate_declared_hooks(
             &names,
             &[HookKind::Metadata, HookKind::Image],
@@ -2183,7 +2363,7 @@ mod tests {
     #[test]
     fn validation_rejects_a_hookless_manifest() {
         let err = validate_declared_hooks(
-            &["noflex:plugin/metadata@0.1.0".to_string()],
+            &["noflex:plugin/metadata@0.2.0".to_string()],
             &[],
             Path::new("p.wasm"),
             &PluginId("p".into()),
@@ -2200,7 +2380,7 @@ mod tests {
             plugin_id = "p"
             display_name = "P"
             version = "0.1.0"
-            noflex_api_version = "0.1"
+            noflex_api_version = "0.2"
             hooks = ["metadata"]
             capabilities = ["background"]
 

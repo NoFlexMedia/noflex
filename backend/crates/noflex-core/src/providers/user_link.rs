@@ -12,6 +12,9 @@ pub struct LinkChallenge {
     /// OAuth authorize or device-code page, opened out-of-band.
     pub auth_url: String,
     pub state: String,
+    /// The code a device flow asks the user to enter at `auth_url`; `None`
+    /// for a redirect flow.
+    pub user_code: Option<String>,
 }
 
 /// One per-user credential the host persists for the linking user.
@@ -42,4 +45,9 @@ pub trait UserLinkProvider: Send + Sync {
         state: String,
         callback_query: String,
     ) -> PluginResult<Vec<UserSecret>>;
+
+    /// `user` is unlinking: abandon any link in progress and, best-effort,
+    /// revoke their grant upstream. The host deletes their secrets
+    /// afterwards, whatever this returns.
+    async fn unlink(&self, user: UserId) -> PluginResult<()>;
 }

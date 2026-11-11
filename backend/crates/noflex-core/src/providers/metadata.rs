@@ -54,7 +54,9 @@ pub struct MetadataPerson {
     pub name: String,
     pub role: Option<String>,
     pub character: Option<String>,
-    pub photo_url: Option<String>,
+    /// The provider's ids for the person, which its image hook answers with
+    /// their photo.
+    pub external_ids: Vec<ExternalId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

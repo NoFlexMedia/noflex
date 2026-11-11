@@ -10,13 +10,18 @@
 //   series   `tv/{id}`
 //   season   `tv/{id}/season/{n}`
 //   episode  `tv/{id}/season/{n}/episode/{m}`
+//   person   `person/{id}`, which only the image hook answers (a photo)
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// TMDb v3 API root.
 pub const API_BASE: &str = "https://api.themoviedb.org/3";
 /// Image CDN root; a size segment (`original`, `w185`) and the file path follow.
 pub const IMAGE_BASE: &str = "https://image.tmdb.org/t/p";
+/// The CDN size kept for a person's photo; credits draw it small.
+pub const PROFILE_SIZE: &str = "w185";
+/// The CDN size of a candidate's preview in a picker grid.
+pub const PREVIEW_SIZE: &str = "w342";
 /// Sent on every request so TMDb can attribute traffic.
 pub const USER_AGENT: &str = "NoFlex/0.0.1 (https://github.com/noflex-media/noflex)";
 
@@ -102,7 +107,8 @@ pub enum IdKind {
 }
 
 /// The image kinds TMDb has, named after the WIT `image-kind` they map to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ArtKind {
     Primary,
     Backdrop,
@@ -126,7 +132,10 @@ pub struct Person {
     pub name: String,
     pub role: Option<String>,
     pub character: Option<String>,
-    pub photo_url: Option<String>,
+    /// TMDb's id for them, named `person/{id}` as an external id.
+    pub id: Option<u64>,
+    /// Their photo's CDN file path, when the credit carries one.
+    pub profile: Option<String>,
 }
 
 /// A parsed record in WIT-payload shape; empty fields mean TMDb had none.
@@ -168,6 +177,58 @@ pub struct Chosen {
     pub language: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+}
+
+/// One image offered to an administrator choosing artwork by hand.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Candidate {
+    /// [`CandidateHandle`] as JSON.
+    pub handle: String,
+    pub language: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    /// TMDb's vote average for the image.
+    pub score: f32,
+}
+
+/// What a candidate's opaque handle carries: enough to fetch it again
+/// without another listing request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateHandle {
+    #[serde(rename = "k")]
+    pub kind: ArtKind,
+    /// CDN file path, `/` and a file name.
+    #[serde(rename = "p")]
+    pub path: String,
+    #[serde(rename = "l", default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(rename = "w", default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(rename = "h", default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+}
+
+impl CandidateHandle {
+    /// Parses a handle [`candidates`] made. The path must be a bare CDN file
+    /// name, so a handle can only ever name an image on TMDb's CDN.
+    pub fn decode(handle: &str) -> Result<Self, String> {
+        let decoded: Self =
+            serde_json::from_str(handle).map_err(|e| format!("tmdb: bad image handle: {e}"))?;
+        let name = decoded.path.strip_prefix('/').unwrap_or_default();
+        let plain = !name.is_empty()
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+        if !plain || name.starts_with('.') {
+            return Err("tmdb: bad image handle path".into());
+        }
+        Ok(decoded)
+    }
+
+    /// The CDN URL of the image: a [`PREVIEW_SIZE`] rendition or the original.
+    pub fn url(&self, preview: bool) -> String {
+        image_url(if preview { PREVIEW_SIZE } else { "original" }, &self.path)
+    }
 }
 
 /// NoFlex's own key, so metadata works without any setup. Anyone holding the
@@ -250,6 +311,16 @@ pub fn images_url(id: TmdbId, language: Option<&str>) -> String {
     url
 }
 
+/// The number in a `person/{id}` external id.
+pub fn person_id(value: &str) -> Option<u64> {
+    value.trim().strip_prefix("person/")?.parse().ok()
+}
+
+/// A person's photo listing.
+pub fn person_images_url(id: u64) -> String {
+    format!("{API_BASE}/person/{id}/images")
+}
+
 /// The number `/find` wants from a `series/{id}` or `movie/{id}` TVDB id, the
 /// forms that name a TVDB record directly. TMDb can't look up the
 /// `series/{id}/season/{n}` forms.
@@ -323,6 +394,7 @@ struct Named {
 
 #[derive(Debug, Default, Deserialize)]
 struct CastMember {
+    id: Option<u64>,
     #[serde(default)]
     name: String,
     character: Option<String>,
@@ -331,6 +403,7 @@ struct CastMember {
 
 #[derive(Debug, Default, Deserialize)]
 struct CrewMember {
+    id: Option<u64>,
     #[serde(default)]
     name: String,
     #[serde(default)]
@@ -373,6 +446,9 @@ pub struct Images {
     logos: Vec<ImageEntry>,
     #[serde(default)]
     stills: Vec<ImageEntry>,
+    /// A person's photos, from [`person_images_url`].
+    #[serde(default)]
+    profiles: Vec<ImageEntry>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -963,6 +1039,58 @@ fn best(list: &[ImageEntry], kind: ArtKind, language: Option<&str>) -> Option<Ch
         })
 }
 
+/// Every `kind` image of `id` with a file, best rated first (then most
+/// voted, then widest). Empty when `id`'s record type has no such kind.
+pub fn candidates(images: &Images, id: TmdbId, kind: ArtKind) -> Vec<Candidate> {
+    if !kinds_for(id).contains(&kind) {
+        return Vec::new();
+    }
+    let mut entries: Vec<&ImageEntry> = list_for(images, kind)
+        .iter()
+        .filter(|e| !e.file_path.is_empty())
+        .collect();
+    entries.sort_by(|a, b| {
+        b.vote_average
+            .total_cmp(&a.vote_average)
+            .then(b.vote_count.cmp(&a.vote_count))
+            .then(b.width.unwrap_or(0).cmp(&a.width.unwrap_or(0)))
+    });
+    entries
+        .into_iter()
+        .filter_map(|e| {
+            let language = e.iso_639_1.clone().filter(|l| !l.is_empty());
+            let handle = CandidateHandle {
+                kind,
+                path: e.file_path.clone(),
+                language: language.clone(),
+                width: e.width,
+                height: e.height,
+            };
+            Some(Candidate {
+                handle: serde_json::to_string(&handle).ok()?,
+                language,
+                width: e.width,
+                height: e.height,
+                score: e.vote_average,
+            })
+        })
+        .collect()
+}
+
+/// The best-rated photo in a [`person_images_url`] listing, as a CDN file path.
+pub fn best_profile(images: &Images) -> Option<String> {
+    images
+        .profiles
+        .iter()
+        .filter(|e| !e.file_path.is_empty())
+        .max_by(|a, b| {
+            a.vote_average
+                .total_cmp(&b.vote_average)
+                .then(a.vote_count.cmp(&b.vote_count))
+        })
+        .map(|e| e.file_path.clone())
+}
+
 /// One entry per kind with art, chosen for English (the language the
 /// detail request narrows images to); the host re-requests through the
 /// `image` hook in its own preferred language.
@@ -992,7 +1120,6 @@ fn art_from_path(kind: ArtKind, path: &str) -> Art {
 }
 
 fn people(credits: Credits) -> Vec<Person> {
-    let photo = |p: Option<String>| non_empty(p).map(|p| image_url("w185", &p));
     let mut out: Vec<Person> = Vec::new();
     for crew in credits.crew {
         let role = match crew.job.as_str() {
@@ -1013,7 +1140,8 @@ fn people(credits: Credits) -> Vec<Person> {
             name: crew.name,
             role: Some(role.into()),
             character: None,
-            photo_url: photo(crew.profile_path),
+            id: crew.id,
+            profile: non_empty(crew.profile_path),
         });
     }
     for cast in credits
@@ -1029,7 +1157,8 @@ fn people(credits: Credits) -> Vec<Person> {
             name: cast.name,
             role: Some("Actor".into()),
             character: non_empty(cast.character),
-            photo_url: photo(cast.profile_path),
+            id: cast.id,
+            profile: non_empty(cast.profile_path),
         });
     }
     out
@@ -1284,10 +1413,8 @@ mod tests {
         assert_eq!(p.people[0].role.as_deref(), Some("Director"));
         let neo = p.people.iter().find(|x| x.name == "Keanu Reeves").unwrap();
         assert_eq!(neo.character.as_deref(), Some("Neo"));
-        assert_eq!(
-            neo.photo_url.as_deref(),
-            Some("https://image.tmdb.org/t/p/w185/keanu.jpg")
-        );
+        assert_eq!(neo.id, Some(6384));
+        assert_eq!(neo.profile.as_deref(), Some("/keanu.jpg"));
         let kinds: Vec<ArtKind> = p.images.iter().map(|a| a.kind).collect();
         assert_eq!(
             kinds,
@@ -1504,6 +1631,63 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn candidates_rank_by_rating_and_round_trip_their_handles() {
+        let images = parse_images(IMAGES).unwrap();
+        let movie = TmdbId::Movie(603);
+        let posters = candidates(&images, movie, ArtKind::Primary);
+        assert_eq!(posters.len(), 4);
+        assert!(posters.windows(2).all(|w| w[0].score >= w[1].score));
+        let best = CandidateHandle::decode(&posters[0].handle).unwrap();
+        assert_eq!(best.path, "/poster-en-best.jpg");
+        assert_eq!(best.kind, ArtKind::Primary);
+        assert_eq!(
+            best.url(true),
+            "https://image.tmdb.org/t/p/w342/poster-en-best.jpg"
+        );
+        assert_eq!(
+            best.url(false),
+            "https://image.tmdb.org/t/p/original/poster-en-best.jpg"
+        );
+        assert!(candidates(&images, movie, ArtKind::Thumb).is_empty());
+        let season = TmdbId::Season {
+            series: 1,
+            season: 1,
+        };
+        assert!(candidates(&images, season, ArtKind::Logo).is_empty());
+    }
+
+    #[test]
+    fn handles_name_only_cdn_files() {
+        for bad in [
+            r#"{"k":"primary","p":"https://evil.example/x.jpg"}"#,
+            r#"{"k":"primary","p":"/../x.jpg"}"#,
+            r#"{"k":"primary","p":"/a/b.jpg"}"#,
+            r#"{"k":"primary","p":"/"}"#,
+            r#"{"k":"primary","p":"x.jpg"}"#,
+            "not json",
+        ] {
+            assert!(CandidateHandle::decode(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn people_are_named_by_their_tmdb_id() {
+        assert_eq!(person_id("person/6384"), Some(6384));
+        assert_eq!(person_id("movie/603"), None);
+        assert_eq!(person_id("person/x"), None);
+        let images = parse_images(
+            br#"{"profiles": [
+                {"file_path": "/low.jpg", "vote_average": 1.0},
+                {"file_path": "/high.jpg", "vote_average": 5.0},
+                {"file_path": "", "vote_average": 9.0}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(best_profile(&images).as_deref(), Some("/high.jpg"));
+        assert_eq!(best_profile(&Images::default()), None);
     }
 
     #[test]

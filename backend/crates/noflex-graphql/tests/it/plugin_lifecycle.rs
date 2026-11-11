@@ -19,7 +19,7 @@ fn sample_manifest() -> noflex_plugin_host::PluginManifest {
         plugin_id = "tmdb"
         display_name = "TMDb"
         version = "0.1.0"
-        noflex_api_version = "0.1"
+        noflex_api_version = "0.2"
         hooks = ["metadata", "image"]
     "#;
     noflex_plugin_host::PluginManifest::from_bytes(toml.as_bytes()).expect("manifest parses")
@@ -230,7 +230,7 @@ fn from_conversion_populates_correct_fields_per_variant() {
         plugin_id = "p"
         display_name = "P"
         version = "0.1.0"
-        noflex_api_version = "0.1"
+        noflex_api_version = "0.2"
         hooks = ["notifier", "made-up-hook"]
         "#,
     )

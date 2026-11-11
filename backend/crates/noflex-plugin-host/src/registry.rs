@@ -737,7 +737,14 @@ pub fn metadata_payload_from_wit(
                 name: p.name,
                 role: p.role,
                 character: p.character,
-                photo_url: p.photo_url,
+                external_ids: p
+                    .external_ids
+                    .into_iter()
+                    .map(|e| ExternalId {
+                        kind: from_wit_kind_id(e.kind),
+                        value: e.value,
+                    })
+                    .collect(),
             })
             .collect(),
         images: payload

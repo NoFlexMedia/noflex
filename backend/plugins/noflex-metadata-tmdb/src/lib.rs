@@ -14,6 +14,10 @@
 // name the parent series' TMDb id and the season/episode numbers, from
 // which the child's id follows; `fetch` then fails for numbers TMDb does
 // not have.
+//
+// Credited people carry `person/{id}` ids, which `image::fetch` answers
+// with their photo: from the credit's own profile path when a recent
+// fetch saw one, else from the person's photo listing.
 
 mod api;
 mod pace;
@@ -28,7 +32,7 @@ mod guest {
             package noflex:tmdb;
 
             world tmdb {
-                include noflex:plugin/metadata-image-plugin@0.1.0;
+                include noflex:plugin/metadata-image-plugin@0.2.0;
                 import wasi:clocks/monotonic-clock@0.3.0;
             }
         "#,
@@ -56,7 +60,7 @@ mod guest {
     use noflex_plugin_sdk::cache::TtlCache;
 
     use crate::{
-        api::{self, ArtKind, FindSource, IdKind, Images, SearchKind, TmdbId},
+        api::{self, ArtKind, CandidateHandle, FindSource, IdKind, Images, SearchKind, TmdbId},
         pace::Pacer,
     };
 
@@ -73,6 +77,10 @@ mod guest {
         /// Ten minutes covers the host fetching each kind of one record.
         static LISTINGS: RefCell<TtlCache<String, Images>> =
             RefCell::new(TtlCache::new(64, Duration::from_secs(600)));
+        /// Person id → photo path from the credits a fetch just parsed, so
+        /// the host's photo requests that follow need no listing request.
+        static PROFILES: RefCell<TtlCache<u64, String>> =
+            RefCell::new(TtlCache::new(1024, Duration::from_secs(3600)));
     }
 
     fn now() -> u64 {
@@ -223,6 +231,53 @@ mod guest {
         })
     }
 
+    fn remember_profiles(payload: &api::Payload) {
+        PROFILES.with(|c| {
+            let mut cache = c.borrow_mut();
+            for person in &payload.people {
+                if let (Some(id), Some(path)) = (person.id, &person.profile) {
+                    cache.put(id, path.clone());
+                }
+            }
+        });
+    }
+
+    /// The photo of TMDb person `id` as a CDN file path.
+    async fn profile_path(id: u64) -> Result<String, PluginError> {
+        if let Some(path) = PROFILES.with(|c| c.borrow_mut().get(&id)) {
+            return Ok(path);
+        }
+        let body = get_api(api::person_images_url(id)).await?;
+        let images = api::parse_images(&body).map_err(PluginError::Internal)?;
+        let path = api::best_profile(&images).ok_or(PluginError::NotFound)?;
+        PROFILES.with(|c| c.borrow_mut().put(id, path.clone()));
+        Ok(path)
+    }
+
+    /// `bytes` as the read end of a stream the host can drain.
+    fn stream_of(bytes: Vec<u8>) -> wit_bindgen::StreamReader<u8> {
+        let (mut writer, reader) = wit_stream::new::<u8>();
+        // The host reads only after the export returns the read end, so an
+        // inline (backpressured) write would deadlock.
+        wit_bindgen::spawn_local(async move {
+            writer.write_all(bytes).await;
+        });
+        reader
+    }
+
+    /// The image listing of `tmdb` narrowed to `language` (all languages
+    /// when `None`), from the cache or a request.
+    async fn listing(tmdb: TmdbId, language: Option<&str>) -> Result<Images, PluginError> {
+        let key = listing_key(tmdb, language);
+        if let Some(images) = LISTINGS.with(|c| c.borrow_mut().get(&key)) {
+            return Ok(images);
+        }
+        let body = get_api(api::images_url(tmdb, language)).await?;
+        let images = api::parse_images(&body).map_err(PluginError::Internal)?;
+        LISTINGS.with(|c| c.borrow_mut().put(key, images.clone()));
+        Ok(images)
+    }
+
     fn to_wit(payload: api::Payload) -> metadata::MetadataPayload {
         metadata::MetadataPayload {
             external_ids: payload
@@ -250,7 +305,14 @@ mod guest {
                     name: p.name,
                     role: p.role,
                     character: p.character,
-                    photo_url: p.photo_url,
+                    external_ids: p
+                        .id
+                        .map(|id| ExternalId {
+                            kind: ExternalIdKind::Tmdb,
+                            value: format!("person/{id}"),
+                        })
+                        .into_iter()
+                        .collect(),
                 })
                 .collect(),
             images: payload
@@ -354,6 +416,7 @@ mod guest {
             if let Ok(images) = api::parse_images_appended(&body) {
                 LISTINGS.with(|c| c.borrow_mut().put(listing_key(tmdb, Some("en")), images));
             }
+            remember_profiles(&payload);
             Ok(to_wit(payload))
         }
 
@@ -367,6 +430,7 @@ mod guest {
             }
             let body = get_api(api::details_url(tmdb)).await?;
             let children = api::parse_children(tmdb, &body).map_err(PluginError::Internal)?;
+            children.iter().for_each(remember_profiles);
             Ok(children.into_iter().map(to_wit).collect())
         }
     }
@@ -377,23 +441,31 @@ mod guest {
             kind: image::ImageKind,
             language: Option<String>,
         ) -> Result<(image::ImageMeta, wit_bindgen::StreamReader<u8>), image::PluginError> {
+            if id.kind == ExternalIdKind::Tmdb
+                && let Some(person) = api::person_id(&id.value)
+            {
+                if kind != ImageKind::Primary {
+                    return Err(PluginError::NotFound);
+                }
+                let path = profile_path(person).await?;
+                let url = api::image_url(api::PROFILE_SIZE, &path);
+                let (bytes, content_type) = download(url.clone()).await?;
+                let meta = image::ImageMeta {
+                    kind,
+                    language: None,
+                    mime: api::image_mime(content_type.as_deref(), &url),
+                    width: None,
+                    height: None,
+                };
+                return Ok((meta, stream_of(bytes)));
+            }
             let art = art_kind(kind).ok_or(PluginError::NotFound)?;
             let tmdb = resolve(&id).await?;
             if !api::kinds_for(tmdb).contains(&art) {
                 return Err(PluginError::NotFound);
             }
             let lang = language.as_deref().and_then(api::primary_language);
-            let key = listing_key(tmdb, lang.as_deref());
-            let cached = LISTINGS.with(|c| c.borrow_mut().get(&key));
-            let images = match cached {
-                Some(images) => images,
-                None => {
-                    let body = get_api(api::images_url(tmdb, lang.as_deref())).await?;
-                    let images = api::parse_images(&body).map_err(PluginError::Internal)?;
-                    LISTINGS.with(|c| c.borrow_mut().put(key, images.clone()));
-                    images
-                }
-            };
+            let images = listing(tmdb, lang.as_deref()).await?;
             let chosen =
                 api::choose(&images, tmdb, art, lang.as_deref()).ok_or(PluginError::NotFound)?;
             let (bytes, content_type) = download(chosen.url.clone()).await?;
@@ -404,13 +476,55 @@ mod guest {
                 width: chosen.width,
                 height: chosen.height,
             };
-            let (mut writer, reader) = wit_stream::new::<u8>();
-            // The host reads only after this returns the read end, so an
-            // inline (backpressured) write would deadlock.
-            wit_bindgen::spawn_local(async move {
-                writer.write_all(bytes).await;
-            });
-            Ok((meta, reader))
+            Ok((meta, stream_of(bytes)))
+        }
+
+        async fn list_candidates(
+            id: image::ExternalId,
+            kind: image::ImageKind,
+        ) -> Result<Vec<image::ImageCandidate>, image::PluginError> {
+            let Some(art) = art_kind(kind) else {
+                return Ok(Vec::new());
+            };
+            let tmdb = resolve(&id).await?;
+            if !api::kinds_for(tmdb).contains(&art) {
+                return Ok(Vec::new());
+            }
+            let images = listing(tmdb, None).await?;
+            Ok(api::candidates(&images, tmdb, art)
+                .into_iter()
+                .map(|c| image::ImageCandidate {
+                    handle: c.handle,
+                    kind,
+                    language: c.language,
+                    width: c.width,
+                    height: c.height,
+                    score: Some(c.score),
+                })
+                .collect())
+        }
+
+        async fn fetch_candidate(
+            handle: String,
+            preview: bool,
+        ) -> Result<(image::ImageMeta, wit_bindgen::StreamReader<u8>), image::PluginError> {
+            let handle = CandidateHandle::decode(&handle).map_err(PluginError::BadInput)?;
+            let url = handle.url(preview);
+            let (bytes, content_type) = download(url.clone()).await?;
+            // A preview's size is the CDN's to choose; only the original's is known.
+            let (width, height) = if preview {
+                (None, None)
+            } else {
+                (handle.width, handle.height)
+            };
+            let meta = image::ImageMeta {
+                kind: wit_kind(handle.kind),
+                language: handle.language,
+                mime: api::image_mime(content_type.as_deref(), &url),
+                width,
+                height,
+            };
+            Ok((meta, stream_of(bytes)))
         }
     }
 

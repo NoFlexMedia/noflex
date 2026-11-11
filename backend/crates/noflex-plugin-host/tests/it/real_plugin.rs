@@ -51,7 +51,7 @@ async fn loads_real_tmdb_plugin() {
 
     assert_eq!(info.id, "tmdb", "plugin_id from embedded manifest");
     assert_eq!(info.display_name, "The Movie Database");
-    assert_eq!(info.api_version, "0.1");
+    assert_eq!(info.api_version, "0.2");
     assert!(
         info.hooks.contains(&HookKind::Metadata),
         "exports metadata hook"
@@ -225,7 +225,7 @@ async fn loads_real_embeddings_plugin() {
         .unwrap_or_else(|e| panic!("load embeddings plugin: {e}"));
 
     assert_eq!(info.id, "embeddings", "plugin_id from embedded manifest");
-    assert_eq!(info.api_version, "0.1");
+    assert_eq!(info.api_version, "0.2");
     assert!(
         info.hooks.contains(&HookKind::Embedder),
         "exports embedder hook"

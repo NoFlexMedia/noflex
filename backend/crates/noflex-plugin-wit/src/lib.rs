@@ -13,16 +13,16 @@ pub const PACKAGE: &str = "noflex:plugin";
 
 /// The WIT package version this build of NoFlex understands.
 ///
-/// Plugins declare `noflex_api_version = "0.1"` in their manifest. While the
+/// Plugins declare `noflex_api_version = "0.2"` in their manifest. While the
 /// major is 0 the host requires an exact `MAJOR.MINOR` match and rejects
 /// anything else at load.
-pub const VERSION: &str = "0.1.0";
+pub const VERSION: &str = "0.2.0";
 
 /// Major component of [`VERSION`] used for the manifest compatibility check.
 pub const API_MAJOR: u32 = 0;
 
 /// Minor component of [`VERSION`].
-pub const API_MINOR: u32 = 1;
+pub const API_MINOR: u32 = 2;
 
 /// Absolute path (resolved at compile time) of this crate's `wit/` directory.
 ///

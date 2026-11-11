@@ -8,40 +8,43 @@
 // `write-for-user`. Compiled only for wasm32 — the host-testable
 // mapping lives in `crate::api`.
 //
-// Device-link flow: `link-start` POSTs `/oauth/device/code`, remembers
-// the device code in instance state (single instance, interior
-// mutability), enqueues a `poll-link` run, and returns the activation
-// URL. `poll-link` then polls `/oauth/device/token`: HTTP 400 means
-// "user hasn't authorized yet" and is answered with `more(cursor)`;
-// the scheduler re-invokes promptly with that cursor. The cursor
-// carries an attempt counter — polling gives up after
-// `MAX_POLL_ATTEMPTS` so an abandoned link cannot poll forever
-// (Trakt's device codes expire after ~10 minutes; the host paces
-// prompt re-invocations, so the cap is expressed in attempts, not
-// wall time). Terminal Trakt answers (404 invalid code, 410 expired,
-// 418 denied) end the poll immediately with `done`. Only one poll
-// chain is live at a time: a new `link-start` enqueue takes priority
-// over the previous chain's cursor.
-//
-// The user-code wart: `link-challenge` has no field for the code the
-// user must type at https://trakt.tv/activate, so `link-start` logs it
-// at info level and returns only the URL. The WIT is not bent to fit
-// Trakt; the log line is the user-facing channel until the WIT grows
-// an instructions field.
+// Device-link flow: `link-start` POSTs `/oauth/device/code`, enqueues a
+// `poll-link` run carrying the device code, and returns the activation
+// URL with the code the user types there. Each `poll-link` run waits
+// Trakt's interval on the monotonic clock, polls `/oauth/device/token`
+// once, and answers `more(cursor)` while the user hasn't authorized; the
+// host keeps one such chain per user. The cursor counts down the code's
+// lifetime, so an abandoned link stops when the code expires; `slow_down`
+// lengthens the wait. `unlink` marks the user's device code revoked, so a
+// poll already in flight can't hand tokens back after they unlinked.
 
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 use exports::noflex::plugin::{background, scrobbler, user_link};
 use noflex::plugin::{
     host_log, host_net, host_secrets, host_tasks,
-    types::{ExternalIdKind, PluginError, ScrobbleAction, ScrobbleEvent, WorkKind},
+    types::{ExternalId, ExternalIdKind, PluginError, ScrobbleAction, ScrobbleEvent, WorkKind},
 };
 
-use crate::api::{self, Action, IdKind, MediaKind, PollCursor};
+use crate::api::{self, Action, IdKind, MediaKind, PollAnswer, PollCursor, Scrobble};
 
+// The canonical `scrobbler-plugin` world plus WASI 0.3's monotonic clock,
+// whose async `wait-for` paces device-token polls without blocking the
+// instance's other calls.
 wit_bindgen::generate!({
+    inline: r#"
+        package noflex:trakt;
+
+        world trakt {
+            include noflex:plugin/scrobbler-plugin@0.2.0;
+            import wasi:clocks/monotonic-clock@0.3.0;
+        }
+    "#,
     path: "../../crates/noflex-plugin-wit/wit",
-    world: "scrobbler-plugin",
+    world: "noflex:trakt/trakt",
     generate_all,
 });
 
@@ -54,11 +57,7 @@ static NOFLEX_MANIFEST: [u8; include_bytes!("manifest.toml").len()] =
     *include_bytes!("manifest.toml");
 
 const TIMEOUT_MS: u32 = 10_000;
-
-/// Upper bound on `/oauth/device/token` polls for one link. Trakt
-/// device codes live ~10 minutes; this caps the prompt re-invocation
-/// chain regardless of the host's pacing.
-const MAX_POLL_ATTEMPTS: u32 = 120;
+const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 thread_local! {
     // In-flight device links, user id → device code. `link-start`
@@ -67,12 +66,32 @@ thread_local! {
     // cursor is what survives instance recycling; the map is the
     // single-instance coherence check on top of it.
     static PENDING: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+    // Device codes whose user unlinked while their poll may still be in
+    // flight. Only this instance's polls can race an unlink: after a
+    // restart the host no longer has the chain.
+    static REVOKED: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
 struct Trakt;
 
 fn log(level: host_log::Level, message: &str) {
     host_log::log(level, "trakt", message, &[]);
+}
+
+fn revoked(device_code: &str) -> bool {
+    REVOKED.with(|revoked| revoked.borrow().contains(device_code))
+}
+
+/// End `cursor`'s chain.
+fn finish(cursor: &PollCursor) -> background::TaskOutcome {
+    PENDING.with(|pending| {
+        let mut pending = pending.borrow_mut();
+        if pending.get(&cursor.user) == Some(&cursor.device_code) {
+            pending.remove(&cursor.user);
+        }
+    });
+    REVOKED.with(|revoked| revoked.borrow_mut().remove(&cursor.device_code));
+    background::TaskOutcome::Done
 }
 
 async fn read_client_credentials() -> Result<(String, String), PluginError> {
@@ -116,39 +135,33 @@ impl user_link::Guest for Trakt {
         }
         let device = api::parse_device_code(&response.body).map_err(PluginError::Internal)?;
 
-        PENDING.with(|pending| {
+        let replaced = PENDING.with(|pending| {
             pending
                 .borrow_mut()
-                .insert(user.clone(), device.device_code.clone());
+                .insert(user.clone(), device.device_code.clone())
         });
-        let enqueue = host_tasks::enqueue(
-            "poll-link".into(),
-            Some(PollCursor::new(user.clone(), device.device_code.clone()).encode()),
-        )
-        .await;
-        if let Err(e) = enqueue {
-            // The challenge still stands, but without the poll the link
-            // can never complete — say so loudly.
-            log(
-                host_log::Level::Error,
-                &format!("trakt: could not schedule poll-link, link will not complete: {e:?}"),
-            );
+        // A restarted link supersedes the old one, whose poll the host's new
+        // chain for this user replaces.
+        if let Some(old) = replaced {
+            REVOKED.with(|revoked| revoked.borrow_mut().insert(old));
         }
+        // The host binds the run to this call's user, so the chain can
+        // write their tokens and nobody else's.
+        host_tasks::enqueue(
+            "poll-link".into(),
+            Some(PollCursor::new(user, &device).encode()),
+        )
+        .await
+        .map_err(|e| {
+            PluginError::Unavailable(format!("trakt: could not schedule the link poll: {e:?}"))
+        })?;
 
-        // The WIT link-challenge has no user-code field (see module
-        // docs): the code goes to the log, the URL to the caller.
-        log(
-            host_log::Level::Info,
-            &format!(
-                "trakt: user {user} linking — open {} and enter code {}",
-                device.verification_url, device.user_code
-            ),
-        );
         Ok(user_link::LinkChallenge {
             auth_url: device.verification_url,
             // Opaque handle the host binds to the user; the device code
             // is exactly the handle Trakt knows this link by.
             state: device.device_code,
+            user_code: Some(device.user_code),
         })
     }
 
@@ -171,25 +184,53 @@ impl user_link::Guest for Trakt {
         }
         Ok(Vec::new())
     }
+
+    async fn unlink(user: String) -> Result<(), PluginError> {
+        if let Some(device_code) = PENDING.with(|pending| pending.borrow_mut().remove(&user)) {
+            REVOKED.with(|revoked| revoked.borrow_mut().insert(device_code));
+        }
+        let Ok(token) = host_secrets::read_for_user(user.clone(), "access_token".into()).await
+        else {
+            return Ok(());
+        };
+        let (client_id, client_secret) = read_client_credentials().await?;
+        let request = post(
+            api::REVOKE_URL,
+            api::api_headers(&client_id, None),
+            api::revoke_body(&token, &client_id, &client_secret),
+        );
+        match host_net::request(request).await {
+            Ok(response) if response.status == 200 => Ok(()),
+            Ok(response) => Err(PluginError::Unavailable(format!(
+                "trakt: revoke answered {}",
+                response.status
+            ))),
+            Err(e) => Err(PluginError::Unavailable(format!(
+                "trakt: revoke failed: {e:?}"
+            ))),
+        }
+    }
 }
 
 // -------- background hook (poll-link) --------
 
-/// One `/oauth/device/token` poll. Returns the outcome the scheduler
-/// should record; `PollCursor` in `more(...)` carries the bumped
-/// attempt counter so an abandoned link dies at `MAX_POLL_ATTEMPTS`.
+/// One paced `/oauth/device/token` poll: wait the cursor's interval, then
+/// ask once. `more(cursor)` keeps the chain going with what's left of the
+/// code's lifetime.
 async fn poll_once(mut cursor: PollCursor) -> background::TaskOutcome {
-    cursor.attempt += 1;
-    if cursor.attempt > MAX_POLL_ATTEMPTS {
+    if revoked(&cursor.device_code) {
+        return finish(&cursor);
+    }
+    let Some(wait) = cursor.next_wait() else {
         log(
-            host_log::Level::Warn,
-            &format!(
-                "trakt: giving up on device link for user {} after {} attempts",
-                cursor.user, MAX_POLL_ATTEMPTS
-            ),
+            host_log::Level::Info,
+            &format!("trakt: device link for user {} expired", cursor.user),
         );
-        PENDING.with(|pending| pending.borrow_mut().remove(&cursor.user));
-        return background::TaskOutcome::Done;
+        return finish(&cursor);
+    };
+    wasi::clocks::monotonic_clock::wait_for(wait * NANOS_PER_SEC).await;
+    if revoked(&cursor.device_code) {
+        return finish(&cursor);
     }
 
     let Ok((client_id, client_secret)) = read_client_credentials().await else {
@@ -198,8 +239,7 @@ async fn poll_once(mut cursor: PollCursor) -> background::TaskOutcome {
             host_log::Level::Error,
             "trakt: client credentials unreadable, abandoning device-link poll",
         );
-        PENDING.with(|pending| pending.borrow_mut().remove(&cursor.user));
-        return background::TaskOutcome::Done;
+        return finish(&cursor);
     };
 
     let request = post(
@@ -210,52 +250,48 @@ async fn poll_once(mut cursor: PollCursor) -> background::TaskOutcome {
     let response = match host_net::request(request).await {
         Ok(response) => response,
         Err(e) => {
-            // Transient egress failure — keep polling until the cap.
+            // Transient egress failure — keep polling until the code expires.
             log(
                 host_log::Level::Warn,
-                &format!(
-                    "trakt: device-token poll failed (attempt {}): {e:?}",
-                    cursor.attempt
-                ),
+                &format!("trakt: device-token poll failed: {e:?}"),
             );
             return background::TaskOutcome::More(cursor.encode());
         }
     };
 
-    match response.status {
-        200 => match api::parse_token_pair(&response.body) {
-            Ok(pair) => {
-                if let Err(e) = store_token_pair(&cursor.user, &pair).await {
-                    log(
+    match PollAnswer::from_status(response.status) {
+        PollAnswer::Authorized => {
+            // The user may have unlinked while the request was out.
+            if revoked(&cursor.device_code) {
+                return finish(&cursor);
+            }
+            match api::parse_token_pair(&response.body) {
+                Ok(pair) => match store_token_pair(&cursor.user, &pair).await {
+                    Ok(()) => log(
+                        host_log::Level::Info,
+                        &format!("trakt: user {} linked", cursor.user),
+                    ),
+                    Err(e) => log(
                         host_log::Level::Error,
                         &format!(
                             "trakt: could not persist tokens for user {}: {e:?}",
                             cursor.user
                         ),
-                    );
-                } else {
-                    log(
-                        host_log::Level::Info,
-                        &format!("trakt: user {} linked", cursor.user),
-                    );
-                }
-                PENDING.with(|pending| pending.borrow_mut().remove(&cursor.user));
-                background::TaskOutcome::Done
-            }
-            Err(e) => {
-                log(
+                    ),
+                },
+                Err(e) => log(
                     host_log::Level::Error,
                     &format!("trakt: unparsable token response, abandoning link: {e}"),
-                );
-                PENDING.with(|pending| pending.borrow_mut().remove(&cursor.user));
-                background::TaskOutcome::Done
+                ),
             }
-        },
-        // 400 = authorization_pending: the user hasn't entered the code
-        // yet. 429 = slow_down: same retry, Trakt is pacing us.
-        400 | 429 => background::TaskOutcome::More(cursor.encode()),
-        // 404 invalid code, 410 expired, 418 denied — terminal.
-        404 | 410 | 418 => {
+            finish(&cursor)
+        }
+        PollAnswer::Pending => background::TaskOutcome::More(cursor.encode()),
+        PollAnswer::SlowDown => {
+            cursor.slow_down();
+            background::TaskOutcome::More(cursor.encode())
+        }
+        PollAnswer::Ended => {
             log(
                 host_log::Level::Info,
                 &format!(
@@ -263,16 +299,12 @@ async fn poll_once(mut cursor: PollCursor) -> background::TaskOutcome {
                     cursor.user, response.status
                 ),
             );
-            PENDING.with(|pending| pending.borrow_mut().remove(&cursor.user));
-            background::TaskOutcome::Done
+            finish(&cursor)
         }
-        other => {
+        PollAnswer::Unexpected => {
             log(
                 host_log::Level::Warn,
-                &format!(
-                    "trakt: unexpected device-token status {other} (attempt {})",
-                    cursor.attempt
-                ),
+                &format!("trakt: unexpected device-token status {}", response.status),
             );
             background::TaskOutcome::More(cursor.encode())
         }
@@ -306,30 +338,19 @@ impl background::Guest for Trakt {
                 "trakt: unknown background task `{task}`"
             )));
         }
-        // A dynamic enqueue starts a fresh poll chain; a scheduled tick
-        // continues the cursor's chain or has nothing to do.
-        let chain = match payload {
-            Some(raw) => match PollCursor::decode(&raw) {
-                Ok(fresh) => Some(fresh),
-                Err(e) => {
-                    log(
-                        host_log::Level::Warn,
-                        &format!("trakt: dropping unparsable poll-link payload: {e}"),
-                    );
-                    None
-                }
-            },
-            None => cursor.and_then(|raw| match PollCursor::decode(&raw) {
-                Ok(chain) => Some(chain),
-                Err(e) => {
-                    log(
-                        host_log::Level::Warn,
-                        &format!("trakt: dropping unparsable poll-link cursor: {e}"),
-                    );
-                    None
-                }
-            }),
-        };
+        // A dynamic enqueue starts a fresh poll chain; a re-invocation
+        // continues the cursor's chain; a scheduled tick has neither.
+        let raw = payload.or(cursor);
+        let chain = raw.and_then(|raw| match PollCursor::decode(&raw) {
+            Ok(chain) => Some(chain),
+            Err(e) => {
+                log(
+                    host_log::Level::Warn,
+                    &format!("trakt: dropping unparsable poll-link state: {e}"),
+                );
+                None
+            }
+        });
         match chain {
             Some(chain) => Ok(poll_once(chain).await),
             None => Ok(background::TaskOutcome::Done),
@@ -349,6 +370,20 @@ impl From<ScrobbleAction> for Action {
     }
 }
 
+fn trakt_ids(ids: &[ExternalId]) -> Vec<(IdKind, &str)> {
+    ids.iter()
+        .map(|id| {
+            let kind = match id.kind {
+                ExternalIdKind::Tmdb => IdKind::Tmdb,
+                ExternalIdKind::Tvdb => IdKind::Tvdb,
+                ExternalIdKind::Imdb => IdKind::Imdb,
+                _ => IdKind::Other,
+            };
+            (kind, id.value.as_str())
+        })
+        .collect()
+}
+
 fn scrobble_request(
     event: &ScrobbleEvent,
     client_id: &str,
@@ -359,22 +394,19 @@ fn scrobble_request(
         WorkKind::Episode => MediaKind::Episode,
         _ => MediaKind::Other,
     };
-    let ids: Vec<(IdKind, &str)> = event
-        .external_ids
-        .iter()
-        .map(|id| {
-            let kind = match id.kind {
-                ExternalIdKind::Tmdb => IdKind::Tmdb,
-                ExternalIdKind::Tvdb => IdKind::Tvdb,
-                ExternalIdKind::Imdb => IdKind::Imdb,
-                _ => IdKind::Other,
-            };
-            (kind, id.value.as_str())
-        })
-        .collect();
+    let ids = trakt_ids(&event.external_ids);
+    let show_ids = trakt_ids(&event.series_external_ids);
     let action = Action::from(event.action);
-    let progress = api::progress_percent(action, event.position_ms, event.runtime_ms);
-    let body = api::scrobble_body(kind, &event.title, event.year, &ids, progress)?;
+    let body = api::scrobble_body(&Scrobble {
+        kind,
+        title: &event.title,
+        year: event.year,
+        ids: &ids,
+        show_ids: &show_ids,
+        season: event.season_number,
+        number: event.episode_number,
+        progress: api::progress_percent(action, event.position_ms, event.runtime_ms),
+    })?;
     Some(post(
         &format!("{}/scrobble/{}", api::API_BASE, action.endpoint()),
         api::api_headers(client_id, Some(token)),

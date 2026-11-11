@@ -2,7 +2,7 @@ manifest_version = 1
 plugin_id = "embeddings"
 display_name = "Local Embeddings (EmbeddingGemma 2)"
 version = "0.0.1"
-noflex_api_version = "0.1"
+noflex_api_version = "0.2"
 hooks = ["embedder"]
 capabilities = ["assets.read", "inference.run"]
 # The tokenizer's 262k-token vocabulary parses to several times its 32MB file.

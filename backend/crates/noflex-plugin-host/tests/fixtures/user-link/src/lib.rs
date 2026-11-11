@@ -37,7 +37,12 @@ impl user_link::Guest for Fixture {
         Ok(user_link::LinkChallenge {
             auth_url: format!("https://example.invalid/authorize?user={user}"),
             state: FIXTURE_STATE.into(),
+            user_code: Some("FIXTURE-CODE".into()),
         })
+    }
+
+    async fn unlink(_user: String) -> Result<(), PluginError> {
+        Ok(())
     }
 
     async fn link_complete(

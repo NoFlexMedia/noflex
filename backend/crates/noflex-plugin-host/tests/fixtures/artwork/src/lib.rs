@@ -6,6 +6,11 @@
 // bytes from `image::fetch`. Values containing `fail` make `fetch` fail;
 // values containing `noart` have no images at all. A `language` of `xx`
 // is answered with English art so the host's language fallback shows.
+// Values containing `cast` credit two people with `person/<n>` ids, the
+// second of whom (`person/2-noart`) has no photo. `list-candidates`
+// offers two candidates per served kind, with handles
+// `<value>|<kind>|<n>`; `fetch-candidate` answers any handle but
+// `missing`, reporting a width of 1 for a preview and 2 otherwise.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -21,7 +26,9 @@ static NOFLEX_MANIFEST: [u8; include_bytes!("manifest.toml").len()] =
     *include_bytes!("manifest.toml");
 
 use exports::noflex::plugin::{background, image, metadata};
-use noflex::plugin::types::{ExternalId, ExternalIdKind, ImageKind, MetadataImage, PluginError};
+use noflex::plugin::types::{
+    ExternalId, ExternalIdKind, ImageKind, MetadataImage, MetadataPerson, PluginError,
+};
 
 /// A valid 1x1 RGBA PNG.
 const PNG: &[u8] = &[
@@ -127,6 +134,22 @@ impl metadata::Guest for Fixture {
                 },
             ]
         };
+        let people = if id.value.contains("cast") {
+            ["1", "2-noart"]
+                .into_iter()
+                .map(|n| MetadataPerson {
+                    name: format!("Person {n}"),
+                    role: Some("Actor".into()),
+                    character: None,
+                    external_ids: vec![ExternalId {
+                        kind: ExternalIdKind::Tmdb,
+                        value: format!("person/{n}"),
+                    }],
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         Ok(metadata::MetadataPayload {
             title: format!("Fetched {}", id.value),
             external_ids: vec![id],
@@ -139,7 +162,7 @@ impl metadata::Guest for Fixture {
             runtime_ms: None,
             genres: vec!["Drama".into()],
             studios: Vec::new(),
-            people: Vec::new(),
+            people,
             images,
             rating: None,
             community_rating: None,
@@ -158,18 +181,38 @@ impl metadata::Guest for Fixture {
     }
 }
 
+/// Whether the fixture has art of `kind` at all.
+fn serves(kind: ImageKind) -> bool {
+    matches!(
+        kind,
+        ImageKind::Primary | ImageKind::Backdrop | ImageKind::Thumb
+    )
+}
+
+fn kind_name(kind: ImageKind) -> &'static str {
+    match kind {
+        ImageKind::Primary => "primary",
+        ImageKind::Backdrop => "backdrop",
+        _ => "thumb",
+    }
+}
+
+fn png_stream() -> wit_bindgen::StreamReader<u8> {
+    let (mut writer, reader) = wit_stream::new::<u8>();
+    // The host reads only after the export returns, so write from a task.
+    wit_bindgen::spawn_local(async move {
+        writer.write_all(PNG.to_vec()).await;
+    });
+    reader
+}
+
 impl image::Guest for Fixture {
     async fn fetch(
         id: ExternalId,
         kind: ImageKind,
         language: Option<String>,
     ) -> Result<(image::ImageMeta, wit_bindgen::StreamReader<u8>), PluginError> {
-        if id.value.contains("noart")
-            || !matches!(
-                kind,
-                ImageKind::Primary | ImageKind::Backdrop | ImageKind::Thumb
-            )
-        {
+        if id.value.contains("noart") || !serves(kind) {
             return Err(PluginError::NotFound);
         }
         let language = match language.as_deref() {
@@ -177,11 +220,6 @@ impl image::Guest for Fixture {
             _ if kind == ImageKind::Backdrop => None,
             _ => language,
         };
-        let (mut writer, reader) = wit_stream::new::<u8>();
-        // The host reads only after this returns, so write from a task.
-        wit_bindgen::spawn_local(async move {
-            writer.write_all(PNG.to_vec()).await;
-        });
         Ok((
             image::ImageMeta {
                 kind,
@@ -190,7 +228,54 @@ impl image::Guest for Fixture {
                 width: Some(1),
                 height: Some(1),
             },
-            reader,
+            png_stream(),
+        ))
+    }
+
+    async fn list_candidates(
+        id: ExternalId,
+        kind: ImageKind,
+    ) -> Result<Vec<image::ImageCandidate>, PluginError> {
+        if id.value.contains("fail") {
+            return Err(PluginError::Unavailable("fixture: list fails".into()));
+        }
+        if id.value.contains("noart") || !serves(kind) {
+            return Ok(Vec::new());
+        }
+        Ok((1..=2)
+            .map(|n| image::ImageCandidate {
+                handle: format!("{}|{}|{n}", id.value, kind_name(kind)),
+                kind,
+                language: (n == 1).then(|| "en".to_string()),
+                width: Some(2),
+                height: Some(2),
+                score: Some(1.0 / n as f32),
+            })
+            .collect())
+    }
+
+    async fn fetch_candidate(
+        handle: String,
+        preview: bool,
+    ) -> Result<(image::ImageMeta, wit_bindgen::StreamReader<u8>), PluginError> {
+        if handle == "missing" {
+            return Err(PluginError::NotFound);
+        }
+        let kind = match handle.split('|').nth(1) {
+            Some("backdrop") => ImageKind::Backdrop,
+            Some("thumb") => ImageKind::Thumb,
+            _ => ImageKind::Primary,
+        };
+        let size = if preview { 1 } else { 2 };
+        Ok((
+            image::ImageMeta {
+                kind,
+                language: None,
+                mime: "image/png".into(),
+                width: Some(size),
+                height: Some(size),
+            },
+            png_stream(),
         ))
     }
 }

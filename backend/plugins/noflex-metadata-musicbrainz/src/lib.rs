@@ -13,7 +13,7 @@ mod guest {
             package noflex:musicbrainz;
 
             world musicbrainz {
-                include noflex:plugin/metadata-plugin@0.1.0;
+                include noflex:plugin/metadata-plugin@0.2.0;
                 import wasi:clocks/monotonic-clock@0.3.0;
             }
         "#,
@@ -197,7 +197,7 @@ mod guest {
                         name: person.name,
                         role: person.role,
                         character: None,
-                        photo_url: None,
+                        external_ids: Vec::new(),
                     })
                     .collect(),
                 images: Vec::new(),

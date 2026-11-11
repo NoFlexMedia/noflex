@@ -1,4 +1,4 @@
-package noflex:plugin@0.1.0;
+package noflex:plugin@0.2.0;
 
 /// Shared types used by every hook interface and several host imports.
 ///
@@ -104,7 +104,9 @@ interface types {
         name: string,
         role: option<string>,
         character: option<string>,
-        photo-url: option<string>,
+        /// The provider's ids for the person, which its `image.fetch`
+        /// answers with their photo (kind `primary`).
+        external-ids: list<external-id>,
     }
 
     record metadata-payload {
@@ -232,8 +234,8 @@ interface types {
     }
 
     /// One scrobble occurrence. The host enriches it from storage
-    /// (kind, year, external ids, runtime) so scrobbler plugins need
-    /// no library lookups of their own.
+    /// (kind, year, external ids, runtime, and an episode's series and
+    /// numbers) so scrobbler plugins need no library lookups of their own.
     record scrobble-event {
         user: user-id,
         work: work-id,
@@ -243,9 +245,15 @@ interface types {
         /// Provider ids the work carries (tmdb, tvdb, imdb, ...) —
         /// scrobblers match on these, never on titles.
         external-ids: list<external-id>,
+        /// For an episode, the ids of its series, so a scrobbler can name it
+        /// by show, season and number; empty for anything else.
+        series-external-ids: list<external-id>,
+        /// For an episode, its season's number and its own within it.
+        season-number: option<u32>,
+        episode-number: option<u32>,
         action: scrobble-action,
-        /// Playback position when known (progress-at-stop); none on
-        /// session start/stop, which carry no position.
+        /// Playback position, on progress-at-stop. A `stopped` without one
+        /// is a title marked played; `started` never carries one.
         position-ms: option<u64>,
         /// Edition runtime when known; the plugin derives its own
         /// progress percent and watched threshold.

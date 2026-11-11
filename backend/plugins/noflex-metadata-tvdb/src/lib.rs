@@ -41,7 +41,7 @@ mod guest {
     };
     use noflex_plugin_sdk::cache::TtlCache;
 
-    use crate::api::{self, ArtKind, IdKind, SearchKind, TvdbId};
+    use crate::api::{self, ArtKind, CandidateHandle, IdKind, SearchKind, TvdbId};
 
     const TIMEOUT_MS: u32 = 15_000;
     const IMAGE_TIMEOUT_MS: u32 = 60_000;
@@ -55,6 +55,55 @@ mod guest {
         /// Every season and episode of a series needs its season ids.
         static SEASONS: RefCell<TtlCache<u64, Vec<api::SeasonRef>>> =
             RefCell::new(TtlCache::new(64, Duration::from_secs(600)));
+        /// Person id → photo URL from the credits a fetch just parsed, so the
+        /// host's photo requests that follow need no person request.
+        static PHOTOS: RefCell<TtlCache<u64, String>> =
+            RefCell::new(TtlCache::new(1024, Duration::from_secs(3600)));
+    }
+
+    fn remember_photos(payload: &api::Payload) {
+        PHOTOS.with(|c| {
+            let mut cache = c.borrow_mut();
+            for person in &payload.people {
+                if let (Some(id), Some(photo)) = (person.id, &person.photo) {
+                    cache.put(id, photo.clone());
+                }
+            }
+        });
+    }
+
+    /// The photo URL of TVDB person `id`.
+    async fn photo_of(id: u64) -> Result<String, PluginError> {
+        if let Some(photo) = PHOTOS.with(|c| c.borrow_mut().get(&id)) {
+            return Ok(photo);
+        }
+        let body = get_api(api::person_url(id)).await?;
+        let photo = api::parse_person_photo(&body)
+            .map_err(PluginError::Internal)?
+            .ok_or(PluginError::NotFound)?;
+        PHOTOS.with(|c| c.borrow_mut().put(id, photo.clone()));
+        Ok(photo)
+    }
+
+    /// Every image `tvdb` lists, from the cache or its record.
+    async fn artwork(tvdb: TvdbId) -> Result<Vec<api::ArtEntry>, PluginError> {
+        if let Some(entries) = ART.with(|c| c.borrow_mut().get(&tvdb.path())) {
+            return Ok(entries);
+        }
+        let (_, entries) = details(tvdb).await?;
+        ART.with(|c| c.borrow_mut().put(tvdb.path(), entries.clone()));
+        Ok(entries)
+    }
+
+    /// `bytes` as the read end of a stream the host can drain.
+    fn stream_of(bytes: Vec<u8>) -> wit_bindgen::StreamReader<u8> {
+        let (mut writer, reader) = wit_stream::new::<u8>();
+        // The host reads only after the export returns the read end, so an
+        // inline (backpressured) write would deadlock.
+        wit_bindgen::spawn_local(async move {
+            writer.write_all(bytes).await;
+        });
+        reader
     }
 
     fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
@@ -302,7 +351,14 @@ mod guest {
                     name: p.name,
                     role: p.role,
                     character: p.character,
-                    photo_url: p.photo_url,
+                    external_ids: p
+                        .id
+                        .map(|id| ExternalId {
+                            kind: ExternalIdKind::Tvdb,
+                            value: format!("people/{id}"),
+                        })
+                        .into_iter()
+                        .collect(),
                 })
                 .collect(),
             images: payload
@@ -397,6 +453,7 @@ mod guest {
             let tvdb = resolve(&id).await?;
             let (payload, art) = details(tvdb).await?;
             ART.with(|c| c.borrow_mut().put(tvdb.path(), art));
+            remember_photos(&payload);
             Ok(to_wit(payload))
         }
 
@@ -417,6 +474,7 @@ mod guest {
                 }
                 TvdbId::Movie(_) | TvdbId::Episode { .. } => Vec::new(),
             };
+            children.iter().for_each(remember_photos);
             Ok(children.into_iter().map(to_wit).collect())
         }
     }
@@ -427,17 +485,26 @@ mod guest {
             kind: image::ImageKind,
             language: Option<String>,
         ) -> Result<(image::ImageMeta, wit_bindgen::StreamReader<u8>), image::PluginError> {
+            if id.kind == ExternalIdKind::Tvdb
+                && let Some(person) = api::person_id(&id.value)
+            {
+                if kind != ImageKind::Primary {
+                    return Err(PluginError::NotFound);
+                }
+                let url = photo_of(person).await?;
+                let (bytes, content_type) = download(url.clone()).await?;
+                let meta = image::ImageMeta {
+                    kind,
+                    language: None,
+                    mime: api::image_mime(content_type.as_deref(), &url),
+                    width: None,
+                    height: None,
+                };
+                return Ok((meta, stream_of(bytes)));
+            }
             let art = art_kind(kind).ok_or(PluginError::NotFound)?;
             let tvdb = resolve(&id).await?;
-            let cached = ART.with(|c| c.borrow_mut().get(&tvdb.path()));
-            let entries = match cached {
-                Some(entries) => entries,
-                None => {
-                    let (_, entries) = details(tvdb).await?;
-                    ART.with(|c| c.borrow_mut().put(tvdb.path(), entries.clone()));
-                    entries
-                }
-            };
+            let entries = artwork(tvdb).await?;
             let chosen = api::choose(&entries, tvdb, art, language.as_deref())
                 .ok_or(PluginError::NotFound)?;
             let (bytes, content_type) = download(chosen.url.clone()).await?;
@@ -448,13 +515,51 @@ mod guest {
                 width: chosen.width,
                 height: chosen.height,
             };
-            let (mut writer, reader) = wit_stream::new::<u8>();
-            // The host reads only after this returns the read end, so an
-            // inline (backpressured) write would deadlock.
-            wit_bindgen::spawn_local(async move {
-                writer.write_all(bytes).await;
-            });
-            Ok((meta, reader))
+            Ok((meta, stream_of(bytes)))
+        }
+
+        async fn list_candidates(
+            id: image::ExternalId,
+            kind: image::ImageKind,
+        ) -> Result<Vec<image::ImageCandidate>, image::PluginError> {
+            let Some(art) = art_kind(kind) else {
+                return Ok(Vec::new());
+            };
+            let tvdb = resolve(&id).await?;
+            let entries = artwork(tvdb).await?;
+            Ok(api::candidates(&entries, tvdb, art)
+                .into_iter()
+                .map(|c| image::ImageCandidate {
+                    handle: c.handle,
+                    kind,
+                    language: c.language,
+                    width: c.width,
+                    height: c.height,
+                    score: Some(c.score),
+                })
+                .collect())
+        }
+
+        async fn fetch_candidate(
+            handle: String,
+            preview: bool,
+        ) -> Result<(image::ImageMeta, wit_bindgen::StreamReader<u8>), image::PluginError> {
+            let handle = CandidateHandle::decode(&handle).map_err(PluginError::BadInput)?;
+            let url = handle.url(preview).to_string();
+            let (bytes, content_type) = download(url.clone()).await?;
+            let (width, height) = if url == handle.image {
+                (handle.width, handle.height)
+            } else {
+                (None, None)
+            };
+            let meta = image::ImageMeta {
+                kind: wit_kind(handle.kind),
+                language: handle.language,
+                mime: api::image_mime(content_type.as_deref(), &url),
+                width,
+                height,
+            };
+            Ok((meta, stream_of(bytes)))
         }
     }
 

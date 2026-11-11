@@ -1,4 +1,4 @@
-package noflex:plugin@0.1.0;
+package noflex:plugin@0.2.0;
 
 /// The umbrella world a NoFlex plugin targets. Plugins implement any subset
 /// of the hook exports; the host introspects the resulting `.wasm`

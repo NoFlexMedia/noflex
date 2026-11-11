@@ -89,20 +89,29 @@ fn err_kind(err: &PluginError) -> &'static str {
 /// Flat, assertion-friendly one-line encoding of a scrobble event,
 /// suffixed with the outcomes of the read/rotate secret round-trip.
 fn encode(event: &ScrobbleEvent, token_read: &str, token_write: &str) -> String {
-    let ids = event
-        .external_ids
-        .iter()
-        .map(|id| format!("{}={}", id_kind_str(&id.kind), id.value))
-        .collect::<Vec<_>>()
-        .join(",");
+    let ids = |ids: &[noflex::plugin::types::ExternalId]| {
+        ids.iter()
+            .map(|id| format!("{}={}", id_kind_str(&id.kind), id.value))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
     format!(
-        "scrobble|user={}|work={}|kind={}|title={}|year={}|ids={}|action={}|pos={}|runtime={}|read={}|write={}",
+        "scrobble|user={}|work={}|kind={}|title={}|year={}|ids={}|series={}|season={}|episode={}|action={}|pos={}|runtime={}|read={}|write={}",
         event.user,
         event.work,
         kind_str(&event.kind),
         event.title,
         event.year.map(|y| y.to_string()).unwrap_or_default(),
-        ids,
+        ids(&event.external_ids),
+        ids(&event.series_external_ids),
+        event
+            .season_number
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
+        event
+            .episode_number
+            .map(|n| n.to_string())
+            .unwrap_or_default(),
         action_str(&event.action),
         event.position_ms.map(|p| p.to_string()).unwrap_or_default(),
         event.runtime_ms.map(|r| r.to_string()).unwrap_or_default(),
@@ -151,7 +160,12 @@ impl user_link::Guest for Fixture {
         Ok(user_link::LinkChallenge {
             auth_url: format!("https://example.invalid/authorize?user={user}"),
             state: FIXTURE_STATE.into(),
+            user_code: None,
         })
+    }
+
+    async fn unlink(_user: String) -> Result<(), PluginError> {
+        Ok(())
     }
 
     async fn link_complete(

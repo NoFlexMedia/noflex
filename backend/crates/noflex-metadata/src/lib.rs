@@ -14,13 +14,17 @@ pub struct TagDraft {
     pub namespace: &'static str,
     pub display: String,
     /// Stored on the tag itself, so only what holds wherever it's used: a
-    /// person's photo.
+    /// person's provider ids, under [`PERSON_IDS_KEY`].
     pub metadata: serde_json::Value,
     /// Stored on this work's assignment of the tag: a person's billing `order`
     /// and `credits`, each with a `role` and `character` when known. Empty
     /// otherwise.
     pub assignment: serde_json::Value,
 }
+
+/// Where a person tag's metadata keeps the providers' ids for them, as a list
+/// of [`ExternalId`]s.
+pub const PERSON_IDS_KEY: &str = "external_ids";
 
 pub struct ApplyReport {
     /// Fields actually overwritten (unlocked + payload had a value).
@@ -150,9 +154,10 @@ pub fn apply_payload(work: &mut Work, payload: &MetadataPayload) -> ApplyReport 
             tags.push(TagDraft {
                 namespace: "person",
                 display: person.name.clone(),
-                metadata: match &person.photo_url {
-                    Some(photo_url) => serde_json::json!({ "photo_url": photo_url }),
-                    None => serde_json::json!({}),
+                metadata: if person.external_ids.is_empty() {
+                    serde_json::json!({})
+                } else {
+                    serde_json::json!({ PERSON_IDS_KEY: person.external_ids })
                 },
                 assignment: serde_json::json!({ "order": order, "credits": [credit] }),
             });
@@ -455,13 +460,13 @@ mod tests {
                 name: "Director One".into(),
                 role: Some("Director".into()),
                 character: None,
-                photo_url: None,
+                external_ids: vec![],
             },
             MetadataPerson {
                 name: "Actor Two".into(),
                 role: Some("Actor".into()),
                 character: Some("Protagonist".into()),
-                photo_url: Some("https://img/p.jpg".into()),
+                external_ids: vec![],
             },
         ];
 
@@ -496,19 +501,22 @@ mod tests {
                 name: "Director One".into(),
                 role: Some("Director".into()),
                 character: None,
-                photo_url: None,
+                external_ids: vec![],
             },
             MetadataPerson {
                 name: "Actor Two".into(),
                 role: None,
                 character: Some("Protagonist".into()),
-                photo_url: Some("https://img/p.jpg".into()),
+                external_ids: vec![ExternalId {
+                    kind: ExternalIdKind::Tmdb,
+                    value: "person/2".into(),
+                }],
             },
             MetadataPerson {
                 name: "Director One".into(),
                 role: Some("Actor".into()),
                 character: Some("Cameo".into()),
-                photo_url: None,
+                external_ids: vec![],
             },
         ];
 
@@ -528,7 +536,7 @@ mod tests {
         );
         assert_eq!(
             report.tags[1].metadata,
-            serde_json::json!({ "photo_url": "https://img/p.jpg" })
+            serde_json::json!({ "external_ids": [{ "kind": "Tmdb", "value": "person/2" }] })
         );
         assert_eq!(
             report.tags[1].assignment,

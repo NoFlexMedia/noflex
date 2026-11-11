@@ -1,4 +1,4 @@
-package noflex:plugin@0.1.0;
+package noflex:plugin@0.2.0;
 
 /// Remote metadata provider — fetches metadata from external sources
 /// (TMDb, TVDB, MusicBrainz, AniDB, ...). Multiple providers compete via the
@@ -35,7 +35,7 @@ interface metadata {
 
 /// Image provider — returns binary image bytes plus metadata.
 ///
-/// The payload crosses the boundary as a `stream<u8>`; the host reads the
+/// Payloads cross the boundary as a `stream<u8>`; the host reads the
 /// stream to completion into a contiguous buffer because upper layers
 /// (cache, GraphQL) keep `Vec<u8>`. The host enforces a per-call memory cap
 /// (manifest-overridable) so a misbehaving plugin streaming a multi-GB blob
@@ -43,11 +43,42 @@ interface metadata {
 interface image {
     use types.{external-id, image-kind, image-meta, plugin-error};
 
+    /// One image a provider offers for a record, for an administrator
+    /// choosing artwork by hand.
+    record image-candidate {
+        /// Plugin-owned and opaque. The host hands it back to
+        /// `fetch-candidate` unchanged and never reads it, so a plugin may
+        /// encode whatever it needs to fetch the image again.
+        handle: string,
+        kind: image-kind,
+        /// ISO 639-1 code of the text on the image; none when text-free.
+        language: option<string>,
+        width: option<u32>,
+        height: option<u32>,
+        /// The provider's own rating of the image, higher is better. The
+        /// host only compares scores from one provider.
+        score: option<f32>,
+    }
+
+    /// The best `kind` image of the record `id` names, in `language` when
+    /// the provider has it. `id` may also be one of a person's ids from
+    /// `metadata-person.external-ids`, with `kind` `primary` for their photo.
     fetch: async func(
         id: external-id,
         kind: image-kind,
         language: option<string>,
     ) -> result<tuple<image-meta, stream<u8>>, plugin-error>;
+
+    /// Every `kind` image the provider has for the record `id` names, best
+    /// first. Empty when it has none; `not-found` only for an unknown record.
+    list-candidates: async func(id: external-id, kind: image-kind)
+        -> result<list<image-candidate>, plugin-error>;
+
+    /// The image a `list-candidates` answer's `handle` names. `preview`
+    /// asks for a small rendition, a few hundred pixels across, for a
+    /// picker's grid; otherwise the full-size original.
+    fetch-candidate: async func(handle: string, preview: bool)
+        -> result<tuple<image-meta, stream<u8>>, plugin-error>;
 }
 
 /// Subtitle provider — searches external subtitle sources (OpenSubtitles,
@@ -82,7 +113,8 @@ interface post-scan {
 /// Per-user account linking (Trakt-style OAuth). The plugin owns the
 /// provider dance; the host owns token storage — plugins never persist
 /// per-user tokens themselves, they hand them to the host at link time
-/// and read them back through `host-secrets.read-for-user`.
+/// and read them back through `host-secrets.read-for-user`. Every call
+/// acts for its `user`.
 interface user-link {
     use types.{user-id, plugin-error};
 
@@ -93,6 +125,9 @@ interface user-link {
         /// Opaque state the host echoes back to `link-complete` when the
         /// provider redirects. The host binds it to the linking user.
         state: string,
+        /// The code a device flow asks the user to enter at `auth-url`;
+        /// none for a redirect flow.
+        user-code: option<string>,
     }
 
     record user-secret {
@@ -114,6 +149,12 @@ interface user-link {
         state: string,
         callback-query: string,
     ) -> result<list<user-secret>, plugin-error>;
+
+    /// `user` is unlinking: abandon any link they have in progress and,
+    /// best-effort, revoke their grant upstream. Their secrets are still
+    /// readable during the call; the host deletes them once it returns,
+    /// whatever it returns, and stops their background chains first.
+    unlink: async func(user: user-id) -> result<_, plugin-error>;
 }
 
 /// Interactive authentication through a verified external identity provider.
@@ -153,9 +194,8 @@ interface notifier {
     notify: async func(event: notify-event) -> result<_, plugin-error>;
 }
 
-/// Per-user watch-history sync (Trakt, ...). Events derive from the
-/// domain bus: playback-session start/stop, progress-at-stop, and
-/// manual mark-played. The host enriches each event from storage, so
+/// Per-user scrobbling (Trakt, ...). Events derive from the domain bus:
+/// playback-session start, progress-at-stop, and manual mark-played. The host enriches each event from storage, so
 /// the plugin's only lookup is `host-secrets.read-for-user` for the
 /// acting user's token; users who never linked are skipped.
 interface scrobbler {

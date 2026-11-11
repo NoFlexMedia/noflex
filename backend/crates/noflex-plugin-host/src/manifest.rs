@@ -34,7 +34,7 @@ pub struct PluginManifest {
     pub plugin_id: String,
     pub display_name: String,
     pub version: String,
-    /// `MAJOR.MINOR`, e.g. `"0.1"`. Pre-1.0 the host requires an exact
+    /// `MAJOR.MINOR`, e.g. `"0.2"`. Pre-1.0 the host requires an exact
     /// match with its own API version; see [`Self::check_api_compat`].
     pub noflex_api_version: String,
     #[serde(default)]
@@ -535,13 +535,13 @@ mod tests {
             plugin_id = "tmdb"
             display_name = "TMDb"
             version = "0.1.0"
-            noflex_api_version = "0.1"
+            noflex_api_version = "0.2"
             hooks = ["metadata", "image"]
         "#;
         let m = PluginManifest::from_bytes(toml.as_bytes()).expect("parses");
         assert_eq!(m.plugin_id, "tmdb");
         assert_eq!(m.hooks, vec!["metadata".to_string(), "image".to_string()]);
-        assert_eq!(m.api_major_minor().unwrap(), (0, 1));
+        assert_eq!(m.api_major_minor().unwrap(), (0, 2));
     }
 
     #[test]
@@ -653,7 +653,7 @@ mod tests {
             plugin_id = "intro"
             display_name = "Intro Detector"
             version = "0.1.0"
-            noflex_api_version = "0.1"
+            noflex_api_version = "0.2"
             hooks = ["background"]
             capabilities = ["background"]
 
@@ -683,7 +683,7 @@ mod tests {
                 plugin_id = "p"
                 display_name = "P"
                 version = "0.1.0"
-                noflex_api_version = "0.1"
+                noflex_api_version = "0.2"
                 secrets_read = ["token"]
             "#,
         )
@@ -696,7 +696,7 @@ mod tests {
                 plugin_id = "p"
                 display_name = "P"
                 version = "0.1.0"
-                noflex_api_version = "0.1"
+                noflex_api_version = "0.2"
                 capabilities = ["user-secrets.write"]
                 user_secrets_write = ["token"]
             "#,
@@ -712,7 +712,7 @@ mod tests {
             plugin_id = "intro"
             display_name = "Intro Detector"
             version = "0.1.0"
-            noflex_api_version = "0.1"
+            noflex_api_version = "0.2"
 
             [[tasks]]
             name = "sweep"
@@ -729,7 +729,7 @@ mod tests {
             plugin_id = "potion"
             display_name = "Potion"
             version = "0.1.0"
-            noflex_api_version = "0.1"
+            noflex_api_version = "0.2"
             hooks = ["embedder"]
             capabilities = ["assets.read"]
 
@@ -747,7 +747,7 @@ mod tests {
         let base = |extra: &str| {
             format!(
                 "manifest_version = 1\nplugin_id = \"p\"\ndisplay_name = \"P\"\n\
-                 version = \"0.1.0\"\nnoflex_api_version = \"0.1\"\n{extra}"
+                 version = \"0.1.0\"\nnoflex_api_version = \"0.2\"\n{extra}"
             )
         };
         let no_table =
@@ -778,7 +778,7 @@ mod tests {
             plugin_id = "gotify"
             display_name = "Gotify"
             version = "0.1.0"
-            noflex_api_version = "0.1"
+            noflex_api_version = "0.2"
             hooks = ["notifier"]
         "#;
         let m = PluginManifest::from_bytes(toml.as_bytes()).expect("parses");
@@ -795,7 +795,7 @@ mod tests {
             plugin_id = "gotify"
             display_name = "Gotify"
             version = "0.1.0"
-            noflex_api_version = "0.1"
+            noflex_api_version = "0.2"
             hooks = ["notifier"]
             events = ["scan-started", "scan-completed"]
         "#;
@@ -810,7 +810,7 @@ mod tests {
         let base = |extra: &str| {
             format!(
                 "manifest_version = 1\nplugin_id = \"p\"\ndisplay_name = \"P\"\n\
-                 version = \"0.1.0\"\nnoflex_api_version = \"0.1\"\n{extra}"
+                 version = \"0.1.0\"\nnoflex_api_version = \"0.2\"\n{extra}"
             )
         };
         let unknown = PluginManifest::from_bytes(
@@ -832,7 +832,7 @@ mod tests {
         let base = |body: &str| {
             format!(
                 "manifest_version = 1\nplugin_id = \"p\"\ndisplay_name = \"P\"\n\
-                 version = \"0.1.0\"\nnoflex_api_version = \"0.1\"\n\
+                 version = \"0.1.0\"\nnoflex_api_version = \"0.2\"\n\
                  capabilities = [\"background\"]\n{body}"
             )
         };

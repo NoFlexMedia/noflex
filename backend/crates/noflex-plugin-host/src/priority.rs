@@ -285,6 +285,7 @@ mod tests {
             memory_limit_mb: None,
             tasks: vec![],
             embedding: None,
+            settings: vec![],
         }
     }
 

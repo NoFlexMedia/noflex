@@ -92,6 +92,153 @@ pub struct PluginManifest {
     /// whose vector length differs from `dimensions`.
     #[serde(default)]
     pub embedding: Option<EmbeddingClaim>,
+    /// Settings an administrator can edit from the admin UI, each a
+    /// top-level key of the plugin's config stanza (or, for a
+    /// [`SettingKind::Secret`], a key of `secrets_read`). Validated by
+    /// [`Self::check_contract`].
+    #[serde(default)]
+    pub settings: Vec<SettingSpec>,
+}
+
+/// One `[[settings]]` entry of a manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingSpec {
+    /// A top-level key of the config stanza `host-config.read` returns,
+    /// or for a secret, the key `host-secrets.read` takes.
+    pub key: String,
+    /// Shown beside the field. Sentence case.
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub kind: SettingKind,
+    /// Whether the plugin can't work without a value. The host still loads
+    /// it without one; an administrator just can't clear the last source.
+    #[serde(default)]
+    pub required: bool,
+    /// The values a [`SettingKind::Choice`] allows, and only for that kind.
+    #[serde(default)]
+    pub choices: Option<Vec<String>>,
+    /// Handed to the guest when neither an administrator nor config.toml
+    /// sets the key. Must match `kind`; never allowed for a secret.
+    #[serde(default)]
+    pub default: Option<toml::Value>,
+}
+
+/// What a [`SettingSpec`] holds, which picks its form field and how a value
+/// is checked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Enum)]
+#[serde(rename_all = "lowercase")]
+#[graphql(name = "PluginSettingKind")]
+pub enum SettingKind {
+    Text,
+    /// An absolute `http` or `https` URL.
+    Url,
+    /// Read through `host-secrets.read`, never `host-config.read`, and
+    /// never readable back.
+    Secret,
+    Boolean,
+    /// A signed 64-bit integer.
+    Integer,
+    /// One of the setting's `choices`.
+    Choice,
+}
+
+impl SettingSpec {
+    /// Check `raw` against this setting's kind and return the value the
+    /// guest gets: a TOML boolean or integer for those kinds, else a string.
+    ///
+    /// # Errors
+    ///
+    /// A client-safe reason when `raw` isn't a value of the kind.
+    pub fn parse_value(&self, raw: &str) -> Result<toml::Value, String> {
+        match self.kind {
+            SettingKind::Text | SettingKind::Secret => Ok(toml::Value::String(raw.to_string())),
+            SettingKind::Url => {
+                let url = url::Url::parse(raw.trim()).map_err(|_| "isn't a URL".to_string())?;
+                if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
+                    return Err("must be an http or https URL".into());
+                }
+                Ok(toml::Value::String(raw.trim().to_string()))
+            }
+            SettingKind::Boolean => match raw {
+                "true" => Ok(toml::Value::Boolean(true)),
+                "false" => Ok(toml::Value::Boolean(false)),
+                _ => Err("must be true or false".into()),
+            },
+            SettingKind::Integer => raw
+                .trim()
+                .parse::<i64>()
+                .map(toml::Value::Integer)
+                .map_err(|_| "must be a whole number".into()),
+            SettingKind::Choice => {
+                let choices = self.choices.as_deref().unwrap_or_default();
+                if choices.iter().any(|c| c == raw) {
+                    Ok(toml::Value::String(raw.to_string()))
+                } else {
+                    Err(format!("must be one of {}", choices.join(", ")))
+                }
+            }
+        }
+    }
+
+    /// The manifest `default` in the string form clients and storage use.
+    pub fn default_string(&self) -> Option<String> {
+        self.default.as_ref().map(setting_string)
+    }
+
+    fn check(&self, manifest: &PluginManifest) -> Result<(), String> {
+        let key = &self.key;
+        if key.is_empty() || key.len() > crate::dispatch::MAX_SECRET_KEY_BYTES {
+            return Err("a setting's key is empty or too long".into());
+        }
+        if self.label.trim().is_empty() {
+            return Err(format!("setting `{key}` has no label"));
+        }
+        match (self.kind, &self.choices) {
+            (SettingKind::Choice, Some(choices)) if !choices.is_empty() => {}
+            (SettingKind::Choice, _) => {
+                return Err(format!("choice setting `{key}` lists no choices"));
+            }
+            (_, Some(_)) => return Err(format!("setting `{key}` has choices but isn't a choice")),
+            (_, None) => {}
+        }
+        if self.kind == SettingKind::Secret {
+            if self.default.is_some() {
+                return Err(format!("secret setting `{key}` has a default"));
+            }
+            if !manifest.secrets_read.iter().any(|k| k == key) {
+                return Err(format!(
+                    "secret setting `{key}` isn't declared in secrets_read"
+                ));
+            }
+        }
+        if let Some(default) = &self.default {
+            let matches = match (self.kind, default) {
+                (SettingKind::Boolean, toml::Value::Boolean(_))
+                | (SettingKind::Integer, toml::Value::Integer(_)) => true,
+                (
+                    SettingKind::Text | SettingKind::Url | SettingKind::Choice,
+                    toml::Value::String(s),
+                ) => self.parse_value(s).is_ok(),
+                _ => false,
+            };
+            if !matches {
+                return Err(format!(
+                    "setting `{key}` has a default that doesn't fit its kind"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A setting's value as clients see it and storage keeps it: a string as
+/// itself, anything else in TOML syntax (`true`, `42`).
+pub(crate) fn setting_string(value: &toml::Value) -> String {
+    match value {
+        toml::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
 }
 
 /// The `[embedding]` table of an embedder plugin's manifest.
@@ -321,7 +468,19 @@ impl PluginManifest {
         if self.memory_limit_mb == Some(0) {
             return Err(reject("memory_limit_mb must be greater than zero".into()));
         }
-        self.check_capabilities(path)
+        self.check_capabilities(path)?;
+        for (index, setting) in self.settings.iter().enumerate() {
+            if self.settings[..index].iter().any(|s| s.key == setting.key) {
+                return Err(reject(format!("duplicate setting `{}`", setting.key)));
+            }
+            setting.check(self).map_err(reject)?;
+        }
+        Ok(())
+    }
+
+    /// The `[[settings]]` entry for `key`, if the manifest declares one.
+    pub fn setting(&self, key: &str) -> Option<&SettingSpec> {
+        self.settings.iter().find(|s| s.key == key)
     }
 
     fn check_capabilities(&self, path: &Path) -> Result<(), HostError> {
@@ -825,6 +984,110 @@ mod tests {
         let no_hook = PluginManifest::from_bytes(base("events = [\"scan-started\"]").as_bytes())
             .expect("parses");
         assert!(no_hook.check_events(Path::new("p.wasm")).is_err());
+    }
+
+    #[test]
+    fn settings_are_checked_against_their_kind() {
+        let check = |settings: &str| {
+            PluginManifest::from_bytes(
+                format!(
+                    "manifest_version = 1\nplugin_id = \"p\"\ndisplay_name = \"P\"\n\
+                     version = \"0.1.0\"\nnoflex_api_version = \"0.1\"\n\
+                     capabilities = [\"secrets.read\"]\nsecrets_read = [\"token\"]\n{settings}"
+                )
+                .as_bytes(),
+            )
+            .unwrap()
+            .check_contract(Path::new("p.wasm"))
+        };
+        check(
+            r#"
+            [[settings]]
+            key = "url"
+            label = "Endpoint"
+            kind = "url"
+            required = true
+            default = "https://example.com/hook"
+            [[settings]]
+            key = "mode"
+            label = "Mode"
+            kind = "choice"
+            choices = ["fast", "slow"]
+            default = "fast"
+            [[settings]]
+            key = "retries"
+            label = "Retries"
+            kind = "integer"
+            default = 3
+            [[settings]]
+            key = "token"
+            label = "Token"
+            kind = "secret"
+            "#,
+        )
+        .expect("a valid schema");
+
+        for (why, settings) in [
+            (
+                "duplicate key",
+                "[[settings]]\nkey = \"a\"\nlabel = \"A\"\nkind = \"text\"\n\
+                 [[settings]]\nkey = \"a\"\nlabel = \"A\"\nkind = \"boolean\"",
+            ),
+            (
+                "choice without choices",
+                "[[settings]]\nkey = \"a\"\nlabel = \"A\"\nkind = \"choice\"",
+            ),
+            (
+                "choices on text",
+                "[[settings]]\nkey = \"a\"\nlabel = \"A\"\nkind = \"text\"\nchoices = [\"x\"]",
+            ),
+            (
+                "default outside the choices",
+                "[[settings]]\nkey = \"a\"\nlabel = \"A\"\nkind = \"choice\"\n\
+                 choices = [\"x\"]\ndefault = \"y\"",
+            ),
+            (
+                "string default for an integer",
+                "[[settings]]\nkey = \"a\"\nlabel = \"A\"\nkind = \"integer\"\ndefault = \"3\"",
+            ),
+            (
+                "secret with a default",
+                "[[settings]]\nkey = \"token\"\nlabel = \"T\"\nkind = \"secret\"\ndefault = \"x\"",
+            ),
+            (
+                "secret outside secrets_read",
+                "[[settings]]\nkey = \"other\"\nlabel = \"T\"\nkind = \"secret\"",
+            ),
+        ] {
+            assert!(check(settings).is_err(), "accepted {why}");
+        }
+    }
+
+    #[test]
+    fn setting_values_parse_by_kind() {
+        let spec = |kind, choices: Option<Vec<String>>| SettingSpec {
+            key: "k".into(),
+            label: "K".into(),
+            description: None,
+            kind,
+            required: false,
+            choices,
+            default: None,
+        };
+        let url = spec(SettingKind::Url, None);
+        assert!(url.parse_value("https://ntfy.example.com/noflex").is_ok());
+        for bad in ["ftp://example.com", "example.com", "file:///etc/passwd"] {
+            assert!(url.parse_value(bad).is_err(), "accepted {bad}");
+        }
+        let integer = spec(SettingKind::Integer, None);
+        assert_eq!(integer.parse_value("42"), Ok(toml::Value::Integer(42)));
+        assert!(integer.parse_value("4.2").is_err());
+        let boolean = spec(SettingKind::Boolean, None);
+        assert_eq!(boolean.parse_value("true"), Ok(toml::Value::Boolean(true)));
+        assert!(boolean.parse_value("yes").is_err());
+        let choice = spec(SettingKind::Choice, Some(vec!["a".into(), "b".into()]));
+        assert!(choice.parse_value("b").is_ok());
+        assert!(choice.parse_value("c").is_err());
     }
 
     #[test]

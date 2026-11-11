@@ -51,8 +51,8 @@ pub use events::{DiscoveredEvent, LifecycleBus, PluginLifecycleEvent, UnloadReas
 pub use inference::{Inference, InferenceConfig, InferenceDevice};
 pub use intro::spawn_intro_detector_worker;
 pub use manifest::{
-    EmbeddingClaim, HookKind, ManifestParseError, PluginManifest, PriorityKey, TaskRegistration,
-    WorkKindFilter,
+    EmbeddingClaim, HookKind, ManifestParseError, PluginManifest, PriorityKey, SettingKind,
+    SettingSpec, TaskRegistration, WorkKindFilter,
 };
 pub use metadata_service::{
     ArtworkCandidate, AutoIdentify, MetadataError, MetadataService, ServableImage,

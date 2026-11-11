@@ -124,6 +124,9 @@ pub struct BundleOptions {
     pub target: String,
     /// Reuse a finished `ffmpeg-build` rather than compiling one.
     pub ffmpeg_dir: Option<PathBuf>,
+    /// Embed this build of the web client rather than building one, so every
+    /// platform's bundle serves the same one.
+    pub web_dir: Option<PathBuf>,
     /// Cargo profile for the server. Release takes minutes of link-time
     /// optimization, which a layout check doesn't need.
     pub profile: String,
@@ -143,10 +146,16 @@ pub fn bundle(root: &Path, options: &BundleOptions) -> Result<()> {
     std::fs::create_dir_all(&out)?;
     std::fs::create_dir_all(&cache)?;
 
-    println!("==> building the web client");
-    let web = root.join("web");
-    run_in(&web, "npm", &["ci", "--no-audit", "--no-fund"])?;
-    run_in(&web, "npm", &["run", "build"])?;
+    let web_dir = match &options.web_dir {
+        Some(dir) => std::path::absolute(dir)?,
+        None => {
+            println!("==> building the web client");
+            let web = root.join("web");
+            run_in(&web, "npm", &["ci", "--no-audit", "--no-fund"])?;
+            run_in(&web, "npm", &["run", "build"])?;
+            web.join("build")
+        }
+    };
 
     println!("==> building noflex-server for {target}");
     let backend = root.join("backend");
@@ -161,6 +170,7 @@ pub fn bundle(root: &Path, options: &BundleOptions) -> Result<()> {
         .current_dir(&backend)
         .args([subcommand, "-p", "noflex-server", "--target", &cargo_target])
         .args(["--profile", &options.profile])
+        .env("NOFLEX_WEB_DIR", &web_dir)
         .status()
         .context("run cargo")?;
     if !status.success() {

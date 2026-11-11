@@ -92,10 +92,11 @@ COMMANDS:
                                Needs Docker or Podman.
     model-fetch <assets_dir>   Download the embedding model pinned in
                                packaging/model.toml, checking its hashes.
-    bundle <target> [--ffmpeg <dir>] [--profile <profile>]
+    bundle <target> [--ffmpeg <dir>] [--web <dir>] [--profile <profile>]
                                Assemble dist/noflex-<target>/ and its archive:
                                the server, plugins, ffmpeg, ONNX Runtime and the
-                               model. --ffmpeg reuses a finished ffmpeg-build.
+                               model. --ffmpeg reuses a finished ffmpeg-build,
+                               --web a built web client.
     third-party check          Check packaging/third-party/apps.toml against
                                the app's media_kit and the license assets.
     third-party sync           Write the apps' license assets from it.
@@ -150,6 +151,7 @@ fn bundle_command(args: &[String]) -> Result<()> {
     let mut options = bundle::BundleOptions {
         target: target.clone(),
         ffmpeg_dir: None,
+        web_dir: None,
         profile: "release".to_string(),
     };
     let mut rest = rest.iter();
@@ -159,6 +161,7 @@ fn bundle_command(args: &[String]) -> Result<()> {
             .with_context(|| format!("{flag} needs a value"))?;
         match flag.as_str() {
             "--ffmpeg" => options.ffmpeg_dir = Some(PathBuf::from(value)),
+            "--web" => options.web_dir = Some(PathBuf::from(value)),
             "--profile" => options.profile = value.clone(),
             other => bail!("unknown option `{other}`"),
         }

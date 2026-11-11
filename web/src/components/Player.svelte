@@ -19,6 +19,7 @@
   import Play from "phosphor-svelte/lib/Play";
   import SkipForward from "phosphor-svelte/lib/SkipForward";
   import Stack from "phosphor-svelte/lib/Stack";
+  import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
   import Subtitles from "phosphor-svelte/lib/Subtitles";
   import Translate from "phosphor-svelte/lib/Translate";
   import WarningCircle from "phosphor-svelte/lib/WarningCircle";
@@ -38,6 +39,7 @@
   import { transport } from "$lib/transport.svelte.js";
   import { poll, toast } from "$lib/ui.svelte.js";
   import Artwork from "$components/Artwork.svelte";
+  import SubtitleSearch from "$components/SubtitleSearch.svelte";
   import Menu from "$components/ui/Menu.svelte";
   import MenuItem from "$components/ui/MenuItem.svelte";
   import Tip from "$components/ui/Tip.svelte";
@@ -73,6 +75,7 @@
   /** Index burned into the picture; text tracks otherwise render natively. */
   let burned = $state(null);
   let subtitleTracks = $state([]);
+  let searchingSubtitles = $state(false);
   let infoOpen = $state(false);
   let stats = $state(null);
   let idleTimer, heartbeat, countdownTimer, restartTimer;
@@ -395,6 +398,16 @@
   }
   function cancelCountdown() { clearInterval(countdownTimer); countdownTimer = null; countdown = null; }
 
+  // A downloaded subtitle joins the file's tracks; the session lists it for
+  // delivery only once restarted.
+  async function useDownloadedSubtitle(index, tracks) {
+    subtitleTracks = tracks.map((track, i) => ({ ...track, index: i }));
+    subtitleIndex = index;
+    burned = null;
+    await finish();
+    await restartSession(null, positionMs());
+  }
+
   async function chooseSubtitle(index, burn = false) {
     subtitleIndex = index;
     // Native tracks switch in place; entering or leaving burn-in needs a
@@ -486,7 +499,9 @@
   });
 
   function key(event) {
-    if (event.target instanceof HTMLInputElement) return;
+    // The subtitle search sits inside the player so it shows in fullscreen;
+    // its keys are its own.
+    if (event.target instanceof HTMLInputElement || searchingSubtitles) return;
     const handled = {
       " ": toggle, k: toggle,
       ArrowLeft: () => skip(-10), j: () => skip(-10),
@@ -838,13 +853,15 @@
           {#each audioTracks as track (track.id)}<MenuItem icon={audioTrack === track.id ? Check : null} onSelect={() => { if (hls) hls.audioTrack = track.id; }}>{track.label}</MenuItem>{/each}
         </Menu>
       {/if}
-      {#if (delivered.length || burnable.length) && !isGuest}
+      {#if !live && !isGuest}
         <Menu portal={root} side="top" width={260}>
           {#snippet trigger(props)}<button {...props} class="ctl" class:on={subtitleIndex != null} aria-label="Subtitles"><Subtitles size={20} /></button>{/snippet}
           <div class="nf-menu-label">Subtitles</div>
           <MenuItem icon={subtitleIndex == null ? Check : null} onSelect={() => chooseSubtitle(null)}>Off</MenuItem>
           {#each delivered as track (track.index)}<MenuItem icon={subtitleIndex === track.index && burned == null ? Check : null} onSelect={() => chooseSubtitle(track.index)}>{trackLabel(track)}</MenuItem>{/each}
           {#each burnable as track (track.index)}<MenuItem icon={burned === track.index ? Check : null} hint={delivered.some((item) => item.index === track.index) ? "styled" : "burn in"} onSelect={() => chooseSubtitle(track.index, true)}>{trackLabel(track)}</MenuItem>{/each}
+          <div class="nf-menu-sep"></div>
+          <MenuItem icon={MagnifyingGlass} onSelect={() => (searchingSubtitles = true)}>Search online…</MenuItem>
         </Menu>
       {/if}
       <Menu portal={root} side="top" width={240}>
@@ -865,6 +882,9 @@
       <Tip portal={root} text={fullscreen ? "Exit fullscreen" : "Fullscreen"} hint="f">{#snippet children(props)}<button {...props} class="ctl" aria-label="Fullscreen" onclick={toggleFullscreen}>{#if fullscreen}<CornersIn size={20} />{:else}<CornersOut size={20} />{/if}</button>{/snippet}</Tip>
     </div>
   </footer>
+  {#if playback.mediaFileId && !live}
+    <SubtitleSearch bind:open={searchingSubtitles} mediaFileId={playback.mediaFileId} portal={root} onpick={useDownloadedSubtitle} />
+  {/if}
 </div>
 
 <style>

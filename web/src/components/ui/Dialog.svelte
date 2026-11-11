@@ -19,8 +19,11 @@
   import { fade, fly, scale } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
 
-  /** `variant`: "center" (default) or "sheet" (slides in from the right). */
-  let { open = $bindable(false), title, description = null, variant = "center", width = 520, onclose = null, children, footer = null } = $props();
+  /**
+   * `variant`: "center" (default) or "sheet" (slides in from the right).
+   * `portal`: where to mount it, for a dialog over a fullscreen element.
+   */
+  let { open = $bindable(false), title, description = null, variant = "center", width = 520, onclose = null, portal = undefined, children, footer = null } = $props();
 
   function change(next) {
     open = next;
@@ -29,7 +32,7 @@
 </script>
 
 <Dialog.Root {open} onOpenChange={change}>
-  <Dialog.Portal>
+  <Dialog.Portal to={portal}>
     <Dialog.Overlay forceMount>
       {#snippet child({ props, open })}
         {#if open}<div {...props} class="overlay" transition:fade={{ duration: 200 }}></div>{/if}

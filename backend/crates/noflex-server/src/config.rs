@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // Typed runtime configuration. Loaded via figment from
-// $XDG_CONFIG_HOME/noflex/config.toml (with /etc/noflex/config.toml as
-// a system-tier fallback) and overridden by `NOFLEX_*` env vars (see
-// [`ENV_KEYS`]). The
+// $XDG_CONFIG_HOME/noflex/config.toml, or the file `NOFLEX_CONFIG_FILE` names
+// (with /etc/noflex/config.toml as a system-tier fallback), and overridden by
+// `NOFLEX_*` env vars (see [`ENV_KEYS`]). The
 // shape here is the single source of truth — main.rs and the rest of
 // the server consume the resolved `Config`, not raw env reads.
 
@@ -337,8 +337,8 @@ impl Config {
     /// The system-tier TOML (`/etc/noflex/config.toml`) is consulted
     /// first, then the user-tier
     /// (`$XDG_CONFIG_HOME/noflex/config.toml` or
-    /// `~/.config/noflex/config.toml`), then `NOFLEX_*` env vars
-    /// override.
+    /// `~/.config/noflex/config.toml`, or whatever [`CONFIG_FILE_ENV`]
+    /// names), then `NOFLEX_*` env vars override.
     pub fn load() -> Result<Self, ConfigError> {
         Self::load_from(&default_user_config_path())
     }
@@ -362,6 +362,10 @@ impl Config {
                 .find(|(env, _)| key.as_str().eq_ignore_ascii_case(env))
                 .map(|(_, path)| (*path).into())
         }));
+        if let Some(list) = std::env::var_os(PLUGIN_SEARCH_PATH_ENV).filter(|v| !v.is_empty()) {
+            let paths: Vec<PathBuf> = std::env::split_paths(&list).collect();
+            fig = fig.merge(Serialized::default("plugin.search_path", paths));
+        }
         let config = fig
             .extract::<Config>()
             .map_err(|e| ConfigError::Parse(e.to_string()))?;
@@ -459,11 +463,20 @@ fn cache_subdir(configured: &str, cache_dir: &std::path::Path, name: &str) -> Pa
     }
 }
 
+/// The config file to read in place of the user-tier one, for a service or
+/// container that keeps it elsewhere.
+pub const CONFIG_FILE_ENV: &str = "NOFLEX_CONFIG_FILE";
+
+/// `plugin.search_path` as the platform's path list (`:`-separated, `;` on
+/// Windows), replacing the default tiers. The one array with a variable, since
+/// a service manager sets it.
+pub const PLUGIN_SEARCH_PATH_ENV: &str = "NOFLEX_PLUGIN_SEARCH_PATH";
+
 /// `NOFLEX_<NAME>` → config key. Explicit because keys themselves
 /// contain `_`, so splitting the name on `_` can't recover the nesting
 /// (`LIVE_TV_RECORDING_CONCURRENCY` would become
-/// `live.tv.recording.concurrency`). Arrays and maps are TOML-only;
-/// unlisted `NOFLEX_*` variables are ignored.
+/// `live.tv.recording.concurrency`). Arrays and maps are TOML-only, but for
+/// [`PLUGIN_SEARCH_PATH_ENV`]; unlisted `NOFLEX_*` variables are ignored.
 pub const ENV_KEYS: &[(&str, &str)] = &[
     ("BIND", "bind"),
     ("PUBLIC_URL", "public_url"),
@@ -527,6 +540,9 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
 ];
 
 fn default_user_config_path() -> PathBuf {
+    if let Some(path) = std::env::var_os(CONFIG_FILE_ENV).filter(|v| !v.is_empty()) {
+        return PathBuf::from(path);
+    }
     user_config_dir().map_or_else(
         || PathBuf::from("./config.toml"),
         |dir| dir.join("config.toml"),
@@ -557,15 +573,21 @@ mod tests {
     // The only test that touches the process environment, so no other
     // test in this binary races its reads.
     #[test]
-    fn load_from_nonexistent_path_uses_defaults_and_env() {
+    fn load_reads_the_named_file_then_env() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let file = dir.path().join("elsewhere.toml");
+        std::fs::write(&file, "cross_origin = false\nbind = \"127.0.0.1:1\"\n").expect("write");
+        let plugins = std::env::join_paths(["/srv/a", "/srv/b"]).expect("path list");
         let vars = [
-            ("NOFLEX_BIND", "0.0.0.0:9999"),
-            ("NOFLEX_PUBLIC_URL", "https://media.example"),
-            ("NOFLEX_LIVE_TV_RECORDING_CONCURRENCY", "7"),
-            ("NOFLEX_SCANNER_DEBOUNCE_MS", "123"),
-            ("NOFLEX_EXTERNAL_AUTH_AUTO_PROVISION", "true"),
-            ("NOFLEX_CACHE_IMAGE_DIR", "/srv/images"),
-            ("NOFLEX_NOT_A_KEY", "ignored"),
+            ("NOFLEX_CONFIG_FILE", file.as_os_str()),
+            ("NOFLEX_PLUGIN_SEARCH_PATH", plugins.as_os_str()),
+            ("NOFLEX_BIND", "0.0.0.0:9999".as_ref()),
+            ("NOFLEX_PUBLIC_URL", "https://media.example".as_ref()),
+            ("NOFLEX_LIVE_TV_RECORDING_CONCURRENCY", "7".as_ref()),
+            ("NOFLEX_SCANNER_DEBOUNCE_MS", "123".as_ref()),
+            ("NOFLEX_EXTERNAL_AUTH_AUTO_PROVISION", "true".as_ref()),
+            ("NOFLEX_CACHE_IMAGE_DIR", "/srv/images".as_ref()),
+            ("NOFLEX_NOT_A_KEY", "ignored".as_ref()),
         ];
         // SAFETY: no other test in this binary reads or writes the environment.
         unsafe {
@@ -573,14 +595,19 @@ mod tests {
                 std::env::set_var(key, value);
             }
         }
-        let loaded = Config::load_from(std::path::Path::new("/nonexistent/config.toml"));
+        let loaded = Config::load();
         unsafe {
             for (key, _) in vars {
                 std::env::remove_var(key);
             }
         }
         let c = loaded.expect("load");
-        assert_eq!(c.bind, "0.0.0.0:9999");
+        assert!(!c.cross_origin, "read from NOFLEX_CONFIG_FILE");
+        assert_eq!(c.bind, "0.0.0.0:9999", "env outranks the file");
+        assert_eq!(
+            c.plugin.search_path,
+            [PathBuf::from("/srv/a"), PathBuf::from("/srv/b")]
+        );
         assert_eq!(c.public_url.as_deref(), Some("https://media.example"));
         assert_eq!(c.live_tv.recording_concurrency, 7);
         assert_eq!(c.scanner.debounce_ms, 123);

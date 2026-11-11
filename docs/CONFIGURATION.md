@@ -6,8 +6,8 @@ three layers, in order of decreasing precedence:
 1. **`NOFLEX_*` environment variables** — highest precedence. Useful for
    container deployments and `systemd` units.
 2. **User-tier TOML** — `$XDG_CONFIG_HOME/noflex/config.toml`, falling
-   back to `~/.config/noflex/config.toml`. This is where a typical
-   installation puts its config.
+   back to `~/.config/noflex/config.toml`, or the file `NOFLEX_CONFIG_FILE`
+   names. This is where a typical installation puts its config.
 3. **System-tier TOML** — `/etc/noflex/config.toml`. Read-only; the NixOS
    module writes it.
 
@@ -16,8 +16,8 @@ variable, listed under **Env** in the reference below: `NOFLEX_` followed by
 the key path upper-cased, with `.` replaced by `_`. The mapping is an explicit
 table (because key names themselves contain `_`), so unlisted `NOFLEX_*`
 variables are ignored. Arrays and maps (`transcoder.ladder`,
-`plugin.search_path`, `plugin.overrides`, `plugin.per_plugin_config`) can only
-be set in TOML.
+`plugin.overrides`, `plugin.per_plugin_config`) can only be set in TOML, except
+`plugin.search_path`, which takes the platform's path list.
 
 ```sh
 NOFLEX_BIND=0.0.0.0:9999                    # -> bind
@@ -202,7 +202,7 @@ Smart transcoding: preparing versions in the background for titles users are lik
 ### `plugin.search_path`
 - **Type:** array of paths
 - **Default:** `["/etc/noflex/plugins", "/var/lib/noflex/plugins", "<XDG_CONFIG_HOME>/noflex/plugins"]`
-- **Env:** not supported (use TOML)
+- **Env:** `NOFLEX_PLUGIN_SEARCH_PATH`, `:`-separated (`;` on Windows)
 
 Directories searched in order for `.wasm` plugin components. Later
 tiers shadow earlier ones.

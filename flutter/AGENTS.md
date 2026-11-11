@@ -74,6 +74,10 @@ A device several people use keeps a session for each of them. `features/auth/pro
 - **Each account has its own device id** (`DeviceIdentity.idFor`), because the server refuses an id another user registered. It's in preferences, not with the session, so it outlives signing out.
 - You → Devices → Link a device approves a code as the viewer. An administrator can choose anyone instead (`approveCode(user:)`), for an account with nothing signed in to approve from; the server records it.
 - The PIN is set under You → Profile, with the password (`setPin`, `removePin`). `_pinChanged` tells this device's own tile.
+- **Deleting an account is You → Profile → Delete account** (`features/account/delete_account.dart`), as app stores require of an app that makes accounts. `accountDeletion` says whether it takes the password or the username typed out, and whether it erases the server; a `LAST_ADMINISTRATOR` refusal mid-way turns the sheet into the erasing one.
+- **The last administrator is asked twice**: what's erased and what's kept (media files, the server's configuration), then `delete everything` typed with their password, sent as `eraseServer`.
+- A deleted account leaves the device as signing out does, and its device id goes too (`SessionService.accountDeleted`, `DeviceIdentity.forget`): the server has no such device any more. Everyone else stays.
+- **A server being reset has nobody on it**, so `serverErased` forgets every account here and their downloads and ids, keeps the server, and shows `AppPhase.resetting` until `serverInfo` stops saying `resetting`. It restarts on the way, so an unreachable or refusing server is polled through. `start` and a `SERVER_RESETTING` refusal of the bootstrap land there too, for every other device.
 - Signing in as someone already here replaces their session where it was. Whoever was signed in stays remembered, so the sign-in screen offers Back to profiles in place of Change server, which signs everyone out.
 
 ## Adaptive layout

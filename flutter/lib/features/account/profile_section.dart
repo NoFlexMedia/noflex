@@ -23,6 +23,7 @@ import '../player/decoders.dart';
 import '../player/playback_service.dart';
 import 'account_controller.dart';
 import 'account_widgets.dart';
+import 'delete_account.dart';
 
 class ProfileSection extends StatelessWidget {
   const ProfileSection({super.key, required this.controller});
@@ -37,6 +38,7 @@ class ProfileSection extends StatelessWidget {
       _PlaybackPanel(controller: controller),
       _ThisDevicePanel(controller: controller),
       _PasswordPanel(controller: controller),
+      DeleteAccountPanel(controller: controller),
     ],
   );
 }

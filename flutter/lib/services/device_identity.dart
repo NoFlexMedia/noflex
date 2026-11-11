@@ -44,6 +44,12 @@ class DeviceIdentity {
     return id;
   }
 
+  /// Forget [userId]'s id, once their account is gone from the server: it named
+  /// a device that no longer exists there.
+  Future<void> forget(String userId) async {
+    await _prefs.remove(deviceIdKey(userId));
+  }
+
   /// What sessions are listed under in Account → Devices.
   String get clientName => 'NoFlex for $platformName';
 

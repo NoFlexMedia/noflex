@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+mutation DeleteAccount($password: String, $username: String, $eraseServer: Boolean!) {
+  deleteAccount(currentPassword: $password, username: $username, eraseServer: $eraseServer) {
+    user { id }
+    serverErased
+  }
+}

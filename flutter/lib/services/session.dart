@@ -39,7 +39,22 @@ import 'nav_service.dart';
 import 'tokens.dart';
 import 'watch_state.dart';
 
-enum AppPhase { boot, connect, error, setup, profiles, auth, app, offline }
+enum AppPhase {
+  boot,
+  connect,
+  error,
+  setup,
+  profiles,
+  auth,
+  app,
+  offline,
+
+  /// The server is erasing itself back to first-run setup.
+  resetting,
+}
+
+/// How often a server being reset is asked whether it's done.
+const _resetPoll = Duration(seconds: 2);
 
 /// Preference key: list libraries in the navigation alongside content types.
 const showLibrariesKey = 'browse.showLibraries';
@@ -145,6 +160,10 @@ class SessionService {
         serverName.value = info.name;
         reachable.value = true;
       });
+      if (info.resetting) {
+        await serverErased();
+        return;
+      }
       if (!info.isConfigured) {
         phase.value = AppPhase.setup;
         return;
@@ -213,6 +232,10 @@ class SessionService {
     } on SessionExpired {
       // The expiry and lock handlers have already moved on from here.
     } on ApiError catch (cause) {
+      if (cause.codes.contains('SERVER_RESETTING')) {
+        await serverErased();
+        return;
+      }
       // Refused as they are, which signing in again may mend. They stay.
       final userId = tokens.activeId.value;
       if (userId != null) await tokens.end(userId);
@@ -567,6 +590,58 @@ class SessionService {
     await _guarded(_downloads.removeAll);
     await tokens.removeActive();
     await _afterLeaving('');
+  }
+
+  /// The active account was deleted on the server. Nothing of theirs stays
+  /// here: their session, what they downloaded, and their id for this device,
+  /// which named a device the server no longer has. Anyone else signed in
+  /// here stays.
+  Future<void> accountDeleted() async {
+    final gone = tokens.active;
+    if (gone == null) return;
+    // First, so nothing still running mistakes the dead session for an
+    // expired one and refreshes it.
+    await tokens.remove(gone.userId);
+    await _guarded(() => _downloads.removeAll());
+    await identity.forget(gone.userId);
+    await _afterLeaving(
+      '${gone.name}’s account was deleted, with everything of theirs on this '
+      'device.',
+    );
+  }
+
+  /// The server is erasing itself, because its last administrator deleted
+  /// their account, so every account this device holds for it is gone, with
+  /// what they downloaded. The server stays chosen: it comes back at
+  /// first-run setup, which this waits for.
+  Future<void> serverErased() async {
+    final gone = tokens.accounts.value;
+    await tokens.clear();
+    await _guarded(() => _downloads.removeEveryone());
+    for (final account in gone) {
+      await identity.forget(account.userId);
+    }
+    if (phase.value == AppPhase.resetting) return;
+    _signedOut('', to: AppPhase.resetting);
+    unawaited(_awaitReset());
+  }
+
+  /// Ask until the server is done. On the way it restarts, so for a moment
+  /// nothing answers, and what does refuses everything but the question.
+  Future<void> _awaitReset() async {
+    while (phase.value == AppPhase.resetting) {
+      await Future<void>.delayed(_resetPoll);
+      final origin = tokens.origin.value;
+      if (phase.value != AppPhase.resetting || origin == null) return;
+      try {
+        if (!(await graphql.probe(origin)).resetting) {
+          await start();
+          return;
+        }
+      } on Exception {
+        continue;
+      }
+    }
   }
 
   /// Forget this server altogether, to choose another: everyone signed in

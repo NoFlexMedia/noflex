@@ -74,10 +74,35 @@ class _AppFrame extends SignalWidget {
           AppPhase.auth => const SignInScreen(),
           AppPhase.app => const AppShell(),
           AppPhase.offline => const OfflineShell(),
+          AppPhase.resetting => const _Resetting(),
         },
       ),
     );
   }
+}
+
+/// Waiting out a server's erasure, which `SessionService` watches for.
+class _Resetting extends StatelessWidget {
+  const _Resetting();
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+    body: NfState(
+      icon: PhosphorIconsRegular.eraser,
+      title: 'This server is being reset',
+      message:
+          'Its last administrator deleted their account, so every account on '
+          'it is gone. Its media files are kept. Setup opens here once it’s '
+          'ready.',
+      child: Padding(
+        padding: EdgeInsets.only(top: 20),
+        child: SizedBox.square(
+          dimension: 22,
+          child: CircularProgressIndicator(strokeWidth: 2.4),
+        ),
+      ),
+    ),
+  );
 }
 
 class _Boot extends StatelessWidget {

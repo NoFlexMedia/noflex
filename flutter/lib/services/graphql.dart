@@ -27,10 +27,15 @@ class ServerInfoProbe {
     required this.name,
     required this.version,
     required this.isConfigured,
+    required this.resetting,
   });
   final String name;
   final String version;
   final bool isConfigured;
+
+  /// Erasing itself back to first-run setup, after its last administrator
+  /// deleted their account. It refuses everything else meanwhile.
+  final bool resetting;
 }
 
 class GraphqlService {
@@ -99,7 +104,7 @@ class GraphqlService {
             Uri.parse('$origin/graphql'),
             headers: const {'Content-Type': 'application/json'},
             body: jsonEncode({
-              'query': '{ serverInfo { name version isConfigured } }',
+              'query': '{ serverInfo { name version isConfigured resetting } }',
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -119,6 +124,7 @@ class GraphqlService {
         name: info['name'] as String,
         version: info['version'] as String,
         isConfigured: info['isConfigured'] as bool,
+        resetting: info['resetting'] as bool,
       );
     } catch (_) {
       throw const ApiError(

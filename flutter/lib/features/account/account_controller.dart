@@ -22,7 +22,10 @@ import '../../graphql/queries/__generated__/account.var.gql.dart';
 import '../../graphql/queries/__generated__/approvable_users.req.gql.dart';
 import '../../graphql/queries/__generated__/authorize_device_code.req.gql.dart';
 import '../../graphql/queries/__generated__/cancel_export_job.req.gql.dart';
+import '../../graphql/queries/__generated__/account_deletion.data.gql.dart';
+import '../../graphql/queries/__generated__/account_deletion.req.gql.dart';
 import '../../graphql/queries/__generated__/change_password.req.gql.dart';
+import '../../graphql/queries/__generated__/delete_account.req.gql.dart';
 import '../../graphql/queries/__generated__/change_username.req.gql.dart';
 import '../../graphql/queries/__generated__/remove_profile_picture.req.gql.dart';
 import '../../graphql/queries/__generated__/set_profile_picture.req.gql.dart';
@@ -66,10 +69,23 @@ import '../player/decoder_probe.dart';
 import '../player/decoders.dart';
 
 typedef AccountSession = GAccountData_mySessions;
+typedef AccountDeletionTerms = GAccountDeletionData_accountDeletion;
 typedef AccountDevice = GAccountData_myDevices;
 typedef ExportJob = GExportJobFields;
 typedef AccountApiKey = GAccountData_apiKeys;
 typedef HistoryRow = GPlayHistoryData_playHistory_nodes;
+
+/// How asking to delete the account went.
+enum AccountDeletionOutcome {
+  deleted,
+
+  /// Refused: the viewer is the last administrator, which only goes with the
+  /// whole server, and that wasn't asked for.
+  erasesServer,
+
+  /// Refused for another reason, which has been shown.
+  failed,
+}
 
 enum AccountSection {
   profile('Profile', PhosphorIconsRegular.user),
@@ -498,6 +514,56 @@ class AccountController {
   Future<void> _pinChanged(GUserFields viewer) async {
     getIt<SessionService>().viewer.value = viewer;
     await getIt<TokenStore>().describe(viewer.id, hasPin: viewer.hasPin);
+  }
+
+  /// What deleting their account asks of the viewer, and whether it takes the
+  /// server with it. Null, having said why, when the server couldn't be asked.
+  Future<AccountDeletionTerms?> accountDeletion() async =>
+      (await _toasts.attempt(
+        () => _graphql.run(
+          GAccountDeletionReq((b) => b..fetchPolicy = FetchPolicy.NetworkOnly),
+        ),
+      ))?.accountDeletion;
+
+  /// Delete the viewer's account, confirmed with their [password], or for one
+  /// without, their [username]. [eraseServer] says they know the last
+  /// administrator's takes the whole server.
+  Future<AccountDeletionOutcome> deleteAccount({
+    String? password,
+    String? username,
+    bool eraseServer = false,
+  }) async {
+    final bool serverErased;
+    try {
+      final data = await _graphql.run(
+        GDeleteAccountReq(
+          (b) => b.vars
+            ..password = password
+            ..username = username
+            ..eraseServer = eraseServer,
+        ),
+      );
+      serverErased = data.deleteAccount.serverErased;
+    } on ApiError catch (error) {
+      if (error.codes.contains('LAST_ADMINISTRATOR')) {
+        return AccountDeletionOutcome.erasesServer;
+      }
+      _toasts.show(error.message, kind: ToastKind.error);
+      return AccountDeletionOutcome.failed;
+    } on SessionExpired {
+      return AccountDeletionOutcome.failed;
+    } on Exception catch (error) {
+      _toasts.show(error.toString(), kind: ToastKind.error);
+      return AccountDeletionOutcome.failed;
+    }
+    // The sheets asking sit over a shell that's about to go.
+    rootNavigatorKey.currentState?.popUntil((route) => route.isFirst);
+    if (serverErased) {
+      await _session.serverErased();
+    } else {
+      await _session.accountDeleted();
+    }
+    return AccountDeletionOutcome.deleted;
   }
 
   Future<bool> changePassword(String current, String next) async {

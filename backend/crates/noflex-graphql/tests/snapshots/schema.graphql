@@ -306,6 +306,12 @@ type Collection {
 	createdAt: DateTime!
 	updatedAt: DateTime!
 	"""
+	The plugin that syncs this collection; unset for one an
+	administrator curates. A plugin-owned collection's title, overview
+	and membership are the plugin's until it is detached.
+	"""
+	pluginId: String
+	"""
 	Visible members in membership order. `first` defaults to
 	`ITEM_PAGE_DEFAULT` (50), max `ITEM_PAGE_MAX` (100).
 	"""
@@ -4599,7 +4605,14 @@ type UserData {
 	playCount: Int!
 	rating: Float
 	favorite: Boolean!
+	"""
+	The latest activity: a play finishing, progress, or a change of mark.
+	"""
 	lastPlayed: DateTime
+	"""
+	When it was last played to the end, here or as an import says.
+	"""
+	playedAt: DateTime
 }
 
 """

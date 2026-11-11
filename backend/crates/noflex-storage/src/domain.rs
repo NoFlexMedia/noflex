@@ -760,7 +760,42 @@ pub struct UserData {
     pub play_count: u32,
     pub rating: Option<f32>,
     pub favorite: bool,
+    /// The latest activity: a play finishing, progress, or a change of mark.
     pub last_played: Option<OffsetDateTime>,
+    /// When it was last played to the end, here or as an import says.
+    pub played_at: Option<OffsetDateTime>,
+}
+
+/// One title's state as a plugin imports it for a user, through
+/// [`Storage::import_user_state`][crate::Storage::import_user_state]. Imports
+/// only add: nothing here un-plays, un-rates or un-favorites.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UserStateImport {
+    pub work: WorkId,
+    /// When it was last played to the end, if it was.
+    pub played_at: Option<OffsetDateTime>,
+    /// How many times it was played, when the plugin knows.
+    pub play_count: Option<u32>,
+    /// A 0–10 rating and when it was given.
+    pub rating: Option<(f32, OffsetDateTime)>,
+    /// Only `true` changes anything.
+    pub favorite: bool,
+}
+
+/// A user's state on one work, with where each part came from: `None` is
+/// this server, `Some` the source an import named.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UserStateEntry {
+    pub work: WorkId,
+    pub played: bool,
+    pub played_at: Option<OffsetDateTime>,
+    pub play_count: u32,
+    pub played_source: Option<String>,
+    pub rating: Option<f32>,
+    pub rated_at: Option<OffsetDateTime>,
+    pub rating_source: Option<String>,
+    pub favorite: bool,
+    pub favorite_source: Option<String>,
 }
 
 /// A top-level work a user has played or started; see
@@ -1320,6 +1355,33 @@ impl Default for LibraryConfig {
 
 /// Tag namespace for [`ContentCategory`] classification.
 pub const CATEGORY_TAG_NAMESPACE: &str = "category";
+
+/// Tag namespaces the server itself writes or reserves, which no plugin may
+/// claim: metadata providers' (`genre`, `keyword`, `scale`, `studio`,
+/// `person`, `parental`), [`CATEGORY_TAG_NAMESPACE`], and those kept for
+/// moods, quality and edition labels, and people's own tags.
+pub const CORE_TAG_NAMESPACES: &[&str] = &[
+    "genre",
+    "keyword",
+    "scale",
+    "studio",
+    "person",
+    "parental",
+    CATEGORY_TAG_NAMESPACE,
+    "mood",
+    "quality",
+    "edition",
+    "user",
+];
+
+/// One tag a plugin assigns through
+/// [`Storage::set_source_tags`][crate::Storage::set_source_tags].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceTag {
+    pub slug: String,
+    pub display: String,
+    pub weight: f32,
+}
 /// Slug of the tag in [`CATEGORY_TAG_NAMESPACE`] that marks a work as anime.
 pub const ANIME_TAG_SLUG: &str = "anime";
 
@@ -2194,7 +2256,7 @@ pub struct ExportJob {
 /// membership is exposed on GQL as the complex `items` field below,
 /// resolved through `Storage::collection_items` — not part of this
 /// row type.
-#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
 #[graphql(complex)]
 pub struct Collection {
     pub id: CollectionId,
@@ -2204,6 +2266,36 @@ pub struct Collection {
     pub overview: Option<String>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
+    /// The plugin that syncs this collection; unset for one an
+    /// administrator curates. A plugin-owned collection's title, overview
+    /// and membership are the plugin's until it is detached.
+    pub plugin_id: Option<String>,
+    /// The plugin's own name for the list, unique per plugin and library.
+    #[graphql(skip)]
+    pub plugin_key: Option<String>,
+}
+
+/// What [`Storage::sync_plugin_collection`][crate::Storage::sync_plugin_collection]
+/// makes of one plugin list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PluginCollectionSync {
+    pub plugin_id: String,
+    pub key: String,
+    pub title: String,
+    pub overview: Option<String>,
+    /// In list order; works that no longer exist are skipped.
+    pub works: Vec<WorkId>,
+}
+
+/// What [`Storage::remove_plugin_data`][crate::Storage::remove_plugin_data]
+/// deleted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, SimpleObject)]
+#[graphql(name = "PluginDataRemoval")]
+pub struct PluginDataRemoval {
+    /// Tag assignments the plugin had made.
+    pub tag_assignments: u64,
+    /// Collections it still owned. Detached ones are left alone.
+    pub collections: u64,
 }
 
 /// A user-owned ordered list of play targets. Like [`Collection`], the

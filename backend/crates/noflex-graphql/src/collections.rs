@@ -231,6 +231,8 @@ impl CollectionsMutation {
             overview,
             created_at: now,
             updated_at: now,
+            plugin_id: None,
+            plugin_key: None,
         };
         storage
             .create_collection(&collection)

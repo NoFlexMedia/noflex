@@ -20,11 +20,12 @@ use crate::{
         EpgProgram, ExportFormat, ExportJob, ExportJobStatus, ExternalIdentity, HistoryPage, Image,
         ImageSource, ImageTarget, Invite, Library, LinkedServer, LiveTvChannel, LiveTvSource,
         MediaFile, OptimizedVersion, OptimizedVersionStats, OptimizedVersionStatus, PlaySession,
-        Playlist, PluginOverrideRow, PluginSettingWrite, PluginTaskPayload, PluginTaskState,
-        Recording, RecordingSchedule, RecordingStatus, RefreshTokenLookup, ScanEvent, ServerReset,
-        Session, SmartTranscodeMark, SmartTranscodeOutcome, SmartTranscodingSettings, Tag,
-        TagAssignment, TagSummary, TrickplayAsset, User, UserData, UserPluginSecret,
-        UserPreference, UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork,
+        Playlist, PluginCollectionSync, PluginDataRemoval, PluginOverrideRow, PluginSettingWrite,
+        PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule, RecordingStatus,
+        RefreshTokenLookup, ScanEvent, ServerReset, Session, SmartTranscodeMark,
+        SmartTranscodeOutcome, SmartTranscodingSettings, SourceTag, Tag, TagAssignment, TagSummary,
+        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
+        UserStateEntry, UserStateImport, WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork,
         Work, WorkFeatures,
     },
     error::StorageResult,
@@ -1258,6 +1259,81 @@ pub trait Storage: Send + Sync + 'static {
         limit: u32,
         cursor: Option<PageCursor>,
     ) -> StorageResult<ItemPage<WorkId>>;
+
+    // ---- Plugin-owned library data --------------------------------------
+    /// Replace the tags `source` assigned in `namespace` on `work` with
+    /// `tags`, creating any tag the namespace doesn't have yet. Repeating a
+    /// call changes nothing. Assignments from other sources stay. A slug
+    /// listed twice keeps its first entry. `NotFound` when `work` is absent.
+    async fn set_source_tags(
+        &self,
+        work: WorkId,
+        namespace: &str,
+        source: &str,
+        tags: &[SourceTag],
+    ) -> StorageResult<()>;
+
+    /// Create or replace the collections `sync.plugin_id` owns under
+    /// `sync.key`: one per library among `sync.works`, holding that
+    /// library's works in list order, and none for a library where an
+    /// administrator detached the key's collection. Collections the key
+    /// owned in libraries the list no longer reaches are deleted, so an
+    /// empty list deletes them all. Returns what the key owns now.
+    async fn sync_plugin_collection(
+        &self,
+        sync: &PluginCollectionSync,
+    ) -> StorageResult<Vec<Collection>>;
+
+    /// Make a plugin-owned collection a manual one, and remember its key so
+    /// the plugin never recreates it in that library. Returns the
+    /// collection as it is now. `NotFound` when absent, `InvalidInput` when
+    /// it isn't plugin-owned.
+    async fn detach_collection(&self, id: CollectionId) -> StorageResult<Collection>;
+
+    /// Delete what `plugin_id` wrote to the library: every tag assignment
+    /// sourced `plugin:<plugin_id>`, then any of those tags left with none,
+    /// and the collections it owns. Detached collections, their remembered
+    /// keys and imported user state are kept.
+    async fn remove_plugin_data(&self, plugin_id: &str) -> StorageResult<PluginDataRemoval>;
+
+    /// Apply `items` to `user`'s state as `source` saw it, in one
+    /// transaction. Imports only add: a play counts when it's newer than
+    /// the one recorded (or none was), a rating when its time is newer than
+    /// the recorded one's, and a favorite when `true`. A newer play clears
+    /// a saved position, and the play count becomes the larger of the
+    /// recorded one and the item's (at least one). Whatever an item changes
+    /// is marked as `source`'s, until this server changes it again. Works
+    /// that no longer exist are skipped. Returns the works that changed.
+    async fn import_user_state(
+        &self,
+        user: UserId,
+        source: &str,
+        items: &[UserStateImport],
+    ) -> StorageResult<Vec<WorkId>>;
+
+    /// A keyset page, by work id, of `user`'s state on works: everything
+    /// played, rated or favorited, or with `since`, only what was played or
+    /// rated at or after it.
+    async fn user_state_history(
+        &self,
+        user: UserId,
+        since: Option<OffsetDateTime>,
+        limit: u32,
+        cursor: Option<PageCursor>,
+    ) -> StorageResult<Page<UserStateEntry>>;
+
+    /// Episodes numbered `episode` in season `season` of `series`, a
+    /// multi-episode file counting for every number it spans.
+    async fn episodes_numbered(
+        &self,
+        series: WorkId,
+        season: u32,
+        episode: u32,
+    ) -> StorageResult<Vec<Work>>;
+
+    /// Users holding any per-user secret for `plugin_id`: everyone who has
+    /// linked an account through it.
+    async fn plugin_linked_users(&self, plugin_id: &str) -> StorageResult<Vec<UserId>>;
 
     // ---- Playlists ------------------------------------------------------
     async fn create_playlist(&self, playlist: &Playlist) -> StorageResult<()>;

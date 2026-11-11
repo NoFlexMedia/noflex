@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-use noflex_core::{TagId, TagTarget};
+use noflex_core::{TagId, TagTarget, WorkId};
 use noflex_storage::{
-    domain::{Tag, TagAssignment, TagSummary},
+    domain::{SourceTag, Tag, TagAssignment, TagSummary},
     error::{StorageError, StorageResult},
     query::{ItemPage, ListTagsQuery, Page, PageCursor},
 };
@@ -304,6 +304,113 @@ pub(crate) async fn search_works(
         items,
         next_cursor: None,
     })
+}
+
+const SOURCE_TAGS_IN_NAMESPACE: &str = "SELECT a.tag_id FROM tag_assignments a \
+    JOIN tags t ON t.id = a.tag_id \
+    WHERE a.target_kind = 'work' AND a.target_id = ?1 AND a.source = ?2 AND t.namespace = ?3";
+
+const WORK_EXISTS: &str = "SELECT 1 FROM works WHERE id = ?1";
+
+const SOURCE_TAG_IDS: &str = "SELECT DISTINCT tag_id FROM tag_assignments WHERE source = ?1";
+
+const DELETE_SOURCE_ASSIGNMENTS: &str = "DELETE FROM tag_assignments WHERE source = ?1";
+
+const DELETE_UNUSED_TAG: &str = "DELETE FROM tags WHERE id = ?1 \
+    AND NOT EXISTS (SELECT 1 FROM tag_assignments WHERE tag_id = ?1)";
+
+async fn tag_ids(conn: &Connection, sql: &str, params: Vec<Value>) -> StorageResult<Vec<TagId>> {
+    let mut rows = conn.query(sql, params).await.map_err(map_turso)?;
+    let mut ids = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        ids.push(TagId::from_uuid(blob_to_uuid(col_blob(
+            &row.get_value(0).map_err(map_turso)?,
+        )?)?));
+    }
+    Ok(ids)
+}
+
+pub(crate) async fn set_source_tags(
+    conn: &Connection,
+    work: WorkId,
+    namespace: &str,
+    source: &str,
+    tags: &[SourceTag],
+) -> StorageResult<()> {
+    let work_blob = Value::Blob(uuid_to_blob(work.into_uuid()));
+    let mut exists = conn
+        .query(WORK_EXISTS, vec![work_blob.clone()])
+        .await
+        .map_err(map_turso)?;
+    if exists.next().await.map_err(map_turso)?.is_none() {
+        return Err(StorageError::NotFound);
+    }
+    let target = TagTarget::Work(work);
+    let mut wanted: Vec<(TagId, f32)> = Vec::with_capacity(tags.len());
+    for draft in tags {
+        let tag = match get_by_slug(conn, namespace, &draft.slug).await? {
+            Some(tag) if tag.display == draft.display => tag,
+            Some(mut tag) => {
+                tag.display = draft.display.clone();
+                upsert(conn, &tag).await?;
+                tag
+            }
+            None => {
+                let tag = Tag {
+                    id: TagId::new(),
+                    namespace: namespace.to_string(),
+                    slug: draft.slug.clone(),
+                    display: draft.display.clone(),
+                    parent_id: None,
+                    metadata: parse_json("{}")?,
+                };
+                upsert(conn, &tag).await?;
+                tag
+            }
+        };
+        if !wanted.iter().any(|(id, _)| *id == tag.id) {
+            wanted.push((tag.id, draft.weight));
+        }
+    }
+    let held = tag_ids(
+        conn,
+        SOURCE_TAGS_IN_NAMESPACE,
+        vec![
+            work_blob,
+            Value::Text(source.to_string()),
+            Value::Text(namespace.to_string()),
+        ],
+    )
+    .await?;
+    for id in held {
+        if !wanted.iter().any(|(wanted, _)| *wanted == id) {
+            unassign(conn, id, target).await?;
+        }
+    }
+    for (id, weight) in wanted {
+        assign(conn, id, target, weight, source, &serde_json::json!({})).await?;
+    }
+    Ok(())
+}
+
+/// Delete `source`'s assignments, then whichever of their tags nothing else
+/// holds. Returns how many assignments went.
+pub(crate) async fn remove_source(conn: &Connection, source: &str) -> StorageResult<u64> {
+    let source = Value::Text(source.to_string());
+    let ids = tag_ids(conn, SOURCE_TAG_IDS, vec![source.clone()]).await?;
+    let removed = conn
+        .execute(DELETE_SOURCE_ASSIGNMENTS, vec![source])
+        .await
+        .map_err(map_turso)?;
+    for id in ids {
+        conn.execute(
+            DELETE_UNUSED_TAG,
+            vec![Value::Blob(uuid_to_blob(id.into_uuid()))],
+        )
+        .await
+        .map_err(map_turso)?;
+    }
+    Ok(removed)
 }
 
 fn tag_target_parts(target: &TagTarget) -> (&'static str, Uuid) {

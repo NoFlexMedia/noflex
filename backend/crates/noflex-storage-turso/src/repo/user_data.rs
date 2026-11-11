@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use noflex_core::{PlayTarget, PlayTargetKind, UserId, WorkId};
 use noflex_storage::{
-    domain::{HistoryPage, HistoryRow, UserData, WatchedWork},
+    domain::{HistoryPage, HistoryRow, UserData, UserStateEntry, UserStateImport, WatchedWork},
     error::{StorageError, StorageResult},
-    query::PageCursor,
+    query::{Page, PageCursor},
 };
 use time::OffsetDateTime;
 use turso::{Connection, Value};
@@ -20,18 +20,28 @@ use crate::{
     error::{backend_msg, map_turso},
 };
 
+// A write from this server takes back whatever it changes from the import
+// that set it, so a plugin's sync reads it as this server's.
 const UPSERT: &str = "INSERT INTO user_data (\
-    user_id, target_kind, target_id, played, position_ms, play_count, rating, favorite, last_played\
-) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) \
+    user_id, target_kind, target_id, played, position_ms, play_count, rating, favorite, \
+    last_played, played_at\
+) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) \
 ON CONFLICT(user_id, target_kind, target_id) DO UPDATE SET \
+    played_source = CASE WHEN excluded.played IS user_data.played \
+        AND excluded.played_at IS user_data.played_at THEN user_data.played_source END, \
+    favorite_source = CASE WHEN excluded.favorite IS user_data.favorite \
+        THEN user_data.favorite_source END, \
+    rating_source = CASE WHEN excluded.rating IS user_data.rating \
+        THEN user_data.rating_source END, \
     played = excluded.played, \
     position_ms = excluded.position_ms, \
     play_count = excluded.play_count, \
     rating = excluded.rating, \
     favorite = excluded.favorite, \
-    last_played = excluded.last_played";
+    last_played = excluded.last_played, \
+    played_at = excluded.played_at";
 
-const GET: &str = "SELECT played, position_ms, play_count, rating, favorite, last_played \
+const GET: &str = "SELECT played, position_ms, play_count, rating, favorite, last_played, played_at \
     FROM user_data WHERE user_id = ?1 AND target_kind = ?2 AND target_id = ?3";
 
 const RESUMABLE_NON_EPISODES: &str = "SELECT ud.target_id, ud.last_played \
@@ -124,10 +134,8 @@ pub(crate) async fn write(
             .map(|r| Value::Real(r as f64))
             .unwrap_or(Value::Null),
         Value::Integer(data.favorite as i64),
-        match data.last_played {
-            Some(dt) => Value::Text(crate::convert::dt_to_text(dt)?),
-            None => Value::Null,
-        },
+        optional_dt(data.last_played)?,
+        optional_dt(data.played_at)?,
     ];
     conn.execute(UPSERT, params).await.map_err(map_turso)?;
     Ok(())
@@ -322,6 +330,11 @@ fn row_to_user_data(row: &turso::Row) -> UserData {
     let rating = row.get_value(3).map_err(map_turso).unwrap_or(Value::Null);
     let favorite = row.get_value(4).map_err(map_turso).unwrap_or(Value::Null);
     let last_played = row.get_value(5).map_err(map_turso).unwrap_or(Value::Null);
+    let played_at = row.get_value(6).map_err(map_turso).unwrap_or(Value::Null);
+    let dt = |value: &Value| match col_text_opt(value).unwrap_or(None) {
+        Some(s) => crate::convert::text_to_dt(&s).ok(),
+        None => None,
+    };
 
     UserData {
         played: col_int(&played).unwrap_or(0) != 0,
@@ -329,16 +342,21 @@ fn row_to_user_data(row: &turso::Row) -> UserData {
         play_count: col_int(&play_count).unwrap_or(0) as u32,
         rating: col_real_opt(&rating).unwrap_or(None),
         favorite: col_int(&favorite).unwrap_or(0) != 0,
-        last_played: match col_text_opt(&last_played).unwrap_or(None) {
-            Some(s) => crate::convert::text_to_dt(&s).ok(),
-            None => None,
-        },
+        last_played: dt(&last_played),
+        played_at: dt(&played_at),
     }
+}
+
+fn optional_dt(at: Option<OffsetDateTime>) -> StorageResult<Value> {
+    Ok(match at {
+        Some(at) => Value::Text(dt_to_text(at)?),
+        None => Value::Null,
+    })
 }
 
 // Total order for history paging: newest first, ties broken by target.
 const HISTORY: &str = "SELECT target_kind, target_id, played, position_ms, play_count, rating, \
-    favorite, last_played FROM user_data \
+    favorite, last_played, played_at FROM user_data \
     WHERE user_id = ?1 AND last_played IS NOT NULL AND (?2 IS NULL OR last_played < ?2 \
         OR (last_played = ?2 AND (target_kind < ?3 OR (target_kind = ?3 AND target_id < ?4)))) \
     ORDER BY last_played DESC, target_kind DESC, target_id DESC LIMIT ?5";
@@ -432,6 +450,9 @@ pub(crate) async fn play_history(
                 rating: col_real_opt(&row.get_value(5).map_err(map_turso)?)?,
                 favorite: col_int(&row.get_value(6).map_err(map_turso)?)? != 0,
                 last_played: Some(last_played),
+                played_at: col_text_opt(&row.get_value(8).map_err(map_turso)?)?
+                    .map(|text| text_to_dt(&text))
+                    .transpose()?,
             },
             // Re-render so rows written before timestamp normalization
             // still yield a cursor that compares correctly.
@@ -442,6 +463,248 @@ pub(crate) async fn play_history(
         page.next_cursor = page.rows.last().map(|row| row.cursor.0.clone());
     }
     Ok(page)
+}
+
+const IMPORT_GET: &str = "SELECT played, position_ms, play_count, rating, favorite, last_played, \
+    played_at, rated_at, played_source, rating_source, favorite_source \
+    FROM user_data WHERE user_id = ?1 AND target_kind = 'work' AND target_id = ?2";
+
+const IMPORT_WRITE: &str = "INSERT INTO user_data (\
+    user_id, target_kind, target_id, played, position_ms, play_count, rating, favorite, \
+    last_played, played_at, rated_at, played_source, rating_source, favorite_source\
+) VALUES (?1,'work',?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) \
+ON CONFLICT(user_id, target_kind, target_id) DO UPDATE SET \
+    played = excluded.played, position_ms = excluded.position_ms, \
+    play_count = excluded.play_count, rating = excluded.rating, \
+    favorite = excluded.favorite, last_played = excluded.last_played, \
+    played_at = excluded.played_at, rated_at = excluded.rated_at, \
+    played_source = excluded.played_source, rating_source = excluded.rating_source, \
+    favorite_source = excluded.favorite_source";
+
+const WORK_EXISTS: &str = "SELECT 1 FROM works WHERE id = ?1";
+
+/// Every column an import reads and writes.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct ImportRow {
+    played: bool,
+    position_ms: Option<i64>,
+    play_count: i64,
+    rating: Option<f32>,
+    favorite: bool,
+    last_played: Option<OffsetDateTime>,
+    played_at: Option<OffsetDateTime>,
+    rated_at: Option<OffsetDateTime>,
+    played_source: Option<String>,
+    rating_source: Option<String>,
+    favorite_source: Option<String>,
+}
+
+impl ImportRow {
+    /// Fold `item` in, only adding; see `Storage::import_user_state`.
+    fn apply(&mut self, item: &UserStateImport, source: &str) {
+        if let Some(at) = item.played_at {
+            let newer = self.played_at.is_none_or(|played_at| at > played_at);
+            if !self.played || newer {
+                self.played = true;
+                self.played_at = Some(self.played_at.map_or(at, |played_at| played_at.max(at)));
+                self.played_source = Some(source.to_string());
+                // A position saved before this play belongs to a viewing it ended.
+                if self.last_played.is_none_or(|last| at > last) {
+                    self.last_played = Some(at);
+                    self.position_ms = None;
+                }
+            }
+            let count = i64::from(item.play_count.unwrap_or(1).max(1));
+            self.play_count = self.play_count.max(count);
+        }
+        if let Some((rating, at)) = item.rating
+            && rating.is_finite()
+            && self.rated_at.is_none_or(|rated_at| at > rated_at)
+        {
+            self.rating = Some(rating.clamp(0.0, 10.0));
+            self.rated_at = Some(at);
+            self.rating_source = Some(source.to_string());
+        }
+        if item.favorite && !self.favorite {
+            self.favorite = true;
+            self.favorite_source = Some(source.to_string());
+        }
+    }
+}
+
+fn row_to_import_row(row: &turso::Row) -> StorageResult<ImportRow> {
+    let value = |index| row.get_value(index).map_err(map_turso);
+    let dt = |index| -> StorageResult<Option<OffsetDateTime>> {
+        col_text_opt(&value(index)?)?
+            .map(|text| text_to_dt(&text))
+            .transpose()
+    };
+    Ok(ImportRow {
+        played: col_int(&value(0)?)? != 0,
+        position_ms: col_int_opt(&value(1)?)?,
+        play_count: col_int(&value(2)?)?,
+        rating: col_real_opt(&value(3)?)?,
+        favorite: col_int(&value(4)?)? != 0,
+        last_played: dt(5)?,
+        played_at: dt(6)?,
+        rated_at: dt(7)?,
+        played_source: col_text_opt(&value(8)?)?,
+        rating_source: col_text_opt(&value(9)?)?,
+        favorite_source: col_text_opt(&value(10)?)?,
+    })
+}
+
+fn text_or_null(value: Option<&str>) -> Value {
+    value
+        .map(|value| Value::Text(value.to_string()))
+        .unwrap_or(Value::Null)
+}
+
+pub(crate) async fn import(
+    conn: &Connection,
+    user: UserId,
+    source: &str,
+    items: &[UserStateImport],
+) -> StorageResult<Vec<WorkId>> {
+    let user_blob = Value::Blob(uuid_to_blob(user.into_uuid()));
+    let mut changed = Vec::new();
+    for item in items {
+        let work_blob = Value::Blob(uuid_to_blob(item.work.into_uuid()));
+        let mut exists = conn
+            .query(WORK_EXISTS, vec![work_blob.clone()])
+            .await
+            .map_err(map_turso)?;
+        if exists.next().await.map_err(map_turso)?.is_none() {
+            continue;
+        }
+        let mut rows = conn
+            .query(IMPORT_GET, vec![user_blob.clone(), work_blob.clone()])
+            .await
+            .map_err(map_turso)?;
+        let before = match rows.next().await.map_err(map_turso)? {
+            Some(row) => row_to_import_row(&row)?,
+            None => ImportRow::default(),
+        };
+        let mut after = before.clone();
+        after.apply(item, source);
+        if after == before {
+            continue;
+        }
+        conn.execute(
+            IMPORT_WRITE,
+            vec![
+                user_blob.clone(),
+                work_blob,
+                Value::Integer(i64::from(after.played)),
+                after.position_ms.map(Value::Integer).unwrap_or(Value::Null),
+                Value::Integer(after.play_count),
+                after
+                    .rating
+                    .map(|rating| Value::Real(f64::from(rating)))
+                    .unwrap_or(Value::Null),
+                Value::Integer(i64::from(after.favorite)),
+                optional_dt(after.last_played)?,
+                optional_dt(after.played_at)?,
+                optional_dt(after.rated_at)?,
+                text_or_null(after.played_source.as_deref()),
+                text_or_null(after.rating_source.as_deref()),
+                text_or_null(after.favorite_source.as_deref()),
+            ],
+        )
+        .await
+        .map_err(map_turso)?;
+        if !changed.contains(&item.work) {
+            changed.push(item.work);
+        }
+    }
+    Ok(changed)
+}
+
+const STATE_HISTORY: &str = "SELECT ud.target_id, ud.played, ud.played_at, ud.play_count, \
+    ud.played_source, ud.rating, ud.rated_at, ud.rating_source, ud.favorite, ud.favorite_source \
+    FROM user_data ud JOIN works w ON w.id = ud.target_id \
+    WHERE ud.user_id = ?1 AND ud.target_kind = 'work' AND (?2 IS NULL OR ud.target_id > ?2) \
+        AND (CASE WHEN ?3 IS NULL \
+            THEN ud.played = 1 OR ud.rating IS NOT NULL OR ud.favorite = 1 \
+            ELSE (ud.played = 1 AND ud.played_at >= ?3) \
+                OR (ud.rating IS NOT NULL AND ud.rated_at >= ?3) END) \
+    ORDER BY ud.target_id LIMIT ?4";
+
+pub(crate) async fn state_history(
+    conn: &Connection,
+    user: UserId,
+    since: Option<OffsetDateTime>,
+    limit: u32,
+    cursor: Option<&PageCursor>,
+) -> StorageResult<Page<UserStateEntry>> {
+    let limit = limit.max(1);
+    let after = cursor
+        .map(|cursor| {
+            Uuid::try_parse(&cursor.0)
+                .map_err(|_| StorageError::InvalidInput("invalid user state cursor".into()))
+        })
+        .transpose()?;
+    let mut rows = conn
+        .query(
+            STATE_HISTORY,
+            vec![
+                Value::Blob(uuid_to_blob(user.into_uuid())),
+                after
+                    .map(|id| Value::Blob(uuid_to_blob(id)))
+                    .unwrap_or(Value::Null),
+                optional_dt(since)?,
+                Value::Integer(i64::from(limit) + 1),
+            ],
+        )
+        .await
+        .map_err(map_turso)?;
+    let mut items = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        let value = |index| row.get_value(index).map_err(map_turso);
+        let dt = |index| -> StorageResult<Option<OffsetDateTime>> {
+            col_text_opt(&value(index)?)?
+                .map(|text| text_to_dt(&text))
+                .transpose()
+        };
+        items.push(UserStateEntry {
+            work: WorkId::from_uuid(blob_to_uuid(col_blob(&value(0)?)?)?),
+            played: col_int(&value(1)?)? != 0,
+            played_at: dt(2)?,
+            play_count: u32::try_from(col_int(&value(3)?)?)
+                .map_err(|_| backend_msg("negative play count"))?,
+            played_source: col_text_opt(&value(4)?)?,
+            rating: col_real_opt(&value(5)?)?,
+            rated_at: dt(6)?,
+            rating_source: col_text_opt(&value(7)?)?,
+            favorite: col_int(&value(8)?)? != 0,
+            favorite_source: col_text_opt(&value(9)?)?,
+        });
+    }
+    let next_cursor = if items.len() > limit as usize {
+        items.truncate(limit as usize);
+        items
+            .last()
+            .map(|entry| PageCursor(entry.work.into_uuid().simple().to_string()))
+    } else {
+        None
+    };
+    Ok(Page { items, next_cursor })
+}
+
+const LINKED_USERS: &str = "SELECT DISTINCT user_id FROM user_plugin_secrets WHERE plugin_id = ?1";
+
+pub(crate) async fn linked_users(conn: &Connection, plugin_id: &str) -> StorageResult<Vec<UserId>> {
+    let mut rows = conn
+        .query(LINKED_USERS, vec![Value::Text(plugin_id.to_string())])
+        .await
+        .map_err(map_turso)?;
+    let mut users = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        users.push(UserId::from_uuid(blob_to_uuid(col_blob(
+            &row.get_value(0).map_err(map_turso)?,
+        )?)?));
+    }
+    Ok(users)
 }
 
 #[cfg(test)]

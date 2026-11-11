@@ -17,10 +17,11 @@ use noflex_storage::{
     domain::{
         AccountPurge, ActivityKind, ApiKey, Collection, DeviceCode, Edition, EpgProgram, ExportJob,
         ExportJobStatus, ExternalIdentity, Image, ImageSource, ImageTarget, Library, LiveTvChannel,
-        LiveTvSource, MediaFile, MediaRemoval, Playlist, PluginOverrideRow, PluginSettingWrite,
-        PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule, RecordingStatus,
-        RefreshTokenLookup, ScanEvent, ServerReset, Session, Tag, TagAssignment, TagSummary,
-        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
+        LiveTvSource, MediaFile, MediaRemoval, Playlist, PluginCollectionSync, PluginDataRemoval,
+        PluginOverrideRow, PluginSettingWrite, PluginTaskPayload, PluginTaskState, Recording,
+        RecordingSchedule, RecordingStatus, RefreshTokenLookup, ScanEvent, ServerReset, Session,
+        SourceTag, Tag, TagAssignment, TagSummary, TrickplayAsset, User, UserData,
+        UserPluginSecret, UserPreference, UserRestrictions, UserStateEntry, UserStateImport,
         WatchRoom, WatchRoomMember, WatchRoomState, Work,
     },
     error::{StorageError, StorageResult},
@@ -849,7 +850,9 @@ impl Storage for TursoStore {
             if played && data.play_count == 0 {
                 data.play_count = 1;
             }
-            data.last_played = Some(time::OffsetDateTime::now_utc());
+            let now = time::OffsetDateTime::now_utc();
+            data.last_played = Some(now);
+            data.played_at = played.then_some(now);
             repo::user_data::write(conn, user, target, &data).await
         })
     }
@@ -961,6 +964,11 @@ impl Storage for TursoStore {
             data.played = played;
             data.position_ms = position_ms;
             data.last_played = Some(last_played);
+            data.played_at = if played {
+                Some(data.played_at.map_or(last_played, |at| at.max(last_played)))
+            } else {
+                None
+            };
             repo::user_data::write(conn, user, target, &data).await
         })
     }
@@ -1951,6 +1959,78 @@ impl Storage for TursoStore {
     ) -> StorageResult<ItemPage<WorkId>> {
         let (_schema, conn) = self.reader().await?;
         repo::collections::items(&conn, id, principal, limit, cursor).await
+    }
+
+    // ---- Plugin-owned library data --------------------------------------
+    async fn set_source_tags(
+        &self,
+        work: WorkId,
+        namespace: &str,
+        source: &str,
+        tags: &[SourceTag],
+    ) -> StorageResult<()> {
+        transact!(self, Lane::Concurrent, |conn| {
+            repo::tags::set_source_tags(conn, work, namespace, source, tags)
+        })
+    }
+    async fn sync_plugin_collection(
+        &self,
+        sync: &PluginCollectionSync,
+    ) -> StorageResult<Vec<Collection>> {
+        let now = time::OffsetDateTime::now_utc();
+        // Deletes the key's collections a list stopped reaching.
+        transact!(self, Lane::Serial, |conn| {
+            repo::collections::sync_plugin(conn, sync, now)
+        })
+    }
+    async fn detach_collection(&self, id: CollectionId) -> StorageResult<Collection> {
+        let now = time::OffsetDateTime::now_utc();
+        // Serial so a sync running alongside can't recreate what this detaches.
+        transact!(self, Lane::Serial, |conn| repo::collections::detach(
+            conn, id, now
+        ))
+    }
+    async fn remove_plugin_data(&self, plugin_id: &str) -> StorageResult<PluginDataRemoval> {
+        let source = format!("plugin:{plugin_id}");
+        transact!(self, Lane::Serial, |conn| async {
+            Ok(PluginDataRemoval {
+                tag_assignments: repo::tags::remove_source(conn, &source).await?,
+                collections: repo::collections::remove_plugin(conn, plugin_id).await?,
+            })
+        })
+    }
+    async fn import_user_state(
+        &self,
+        user: UserId,
+        source: &str,
+        items: &[UserStateImport],
+    ) -> StorageResult<Vec<WorkId>> {
+        transact!(self, Lane::Concurrent, |conn| repo::user_data::import(
+            conn, user, source, items
+        ))
+    }
+    async fn user_state_history(
+        &self,
+        user: UserId,
+        since: Option<time::OffsetDateTime>,
+        limit: u32,
+        cursor: Option<PageCursor>,
+    ) -> StorageResult<Page<UserStateEntry>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::user_data::state_history(&conn, user, since, limit, cursor.as_ref()).await
+    }
+    async fn episodes_numbered(
+        &self,
+        series: WorkId,
+        season: u32,
+        episode: u32,
+    ) -> StorageResult<Vec<Work>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::works::episodes_numbered(&conn, series, season, episode).await
+    }
+    async fn plugin_linked_users(&self, plugin_id: &str) -> StorageResult<Vec<UserId>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::user_data::linked_users(&conn, plugin_id).await
     }
 
     // ---- Playlists ------------------------------------------------------

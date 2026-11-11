@@ -268,6 +268,37 @@ pub(crate) async fn by_external_id(
     Ok(out)
 }
 
+const EPISODES_NUMBERED: &str = "SELECT e.id, e.kind, e.parent_id, e.library_id, e.title, \
+    e.sort_title, e.year, e.release_date, e.overview, e.external_ids_json, e.index_number, \
+    e.index_end, e.parent_index, e.metadata_status, e.added_at, e.updated_at, e.tagline, \
+    e.original_title, e.community_rating, e.locked_fields_json, e.metadata_provider \
+    FROM works e JOIN works season ON season.id = e.parent_id \
+    WHERE season.parent_id = ?1 AND e.kind = 'episode' AND e.parent_index = ?2 \
+        AND (e.index_number = ?3 OR (e.index_number <= ?3 AND e.index_end >= ?3)) \
+    ORDER BY e.index_number, e.id";
+
+pub(crate) async fn episodes_numbered(
+    conn: &Connection,
+    series: WorkId,
+    season: u32,
+    episode: u32,
+) -> StorageResult<Vec<Work>> {
+    let params: Vec<Value> = vec![
+        Value::Blob(uuid_to_blob(series.into_uuid())),
+        Value::Integer(season.into()),
+        Value::Integer(episode.into()),
+    ];
+    let mut rows = conn
+        .query(EPISODES_NUMBERED, params)
+        .await
+        .map_err(map_turso)?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(map_turso)? {
+        out.push(row_to_work(&row)?);
+    }
+    Ok(out)
+}
+
 pub(crate) fn row_to_work(row: &turso::Row) -> StorageResult<Work> {
     let id = row.get_value(0).map_err(map_turso)?;
     let kind = row.get_value(1).map_err(map_turso)?;

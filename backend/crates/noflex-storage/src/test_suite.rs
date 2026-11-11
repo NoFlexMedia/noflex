@@ -166,6 +166,11 @@ where
     collection_items_order_and_dedupe(store).await;
     visible_item_pagination(store).await;
     collection_items_cascade(store).await;
+    source_tags_replace_only_their_own(store).await;
+    plugin_collections_follow_their_list(store).await;
+    imported_user_state_only_adds(store).await;
+    episodes_numbered_cover_multi_episode_files(store).await;
+    plugin_linked_users_are_those_with_secrets(store).await;
     playlist_crud_round_trip(store).await;
     playlist_items_mixed_targets(store).await;
     playlist_user_delete_cascade(store).await;
@@ -7239,6 +7244,8 @@ async fn rules_fixture<S: Storage + ?Sized>(store: &S, name: &str) -> RulesFixtu
         overview: None,
         created_at: now,
         updated_at: now,
+        plugin_id: None,
+        plugin_key: None,
     };
     store
         .create_collection(&collection)
@@ -9043,6 +9050,439 @@ async fn trickplay_cascades_with_edition<S: Storage + ?Sized>(store: &S) {
     store.delete_library(lib.id).await.ok();
 }
 
+// ---- Plugin-owned library data ------------------------------------------
+
+fn source_tag(slug: &str, display: &str, weight: f32) -> crate::domain::SourceTag {
+    crate::domain::SourceTag {
+        slug: slug.to_string(),
+        display: display.to_string(),
+        weight,
+    }
+}
+
+/// A plugin's call replaces its own assignments in a namespace and nobody
+/// else's; repeating it changes nothing, and removing the plugin's data
+/// takes its tags with it unless something else still holds them.
+async fn source_tags_replace_only_their_own<S: Storage + ?Sized>(store: &S) {
+    let lib = test_library("Source Tags Lib");
+    store.upsert_library(&lib).await.expect("library");
+    let now = OffsetDateTime::now_utc();
+    let work = make_work(lib.id, "Tagged", now);
+    let other = make_work(lib.id, "Also Tagged", now);
+    store.upsert_work(&work).await.expect("work");
+    store.upsert_work(&other).await.expect("other");
+    let target = TagTarget::Work(work.id);
+    let slugs = |assignments: Vec<crate::domain::TagAssignment>| {
+        let mut slugs = assignments
+            .into_iter()
+            .filter(|a| a.tag.namespace == "trakt-list")
+            .map(|a| (a.tag.slug, a.source))
+            .collect::<Vec<_>>();
+        slugs.sort();
+        slugs
+    };
+
+    let genre = make_tag("genre", "source-tags-drama", "Source Tags Drama");
+    store.upsert_tag(&genre).await.expect("genre");
+    store
+        .assign_tag(genre.id, target, 1.0, "provider:tmdb")
+        .await
+        .expect("provider genre");
+    let tags = [
+        source_tag("watchlist", "Watchlist", 1.0),
+        source_tag("trending", "Trending", 0.5),
+    ];
+    for _ in 0..2 {
+        store
+            .set_source_tags(work.id, "trakt-list", "plugin:trakt", &tags)
+            .await
+            .expect("set tags");
+    }
+    store
+        .set_source_tags(
+            other.id,
+            "trakt-list",
+            "plugin:trakt",
+            &[source_tag("trending", "Trending now", 1.0)],
+        )
+        .await
+        .expect("other work");
+    assert_eq!(
+        slugs(
+            store
+                .tag_assignments_for_target(target)
+                .await
+                .expect("read")
+        ),
+        [
+            ("trending".to_string(), "plugin:trakt".to_string()),
+            ("watchlist".to_string(), "plugin:trakt".to_string()),
+        ],
+        "a repeated call is harmless"
+    );
+    let trending = store
+        .tag_by_slug("trakt-list", "trending")
+        .await
+        .expect("tag")
+        .expect("trending exists");
+    assert_eq!(trending.display, "Trending now", "the latest display wins");
+
+    store
+        .set_source_tags(
+            work.id,
+            "trakt-list",
+            "plugin:trakt",
+            &[source_tag("watchlist", "Watchlist", 1.0)],
+        )
+        .await
+        .expect("narrow");
+    let assignments = store
+        .tag_assignments_for_target(target)
+        .await
+        .expect("read");
+    assert_eq!(
+        slugs(assignments.clone()),
+        [("watchlist".to_string(), "plugin:trakt".to_string())]
+    );
+    assert!(
+        assignments.iter().any(|a| a.tag.id == genre.id),
+        "another source's tags stay"
+    );
+    assert!(matches!(
+        store
+            .set_source_tags(WorkId::new(), "trakt-list", "plugin:trakt", &tags)
+            .await,
+        Err(StorageError::NotFound)
+    ));
+
+    let removal = store.remove_plugin_data("trakt").await.expect("remove");
+    assert_eq!(removal.tag_assignments, 2);
+    assert!(
+        store
+            .tag_by_slug("trakt-list", "watchlist")
+            .await
+            .expect("lookup")
+            .is_none(),
+        "a tag nothing holds goes"
+    );
+    assert!(
+        store.get_tag(genre.id).await.expect("lookup").is_some(),
+        "other sources' tags stay"
+    );
+    store.delete_library(lib.id).await.ok();
+}
+
+/// One list becomes a collection per library; a detached collection is the
+/// administrator's for good, and the plugin's syncs and data removal leave
+/// it alone.
+async fn plugin_collections_follow_their_list<S: Storage + ?Sized>(store: &S) {
+    let movies = test_library("Plugin Collections Movies");
+    let kids = test_library("Plugin Collections Kids");
+    store.upsert_library(&movies).await.expect("movies");
+    store.upsert_library(&kids).await.expect("kids");
+    let now = OffsetDateTime::now_utc();
+    let alien = make_work(movies.id, "Alien", now);
+    let aliens = make_work(movies.id, "Aliens", now);
+    let up = make_work(kids.id, "Up", now);
+    for work in [&alien, &aliens, &up] {
+        store.upsert_work(work).await.expect("work");
+    }
+    let sync = |works: Vec<WorkId>| crate::domain::PluginCollectionSync {
+        plugin_id: "trakt".to_string(),
+        key: "watchlist".to_string(),
+        title: "Watchlist".to_string(),
+        overview: Some("From Trakt".to_string()),
+        works,
+    };
+    let members = |id: CollectionId| async move {
+        store
+            .collection_items(id, admin_principal(), 50, None)
+            .await
+            .expect("items")
+            .items
+    };
+
+    let synced = store
+        .sync_plugin_collection(&sync(vec![aliens.id, up.id, alien.id, WorkId::new()]))
+        .await
+        .expect("sync");
+    assert_eq!(synced.len(), 2, "one collection per library");
+    let in_movies = synced
+        .iter()
+        .find(|c| c.library_id == movies.id)
+        .expect("movies collection")
+        .clone();
+    assert_eq!(in_movies.plugin_id.as_deref(), Some("trakt"));
+    assert_eq!(members(in_movies.id).await, [aliens.id, alien.id]);
+
+    let again = store
+        .sync_plugin_collection(&sync(vec![alien.id]))
+        .await
+        .expect("resync");
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].id, in_movies.id, "a resync keeps the collection");
+    assert_eq!(members(in_movies.id).await, [alien.id]);
+    assert_eq!(
+        store
+            .list_collections(kids.id, 10, None)
+            .await
+            .expect("kids")
+            .items
+            .len(),
+        0,
+        "a library the list left loses its collection"
+    );
+
+    let detached = store.detach_collection(in_movies.id).await.expect("detach");
+    assert_eq!(detached.plugin_id, None);
+    assert!(matches!(
+        store.detach_collection(in_movies.id).await,
+        Err(StorageError::InvalidInput(_))
+    ));
+    let after = store
+        .sync_plugin_collection(&sync(vec![alien.id, aliens.id, up.id]))
+        .await
+        .expect("sync after detach");
+    assert_eq!(after.len(), 1, "the detached library is skipped");
+    assert_eq!(after[0].library_id, kids.id);
+    assert_eq!(
+        members(in_movies.id).await,
+        [alien.id],
+        "the detached collection is left as it was"
+    );
+
+    let removal = store.remove_plugin_data("trakt").await.expect("remove");
+    assert_eq!(removal.collections, 1);
+    assert!(
+        store
+            .get_collection(after[0].id)
+            .await
+            .expect("get")
+            .is_none()
+    );
+    assert!(
+        store
+            .get_collection(in_movies.id)
+            .await
+            .expect("get")
+            .is_some(),
+        "detached collections are kept"
+    );
+    assert!(
+        store
+            .sync_plugin_collection(&sync(vec![alien.id]))
+            .await
+            .expect("sync after removal")
+            .is_empty(),
+        "a detached key stays remembered"
+    );
+    store.delete_library(movies.id).await.ok();
+    store.delete_library(kids.id).await.ok();
+}
+
+/// Imports add and never take away, the newer time wins, and a repeat
+/// changes nothing. What an import set is marked as its source's until this
+/// server changes it.
+async fn imported_user_state_only_adds<S: Storage + ?Sized>(store: &S) {
+    let lib = test_library("Imported State Lib");
+    store.upsert_library(&lib).await.expect("library");
+    let user = make_user("imported-state", false);
+    store.upsert_user(&user).await.expect("user");
+    let now = OffsetDateTime::now_utc();
+    let film = make_work(lib.id, "Imported Film", now);
+    let started = make_work(lib.id, "Half Watched", now);
+    store.upsert_work(&film).await.expect("film");
+    store.upsert_work(&started).await.expect("started");
+    let hours = |n: i64| now - time::Duration::hours(n);
+    let item = |work: WorkId| crate::domain::UserStateImport {
+        work,
+        played_at: None,
+        play_count: None,
+        rating: None,
+        favorite: false,
+    };
+
+    let watched = crate::domain::UserStateImport {
+        played_at: Some(hours(48)),
+        play_count: Some(3),
+        rating: Some((8.0, hours(40))),
+        favorite: true,
+        ..item(film.id)
+    };
+    assert_eq!(
+        store
+            .import_user_state(user.id, "trakt", &[watched.clone(), item(WorkId::new())])
+            .await
+            .expect("import"),
+        [film.id],
+        "a work that doesn't exist is skipped"
+    );
+    assert!(
+        store
+            .import_user_state(user.id, "trakt", std::slice::from_ref(&watched))
+            .await
+            .expect("repeat")
+            .is_empty(),
+        "a repeat changes nothing"
+    );
+    let older = crate::domain::UserStateImport {
+        played_at: Some(hours(72)),
+        play_count: Some(1),
+        rating: Some((2.0, hours(70))),
+        ..item(film.id)
+    };
+    assert!(
+        store
+            .import_user_state(user.id, "trakt", &[older])
+            .await
+            .expect("older")
+            .is_empty(),
+        "older state loses"
+    );
+    let data = store
+        .user_data(user.id, PlayTarget::Work(film.id))
+        .await
+        .expect("data");
+    assert!(data.played && data.favorite);
+    assert_eq!(data.play_count, 3);
+    assert_eq!(data.rating, Some(8.0));
+    assert_eq!(
+        data.played_at.map(|at| at.unix_timestamp()),
+        Some(hours(48).unix_timestamp())
+    );
+
+    store
+        .record_playback_progress(user.id, PlayTarget::Work(started.id), 60_000)
+        .await
+        .expect("progress");
+    store
+        .import_user_state(
+            user.id,
+            "trakt",
+            &[crate::domain::UserStateImport {
+                played_at: Some(hours(24)),
+                ..item(started.id)
+            }],
+        )
+        .await
+        .expect("import under progress");
+    let data = store
+        .user_data(user.id, PlayTarget::Work(started.id))
+        .await
+        .expect("data");
+    assert!(data.played);
+    assert_eq!(
+        data.position_ms,
+        Some(60_000),
+        "a play older than the progress keeps it"
+    );
+
+    let entries = |since| async move {
+        store
+            .user_state_history(user.id, since, 10, None)
+            .await
+            .expect("history")
+            .items
+    };
+    let all = entries(None).await;
+    let film_entry = all.iter().find(|e| e.work == film.id).expect("film entry");
+    assert_eq!(film_entry.played_source.as_deref(), Some("trakt"));
+    assert_eq!(film_entry.rating_source.as_deref(), Some("trakt"));
+    assert_eq!(film_entry.favorite_source.as_deref(), Some("trakt"));
+    assert_eq!(
+        entries(Some(hours(30)))
+            .await
+            .into_iter()
+            .map(|e| e.work)
+            .collect::<Vec<_>>(),
+        [started.id],
+        "since filters by play and rating times"
+    );
+
+    store
+        .mark_played(user.id, PlayTarget::Work(film.id), true)
+        .await
+        .expect("local play");
+    let all = entries(None).await;
+    let film_entry = all.iter().find(|e| e.work == film.id).expect("film entry");
+    assert_eq!(
+        film_entry.played_source, None,
+        "a local play is this server's"
+    );
+    assert_eq!(film_entry.rating_source.as_deref(), Some("trakt"));
+    assert_eq!(film_entry.play_count, 3);
+
+    let first = store
+        .user_state_history(user.id, None, 1, None)
+        .await
+        .expect("first page");
+    let rest = store
+        .user_state_history(user.id, None, 1, first.next_cursor.clone())
+        .await
+        .expect("second page");
+    assert!(first.next_cursor.is_some());
+    assert_ne!(first.items[0].work, rest.items[0].work);
+    assert!(matches!(
+        store
+            .user_state_history(user.id, None, 1, Some(PageCursor("bogus".into())))
+            .await,
+        Err(StorageError::InvalidInput(_))
+    ));
+
+    store.delete_user(user.id).await.ok();
+    store.delete_library(lib.id).await.ok();
+}
+
+async fn episodes_numbered_cover_multi_episode_files<S: Storage + ?Sized>(store: &S) {
+    let library = test_library("Episodes Numbered Lib");
+    store.upsert_library(&library).await.expect("library");
+    let show = ContinueSeries::create(store, library.id, "Numbered Show").await;
+    let pilot = show.episode(store, 1, 1).await;
+    let double = show.episode(store, 1, 2).await;
+    let mut work = store.get_work(double).await.expect("get").expect("double");
+    work.index_end = Some(3);
+    store.upsert_work(&work).await.expect("double ends at 3");
+    show.episode(store, 2, 1).await;
+
+    let ids = |works: Vec<Work>| works.into_iter().map(|work| work.id).collect::<Vec<_>>();
+    let numbered = |season, episode| async move {
+        ids(store
+            .episodes_numbered(show.series, season, episode)
+            .await
+            .expect("numbered"))
+    };
+    assert_eq!(numbered(1, 1).await, [pilot]);
+    assert_eq!(numbered(1, 3).await, [double], "E02-E03 covers 3");
+    assert!(numbered(1, 4).await.is_empty());
+    store.delete_library(library.id).await.ok();
+}
+
+async fn plugin_linked_users_are_those_with_secrets<S: Storage + ?Sized>(store: &S) {
+    let linked = make_user("linked-plugin-user", false);
+    let other = make_user("unlinked-plugin-user", false);
+    store.upsert_user(&linked).await.expect("linked");
+    store.upsert_user(&other).await.expect("other");
+    for key in ["access_token", "refresh_token"] {
+        store
+            .set_user_plugin_secret(linked.id, "linked-fixture", key, "v")
+            .await
+            .expect("secret");
+    }
+    store
+        .set_user_plugin_secret(other.id, "another-plugin", "access_token", "v")
+        .await
+        .expect("secret");
+    assert_eq!(
+        store
+            .plugin_linked_users("linked-fixture")
+            .await
+            .expect("linked users"),
+        [linked.id]
+    );
+    store.delete_user(linked.id).await.ok();
+    store.delete_user(other.id).await.ok();
+}
+
 fn make_collection(library_id: LibraryId, title: &str, sort_title: &str) -> Collection {
     let now = OffsetDateTime::now_utc();
     Collection {
@@ -9053,6 +9493,8 @@ fn make_collection(library_id: LibraryId, title: &str, sort_title: &str) -> Coll
         overview: None,
         created_at: now,
         updated_at: now,
+        plugin_id: None,
+        plugin_key: None,
     }
 }
 

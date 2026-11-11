@@ -211,6 +211,14 @@ CREATE TABLE IF NOT EXISTS user_data (
     rating       REAL,
     favorite     INTEGER NOT NULL DEFAULT 0,
     last_played  TEXT,
+    -- When it was last played to the end; `last_played` is any activity.
+    played_at    TEXT,
+    rated_at     TEXT,
+    -- The plugin whose import set the play, rating or favorite, so its own
+    -- sync never reads them back as new; NULL once this server changes them.
+    played_source   TEXT,
+    rating_source   TEXT,
+    favorite_source TEXT,
     PRIMARY KEY (user_id, target_kind, target_id)
 );
 
@@ -253,6 +261,10 @@ CREATE TABLE IF NOT EXISTS tag_assignments (
 
 CREATE INDEX IF NOT EXISTS tag_assignments_target
     ON tag_assignments(target_kind, target_id);
+
+-- Removing a plugin's data finds its assignments by source.
+CREATE INDEX IF NOT EXISTS tag_assignments_source
+    ON tag_assignments(source);
 
 -- `source` is part of the primary key, so a work can hold a local and a
 -- provider poster at once and readers choose between them by preference. The
@@ -473,11 +485,28 @@ CREATE TABLE IF NOT EXISTS collections (
     sort_title  TEXT NOT NULL,
     overview    TEXT,
     created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    -- Set on a collection a plugin syncs; a manual one has neither.
+    plugin_id   TEXT,
+    plugin_key  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS collections_library_sort
     ON collections(library_id, sort_title, id);
+
+-- NULLs are distinct, so manual collections never collide.
+CREATE UNIQUE INDEX IF NOT EXISTS collections_plugin_key
+    ON collections(plugin_id, plugin_key, library_id);
+
+-- Keys whose collection an administrator detached in a library, so the
+-- plugin's later syncs leave that library alone. Kept when the plugin's
+-- data is removed: the detached collection still exists.
+CREATE TABLE IF NOT EXISTS detached_plugin_collections (
+    plugin_id  TEXT NOT NULL,
+    plugin_key TEXT NOT NULL,
+    library_id BLOB NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    PRIMARY KEY (plugin_id, plugin_key, library_id)
+);
 
 CREATE TABLE IF NOT EXISTS collection_items (
     collection_id BLOB NOT NULL REFERENCES collections(id) ON DELETE CASCADE,

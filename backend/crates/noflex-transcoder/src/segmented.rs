@@ -159,15 +159,23 @@ fn segment_file(variant: usize, index: u32, container: HlsSegmentContainer) -> S
     format!("v{variant}_{index:05}.{ext}")
 }
 
-/// The segment indices a run's playlist lists as finished.
-fn finished_segments(playlist: &str) -> impl Iterator<Item = u32> + '_ {
-    playlist
-        .lines()
-        .filter(|line| !line.starts_with('#'))
-        .filter_map(|line| match Artifact::parse(line.trim()) {
-            Some(Artifact::Segment(_, index)) => Some(index),
-            _ => None,
-        })
+/// The segments a run's playlist lists as finished, with the length ffmpeg
+/// gave each.
+fn finished_segments(playlist: &str) -> Vec<(u32, Option<f64>)> {
+    let mut length = None;
+    let mut finished = Vec::new();
+    for line in playlist.lines().map(str::trim) {
+        if let Some(extinf) = line.strip_prefix("#EXTINF:") {
+            length = extinf
+                .trim_end_matches(',')
+                .split(',')
+                .next()
+                .and_then(|v| v.parse().ok());
+        } else if let Some(Artifact::Segment(_, index)) = Artifact::parse(line) {
+            finished.push((index, length.take()));
+        }
+    }
+    finished
 }
 
 /// `audio` as an on-demand run carries it, from a source track of
@@ -236,6 +244,8 @@ fn next(done: &BTreeSet<u32>, run: Option<Reach>, index: u32) -> Next {
 struct Run {
     id: String,
     reach: Reach,
+    /// Said once that its segments are off the grid.
+    warned: bool,
 }
 
 struct Variant {
@@ -418,9 +428,26 @@ impl SegmentedJob {
         };
         if let Ok(playlist) = tokio::fs::read_to_string(self.dir.join(run_playlist(variant))).await
         {
-            for index in finished_segments(&playlist) {
+            for (index, length) in finished_segments(&playlist) {
                 state.done.insert(index);
                 run.reach.head = run.reach.head.max(index + 1);
+                // A segment the playlist calls 4 s that isn't means the encoder
+                // ignored the forced keyframes, and players will stumble.
+                let expected = self.grid.length_secs(index);
+                if !run.warned
+                    && index + 1 < self.grid.count()
+                    && length.is_some_and(|length| (length - expected).abs() > 0.5)
+                {
+                    run.warned = true;
+                    tracing::warn!(
+                        session = %self.id,
+                        variant,
+                        index,
+                        length,
+                        encoder = state.template.encoder.video_flag(),
+                        "on-demand segment off the grid; the encoder ignored forced keyframes"
+                    );
+                }
             }
         }
         match self.launcher.registry.get(&run.id).await {
@@ -478,6 +505,7 @@ impl SegmentedJob {
                 end,
                 head: index,
             },
+            warned: false,
         });
         Ok(())
     }
@@ -598,7 +626,10 @@ mod tests {
 
     #[test]
     fn a_runs_playlist_lists_what_it_finished() {
-        let playlist = "#EXTM3U\n#EXT-X-MAP:URI=\"v0_init.mp4\"\n#EXTINF:4.004,\nv0_00007.m4s\n#EXTINF:4.004,\nv0_00008.m4s\n";
-        assert_eq!(finished_segments(playlist).collect::<Vec<_>>(), [7, 8]);
+        let playlist = "#EXTM3U\n#EXT-X-MAP:URI=\"v0_init.mp4\"\n#EXTINF:4.004000,\nv0_00007.m4s\n#EXTINF:8.333333,\nv0_00008.m4s\n";
+        assert_eq!(
+            finished_segments(playlist),
+            [(7, Some(4.004)), (8, Some(8.333333))]
+        );
     }
 }

@@ -378,7 +378,12 @@ pub(crate) fn push_video(argv: &mut Vec<String>, req: &TranscodeRequest) {
                 "-force_key_frames".to_string(),
                 format!("expr:gte(t,n_forced*{})", req.segment.duration_secs.max(1)),
             ]);
-            argv.extend(req.encoder.forced_keyframe_args().iter().map(|arg| arg.to_string()));
+            argv.extend(
+                req.encoder
+                    .forced_keyframe_args()
+                    .iter()
+                    .map(|arg| arg.to_string()),
+            );
             if tonemap && !req.tonemaps_on_gpu() {
                 argv.extend([
                     "-filter_threads".to_string(),

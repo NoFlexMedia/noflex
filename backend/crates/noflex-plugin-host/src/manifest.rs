@@ -154,8 +154,10 @@ impl SettingSpec {
         match self.kind {
             SettingKind::Text | SettingKind::Secret => Ok(toml::Value::String(raw.to_string())),
             SettingKind::Url => {
-                let url = url::Url::parse(raw.trim()).map_err(|_| "isn't a URL".to_string())?;
-                if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
+                let is_web = url::Url::parse(raw.trim()).is_ok_and(|url| {
+                    matches!(url.scheme(), "http" | "https") && url.host().is_some()
+                });
+                if !is_web {
                     return Err("must be an http or https URL".into());
                 }
                 Ok(toml::Value::String(raw.trim().to_string()))

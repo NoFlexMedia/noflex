@@ -54,14 +54,19 @@ pub struct PluginSetting {
 /// refused or failed.
 #[derive(Debug, Error)]
 pub enum SettingsError {
-    #[error("the plugin isn't loaded")]
+    #[error("The plugin isn't loaded")]
     NotLoaded,
-    #[error("the plugin has no setting `{0}`")]
+    #[error("The plugin has no setting “{0}”")]
     UnknownKey(String),
-    #[error("`{key}` {reason}")]
-    Invalid { key: String, reason: String },
-    #[error("`{0}` is required, and nothing else sets it")]
-    Required(String),
+    /// The message leads with the setting's label, for showing as is.
+    #[error("{label} {reason}")]
+    Invalid {
+        key: String,
+        label: String,
+        reason: String,
+    },
+    #[error("{label} is required")]
+    Required { key: String, label: String },
     #[error("plugin settings need storage")]
     NoStorage,
     #[error(transparent)]
@@ -76,7 +81,7 @@ impl SettingsError {
     pub fn is_bad_input(&self) -> bool {
         matches!(
             self,
-            Self::NotLoaded | Self::UnknownKey(_) | Self::Invalid { .. } | Self::Required(_)
+            Self::NotLoaded | Self::UnknownKey(_) | Self::Invalid { .. } | Self::Required { .. }
         )
     }
 }
@@ -192,6 +197,7 @@ pub(crate) fn plan(
         };
         let invalid = |reason: &str| SettingsError::Invalid {
             key: key.clone(),
+            label: spec.label.clone(),
             reason: reason.to_string(),
         };
         if writes.iter().any(|w| w.key == key) {
@@ -212,7 +218,10 @@ pub(crate) fn plan(
                     base.is_some_and(|b| b.contains_key(&key)) || spec.default.is_some()
                 };
                 if spec.required && !supplied {
-                    return Err(SettingsError::Required(key));
+                    return Err(SettingsError::Required {
+                        key,
+                        label: spec.label.clone(),
+                    });
                 }
                 None
             }
@@ -342,11 +351,11 @@ mod tests {
         ));
         assert!(matches!(
             plan(None, &[("url", None)]),
-            Err(SettingsError::Required(_))
+            Err(SettingsError::Required { .. })
         ));
         assert!(matches!(
             plan(None, &[("url", Some(""))]),
-            Err(SettingsError::Required(_))
+            Err(SettingsError::Required { .. })
         ));
         let base = table("url = \"https://config.example\"");
         assert!(

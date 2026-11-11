@@ -472,6 +472,11 @@ async fn artwork_falls_back_to_the_next_image_provider() {
     let refreshed = h.service().refresh(work.id, false).await.expect("refresh");
     assert_eq!(refreshed.title, "Fixture Title", "metadata from the winner");
     assert_eq!(
+        refreshed.community_rating,
+        Some(7.5),
+        "taken from the rating the winner reported"
+    );
+    assert_eq!(
         h.provider_art(work.id).await,
         vec![(ImageKind::Primary, None)],
         "the winner's payload lists only a poster, fetched from the fallback"

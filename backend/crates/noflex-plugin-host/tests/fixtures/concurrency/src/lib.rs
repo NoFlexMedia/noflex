@@ -79,7 +79,7 @@ impl metadata::Guest for Fixture {
     async fn fetch(
         id: metadata::ExternalId,
     ) -> Result<metadata::MetadataPayload, metadata::PluginError> {
-        use noflex::plugin::types::{ImageKind, MetadataImage, MetadataPerson};
+        use noflex::plugin::types::{ImageKind, MetadataImage, MetadataPerson, Rating};
         Ok(metadata::MetadataPayload {
             external_ids: vec![id],
             title: "Fixture Title".into(),
@@ -106,7 +106,12 @@ impl metadata::Guest for Fixture {
                 height: None,
             }],
             rating: Some("PG-13".into()),
-            community_rating: Some(7.5),
+            ratings: vec![Rating {
+                source: "tmdb".into(),
+                value: 7.5,
+                scale: 10.0,
+                votes: Some(1200),
+            }],
             original_language: None,
             origin_countries: Vec::new(),
             keywords: Vec::new(),

@@ -244,6 +244,15 @@ async fn registry_metadata_fetch_walks_candidates() {
     assert_eq!(id.0, "concurrency-fixture");
     assert_eq!(payload.title, "Fixture Title");
     assert_eq!(payload.genres, vec!["Drama", "Fixture"]);
+    assert_eq!(
+        payload.ratings,
+        vec![noflex_core::providers::Rating {
+            source: "tmdb".into(),
+            value: 7.5,
+            scale: 10.0,
+            votes: Some(1200),
+        }]
+    );
     assert_eq!(payload.external_ids.len(), 1);
     assert_eq!(payload.external_ids[0].value, "fixture:7");
     assert_eq!(

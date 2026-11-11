@@ -8,6 +8,7 @@ use crate::{
     error::PluginResult,
     ids::WorkId,
     model::{ExternalId, ImageKind, WorkKind},
+    providers::ratings::Rating,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,8 +75,10 @@ pub struct MetadataPayload {
     pub studios: Vec<String>,
     pub people: Vec<MetadataPerson>,
     pub images: Vec<MetadataImage>,
+    /// The parental certificate ("PG-13").
     pub rating: Option<String>,
-    pub community_rating: Option<f32>,
+    /// The provider's own ratings, one per source.
+    pub ratings: Vec<Rating>,
     /// ISO 639-1 code of the original language, when known.
     pub original_language: Option<String>,
     /// ISO 3166-1 alpha-2 codes of the countries of origin.

@@ -31,8 +31,8 @@ impl EntityKind {
 
     fn includes(self) -> &'static str {
         match self {
-            Self::Artist => "genres",
-            Self::Album | Self::Track => "artist-credits+genres+releases",
+            Self::Artist => "genres+ratings",
+            Self::Album | Self::Track => "artist-credits+genres+releases+ratings",
         }
     }
 }
@@ -71,6 +71,14 @@ pub struct Payload {
     pub runtime_ms: Option<i64>,
     pub genres: Vec<String>,
     pub people: Vec<Person>,
+    /// MusicBrainz users' average, out of 5.
+    pub rating: Option<Score>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Score {
+    pub average: f32,
+    pub votes: u64,
 }
 
 pub fn headers() -> Vec<(String, String)> {
@@ -233,6 +241,7 @@ struct ArtistResponse {
     life_span: LifeSpan,
     #[serde(default)]
     genres: Vec<Genre>,
+    rating: Option<RatingResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -245,6 +254,7 @@ struct ReleaseGroupResponse {
     genres: Vec<Genre>,
     #[serde(rename = "artist-credit", default)]
     artist_credit: Vec<ArtistCredit>,
+    rating: Option<RatingResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -258,6 +268,26 @@ struct RecordingResponse {
     artist_credit: Vec<ArtistCredit>,
     #[serde(default)]
     releases: Vec<Release>,
+    rating: Option<RatingResponse>,
+}
+
+/// Null with no votes.
+#[derive(Debug, Deserialize)]
+struct RatingResponse {
+    value: Option<f32>,
+    #[serde(rename = "votes-count", default)]
+    votes_count: u64,
+}
+
+impl RatingResponse {
+    fn score(self) -> Option<Score> {
+        self.value
+            .filter(|_| self.votes_count > 0)
+            .map(|average| Score {
+                average,
+                votes: self.votes_count,
+            })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -291,6 +321,7 @@ pub fn parse_fetch(kind: EntityKind, body: &[u8]) -> Result<Payload, String> {
                 runtime_ms: None,
                 genres: genre_names(item.genres),
                 people: Vec::new(),
+                rating: item.rating.and_then(RatingResponse::score),
             })
         }
         EntityKind::Album => {
@@ -307,6 +338,7 @@ pub fn parse_fetch(kind: EntityKind, body: &[u8]) -> Result<Payload, String> {
                 runtime_ms: None,
                 genres: genre_names(item.genres),
                 people: people(item.artist_credit),
+                rating: item.rating.and_then(RatingResponse::score),
             })
         }
         EntityKind::Track => {
@@ -324,6 +356,7 @@ pub fn parse_fetch(kind: EntityKind, body: &[u8]) -> Result<Payload, String> {
                 runtime_ms: item.length,
                 genres: genre_names(item.genres),
                 people: people(item.artist_credit),
+                rating: item.rating.and_then(RatingResponse::score),
             })
         }
     }
@@ -378,7 +411,9 @@ mod tests {
         );
         assert_eq!(
             fetch_url(EntityKind::Track, TRACK_ID).unwrap(),
-            format!("{API_BASE}/recording/{TRACK_ID}?fmt=json&inc=artist-credits+genres+releases")
+            format!(
+                "{API_BASE}/recording/{TRACK_ID}?fmt=json&inc=artist-credits+genres+releases+ratings"
+            )
         );
         assert!(fetch_url(EntityKind::Artist, "not-an-mbid").is_err());
     }
@@ -407,10 +442,10 @@ mod tests {
             r#"{{"id":"{ARTIST_ID}","name":"Miles Davis","sort-name":"Davis, Miles","disambiguation":"American jazz trumpeter","life-span":{{"begin":"1926-05-26"}},"genres":[{{"name":"jazz"}}]}}"#
         );
         let album = format!(
-            r#"{{"id":"{ALBUM_ID}","title":"Kind of Blue","first-release-date":"1959-08-17","artist-credit":[{{"name":"Miles Davis"}}],"genres":[{{"name":"modal jazz"}}]}}"#
+            r#"{{"id":"{ALBUM_ID}","title":"Kind of Blue","first-release-date":"1959-08-17","artist-credit":[{{"name":"Miles Davis"}}],"genres":[{{"name":"modal jazz"}}],"rating":{{"value":4.55,"votes-count":89}}}}"#
         );
         let track = format!(
-            r#"{{"id":"{TRACK_ID}","title":"So What","length":562000,"artist-credit":[{{"name":"Miles Davis"}}],"genres":[{{"name":"jazz"}}],"releases":[{{"date":"1960"}},{{"date":"1959-08-17"}}]}}"#
+            r#"{{"id":"{TRACK_ID}","title":"So What","length":562000,"artist-credit":[{{"name":"Miles Davis"}}],"genres":[{{"name":"jazz"}}],"releases":[{{"date":"1960"}},{{"date":"1959-08-17"}}],"rating":{{"value":null,"votes-count":0}}}}"#
         );
 
         let a = parse_fetch(EntityKind::Artist, artist.as_bytes()).unwrap();
@@ -420,10 +455,18 @@ mod tests {
         let a = parse_fetch(EntityKind::Album, album.as_bytes()).unwrap();
         assert_eq!(a.external_id_kind, IdKind::ReleaseGroup);
         assert_eq!(a.people[0].role.as_deref(), Some("Artist"));
+        assert_eq!(
+            a.rating,
+            Some(Score {
+                average: 4.55,
+                votes: 89
+            })
+        );
         let a = parse_fetch(EntityKind::Track, track.as_bytes()).unwrap();
         assert_eq!(a.external_id_kind, IdKind::Recording);
         assert_eq!(a.runtime_ms, Some(562000));
         assert_eq!(a.release_date.as_deref(), Some("1959-08-17"));
+        assert_eq!(a.rating, None, "an unrated recording");
     }
 
     #[test]

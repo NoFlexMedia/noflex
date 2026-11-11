@@ -373,7 +373,7 @@ mod guest {
                 })
                 .collect(),
             rating: payload.rating,
-            community_rating: None,
+            ratings: Vec::new(),
             original_language: payload.original_language,
             origin_countries: payload.origin_countries,
             keywords: Vec::new(),

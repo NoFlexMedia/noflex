@@ -165,7 +165,7 @@ impl metadata::Guest for Fixture {
             people,
             images,
             rating: None,
-            community_rating: None,
+            ratings: Vec::new(),
             original_language: None,
             origin_countries: Vec::new(),
             keywords: Vec::new(),

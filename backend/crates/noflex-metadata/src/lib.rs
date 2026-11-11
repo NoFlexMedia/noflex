@@ -84,12 +84,8 @@ pub fn apply_payload(work: &mut Work, payload: &MetadataPayload) -> ApplyReport 
         work.tagline = Some(tagline.clone());
         changed.push(WorkField::Tagline);
     }
-    if !locked(WorkField::CommunityRating)
-        && let Some(community_rating) = payload.community_rating
-    {
-        work.community_rating = Some(community_rating);
-        changed.push(WorkField::CommunityRating);
-    }
+    // Ratings are kept per source beside the work (the host stores the
+    // payload's), and the store derives `community_rating` from them.
 
     // External ids are never lockable: always merged, never cleared.
     for id in &payload.external_ids {
@@ -344,7 +340,7 @@ mod tests {
             people: vec![],
             images: vec![],
             rating: None,
-            community_rating: None,
+            ratings: vec![],
             original_language: None,
             origin_countries: vec![],
             keywords: vec![],

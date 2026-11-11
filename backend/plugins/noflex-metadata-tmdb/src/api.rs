@@ -154,11 +154,18 @@ pub struct Payload {
     pub people: Vec<Person>,
     pub images: Vec<Art>,
     pub rating: Option<String>,
-    pub community_rating: Option<f32>,
+    pub score: Option<Score>,
     pub original_language: Option<String>,
     pub origin_countries: Vec<String>,
     pub keywords: Vec<String>,
     pub budget_usd: Option<u64>,
+}
+
+/// TMDb's own rating of a record: its users' average, out of 10.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Score {
+    pub average: f32,
+    pub votes: Option<u64>,
 }
 
 /// One search result with this plugin's confidence (see [`confidence`]).
@@ -513,6 +520,7 @@ struct Movie {
     #[serde(default)]
     production_companies: Vec<Named>,
     vote_average: Option<f32>,
+    vote_count: Option<u64>,
     imdb_id: Option<String>,
     #[serde(default)]
     credits: Credits,
@@ -564,6 +572,7 @@ struct Series {
     #[serde(default)]
     production_companies: Vec<Named>,
     vote_average: Option<f32>,
+    vote_count: Option<u64>,
     #[serde(default)]
     credits: Credits,
     #[serde(default)]
@@ -586,6 +595,7 @@ struct EpisodeSummary {
     runtime: Option<i64>,
     still_path: Option<String>,
     vote_average: Option<f32>,
+    vote_count: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -610,6 +620,7 @@ struct Episode {
     runtime: Option<i64>,
     still_path: Option<String>,
     vote_average: Option<f32>,
+    vote_count: Option<u64>,
     #[serde(default)]
     credits: Credits,
     #[serde(default)]
@@ -783,7 +794,7 @@ fn parse_movie(body: &[u8]) -> Result<Payload, String> {
             &[ArtKind::Primary, ArtKind::Backdrop, ArtKind::Logo],
         ),
         rating,
-        community_rating: rating_value(m.vote_average),
+        score: score(m.vote_average, m.vote_count),
         original_language: non_empty(m.original_language),
         origin_countries: m.origin_country,
         keywords: names(m.keywords.keywords),
@@ -834,7 +845,7 @@ fn parse_series(body: &[u8]) -> Result<Payload, String> {
                 .map(|r| (r.iso_3166_1, r.rating))
                 .collect(),
         ),
-        community_rating: rating_value(s.vote_average),
+        score: score(s.vote_average, s.vote_count),
         original_language: non_empty(s.original_language),
         origin_countries: s.origin_country,
         keywords: names(s.keywords.keywords),
@@ -887,7 +898,7 @@ fn parse_episode(series: u64, season: u32, episode: u32, body: &[u8]) -> Result<
         runtime_ms: e.runtime.filter(|r| *r > 0).map(|r| r * 60_000),
         people: people(e.credits),
         images,
-        community_rating: rating_value(e.vote_average),
+        score: score(e.vote_average, e.vote_count),
         ..Payload::default()
     })
 }
@@ -942,7 +953,7 @@ pub fn parse_children(parent: TmdbId, body: &[u8]) -> Result<Vec<Payload>, Strin
                     images: non_empty(e.still_path)
                         .map(|p| vec![art_from_path(ArtKind::Thumb, &p)])
                         .unwrap_or_default(),
-                    community_rating: rating_value(e.vote_average),
+                    score: score(e.vote_average, e.vote_count),
                     ..Payload::default()
                 })
                 .collect())
@@ -1177,8 +1188,11 @@ fn pick_certification(by_country: Vec<(String, String)>) -> Option<String> {
         .map(|(_, rating)| rating.trim().to_string())
 }
 
-fn rating_value(vote: Option<f32>) -> Option<f32> {
-    vote.filter(|v| *v > 0.0)
+/// TMDb reports a record nobody has rated as an average of 0.
+fn score(average: Option<f32>, votes: Option<u64>) -> Option<Score> {
+    average
+        .filter(|average| *average > 0.0 && votes != Some(0))
+        .map(|average| Score { average, votes })
 }
 
 fn names(list: Vec<Named>) -> Vec<String> {
@@ -1401,7 +1415,13 @@ mod tests {
             vec!["Warner Bros. Pictures", "Village Roadshow Pictures"]
         );
         assert_eq!(p.rating.as_deref(), Some("R"));
-        assert_eq!(p.community_rating, Some(8.2));
+        assert_eq!(
+            p.score,
+            Some(Score {
+                average: 8.2,
+                votes: Some(26000)
+            })
+        );
         assert_eq!(
             p.ids,
             vec![

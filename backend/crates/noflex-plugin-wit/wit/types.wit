@@ -109,6 +109,21 @@ interface types {
         external-ids: list<external-id>,
     }
 
+    /// One source's rating of a work, on that source's own scale.
+    record rating {
+        /// Whose rating it is, not who reports it: a stable slug of
+        /// lowercase letters, digits and hyphens, such as `imdb`, `tmdb`,
+        /// `rotten-tomatoes` or `metacritic`. A new source needs no change
+        /// here; the host names the ones it knows and spells out the rest.
+        source: string,
+        /// Between 0 and `scale`, as the source shows it.
+        value: f32,
+        /// The best `value` can be: 10 for "7.8/10", 100 for "87%".
+        scale: f32,
+        /// How many ratings `value` summarises, when the source says.
+        votes: option<u64>,
+    }
+
     record metadata-payload {
         external-ids: list<external-id>,
         title: string,
@@ -123,8 +138,12 @@ interface types {
         studios: list<string>,
         people: list<metadata-person>,
         images: list<metadata-image>,
+        /// The parental certificate ("PG-13", "TV-MA").
         rating: option<string>,
-        community-rating: option<f32>,
+        /// The provider's own ratings of the record, one per source. They
+        /// replace what this provider reported last time; other providers'
+        /// stay.
+        ratings: list<rating>,
         /// ISO 639-1 code of the original language, when known.
         original-language: option<string>,
         /// ISO 3166-1 alpha-2 codes of the countries of origin.

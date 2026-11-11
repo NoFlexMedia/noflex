@@ -30,7 +30,7 @@ mod guest {
     use exports::noflex::plugin::{background, metadata};
     use noflex::plugin::{
         host_net,
-        types::{ExternalIdKind, MetadataPerson},
+        types::{ExternalIdKind, MetadataPerson, Rating},
     };
 
     use crate::{
@@ -202,7 +202,16 @@ mod guest {
                     .collect(),
                 images: Vec::new(),
                 rating: None,
-                community_rating: None,
+                ratings: payload
+                    .rating
+                    .map(|score| Rating {
+                        source: "musicbrainz".into(),
+                        value: score.average,
+                        scale: 5.0,
+                        votes: Some(score.votes),
+                    })
+                    .into_iter()
+                    .collect(),
                 original_language: None,
                 origin_countries: Vec::new(),
                 keywords: Vec::new(),

@@ -22,7 +22,9 @@ use std::{
 use async_graphql::Json;
 use noflex_core::{
     ExternalId, ExternalIdKind, ImageKind, MetadataStatus, TagId, TagTarget, WorkField, WorkId,
-    WorkKind, providers::MetadataPayload, slugify,
+    WorkKind,
+    providers::{MetadataPayload, Rating},
+    slugify,
 };
 use noflex_metadata::{TagDraft, apply_payload, merge_external_id, merge_tag_metadata, person_ids};
 use noflex_storage::{
@@ -394,6 +396,14 @@ impl MetadataService {
         if let Err(error) = self.storage.delete_work_embeddings(work.id).await {
             tracing::warn!(work = %work.id, %error, "metadata: stale embedding not cleared");
         }
+        let ratings = usable_ratings(&provider.0, &payload.ratings);
+        if let Err(error) = self
+            .storage
+            .replace_work_ratings(work.id, &provider.0, &ratings)
+            .await
+        {
+            tracing::warn!(work = %work.id, plugin = %provider.0, %error, "metadata: ratings not stored");
+        }
 
         let mut kinds: Vec<(ImageKind, Option<String>)> = Vec::new();
         for image in &payload.images {
@@ -417,7 +427,8 @@ impl MetadataService {
             self.drop_provider_art_except(&work, &kinds).await;
         }
         tracing::debug!(work = %work.id, provider = %provider.0, written, "metadata applied");
-        Ok(work)
+        // The store derived its rating from what was stored above.
+        Ok(self.storage.get_work(work.id).await?.unwrap_or(work))
     }
 
     /// Fetch each of `kinds` for `work` through the `image` hook and record
@@ -920,6 +931,21 @@ impl MetadataService {
             hints,
         }))
     }
+}
+
+/// `ratings` as `provider` may store them: the first of each source, and
+/// only those [`Rating::is_valid`] passes. The rest are logged and dropped.
+pub(crate) fn usable_ratings(provider: &str, ratings: &[Rating]) -> Vec<Rating> {
+    let mut out: Vec<Rating> = Vec::with_capacity(ratings.len());
+    for rating in ratings {
+        if !rating.is_valid() {
+            tracing::warn!(plugin = %provider, source = %rating.source, value = rating.value,
+                scale = rating.scale, "rating dropped: not a slug, or not within its scale");
+        } else if !out.iter().any(|kept| kept.source == rating.source) {
+            out.push(rating.clone());
+        }
+    }
+    out
 }
 
 /// The art kinds asked of providers when no payload says which exist.

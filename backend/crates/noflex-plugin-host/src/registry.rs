@@ -878,7 +878,7 @@ pub fn metadata_payload_from_wit(
     use noflex_core::{
         model::ExternalId,
         providers::{
-            MetadataPayload,
+            MetadataPayload, Rating,
             metadata::{MetadataImage, MetadataPerson},
         },
     };
@@ -931,7 +931,16 @@ pub fn metadata_payload_from_wit(
             })
             .collect(),
         rating: payload.rating,
-        community_rating: payload.community_rating,
+        ratings: payload
+            .ratings
+            .into_iter()
+            .map(|r| Rating {
+                source: r.source,
+                value: r.value,
+                scale: r.scale,
+                votes: r.votes,
+            })
+            .collect(),
         original_language: payload.original_language,
         origin_countries: payload.origin_countries,
         keywords: payload.keywords,

@@ -55,6 +55,7 @@ mod guest {
         host_net, host_secrets,
         types::{
             ExternalId, ExternalIdKind, ImageKind, MetadataImage, MetadataPerson, PluginError,
+            Rating,
         },
     };
     use noflex_plugin_sdk::cache::TtlCache;
@@ -327,7 +328,16 @@ mod guest {
                 })
                 .collect(),
             rating: payload.rating,
-            community_rating: payload.community_rating,
+            ratings: payload
+                .score
+                .map(|score| Rating {
+                    source: "tmdb".into(),
+                    value: score.average,
+                    scale: 10.0,
+                    votes: score.votes,
+                })
+                .into_iter()
+                .collect(),
             original_language: payload.original_language,
             origin_countries: payload.origin_countries,
             keywords: payload.keywords,

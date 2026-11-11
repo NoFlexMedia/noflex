@@ -217,13 +217,11 @@ adb exec-out screencap -d <display id> -p > shot.png           # foldables have 
 
 ## Licenses
 
-You → About shows the app's version, its source, and every license in the build: Flutter's registry for Dart packages and the engine, plus what `services/licenses.dart` adds.
+You → About shows the app's version, its source, and every license in the build: Flutter's registry for Dart packages and the engine, plus what `services/licenses.dart` adds from `assets/licenses/manifest.json`.
 
-- **Flutter can't see the native libraries media_kit downloads prebuilt**, so `services/licenses.dart` lists them per platform, from the builds media_kit's packages pin: libmpv-darwin-build for iOS and macOS, libmpv-android-video-build, libmpv-win32-video-cmake. Moving media_kit means checking those builds' libraries and versions and updating the lists.
-- All of them are LGPL or permissive: the pinned flavors build mpv with `-Dgpl=false` and FFmpeg without `--enable-gpl`. A flavor named `encodersgpl` or `full`, or any GPL library, changes that, and can't ship on the App Store.
-- The Windows list was read from the DLL itself: mpv's list of enabled features, and what each links. Its libarchive is configured with LZO, which is GPL, but no LZO code is in the DLL. Check again when the DLL changes.
+- **`assets/licenses/` is generated** by `cargo xtask third-party sync` from `packaging/third-party/apps.toml`. Change the record, never the assets; [`packaging/AGENTS.md`](../packaging/AGENTS.md) says how, including what to do when media_kit moves.
+- The record covers what Flutter can't see: the native libraries media_kit downloads prebuilt for each platform, and Inter. A new Dart package needs nothing.
 - Linux plays through the system's libmpv, which the app doesn't ship; only mimalloc is linked in.
-- Texts are in `assets/licenses/`: upstream license files as they are, and short notices for the LGPL and Apache libraries, whose full license texts are shared files. `test/licenses_test.dart` fails if a platform names one that isn't there.
 
 ## Motion and loading
 

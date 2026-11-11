@@ -12,8 +12,8 @@ void main() {
     LicenseRegistry.reset();
   });
 
-  // A notice missing from assets/licenses only fails on the platform that names
-  // it, when someone opens the licenses.
+  // `cargo xtask third-party check` holds the assets to their record; this holds
+  // the app to the manifest's shape, on every platform.
   test('every platform’s native libraries come with their licenses', () async {
     for (final platform in [
       TargetPlatform.android,

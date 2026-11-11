@@ -320,6 +320,11 @@ class Cast {
       const detail = playable.detail.work ?? work;
       const info = new chrome.cast.media.MediaInfo(url, stream.route === "DIRECT" ? (/webm/.test(stream.decision?.source?.container ?? "") ? "video/webm" : "video/mp4") : "application/x-mpegURL");
       info.streamType = chrome.cast.media.StreamType.BUFFERED;
+      // Google's own receiver takes HLS segments for MPEG-TS unless told; ours sets this too.
+      if (stream.route !== "DIRECT" && stream.decision?.target.container === "fmp4") {
+        info.hlsSegmentFormat = chrome.cast.media.HlsSegmentFormat.FMP4;
+        info.hlsVideoSegmentFormat = chrome.cast.media.HlsVideoSegmentFormat.FMP4;
+      }
       info.metadata = new chrome.cast.media.GenericMediaMetadata();
       info.metadata.title = detail.title;
       info.metadata.subtitle = subtitleFor(detail);

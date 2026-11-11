@@ -12,7 +12,6 @@
     { id: "musicbrainz", name: "MusicBrainz", hooks: ["metadata"], caps: ["http.egress"], hosts: ["musicbrainz.org"], calls: ["GET musicbrainz.org/ws/2/release", "GET musicbrainz.org/ws/2/artist"] },
     { id: "trakt", name: "Trakt", hooks: ["scrobbler", "user-link"], caps: ["http.egress", "secrets.read", "user-secrets.read", "user-secrets.write", "background"], hosts: ["api.trakt.tv"], calls: ["POST api.trakt.tv/scrobble/start", "POST api.trakt.tv/scrobble/stop", "GET api.trakt.tv/sync/history"] },
     { id: "embeddings", name: "Local embeddings", hooks: ["embedder"], caps: ["assets.read", "inference.run"], hosts: [], calls: [] },
-    { id: "intro-chapters", name: "Intro chapters", hooks: ["intro-detector"], caps: [], hosts: [], calls: [] },
   ];
 
   let selected = $state(0);
@@ -27,7 +26,7 @@
     const time = new Date(Date.UTC(2026, 10, 11, 20, 4, 30 + n)).toISOString().slice(11, 19);
     // Now and then, show the host turning something away.
     if (p.calls.length && n % 5 === 0) return { id: n, time, plugin: p.id, text: "GET 192.168.1.20/admin", ok: false, why: "private address" };
-    if (!p.calls.length) return { id: n, time, plugin: p.id, text: p.caps.includes("inference.run") ? "inference.run · 16 synopses" : "chapters read · 3 markers", ok: true };
+    if (!p.calls.length) return { id: n, time, plugin: p.id, text: "inference.run · 16 synopses", ok: true };
     return { id: n, time, plugin: p.id, text: p.calls[n % p.calls.length], ok: true };
   }
   function start() {

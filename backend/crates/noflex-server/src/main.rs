@@ -172,6 +172,11 @@ async fn run(
         Some(_) => finish_reset(cfg, storage.as_ref()).await?,
         None => None,
     };
+    // Every start, as the configuration may have changed since the last.
+    storage
+        .set_rating_sources(&cfg.metadata.rating_sources)
+        .await
+        .context("set the rating sources")?;
 
     // Separate by purpose, so a deployer can put the transcode cache on a fast
     // scratch disk without putting the image cache next to it.

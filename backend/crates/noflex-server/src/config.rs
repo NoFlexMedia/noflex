@@ -45,6 +45,8 @@ pub struct Config {
     pub log: LogConfig,
     pub transcoder: TranscoderConfig,
     pub plugin: PluginConfig,
+    #[serde(default)]
+    pub metadata: MetadataConfig,
     pub scanner: ScannerConfig,
     pub search: SearchConfig,
     pub live_tv: LiveTvConfig,
@@ -204,6 +206,27 @@ pub struct PluginOverride {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MetadataConfig {
+    /// The rating sources a work's single rating (what filters, smart lists
+    /// and recommendations compare) is taken from, first preferred:
+    /// slugs such as `imdb`, `tmdb` or `metacritic`. A source not listed is
+    /// still shown beside the others, but never supplies it.
+    pub rating_sources: Vec<String>,
+}
+
+impl Default for MetadataConfig {
+    fn default() -> Self {
+        Self {
+            rating_sources: noflex_core::providers::DEFAULT_RATING_SOURCES
+                .iter()
+                .map(|source| source.to_string())
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScannerConfig {
     pub debounce_ms: u64,
     pub concurrency: u32,
@@ -295,6 +318,7 @@ impl Default for Config {
                 overrides: std::collections::HashMap::new(),
                 per_plugin_config: std::collections::HashMap::new(),
             },
+            metadata: MetadataConfig::default(),
             scanner: ScannerConfig {
                 debounce_ms: 500,
                 concurrency: 4,
@@ -434,6 +458,19 @@ impl Config {
 
     fn validate(&self) -> Result<(), ConfigError> {
         use noflex_core::{VideoCodec, VideoProfile};
+        if let Some(source) = self
+            .metadata
+            .rating_sources
+            .iter()
+            .find(|source| !noflex_core::providers::is_source_slug(source))
+        {
+            return Err(ConfigError::Invalid {
+                field: "metadata.rating_sources",
+                reason: format!(
+                    "{source:?} isn't a source's slug: lowercase letters, digits and hyphens"
+                ),
+            });
+        }
         for rung in &self.transcoder.ladder {
             let matches = match rung.video_codec {
                 VideoCodec::H264 => matches!(
@@ -588,6 +625,21 @@ mod tests {
         assert!(c.bind.contains("28793"));
         assert_eq!(c.scanner.debounce_ms, 500);
         assert!(!c.plugin.search_path.is_empty());
+    }
+
+    #[test]
+    fn rating_sources_are_slugs() {
+        let mut c = Config::default();
+        c.metadata.rating_sources = vec!["metacritic".into(), "imdb".into()];
+        c.validate().expect("slugs");
+        c.metadata.rating_sources = vec!["imdb".into(), "Rotten Tomatoes".into()];
+        assert!(matches!(
+            c.validate(),
+            Err(ConfigError::Invalid {
+                field: "metadata.rating_sources",
+                ..
+            })
+        ));
     }
 
     // The only test that touches the process environment, so no other

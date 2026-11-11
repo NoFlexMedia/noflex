@@ -16,8 +16,9 @@ variable, listed under **Env** in the reference below: `NOFLEX_` followed by
 the key path upper-cased, with `.` replaced by `_`. The mapping is an explicit
 table (because key names themselves contain `_`), so unlisted `NOFLEX_*`
 variables are ignored. Arrays and maps (`transcoder.ladder`,
-`plugin.overrides`, `plugin.per_plugin_config`) can only be set in TOML, except
-`plugin.search_path`, which takes the platform's path list.
+`plugin.overrides`, `plugin.per_plugin_config`, `metadata.rating_sources`) can
+only be set in TOML, except `plugin.search_path`, which takes the platform's
+path list.
 
 ```sh
 NOFLEX_BIND=0.0.0.0:9999                    # -> bind
@@ -321,6 +322,27 @@ client_secret = "replace-me"
 
 The webhook plugin's URL and token are in its
 [README](../backend/plugins/noflex-webhook/README.md).
+
+### `metadata.rating_sources`
+- **Type:** array of strings
+- **Default:** `["imdb", "tmdb", "tvdb", "musicbrainz"]`
+- **Env:** not supported (use TOML)
+
+The rating sources a title's one rating is taken from, first preferred. That
+rating, out of 10, is what the rating filter, smart lists and recommendations
+compare, and what a card shows. Each source a plugin reports
+(`imdb`, `tmdb`, `rotten-tomatoes`, `metacritic`, ...) is kept apart and shown
+on the title's page, on its own scale. A source left out of this list is still
+shown there, but never supplies the one rating, and a title with none of the
+listed sources has none. Community scores are the default: a critics'
+aggregate or a share of positive reviews measures something else. Changes
+apply at the next start, to every title. A rating set by hand from a title's
+admin sheet is locked and stays.
+
+```toml
+[metadata]
+rating_sources = ["imdb", "metacritic", "tmdb"]
+```
 
 ### Live TV source URLs
 

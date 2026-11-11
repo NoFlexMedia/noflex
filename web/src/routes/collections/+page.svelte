@@ -3,8 +3,10 @@
   import CardsThree from "phosphor-svelte/lib/CardsThree";
   import DotsThree from "phosphor-svelte/lib/DotsThree";
   import FilmStrip from "phosphor-svelte/lib/FilmStrip";
+  import LinkBreak from "phosphor-svelte/lib/LinkBreak";
   import PencilSimple from "phosphor-svelte/lib/PencilSimple";
   import Play from "phosphor-svelte/lib/Play";
+  import Plug from "phosphor-svelte/lib/Plug";
   import Plus from "phosphor-svelte/lib/Plus";
   import Trash from "phosphor-svelte/lib/Trash";
   import X from "phosphor-svelte/lib/X";
@@ -13,6 +15,7 @@
   import { Tabs as BitsTabs } from "bits-ui";
   import { cache, graphql } from "$houdini";
   import { removeFromCollection, removeFromPlaylist } from "$lib/collections.js";
+  import { titleCase } from "$lib/format.js";
   import { failure, fetchQuery, refetch } from "$lib/graphql.js";
   import { playWork } from "$lib/playback.svelte.js";
   import { app } from "$lib/session.svelte.js";
@@ -56,6 +59,10 @@
   `);
   const deleteCollection = graphql(`
     mutation DeleteCollection($id: ID!) { deleteCollection(id: $id) { id @Collection_delete } }
+  `);
+  // The plugin stops syncing it, and an administrator can edit it from then on.
+  const detachCollection = graphql(`
+    mutation DetachCollection($id: ID!) { detachCollection(id: $id) { id pluginId } }
   `);
   const createPlaylist = graphql(`
     mutation CreatePlaylist($title: String!, $overview: String) {
@@ -111,6 +118,12 @@
     await attempt(() => (isCollection ? deleteCollection : deletePlaylist).mutate({ id: item.id }), "Deleted");
   }
 
+  async function detach(item) {
+    const plugin = titleCase(item.pluginId);
+    if (!(await confirmAction({ title: `Detach “${item.title}” from ${plugin}?`, message: `${plugin} stops syncing it, and it becomes a collection you edit here. ${plugin} won’t make it again in this library.`, confirmLabel: "Detach" }))) return;
+    await attempt(() => detachCollection.mutate({ id: item.id }), "Detached");
+  }
+
   async function removeEntry(item, index) {
     const removed = item.entries[index];
     const task = tab === "collections"
@@ -135,7 +148,7 @@
         <section class="shelf" style:--i={index}>
           <header>
             <div>
-              <h2>{item.title}</h2>
+              <h2>{item.title}{#if item.pluginId}<span class="chip synced"><Plug size={13} />Synced by {titleCase(item.pluginId)}</span>{/if}</h2>
               <p>{item.overview || `${item.entries.length}${item.more ? "+" : ""} ${item.entries.length === 1 && !item.more ? "title" : "titles"}`}</p>
             </div>
             <div class="row">
@@ -143,8 +156,12 @@
               {#if canEdit}
                 <Menu>
                   {#snippet trigger(props)}<button {...props} class="icon-btn sm" aria-label="Manage {item.title}"><DotsThree size={18} weight="bold" /></button>{/snippet}
-                  <MenuItem icon={PencilSimple} onSelect={() => openEditor(item)}>Rename or describe</MenuItem>
-                  <MenuItem icon={Trash} danger onSelect={() => remove(item)}>Delete</MenuItem>
+                  {#if item.pluginId}
+                    <MenuItem icon={LinkBreak} onSelect={() => detach(item)}>Detach from {titleCase(item.pluginId)}</MenuItem>
+                  {:else}
+                    <MenuItem icon={PencilSimple} onSelect={() => openEditor(item)}>Rename or describe</MenuItem>
+                    <MenuItem icon={Trash} danger onSelect={() => remove(item)}>Delete</MenuItem>
+                  {/if}
                 </Menu>
               {/if}
             </div>
@@ -155,7 +172,7 @@
                 <div class="entry">
                   {#if entry.work}<WorkCard work={entry.work} key="{item.id}:{position}" />
                   {:else if entry.edition}<a class="edition" href="/works/{entry.edition.workId}"><FilmStrip size={22} /><strong>{entry.edition.name}</strong><small>Edition</small></a>{/if}
-                  {#if canEdit}<button class="remove" aria-label="Remove from {item.title}" onclick={() => removeEntry(item, position)}><X size={14} /></button>{/if}
+                  {#if canEdit && !item.pluginId}<button class="remove" aria-label="Remove from {item.title}" onclick={() => removeEntry(item, position)}><X size={14} /></button>{/if}
                 </div>
               {/each}
             </div>
@@ -202,7 +219,8 @@
   .page :global(.panel-body) { margin-top: 28px; }
   .shelf { margin-bottom: 44px; }
   .shelf header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 14px; }
-  .shelf h2 { font-size: 1.2rem; }
+  .shelf h2 { font-size: 1.2rem; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .synced { height: 22px; font-size: 0.72rem; }
   .shelf p { color: var(--text-3); font-size: 0.88rem; margin-top: 2px; }
   .row-cards { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(130px, 13vw, 170px); gap: 16px; overflow-x: auto; padding: 6px 2px 12px; scrollbar-width: none; }
   .entry { position: relative; }

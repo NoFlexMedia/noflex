@@ -16,6 +16,7 @@ fragment CollectionShelf on Collection {
   id
   title
   overview
+  pluginId
   items(first: 12) {
     nodes { ...WorkShelf }
     pageInfo { hasNextPage }
@@ -40,7 +41,7 @@ query PlaylistMenu {
 
 query CollectionMenu($library: ID!) {
   collections(libraryId: $library, first: 100) @list(name: "CollectionMenu") {
-    edges { node { id title } }
+    edges { node { id title pluginId } }
   }
 }
 

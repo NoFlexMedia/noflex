@@ -405,7 +405,7 @@
                 <DropdownMenu.SubTrigger class="nf-menu-item"><Books size={17} /><span>Add to collection</span><CaretRight size={15} /></DropdownMenu.SubTrigger>
                 <DropdownMenu.Portal>
                 <DropdownMenu.SubContent class="nf-menu" sideOffset={6} collisionPadding={12} style="--menu-w: 240px">
-                  {#each $collections.data?.collections.edges.map((edge) => edge.node) ?? [] as collection (collection.id)}<MenuItem onSelect={() => addToLibraryCollection(collection)}>{collection.title}</MenuItem>{:else}<div class="nf-menu-label">No collections in this library</div>{/each}
+                  {#each $collections.data?.collections.edges.map((edge) => edge.node).filter((collection) => !collection.pluginId) ?? [] as collection (collection.id)}<MenuItem onSelect={() => addToLibraryCollection(collection)}>{collection.title}</MenuItem>{:else}<div class="nf-menu-label">No collections in this library</div>{/each}
                   <div class="nf-menu-sep"></div>
                   <MenuItem icon={Plus} onSelect={() => (newList = { open: true, kind: "collection", title: "", saving: false })}>New collection…</MenuItem>
                 </DropdownMenu.SubContent>

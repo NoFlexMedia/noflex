@@ -2,6 +2,7 @@
 <script>
   import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
   import ArrowsDownUp from "phosphor-svelte/lib/ArrowsDownUp";
+  import Broom from "phosphor-svelte/lib/Broom";
   import ClockCounterClockwise from "phosphor-svelte/lib/ClockCounterClockwise";
   import GearSix from "phosphor-svelte/lib/GearSix";
   import PencilSimple from "phosphor-svelte/lib/PencilSimple";
@@ -11,7 +12,7 @@
   import { webUrl } from "$lib/api.js";
   import { titleCase } from "$lib/format.js";
   import { nextPage, refetch } from "$lib/graphql.js";
-  import { attempt, confirmAction, poll } from "$lib/ui.svelte.js";
+  import { attempt, confirmAction, poll, toast } from "$lib/ui.svelte.js";
   import ProviderLogo from "$components/ProviderLogo.svelte";
   import State from "$components/State.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
@@ -35,6 +36,23 @@
       setPluginOverride(pluginId: $plugin, hook: $hook, workKind: $kind, priority: $priority) { pluginId hook workKind priority adminSet }
     }
   `);
+
+  const removeData = graphql(`
+    mutation RemovePluginData($plugin: String!) {
+      removePluginData(pluginId: $plugin) { tagAssignments collections }
+    }
+  `);
+  const WRITES = ["library.tags.write", "library.collections.write"];
+  const writesLibrary = (plugin) => plugin.capabilities.some((capability) => WRITES.includes(capability));
+  const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+  async function removePluginData(plugin) {
+    const name = plugin.displayName;
+    if (!(await confirmAction({ title: `Remove ${name}’s library data?`, message: `Its tags and the collections it syncs are deleted. Collections you detached, and the watch history it imported for people, stay. ${name} writes them again at its next sync while it’s installed.`, confirmLabel: "Remove data", danger: true }))) return;
+    const result = await attempt(() => removeData.mutate({ plugin: plugin.id }));
+    const removed = result?.data?.removePluginData;
+    if (removed) toast(`Removed ${count(removed.tagAssignments, "tag", "tags")} and ${count(removed.collections, "collection", "collections")}`, "success");
+  }
 
   const HOOKS = ["METADATA", "IMAGE", "SUBTITLE", "POST_SCAN", "NOTIFIER", "USER_LINK", "AUTH", "SCROBBLER", "EMBEDDER", "BACKGROUND"];
   const KINDS = ["MOVIE", "SERIES", "SEASON", "EPISODE", "ALBUM", "TRACK", "ARTIST", "AUDIO_BOOK", "PHOTO"];
@@ -183,9 +201,10 @@
           </div>
         {/if}
 
-        {#if plugin.settings.length || webUrl(plugin.homepage)}
+        {#if plugin.settings.length || webUrl(plugin.homepage) || writesLibrary(plugin)}
           <div class="foot">
             {#if plugin.settings.length}<button class="btn sm" onclick={() => { settingsId = plugin.id; settingsOpen = true; }}><GearSix size={15} />Settings</button>{/if}
+            {#if writesLibrary(plugin)}<button class="btn danger sm" onclick={() => removePluginData(plugin)}><Broom size={15} />Remove its data</button>{/if}
             {#if webUrl(plugin.homepage)}<a class="home" href={webUrl(plugin.homepage)} target="_blank" rel="noopener noreferrer"><ArrowSquareOut size={14} />Homepage</a>{/if}
           </div>
         {/if}

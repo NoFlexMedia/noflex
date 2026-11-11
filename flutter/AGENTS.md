@@ -178,10 +178,13 @@ Ferry, against `lib/graphql/schema.graphql`, a symlink to `backend/crates/noflex
 - `CastChannel` is the wire: TLS to port 8009, accepting the device's self-signed certificate unchecked as every non-SDK sender does. The device isn't authenticated, so a spoofed one on the LAN would receive the stream's URL and its token.
 - It answers the device's PINGs and sends its own every 5 s; a Nest Hub kept it open across two of them.
 - Devices only report on change, so `CastService` asks for media status every 5 s while something plays.
+- **A dropped connection keeps the title** (`_lost`): the bar shows it waiting at the last position, the reports pause, and `_rejoin` tries again for about two minutes without launching anything. Found again, it carries on from the device's position. Out of reach, it reports that last position and lets go, leaving the server session to the device. Reachable with our receiver gone, it ends the title.
+- **Opening a session reads what's there first** (`_resync`): the title being followed, or one cast for this viewer before the app closed, which it adopts from `customData.sender` (`cast/AGENTS.md`). The app also looks at each device it finds once per trip to the foreground (`_peek`), joining nothing it doesn't take up and starting nothing.
+- Ending a session stops the receiver only if this app launched it or played on it (`_Session.owned`).
 - **The receiver app id is `--dart-define=NOFLEX_CAST_APP_ID`**, and Google's Default Media Receiver without it, as on the web. With NoFlex's receiver the device answers `capabilities`; with Google's, `cast_profile.dart` (a port of `web/src/lib/castProfile.ts`) goes by model.
 - Quality and Auto follow the web's: the device's choice is this device's (`PlaybackService.quality`), and Auto runs `AutoQuality` on the receiver's health reports.
 - A server reached at `localhost` or `127.*` is refused, as a Cast device can't reach it.
-- Checked against a Nest Hub for the connection, status and heartbeat (read only), and end to end against a stand-in device on Linux. Launching NoFlex's receiver and playing on a real device are unverified.
+- Checked against a Nest Hub for the connection, status and heartbeat (read only), and end to end against a stand-in device on Linux, including a dropped connection, an unreachable device, a stop from the TV, and the app killed and relaunched mid-film. Launching NoFlex's receiver and playing on a real device are unverified.
 
 ## Downloads
 

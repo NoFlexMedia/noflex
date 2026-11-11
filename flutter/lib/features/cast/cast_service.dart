@@ -23,6 +23,8 @@ import '../../graphql/queries/__generated__/mark_played.req.gql.dart';
 import '../../graphql/queries/__generated__/media_files.req.gql.dart';
 import '../../graphql/queries/__generated__/report_progress.req.gql.dart';
 import '../../graphql/queries/__generated__/work_detail.req.gql.dart';
+import '../../graphql/queries/__generated__/works_by_id.data.gql.dart';
+import '../../graphql/queries/__generated__/works_by_id.req.gql.dart';
 import '../../graphql/queries/fragments/__generated__/media_file_full.data.gql.dart';
 import '../../models/work.dart';
 import '../../services/graphql.dart';
@@ -62,6 +64,11 @@ const _statusEvery = Duration(seconds: 5);
 // A linear transcode's seek past what it has produced restarts it at the target, as the player does.
 const _transcodeReach = 30;
 
+/// How long to wait before each try at finding a device again after its
+/// connection dropped: about two minutes in all, as a phone off the Wi-Fi
+/// for a moment or a device restarting its network comes back within it.
+const _rejoinWaits = [1, 2, 4, 8, 15, 15, 15, 15, 15, 15];
+
 const _plans = {
   'DIRECT_PLAY': 'Direct play',
   'REMUX': 'Direct stream (remux)',
@@ -85,8 +92,14 @@ class _Session {
   final String sessionId;
   StreamSubscription<CastEvent>? events;
 
-  // The media session's last status.
-  int? mediaSessionId;
+  /// This app launched the receiver or played on it, so ending the session
+  /// stops it; one only joined is left as it was.
+  bool owned = false;
+}
+
+/// The media session's last status, kept through a dropped connection.
+class _Media {
+  int? id;
   String playerState = 'IDLE';
   double currentTime = 0;
   double? duration;
@@ -96,6 +109,12 @@ class _Session {
   double get now => playerState == 'PLAYING'
       ? currentTime + DateTime.now().difference(heardAt).inMilliseconds / 1000
       : currentTime;
+}
+
+/// The device is reachable but isn't running the receiver: nothing of ours
+/// plays there.
+class _NotRunning implements Exception {
+  const _NotRunning();
 }
 
 /// What this sender loaded, which the Cast device doesn't know.
@@ -163,7 +182,10 @@ class CastService implements RemoteRoute {
     });
     _stopWatchingDevices = effect(() {
       _discovery.devices.value;
-      untracked(_publish);
+      untracked(() {
+        _publish();
+        _peekAll();
+      });
     });
     _stopFollowingTarget = effect(() {
       final id = _connect.targetId.value;
@@ -172,7 +194,11 @@ class CastService implements RemoteRoute {
     _lifecycle = AppLifecycleListener(
       onStateChange: (state) {
         _foreground = state == AppLifecycleState.resumed;
+        // Back in front, a device may be playing what this app lost hold of
+        // while away, which the system may have cut off.
+        if (_foreground) _peeked.clear();
         _follow();
+        _peekAll();
       },
     );
   }
@@ -203,6 +229,14 @@ class CastService implements RemoteRoute {
   _Session? _session;
   Future<_Session>? _opening;
   _Loaded? _loaded;
+  var _media = _Media();
+
+  /// The device a title plays on while its connection is found again.
+  CastReceiverInfo? _away;
+
+  /// Devices looked at for a title this app cast before it last closed, since
+  /// it came to the front.
+  final _peeked = <String>{};
 
   /// A title being started, which the Cast device hasn't answered for yet.
   ({WorkSummary work, int positionMs})? _preparing;
@@ -214,7 +248,7 @@ class CastService implements RemoteRoute {
   GPlaybackState? _last;
   Timer? _beat;
   Timer? _steer;
-  Timer? _status;
+  Timer? _poll;
 
   /// What each device decodes, probed once while the app runs.
   final _profiles = <String, Future<GClientCapabilities>>{};
@@ -222,9 +256,11 @@ class CastService implements RemoteRoute {
   String _id(CastReceiverInfo device) => 'cast:${device.id}';
 
   CastReceiverInfo? _infoFor(String id) {
-    final session = _session;
-    if (session != null && _id(session.device) == id) return session.device;
+    // The latest announcement first, as a device's address can change.
     for (final device in _discovery.devices.peek()) {
+      if (_id(device) == id) return device;
+    }
+    for (final device in [?_session?.device, ?_away]) {
       if (_id(device) == id) return device;
     }
     return null;
@@ -238,7 +274,7 @@ class CastService implements RemoteRoute {
     } else {
       unawaited(_discovery.stop());
     }
-    if (!_signedIn) unawaited(_close());
+    if (!_signedIn) unawaited(_session != null ? _close() : _abandon());
   }
 
   /// The viewer chose where Play goes: open a session on a Cast device as it's
@@ -264,19 +300,32 @@ class CastService implements RemoteRoute {
     }
   }
 
-  Future<_Session> _connectTo(CastReceiverInfo info) async {
+  /// The session on [info], opened if need be. Without [launch], only a
+  /// receiver already running there is joined, or [_NotRunning] thrown.
+  Future<_Session> _connectTo(
+    CastReceiverInfo info, {
+    bool launch = true,
+  }) async {
     final current = _session;
     if (current != null && current.device.id == info.id) return current;
     final opening = _opening;
     if (opening != null) {
-      final session = await opening;
-      if (session.device.id == info.id) return session;
+      final session = await opening.then<_Session?>(
+        (session) => session,
+        onError: (Object _) => null,
+      );
+      if (session != null && session.device.id == info.id) return session;
     }
     if (_session != null) await _close();
-    return _opening ??= _open(info).whenComplete(() => _opening = null);
+    // Played elsewhere now: the device out of reach is let go.
+    if (_away case final away? when away.id != info.id) await _abandon();
+    return _opening ??= _open(
+      info,
+      launch: launch,
+    ).whenComplete(() => _opening = null);
   }
 
-  Future<_Session> _open(CastReceiverInfo info) async {
+  Future<_Session> _open(CastReceiverInfo info, {required bool launch}) async {
     final channel = await CastChannel.connect(info.host, info.port);
     try {
       ({String sessionId, String transportId})? appIn(CastEvent event) {
@@ -297,7 +346,9 @@ class CastService implements RemoteRoute {
       var app = appIn(
         await channel.request(_receiverNamespace, {'type': 'GET_STATUS'}),
       );
-      if (app == null) {
+      final launching = app == null;
+      if (launching) {
+        if (!launch) throw const _NotRunning();
         final launched = channel.events
             .where((event) => appIn(event) != null)
             .first;
@@ -312,14 +363,16 @@ class CastService implements RemoteRoute {
             appIn(reply) ??
             appIn(await launched.timeout(const Duration(seconds: 20)));
       }
-      final session = _Session(info, channel, app!.transportId, app.sessionId);
+      final session = _Session(info, channel, app!.transportId, app.sessionId)
+        ..owned = launching;
       channel.open(session.transportId);
       session.events = channel.events.listen(
         (event) => _onEvent(session, event),
       );
       unawaited(channel.closed.then((_) => _lost(session)));
       _session = session;
-      _command(session, {'type': 'GET_STATUS'});
+      _away = null;
+      await _resync(session);
       // Probe while the viewer picks a title, so loading doesn't wait on it.
       unawaited(_profile(session));
       _publish();
@@ -330,28 +383,233 @@ class CastService implements RemoteRoute {
     }
   }
 
-  /// The connection went: whatever played there is ours to close out.
+  /// What the device plays as a connection opens: the title this app was
+  /// following, carried on or over; one it cast before it last closed, to
+  /// take up again; or nothing of ours.
+  Future<void> _resync(_Session session) async {
+    final CastEvent reply;
+    try {
+      reply = await session.channel.request(
+        _mediaNamespace,
+        {'type': 'GET_STATUS'},
+        destination: session.transportId,
+        timeout: const Duration(seconds: 5),
+      );
+    } on Object {
+      // Its next status says, or the poll asks again.
+      if (_session == session && _loaded != null) _startTimers();
+      return;
+    }
+    if (_session != session) return;
+    final statuses = reply.data['status'];
+    final status = statuses is List
+        ? statuses.whereType<Map<String, dynamic>>().firstOrNull
+        : null;
+    final playing = status != null && status['playerState'] != 'IDLE';
+    final custom = status?['media']?['customData'];
+    final sender = custom is Map<String, dynamic> ? custom['sender'] : null;
+    final loaded = _loaded;
+    if (loaded != null) {
+      final same =
+          playing &&
+          (status['mediaSessionId'] == _media.id ||
+              (sender is Map && sender['sessionId'] == loaded.sessionId));
+      if (same) {
+        session.owned = true;
+        // Reported at once: the device went on without us.
+        _last = null;
+        _media.id = status['mediaSessionId'] as int?;
+        _onMediaStatus(session, reply.data);
+        _startTimers();
+      } else {
+        // It ended, or something else was put on, while we were away.
+        await _finish(ended: status?['idleReason'] == 'FINISHED');
+      }
+    } else if (playing &&
+        _preparing == null &&
+        sender is Map<String, dynamic>) {
+      await _adopt(session, status, custom as Map<String, dynamic>, sender);
+    }
+  }
+
+  /// Take up a title this app cast before it closed or lost the device, from
+  /// what the load request carried, so it's reported and steered again.
+  Future<void> _adopt(
+    _Session session,
+    Map<String, dynamic> status,
+    Map<String, dynamic> custom,
+    Map<String, dynamic> sender,
+  ) async {
+    // Someone else's, cast from their own account.
+    if (sender['user'] != _tokens.activeId.peek()) return;
+    final serverId = sender['server'] as String?;
+    final server = serverId == null
+        ? null
+        : getIt<SessionService>().connectedServers
+              .peek()
+              .where((server) => server.id == serverId)
+              .firstOrNull;
+    final workId = custom['workId'] as String?;
+    if ((serverId != null && server == null) || workId == null) return;
+    final GWorksByIdData found;
+    try {
+      found = await _graphql.run(
+        GWorksByIdReq(
+          (b) => b
+            ..fetchPolicy = FetchPolicy.NetworkOnly
+            ..vars.ids.add(workId),
+        ),
+        server: server,
+      );
+    } on Exception {
+      return;
+    }
+    final card = found.worksById.firstOrNull;
+    if (card == null || _session != session || _loaded != null) return;
+    final stream = custom['stream'] as Map<String, dynamic>?;
+    final quality = decodeChoice(sender['quality'] as String?);
+    _media = _Media();
+    _loaded = _Loaded(
+      work: WorkSummary.fromCard(card, server: server),
+      mediaFileId: sender['mediaFileId'] as String,
+      editionId: sender['editionId'] as String,
+      sessionId: sender['sessionId'] as String,
+      transcode: sender['transcode'] == true,
+      offsetMs: (custom['offsetMs'] as num?)?.toInt() ?? 0,
+      durationMs: (custom['durationMs'] as num?)?.toInt(),
+      quality: quality,
+      leftOriginal: sender['leftOriginal'] == true,
+      adaptive: stream?['adaptive'] == true,
+      sourceBitrateBps: (stream?['source']?['bitrateBps'] as num?)?.toInt(),
+    );
+    session.owned = true;
+    _auto = AutoQuality()..settle();
+    qualities.value = [
+      for (final step
+          in (sender['qualities'] as List? ?? const [])
+              .whereType<Map<String, dynamic>>())
+        StreamQuality(
+          label: step['label'] as String,
+          width: (step['width'] as num).toInt(),
+          height: (step['height'] as num).toInt(),
+          bitrateBps: (step['bitrateBps'] as num).toInt(),
+        ),
+    ];
+    choice.value = quality;
+    _onMediaStatus(session, {
+      'status': [status],
+    });
+    _startTimers();
+  }
+
+  /// The connection went. What plays there carries on without it, and so does
+  /// its stream on the server, so look for the device again rather than end it.
   void _lost(_Session session) {
     if (_session != session) return;
     _session = null;
     unawaited(session.events?.cancel());
-    _status?.cancel();
-    unawaited(_finish(ended: false));
+    _poll?.cancel();
+    if (_loaded != null) {
+      _away = session.device;
+      unawaited(_rejoin(session));
+    }
     _publish();
   }
 
-  /// End the session: the app on the device and the connection to it.
+  Future<void> _rejoin(_Session previous) async {
+    final loaded = _loaded;
+    final id = _id(previous.device);
+    for (final wait in _rejoinWaits) {
+      await Future<void>.delayed(Duration(seconds: wait));
+      if (_loaded != loaded || _session != null || !_signedIn) return;
+      try {
+        await _connectTo(_infoFor(id) ?? previous.device, launch: false);
+        return;
+      } on _NotRunning {
+        // Reachable, and our receiver is gone: the title ended with it.
+        _away = null;
+        await _finish(ended: false);
+        return;
+      } on Object {
+        // Not reachable yet.
+      }
+    }
+    if (_loaded != loaded) return;
+    // Found again later, it's taken up then (_peek).
+    _peeked.remove(previous.device.id);
+    await _abandon();
+  }
+
+  /// Stop following the title on a device out of reach. It may well play on,
+  /// and the server keeps its stream while it's fetched, so only this app lets
+  /// go, at the device's last word.
+  Future<void> _abandon() async {
+    _away = null;
+    await _finish(ended: false, stopServer: false);
+  }
+
+  /// Look on [info] for a title this app cast before it closed, starting nothing.
+  Future<void> _peek(CastReceiverInfo info) async {
+    try {
+      final session = await _connectTo(info, launch: false);
+      if (_loaded == null &&
+          _session == session &&
+          _connect.targetId.peek() != _id(info)) {
+        await _leave(session);
+      }
+    } on Object {
+      // Not ours there, or out of reach.
+    }
+    _peekAll();
+  }
+
+  /// Peek at the devices found, one at a time, while nothing is held here.
+  void _peekAll() {
+    if (!_signedIn ||
+        !_foreground ||
+        _session != null ||
+        _opening != null ||
+        _loaded != null) {
+      return;
+    }
+    for (final info in _discovery.devices.peek()) {
+      if (_peeked.add(info.id)) {
+        unawaited(_peek(info));
+        return;
+      }
+    }
+  }
+
+  /// Let the device go without touching what it plays.
+  Future<void> _leave(_Session session) async {
+    _lost(session);
+    await session.channel.close();
+  }
+
+  /// End the session: what plays there, the app on the device if it's ours to
+  /// stop, and the connection to it.
   Future<void> _close() async {
     final session = _session;
     if (session == null) return;
     await _finish(ended: false);
-    session.channel.send(_receiverNamespace, {
-      'type': 'STOP',
-      'sessionId': session.sessionId,
-      'requestId': 0,
-    });
-    _lost(session);
-    await session.channel.close();
+    if (session.owned) {
+      session.channel.send(_receiverNamespace, {
+        'type': 'STOP',
+        'sessionId': session.sessionId,
+        'requestId': 0,
+      });
+    }
+    await _leave(session);
+  }
+
+  /// The device ended our session, or something else took the screen.
+  Future<void> _ended(_Session session) async {
+    // The connection may have dropped on the way, leaving the title waiting on it.
+    if (_session == session || _away?.id == session.device.id) {
+      _away = null;
+      await _finish(ended: false);
+    }
+    await _leave(session);
   }
 
   /// A media command whose reply is the status that follows anyway.
@@ -377,39 +635,45 @@ class CastService implements RemoteRoute {
               (app) => app is Map && app['sessionId'] == session.sessionId,
             );
         // Something else took the screen, or the device stopped us.
-        if (!ours) unawaited(session.channel.close());
+        if (!ours) unawaited(_ended(session));
       case (connectionNamespace, 'CLOSE')
           when event.source == session.transportId:
-        unawaited(session.channel.close());
+        unawaited(_ended(session));
     }
   }
 
   void _onMediaStatus(_Session session, Map<String, dynamic> data) {
     final statuses = data['status'];
-    if (statuses is! List) return;
+    final media = _media;
+    if (statuses is! List || _loaded == null || _session != session) return;
     if (statuses.isEmpty) {
       // Nothing loaded any more: stopped from the device or another sender.
-      if (_loaded != null && session.mediaSessionId != null) {
-        session.playerState = 'IDLE';
+      if (media.id != null) {
+        media.playerState = 'IDLE';
         unawaited(_finish(ended: false));
       }
     }
     for (final status in statuses.whereType<Map<String, dynamic>>()) {
       final id = status['mediaSessionId'] as int?;
       // A status for the title this replaced, which only says it was interrupted.
-      if (session.mediaSessionId != null && id != session.mediaSessionId) {
+      if (media.id != null && id != media.id) continue;
+      final state = status['playerState'] as String? ?? 'IDLE';
+      media.id = id;
+      if (state == 'IDLE') {
+        // Its time is where the device reset to, not where the viewer got to.
+        media
+          ..currentTime = media.now
+          ..playerState = state;
+        unawaited(_finish(ended: status['idleReason'] == 'FINISHED'));
         continue;
       }
-      session.mediaSessionId = id;
-      session.playerState = status['playerState'] as String? ?? 'IDLE';
-      session.currentTime =
-          (status['currentTime'] as num?)?.toDouble() ?? session.currentTime;
-      session.heardAt = DateTime.now();
+      media
+        ..playerState = state
+        ..currentTime =
+            (status['currentTime'] as num?)?.toDouble() ?? media.currentTime
+        ..heardAt = DateTime.now();
       final duration = (status['media']?['duration'] as num?)?.toDouble();
-      if (duration != null && duration > 0) session.duration = duration;
-      if (session.playerState == 'IDLE' && _loaded != null) {
-        unawaited(_finish(ended: status['idleReason'] == 'FINISHED'));
-      }
+      if (duration != null && duration > 0) media.duration = duration;
     }
     _publish();
   }
@@ -432,7 +696,8 @@ class CastService implements RemoteRoute {
     if (loaded == null ||
         _switching ||
         loaded.quality.kind != QualityKind.auto ||
-        _session?.playerState == 'PAUSED') {
+        _session == null ||
+        _media.playerState == 'PAUSED') {
       return;
     }
     if (!loaded.adaptive && !loaded.leftOriginal && _auto.struggling()) {
@@ -533,22 +798,29 @@ class CastService implements RemoteRoute {
         });
   }
 
-  /// Source time now, in milliseconds.
-  int _positionMs() => math.max(
-    0,
-    (_loaded?.offsetMs ?? 0) + ((_session?.now ?? 0) * 1000).round(),
-  );
+  /// Source time now, in milliseconds: where the device last said while it's
+  /// out of reach, rather than a guess.
+  int _positionMs([_Loaded? title]) {
+    final seconds = _session == null ? _media.currentTime : _media.now;
+    return math.max(
+      0,
+      ((title ?? _loaded)?.offsetMs ?? 0) + (seconds * 1000).round(),
+    );
+  }
 
   /// Tell the shared list what the Cast devices are doing.
   void _publish() {
     final session = _session;
     final loaded = _loaded;
+    final media = _media;
     final live =
         loaded != null &&
-        session?.mediaSessionId != null &&
-        session?.playerState != 'IDLE';
+        session != null &&
+        media.id != null &&
+        media.playerState != 'IDLE';
+    final away = loaded != null && session == null ? _away : null;
     if (live) {
-      final now = session!.playerState == 'PAUSED'
+      final now = media.playerState == 'PAUSED'
           ? GPlaybackState.PAUSED
           : GPlaybackState.PLAYING;
       if (now != _last) {
@@ -557,20 +829,27 @@ class CastService implements RemoteRoute {
       }
     }
     final preparing = _preparing;
+    final durationMs =
+        loaded?.durationMs ??
+        (media.duration == null ? null : (media.duration! * 1000).round());
     final RemotePlayback? playback = live
         ? RemotePlayback(
-            state: switch (session!.playerState) {
+            state: switch (media.playerState) {
               'PLAYING' => GDevicePlayState.PLAYING,
               'PAUSED' => GDevicePlayState.PAUSED,
               _ => GDevicePlayState.BUFFERING,
             },
-            positionMs: loaded.offsetMs + (session.currentTime * 1000).round(),
-            durationMs:
-                loaded.durationMs ??
-                (session.duration == null
-                    ? null
-                    : (session.duration! * 1000).round()),
+            positionMs: loaded.offsetMs + (media.currentTime * 1000).round(),
+            durationMs: durationMs,
             work: loaded.work,
+          )
+        // Where it was, waiting, while the device is found again.
+        : away != null
+        ? RemotePlayback(
+            state: GDevicePlayState.BUFFERING,
+            positionMs: _positionMs(),
+            durationMs: durationMs,
+            work: loaded!.work,
           )
         : preparing != null
         ? RemotePlayback(
@@ -579,8 +858,9 @@ class CastService implements RemoteRoute {
             work: preparing.work,
           )
         : null;
+    final holder = session?.device ?? away;
     RemoteDevice remote(CastReceiverInfo info) {
-      final ours = session?.device.id == info.id;
+      final ours = holder?.id == info.id;
       return RemoteDevice(
         id: _id(info),
         name: info.name,
@@ -589,7 +869,7 @@ class CastService implements RemoteRoute {
           if (info.model.isNotEmpty) info.model,
           'Chromecast',
         ].join(' · '),
-        heardAt: ours ? session!.heardAt : DateTime.now(),
+        heardAt: ours && live ? media.heardAt : DateTime.now(),
         playback: ours ? playback : null,
         via: RemoteVia.cast,
       );
@@ -599,18 +879,15 @@ class CastService implements RemoteRoute {
     _connect.external.value = [
       for (final info in found) remote(info),
       // The device playing stays listed though its announcement lapses.
-      if (session != null && !found.any((info) => info.id == session.device.id))
-        remote(session.device),
+      if (holder != null && !found.any((info) => info.id == holder.id))
+        remote(holder),
     ];
   }
 
   Future<void> _report(GPlaybackState state, [_Loaded? title]) async {
     final loaded = title ?? _loaded;
     if (loaded == null) return;
-    final positionMs = math.max(
-      0,
-      loaded.offsetMs + ((_session?.now ?? 0) * 1000).round(),
-    );
+    final positionMs = _positionMs(loaded);
     try {
       final data = await _graphql.run(
         GReportProgressReq(
@@ -636,8 +913,8 @@ class CastService implements RemoteRoute {
   }
 
   /// End what was playing: its last position, its watched mark if it ran out,
-  /// and its server session.
-  Future<void> _finish({required bool ended}) async {
+  /// and, unless it may still be playing, its server session.
+  Future<void> _finish({required bool ended, bool stopServer = true}) async {
     final loaded = _loaded;
     if (loaded == null) return;
     // Taken at once, so a second idle status in the meantime finds nothing to end.
@@ -646,7 +923,7 @@ class CastService implements RemoteRoute {
     qualities.value = const [];
     _beat?.cancel();
     _steer?.cancel();
-    _status?.cancel();
+    _poll?.cancel();
     await _report(GPlaybackState.STOPPED, loaded);
     if (ended) {
       try {
@@ -664,7 +941,9 @@ class CastService implements RemoteRoute {
         // Marked the next time it's watched to the end.
       }
     }
-    await _playback.stopSession(loaded.sessionId, server: loaded.work.server);
+    if (stopServer) {
+      await _playback.stopSession(loaded.sessionId, server: loaded.work.server);
+    }
     _publish();
   }
 
@@ -738,6 +1017,28 @@ class CastService implements RemoteRoute {
       await Future<void>.delayed(const Duration(milliseconds: 500));
     }
     throw const ApiError('The stream didn’t start in time.');
+  }
+
+  /// Report, steer and ask after the title on the device from now on.
+  void _startTimers() {
+    _beat?.cancel();
+    _steer?.cancel();
+    _poll?.cancel();
+    _beat = Timer.periodic(_reportEvery, (_) {
+      // Out of reach, the device's last word has been reported already.
+      if (_session != null && _last == GPlaybackState.PLAYING) {
+        unawaited(_report(GPlaybackState.PLAYING));
+      }
+    });
+    _steer = Timer.periodic(const Duration(seconds: 1), (_) => _steerAuto());
+    _poll = Timer.periodic(_statusEvery, (_) {
+      final current = _session;
+      final id = _media.id;
+      if (current != null && id != null) {
+        _command(current, {'type': 'GET_STATUS', 'mediaSessionId': id});
+      }
+    });
+    _publish();
   }
 
   @override
@@ -908,6 +1209,27 @@ class CastService implements RemoteRoute {
                             decision.target.height,
                           ),
                     },
+              // What a sender needs to take this up should this one close or
+              // lose the device (_adopt): the device keeps it with the media.
+              'sender': {
+                'user': _tokens.activeId.peek(),
+                'server': server?.id,
+                'sessionId': stream.sessionId,
+                'mediaFileId': playable.file.id,
+                'editionId': playable.editionId,
+                'transcode': stream.transcoding,
+                'quality': encodeChoice(chosen),
+                'leftOriginal': leftOriginal,
+                'qualities': [
+                  for (final step in steps)
+                    {
+                      'label': step.label,
+                      'width': step.width,
+                      'height': step.height,
+                      'bitrateBps': step.bitrateBps,
+                    },
+                ],
+              },
             },
           },
         },
@@ -919,7 +1241,8 @@ class CastService implements RemoteRoute {
           'That Cast device couldn’t play this (${reply.data['reason'] ?? reply.type}).',
         );
       }
-      session.mediaSessionId = null;
+      _media = _Media();
+      session.owned = true;
       _loaded = _Loaded(
         work: work,
         mediaFileId: playable.file.id,
@@ -937,22 +1260,7 @@ class CastService implements RemoteRoute {
       _onMediaStatus(session, reply.data);
       qualities.value = steps;
       choice.value = chosen;
-      _beat = Timer.periodic(_reportEvery, (_) {
-        if (_last == GPlaybackState.PLAYING) {
-          unawaited(_report(GPlaybackState.PLAYING));
-        }
-      });
-      _steer = Timer.periodic(const Duration(seconds: 1), (_) => _steerAuto());
-      _status = Timer.periodic(_statusEvery, (_) {
-        final current = _session;
-        if (current != null && current.mediaSessionId != null) {
-          _command(current, {
-            'type': 'GET_STATUS',
-            'mediaSessionId': current.mediaSessionId,
-          });
-        }
-      });
-      _publish();
+      _startTimers();
       return true;
     } on Exception catch (error) {
       _preparing = null;
@@ -979,10 +1287,11 @@ class CastService implements RemoteRoute {
   }) async {
     final session = _session;
     final loaded = _loaded;
-    final media = session?.mediaSessionId;
-    if (session == null || loaded == null || media == null) return;
+    final media = _media;
+    final id = media.id;
+    if (session == null || loaded == null || id == null) return;
     void send(String type, [Map<String, Object?> extra = const {}]) =>
-        _command(session, {'type': type, 'mediaSessionId': media, ...extra});
+        _command(session, {'type': type, 'mediaSessionId': id, ...extra});
     switch (action) {
       case GDeviceControl.STOP:
         send('STOP');
@@ -990,7 +1299,7 @@ class CastService implements RemoteRoute {
         return;
       case GDeviceControl.SEEK when positionMs != null:
         final local = (positionMs - loaded.offsetMs) / 1000;
-        final produced = session.duration ?? 0;
+        final produced = media.duration ?? 0;
         // Beyond what a transcode has produced, a new session starting there beats waiting for the encoder.
         if (loaded.transcode &&
             (local < 0 || local > produced + _transcodeReach)) {
@@ -1006,18 +1315,18 @@ class CastService implements RemoteRoute {
           return;
         }
         _auto.settle();
-        session
+        media
           ..currentTime = local
           ..heardAt = DateTime.now();
         send('SEEK', {'currentTime': local});
       case GDeviceControl.PAUSE:
-        session
-          ..currentTime = session.now
+        media
+          ..currentTime = media.now
           ..heardAt = DateTime.now()
           ..playerState = 'PAUSED';
         send('PAUSE');
       case GDeviceControl.PLAY:
-        session
+        media
           ..heardAt = DateTime.now()
           ..playerState = 'PLAYING';
         send('PLAY');

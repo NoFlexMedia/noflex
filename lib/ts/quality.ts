@@ -4,7 +4,7 @@
 // Auto leaves the original for the transcode ladder and comes back. The
 // ladder itself adapts in the player (hls.js, Shaka, ExoPlayer, AVPlayer);
 // what no player can do is move between the original and the ladder, as that
-// is a new session. flutter/lib/player/quality.dart ports this.
+// is a new session. flutter/lib/features/player/quality.dart ports this.
 
 /** One step of a session's `qualities`. */
 export interface StreamQuality { label: string; width: number; height: number; bitrateBps: number }

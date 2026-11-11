@@ -1688,6 +1688,11 @@ mod tests {
         .unwrap();
         assert_eq!(best_profile(&images).as_deref(), Some("/high.jpg"));
         assert_eq!(best_profile(&Images::default()), None);
+        let recorded = parse_images(include_bytes!("../fixtures/person_2975_images.json")).unwrap();
+        assert_eq!(
+            best_profile(&recorded).as_deref(),
+            Some("/2GbXERENPpl5MmlqOLlPVaVtifD.jpg")
+        );
     }
 
     #[test]

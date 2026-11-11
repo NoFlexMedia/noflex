@@ -1779,10 +1779,11 @@ mod tests {
         assert_eq!(person_id("people/296500"), Some(296500));
         assert_eq!(person_id("series/1"), None);
         assert_eq!(
-            parse_person_photo(br#"{"data": {"id": 1, "image": "/banners/person/1.jpg"}}"#)
+            parse_person_photo(include_bytes!("../fixtures/live_person_296500.json"))
                 .unwrap()
                 .as_deref(),
-            Some("https://artworks.thetvdb.com/banners/person/1.jpg")
+            halina.photo.as_deref(),
+            "the person record carries the photo the credit did"
         );
         assert_eq!(
             parse_person_photo(br#"{"data": {"id": 1, "image": null}}"#).unwrap(),

@@ -8,7 +8,7 @@ script := justfile_directory() / "scripts/tasks/demo.sh"
 default:
     @just --list demo
 
-# Fetch, build and start the demo. Options: --servers N, --port P, --bind HOST, --advertise HOST, --release. Changing them starts afresh.
+# Fetch, build and start the demo, with the embedding model search uses. Options: --servers N, --port P, --bind HOST, --advertise HOST, --release. Changing them starts afresh.
 up *args:
     @"{{ script }}" up "$@"
 
@@ -32,6 +32,6 @@ fetch:
 reset:
     @"{{ script }}" reset
 
-# Stop the demo and delete everything, the downloaded films included.
+# Stop the demo and delete everything, the downloaded films and model included.
 clean:
     @"{{ script }}" clean

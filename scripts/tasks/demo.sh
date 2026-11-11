@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # A throwaway NoFlex with a real library: Blender's open movies, on one server
-# or several linked ones. Everything lives under .cache, and metadata comes from
-# the real providers. Run it through `just demo`.
+# or several linked ones. Everything lives under .cache, metadata comes from the
+# real providers, and search embeds with the default model, as a release bundle
+# would. Run it through `just demo`.
 
 # GraphQL variables look like shell ones.
 # shellcheck disable=SC2016
@@ -11,9 +12,10 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-# Worktrees share the films but run their own servers.
+# Worktrees share the films and the embedding model but run their own servers.
 common=$(dirname "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)")
 films=$common/.cache/demo-films
+model=$common/.cache/demo-model
 state=$root/.cache/demo
 config=$state/config
 seeded=$state/seeded
@@ -102,7 +104,9 @@ build() {
   fi
   (
     cd "$root/backend"
-    cargo xtask plugin-build tmdb tvdb
+    cargo xtask plugin-build tmdb tvdb embeddings
+    # Checks the pinned hashes, so only the first run downloads (about 280 MB).
+    cargo xtask model-fetch "$model"
     cargo build -p noflex-server ${release:+--release}
   )
 }
@@ -160,9 +164,9 @@ start() {
     die "port $server_port is taken; stop what's using it or pass --port"
   fi
   mkdir -p "$home/data" "$home/cache" "$home/config/noflex/plugins"
-  for plugin in tmdb tvdb; do
-    cp "$root/backend/plugins/noflex-metadata-$plugin/target/wasm32-wasip2/release/noflex_metadata_$plugin.wasm" \
-      "$home/config/noflex/plugins/$plugin.wasm"
+  for plugin in metadata-tmdb metadata-tvdb embeddings; do
+    cp "$root/backend/plugins/noflex-$plugin/target/wasm32-wasip2/release/noflex_${plugin//-/_}.wasm" \
+      "$home/config/noflex/plugins/${plugin#metadata-}.wasm"
   done
   (
     # Whatever this shell has set is for the real server, not these.
@@ -170,6 +174,7 @@ start() {
     export NOFLEX_BIND=$bind:$server_port
     export NOFLEX_DATA_DIR=$home/data NOFLEX_CACHE_DIR=$home/cache
     export NOFLEX_CROSS_ORIGIN=true NOFLEX_LOG_LEVEL=info XDG_CONFIG_HOME=$home/config
+    export NOFLEX_PLUGIN_ASSETS_DIR=$model
     cd "$home"
     nohup "$binary" >>"$home/server.log" 2>&1 </dev/null &
     echo "$!" >"$home/pid"
@@ -359,7 +364,7 @@ reset)
   ;;
 clean)
   stop_all
-  rm -rf "$state" "$films"
+  rm -rf "$state" "$films" "$model"
   ;;
 *) die "unknown command: $command" ;;
 esac

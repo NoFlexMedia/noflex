@@ -173,6 +173,13 @@ gh secret set ANDROID_KEY_PASSWORD
 Locally, `flutter/android/key.properties` with `storeFile`, `storePassword`, `keyAlias`
 and `keyPassword` does the same, and git ignores it.
 
+**Third-party source.** The apps ship native libraries media_kit downloads prebuilt, mpv
+and FFmpeg among them, under the LGPL, which asks for their source beside the builds.
+`packaging/third-party/apps.toml` records what each platform ships, and the release
+attaches `noflex-<version>-third-party-source.tar`: each build's scripts and every library
+source it pins, gathered by `cargo xtask third-party source`. The same record writes the
+apps' license screen. [`packaging/AGENTS.md`](../packaging/AGENTS.md) says how to keep it.
+
 **Windows, macOS and iOS** builds aren't signed. Windows shows a SmartScreen warning,
 macOS quarantines the app until it's notarized, and iOS only installs through a
 sideloading tool. Signing needs a certificate for Windows and an Apple Developer account
@@ -183,6 +190,9 @@ for the others.
 - **macOS signing.** Bundles are ad-hoc signed by the linker. A downloaded one is
   quarantined by Gatekeeper until it's notarized, which needs an Apple Developer
   account.
+- **The Windows app's exact third-party source.** media_kit's Windows libmpv builds most of
+  its libraries from branch heads, so the archive can only name them. Building that DLL
+  from pinned inputs, as the server's ffmpeg is, would close it.
 - **Linux and Windows CI.** `ffmpeg-build` compiles from pinned inputs, so a release
   workflow can cache on the hash of `pipeline/`. It needs writing, along with a place to
   publish the corresponding source.

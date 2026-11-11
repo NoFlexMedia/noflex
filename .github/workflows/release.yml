@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Builds the Flutter app for every client target. Pushing a `v*` tag attaches the
-# builds to a draft release for a person to look over and publish; running it by
-# hand just leaves them as this run's artifacts. Any target can fail without
-# stopping the others. See docs/PACKAGING.md, which also says what each needs.
+# Builds the Flutter app for every client target, and gathers the source of the
+# third-party libraries it ships. Pushing a `v*` tag attaches them to a draft
+# release for a person to look over and publish; running it by hand just leaves
+# them as this run's artifacts. Any target can fail without stopping the others.
+# See docs/PACKAGING.md, which also says what each needs.
 
 name: release
 
@@ -107,8 +108,34 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  # The LGPL's corresponding source for the native libraries the apps ship, as
+  # packaging/third-party/apps.toml records them.
+  third-party:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v24
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Gather the apps' third-party sources
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=${GITHUB_REF_NAME#v}
+          else
+            version=$(sed -n 's/^version: \([^+]*\).*/\1/p' flutter/pubspec.yaml)
+          fi
+          nix develop .#no-flutter --command sh -c 'cd backend && cargo xtask third-party source ../dist/third-party-source'
+          tar -cf "dist/noflex-$version-third-party-source.tar" -C dist third-party-source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: third-party-source
+          path: dist/noflex-*
+          retention-days: 14
+          if-no-files-found: error
+
   publish:
-    needs: [check, android, native]
+    needs: [check, android, native, third-party]
     if: ${{ !cancelled() && needs.check.result == 'success' && github.ref_type == 'tag' }}
     runs-on: ubuntu-latest
     permissions:

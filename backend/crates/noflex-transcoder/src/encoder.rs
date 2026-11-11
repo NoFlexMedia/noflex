@@ -150,7 +150,10 @@ mod tests {
 
     #[test]
     fn forced_keyframes_are_idrs_on_every_backend() {
-        assert_eq!(Encoder::NvencAv1.forced_keyframe_args(), ["-forced-idr", "1"]);
+        assert_eq!(
+            Encoder::NvencAv1.forced_keyframe_args(),
+            ["-forced-idr", "1"]
+        );
         assert_eq!(Encoder::Qsv265.forced_keyframe_args(), ["-forced_idr", "1"]);
         assert!(Encoder::Software264.forced_keyframe_args().is_empty());
     }

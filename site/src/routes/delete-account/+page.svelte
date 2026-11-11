@@ -23,7 +23,7 @@
   <h2 id="steps">Delete your account</h2>
   <h3>In the app</h3>
   <ol class="steps">
-    <li>Open NoFlex, go to <strong>You</strong>, then <strong>Account</strong>.</li>
+    <li>Open NoFlex and go to <strong>You</strong>.</li>
     <li>In <strong>Profile</strong>, choose <strong>Delete account</strong>.</li>
     <li>Confirm with your password, then <strong>Delete account</strong>.</li>
   </ol>
@@ -42,7 +42,7 @@
     <li>What you've watched, your progress, ratings, favorites and playlists.</li>
     <li>Your devices, sessions and API keys, and anything prepared only for your devices.</li>
     <li>Accounts you linked, such as Trakt or single sign-on, and the tokens for them.</li>
-    <li>Watch rooms you host, invites you created, and offline copies you made.</li>
+    <li>Watch rooms you host, invites you created, and the offline copies and recordings you made.</li>
     <li>Entries about you in the server's activity log.</li>
   </ul>
   <p>The app also removes that account's sign-in and downloads from your device.</p>
@@ -55,7 +55,7 @@
   </ul>
 
   <h2 id="administrators">If you're the administrator</h2>
-  <p>If other administrators remain, deleting your account works as above. <strong>If you're the last administrator, deleting your account resets the whole server:</strong> every account, all watch history, libraries and settings are erased, and the server starts over at first-time setup. Your media files and the server's configuration file are kept. NoFlex warns you first, then asks you to type <strong>delete everything</strong> with your password before doing this.</p>
+  <p>If other administrators remain, deleting your account works as above. <strong>If you're the last administrator, deleting your account resets the whole server:</strong> every account, all watch history, libraries and settings, recordings, and everything the server prepared or cached are erased, and the server starts over at first-time setup. Your media files, the server's configuration file and its backups are kept. NoFlex warns you first, then asks you to type <strong>delete everything</strong> with your password before doing this.</p>
 
   <h2 id="cannot">If you can't sign in</h2>
   <p>Ask the person who runs your NoFlex server to delete your account. Administrators can delete any account from <strong>Administration → Users</strong>.</p>

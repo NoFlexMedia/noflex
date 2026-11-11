@@ -72,6 +72,8 @@ Checking a change without Windows: `cargo zigbuild --target x86_64-pc-windows-gn
 `windres` on `PATH` (Turso's build script compiles a version resource with it), and
 Wine runs the result, the service and the installer included. Wine can't set a
 service to restart after a non-crash failure, which `service install` warns about.
+Wine also stops every service shortly after its last other process exits, so keep
+`wineserver -p` running while testing one the installer started.
 
 ## ffmpeg
 
@@ -246,10 +248,6 @@ for the others.
   builds, the arm64 runner, the MSVC build and the installer on a real Windows.
 - **Windows signing.** The installer and server aren't signed, so SmartScreen warns.
 - **An apt and dnf repository**, so packages update with the system.
-- **Windows: one Wine-only failure to look into.** Started by the installer under
-  Wine, the service logs `smart transcoding: planning failed error=background task
-  failed`, a `tokio::fs` task that never ran, without a panic. Run in the
-  foreground, it doesn't. Check on a real Windows.
 - **Publishing a winget manifest** after the first release, with `wingetcreate new`
   on the installer's URL.
 

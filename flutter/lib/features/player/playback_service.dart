@@ -288,7 +288,8 @@ class PlaybackService {
       : url;
 
   /// Open a session. A transcode starts at [startMs] so far seeks don't wait on
-  /// ffmpeg.
+  /// ffmpeg. [device] is what another device decodes, when it will play rather
+  /// than this one (Cast).
   Future<SessionInfo> startSession(
     String mediaFileId, {
     ServerRef? server,
@@ -296,13 +297,15 @@ class PlaybackService {
     int startMs = 0,
     int? audio,
     SessionQuality? quality,
+    GClientCapabilities? device,
   }) async {
-    final profile = await _decoders.ready();
     final asked = quality ?? sessionQuality(this.quality.value, null);
-    final capabilities = buildCapabilities(
-      profile,
-      maxBitrateBps: asked.maxBitrateBps,
-    );
+    final capabilities = device != null
+        ? device.rebuild((b) => b..maxBitrateBps = asked.maxBitrateBps)
+        : buildCapabilities(
+            await _decoders.ready(),
+            maxBitrateBps: asked.maxBitrateBps,
+          );
     final data = await _graphql.run(
       GStartPlaybackReq(
         (b) => b.vars

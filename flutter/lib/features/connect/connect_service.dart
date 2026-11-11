@@ -21,39 +21,110 @@ import '../../services/graphql.dart';
 import '../../services/session.dart';
 import '../../services/toast_service.dart';
 
-/// A device of the viewer's as the server last described it.
-class RemoteDevice {
-  const RemoteDevice(
-    this.data,
-    this.heardAt, {
-    this._state,
-    this._positionMs,
-    this._stopped = false,
+/// What another device is playing, as it last said.
+class RemotePlayback {
+  const RemotePlayback({
+    required this.state,
+    required this.positionMs,
+    this.durationMs,
+    this.work,
   });
 
-  final GConnectDeviceFields data;
+  final GDevicePlayState state;
+  final int positionMs;
+  final int? durationMs;
+  final WorkSummary? work;
+
+  RemotePlayback copyWith({GDevicePlayState? state, int? positionMs}) =>
+      RemotePlayback(
+        state: state ?? this.state,
+        positionMs: positionMs ?? this.positionMs,
+        durationMs: durationMs,
+        work: work,
+      );
+}
+
+/// How a device is steered: through the server, or over Cast from here.
+enum RemoteVia { connect, cast }
+
+/// Somewhere to play other than here: one of the viewer's devices as the
+/// server last described it, or a Cast device this app found (`CastService`).
+class RemoteDevice {
+  const RemoteDevice({
+    required this.id,
+    required this.name,
+    required this.heardAt,
+    this.client,
+    this.online = true,
+    this.playback,
+    this.via = RemoteVia.connect,
+  });
+
+  factory RemoteDevice.fromConnect(
+    GConnectDeviceFields data,
+    DateTime heardAt,
+  ) {
+    final playback = data.playback;
+    final work = playback?.work;
+    return RemoteDevice(
+      id: data.device.id,
+      name: data.device.name,
+      client: data.device.client,
+      online: data.online,
+      heardAt: heardAt,
+      playback: playback == null
+          ? null
+          : RemotePlayback(
+              state: playback.state,
+              positionMs: playback.positionMs,
+              durationMs: playback.durationMs,
+              work: work == null ? null : WorkSummary.fromCard(work),
+            ),
+    );
+  }
+
+  final String id;
+  final String name;
+  final String? client;
+  final bool online;
+  final RemotePlayback? playback;
+  final RemoteVia via;
 
   /// When this was heard, by this clock: [ConnectService.position] advances from it.
   final DateTime heardAt;
 
-  // What a control just asked for, shown until the device says otherwise.
-  final GDevicePlayState? _state;
-  final int? _positionMs;
-
-  // A stop just sent, until the device's next word says it's idle.
-  final bool _stopped;
-
-  GDevicePlayState? get state => _state ?? playback?.state;
-  int get positionMs => _positionMs ?? playback?.positionMs ?? 0;
-
-  String get id => data.device.id;
-  String get name => data.device.name;
-  String? get client => data.device.client;
-  bool get online => data.online;
-  GConnectDeviceFields_playback? get playback =>
-      _stopped ? null : data.playback;
+  GDevicePlayState? get state => playback?.state;
+  int get positionMs => playback?.positionMs ?? 0;
   bool get playing => state == GDevicePlayState.PLAYING;
   bool get buffering => state == GDevicePlayState.BUFFERING;
+
+  /// What a control just asked for, shown until the device's word replaces it.
+  RemoteDevice expecting(RemotePlayback? playback) => RemoteDevice(
+    id: id,
+    name: name,
+    client: client,
+    online: online,
+    heardAt: DateTime.now(),
+    playback: playback,
+    via: via,
+  );
+}
+
+/// Steering for devices the server doesn't know: Cast.
+abstract interface class RemoteRoute {
+  Future<bool> play(
+    RemoteDevice device,
+    WorkSummary work, {
+    String? editionId,
+    String? mediaFileId,
+    int? positionMs,
+  });
+
+  Future<void> control(
+    RemoteDevice device,
+    GDeviceControl action, {
+    int? positionMs,
+  });
 }
 
 class ConnectService {
@@ -83,6 +154,10 @@ class ConnectService {
   /// Every device of the viewer's, this one excluded.
   final devices = signal<List<RemoteDevice>>(const []);
 
+  /// Devices found here rather than through the server, and how to steer them.
+  final external = signal<List<RemoteDevice>>(const []);
+  RemoteRoute? castRoute;
+
   /// Where Play goes; null plays here.
   final targetId = signal<String?>(null);
 
@@ -94,6 +169,7 @@ class ConnectService {
     () => [
       for (final device in devices.value)
         if (device.online) device,
+      ...external.value,
     ],
   );
 
@@ -167,7 +243,7 @@ class ConnectService {
               devices.value = [
                 for (final device in list)
                   if (device.device.id != _identity.id)
-                    RemoteDevice(device, heard),
+                    RemoteDevice.fromConnect(device, heard),
               ];
               if (targetId.peek() != null && target.peek() == null) {
                 targetId.value = null;
@@ -191,9 +267,16 @@ class ConnectService {
     devices.value = [
       for (final device in devices.value)
         if (device.id == fresh.device.id)
-          RemoteDevice(fresh, heard)
+          RemoteDevice.fromConnect(fresh, heard)
         else
           device,
+    ];
+  }
+
+  void _expect(RemoteDevice device, RemotePlayback? playback) {
+    devices.value = [
+      for (final each in devices.value)
+        if (each.id == device.id) device.expecting(playback) else each,
     ];
   }
 
@@ -206,6 +289,16 @@ class ConnectService {
   }) async {
     final device = target.peek();
     if (device == null) return false;
+    if (device.via == RemoteVia.cast) {
+      return await castRoute?.play(
+            device,
+            work,
+            editionId: editionId,
+            mediaFileId: mediaFileId,
+            positionMs: positionMs,
+          ) ??
+          false;
+    }
     final sent = await _toasts.attempt(
       () => _graphql.run(
         GCastToDeviceReq(
@@ -229,37 +322,27 @@ class ConnectService {
     GDeviceControl action, {
     int? positionMs,
   }) async {
+    if (device.via == RemoteVia.cast) {
+      return castRoute?.control(device, action, positionMs: positionMs);
+    }
+    final playback = device.playback;
     if (action == GDeviceControl.STOP) {
       // Stopped is stopped: the bar goes now, and the device's word that it's idle only confirms it.
-      devices.value = [
-        for (final each in devices.value)
-          if (each.id == device.id)
-            RemoteDevice(device.data, DateTime.now(), stopped: true)
-          else
-            each,
-      ];
-    }
-    if (device.playback != null && action != GDeviceControl.STOP) {
-      final state = action == GDeviceControl.PAUSE
-          ? GDevicePlayState.PAUSED
-          : action == GDeviceControl.PLAY
-          ? GDevicePlayState.PLAYING
-          : device.state;
-      final at = action == GDeviceControl.SEEK && positionMs != null
-          ? positionMs
-          : position(device);
-      devices.value = [
-        for (final each in devices.value)
-          if (each.id == device.id)
-            RemoteDevice(
-              device.data,
-              DateTime.now(),
-              state: state,
-              positionMs: at,
-            )
-          else
-            each,
-      ];
+      _expect(device, null);
+    } else if (playback != null) {
+      _expect(
+        device,
+        playback.copyWith(
+          state: switch (action) {
+            GDeviceControl.PAUSE => GDevicePlayState.PAUSED,
+            GDeviceControl.PLAY => GDevicePlayState.PLAYING,
+            _ => playback.state,
+          },
+          positionMs: action == GDeviceControl.SEEK && positionMs != null
+              ? positionMs
+              : position(device),
+        ),
+      );
     }
     final sent = await _toasts.attempt(
       () => _graphql.run(

@@ -6,12 +6,12 @@ import 'package:signals_flutter/signals_flutter.dart';
 
 import '../../di.dart';
 import '../../graphql/__generated__/schema.schema.gql.dart';
-import '../../models/work.dart';
 import '../../theme.dart';
 import '../../utils/device_icon.dart';
 import '../../utils/format.dart';
 import '../../widgets/artwork.dart';
 import '../../widgets/nf_button.dart';
+import '../cast/cast_settings.dart';
 import 'connect_service.dart';
 
 const _skipBack = 10000;
@@ -37,8 +37,7 @@ class _RemoteBarState extends State<RemoteBar> {
       final device = connect.active.value;
       final playback = device?.playback;
       if (device == null || playback == null) return const SizedBox.shrink();
-      final card = playback.work;
-      final work = card == null ? null : WorkSummary.fromCard(card);
+      final work = playback.work;
       final length = playback.durationMs ?? 0;
       final at = connect.position(device);
       final shown = _scrub.value ?? at.toDouble();
@@ -163,6 +162,13 @@ class _RemoteBarState extends State<RemoteBar> {
                       label: 'Forward 30 seconds',
                       size: 40,
                       onPressed: () => seek(at + _skipForward),
+                    ),
+                  if (device.via == RemoteVia.cast)
+                    NfIconButton(
+                      icon: PhosphorIconsRegular.gear,
+                      label: 'Playback settings on ${device.name}',
+                      size: 40,
+                      onPressed: () => chooseCastSettings(device),
                     ),
                   NfIconButton(
                     icon: PhosphorIconsFill.stop,

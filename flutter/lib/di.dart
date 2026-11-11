@@ -2,6 +2,7 @@
 
 import 'package:get_it/get_it.dart';
 
+import 'features/cast/cast_service.dart';
 import 'features/connect/connect_service.dart';
 import 'features/downloads/downloads_service.dart';
 import 'features/home/home_service.dart';
@@ -54,5 +55,15 @@ void configureDependencies() {
         toasts: getIt<ToastService>(),
       ),
     )
-    ..registerSingleton(PlaybackService());
+    ..registerSingleton(PlaybackService())
+    ..registerSingleton(
+      CastService(
+        session: getIt<SessionService>(),
+        connect: getIt<ConnectService>(),
+        playback: getIt<PlaybackService>(),
+        graphql: getIt<GraphqlService>(),
+        tokens: getIt<TokenStore>(),
+        toasts: getIt<ToastService>(),
+      ),
+    );
 }

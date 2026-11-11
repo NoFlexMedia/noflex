@@ -167,6 +167,22 @@ Ferry, against `lib/graphql/schema.graphql`, a symlink to `backend/crates/noflex
 - `RemoteBar` shows whichever device is playing, over the bottom bar on a phone and over the content beside the navigation on wider windows. Position advances between reports from `ConnectService.now`; controls update at once and the device's next report corrects them.
 - `ConnectButton` is on a title's actions only while a device is listening, as a cast button is.
 
+## Cast
+
+`features/cast/` sends to Google Cast devices, a port of the web's sender (`cast/AGENTS.md`) that speaks CASTV2 itself. Google's sender SDK is closed source, so it can't ship in this app, and covers only Android and iOS.
+
+- **A Cast device is one more `RemoteDevice`** (`via: RemoteVia.cast`), listed through `ConnectService.external` and steered through `castRoute`. The picker, `ConnectButton` and `RemoteBar` treat it as any device; the bar adds the quality and stream-info sheet (`cast_settings.dart`).
+- `CastDiscovery` browses `_googlecast._tcp` through bonsoir, which asks each platform's own service browser: NsdManager, Bonjour, Avahi, DNS-SD. iOS and macOS list the type under `NSBonjourServices`; a raw mDNS socket would need Apple's multicast entitlement instead. Linux needs `avahi-daemon` running, or Cast isn't offered.
+- Only devices that show video are listed: `ca` bit 1, which speakers and speaker groups leave out.
+- **Choosing a Cast device opens the session**, launching or joining the receiver, so its screen is ready before Play. Choosing elsewhere closes one that isn't playing.
+- `CastChannel` is the wire: TLS to port 8009, accepting the device's self-signed certificate unchecked as every non-SDK sender does. The device isn't authenticated, so a spoofed one on the LAN would receive the stream's URL and its token.
+- It answers the device's PINGs and sends its own every 5 s; a Nest Hub kept it open across two of them.
+- Devices only report on change, so `CastService` asks for media status every 5 s while something plays.
+- **The receiver app id is `--dart-define=NOFLEX_CAST_APP_ID`**, and Google's Default Media Receiver without it, as on the web. With NoFlex's receiver the device answers `capabilities`; with Google's, `cast_profile.dart` (a port of `web/src/lib/castProfile.ts`) goes by model.
+- Quality and Auto follow the web's: the device's choice is this device's (`PlaybackService.quality`), and Auto runs `AutoQuality` on the receiver's health reports.
+- A server reached at `localhost` or `127.*` is refused, as a Cast device can't reach it.
+- Checked against a Nest Hub for the connection, status and heartbeat (read only), and end to end against a stand-in device on Linux. Launching NoFlex's receiver and playing on a real device are unverified.
+
 ## Downloads
 
 - `background_downloader` owns transfers natively: URLSession background tasks on iOS and macOS, WorkManager or UIDT on Android, isolates on Windows and Linux.

@@ -1,6 +1,6 @@
 # Cast
 
-`cast/` is what NoFlex needs for Google Cast beyond the clients themselves: today, the receiver. A sender (`web/src/lib/cast.svelte.ts`) starts a session on a Cast device and loads a stream; the receiver plays it with the NoFlex look.
+`cast/` is what NoFlex needs for Google Cast beyond the clients themselves: today, the receiver. A sender (the web's `web/src/lib/cast.svelte.ts`, the app's `flutter/lib/features/cast/`) starts a session on a Cast device and loads a stream; the receiver plays it with the NoFlex look.
 
 ## Receiver
 
@@ -19,7 +19,7 @@
 - **The receiver probes its own device.** Asked `{type: "capabilities"}` on `urn:x-cast:dev.noflex.cast`, it runs the web client's own walk (`probeElsewhere`) with each `MediaQuestion` put to `canDisplayType`, and answers with the whole `ClientCapabilities`. A TV with Cast built in or a Google TV with an AV1 decoder is measured like a browser, about 500 questions, in one message to any sender.
 - Google's Default Media Receiver can't be asked, so `castCapabilities` goes by model name (Google's device table) and falls back to H.264 at level 4.1.
 
-## Sender
+## Senders
 
 `web/src/lib/cast.svelte.ts` is the browser's side, for Chrome with the server's `cast_sdk` on (`docs/CONFIGURATION.md`): Google's sender script has to be admitted by the page's policy.
 
@@ -30,3 +30,7 @@
 - **Quality is this browser's choice** (`qualityChoice`, the player's menu) and can be changed for the device from the now-playing bar's settings, which also toggles stream info on the TV. Auto runs `AutoQuality` (`$quality`) on the receiver's health reports: stalls on the original reload at the same place on the ladder, and the receiver's Shaka adapts along it from there.
 - An on-demand transcode's playlist is the whole title, so the load request's `currentTime` is the resume point less the stream's offset, as for a file.
 - Untested against a real Cast device. Loading the script, the session events, and the load request follow Google's documented API.
+
+### The Flutter app
+
+`flutter/lib/features/cast/` speaks CASTV2 itself, as Google's sender SDK is closed source and Android and iOS only; `flutter/AGENTS.md` has the details. It sends what the web's sender does (the same `LOAD` and `customData`, `capabilities`, `stats`, `notice`), so the receiver can't tell them apart.

@@ -13,6 +13,7 @@ They live in `backend/plugins/`, outside the main Cargo workspace because they b
 | `noflex-metadata-tmdb/`           | `tmdb`          | The Movie Database — movies and series metadata and artwork             |
 | `noflex-metadata-tvdb/`           | `tvdb`          | TheTVDB — series and movie metadata and artwork                         |
 | `noflex-metadata-musicbrainz/`    | `musicbrainz`   | MusicBrainz — albums, artists, tracks                                   |
+| `noflex-ratings-omdb/`            | `omdb`          | OMDb — IMDb, Rotten Tomatoes and Metacritic ratings; needs your own key |
 | `noflex-auth-oidc/`               | `oidc`          | OpenID Connect login and local-account linking                          |
 | `noflex-embeddings/`              | `embeddings`    | Local Model2Vec embeddings that fill the vector search index            |
 | `noflex-webhook/`                 | `webhook`       | Outbound webhooks for domain events (Gotify, ntfy, Discord, Slack, ...) |
@@ -27,6 +28,7 @@ Some have their own README with setup steps (`noflex-embeddings`, `noflex-webhoo
 | --------------- | ---------------------------------------------------------------- | -------------------------------------------- |
 | `metadata`      | Identifying and refreshing works                                 | `MetadataMatch`es, a full `MetadataPayload`  |
 | `image`         | A work's artwork, a credited person's photo, a hand-picked image | `(ImageMeta, stream<u8>)`; `ImageCandidate`s |
+| `ratings`       | After a work's metadata is applied; for works it hasn't rated    | `Rating`s, one per source                    |
 | `subtitle`      | A viewer searches online for a file's subtitles                  | `SubtitleMatch`es; `(format, stream<u8>)`    |
 | `post-scan`     | After a library scan completes                                   | unit                                         |
 | `notifier`      | Library events and plugin lifecycle                              | unit                                         |
@@ -247,6 +249,26 @@ When several plugins implement the same hook, the host:
 - A picked image is locked on the work (`*_IMAGE` fields), so refreshes and backfills leave it alone until it's unlocked.
 - **People.** Each `metadata-person` carries `external-ids`, the provider's own ids for them, in the same path style as its work ids (TMDb `person/<id>`, TheTVDB `people/<id>`). After applying a payload, the host asks the plugin that supplied it for the photos of the first 20 people billed who don't have one yet: `image.fetch` with one of those ids and kind `primary`. It runs in the background and never fails the payload; answer `not-found` for someone with no photo. The host keeps every provider's ids on the person's tag.
 
+## Ratings
+
+A work keeps one rating per source, each on that source's own scale, beside the single number cards show and the rating filter, smart lists and recommendations compare.
+
+```rust
+Rating {
+    source: "rotten-tomatoes".into(), // whose rating it is, not who reports it
+    value: 87.0,
+    scale: 100.0,                     // the best `value` can be
+    votes: None,
+}
+```
+
+- **`source` is a slug** of lowercase letters, digits and hyphens: `imdb`, `tmdb`, `tvdb`, `musicbrainz`, `rotten-tomatoes`, `metacritic`. It's a string, so a new source needs no interface change. The host names the ones it knows ("Rotten Tomatoes") and spells out the rest from the slug. A rating that isn't a slug, or isn't within `0..=scale`, is dropped with a warning; so is a second one for the same source.
+- **A metadata provider reports its own** in `metadata-payload.ratings` (TMDb its users' average out of 10, MusicBrainz out of 5).
+- **`ratings.fetch(ids, kind)` is for providers that only add ratings** to works someone else described, as OMDb adds IMDb's, Rotten Tomatoes' and Metacritic's. After any payload is applied, whichever provider supplied it, the host asks every ratings plugin at once with the ids the work then has. Answer empty when none of them is one you can look up. The metadata worker also asks each ratings plugin about every identified work it hasn't rated yet, so one installed later still rates the library; answer `rate-limited` or `unavailable` when you can't answer for now, and the rest wait for the next sweep. Such a plugin targets the `ratings-plugin` world; `noflex-ratings-omdb` is the reference.
+- **An answer replaces only what that plugin reported before.** One that fails keeps its last ratings, and changes nobody else's. Where two plugins report the same source, the later report holds it.
+- **The single rating is picked, not merged**: the one from the first source in the server's [`metadata.rating_sources`](CONFIGURATION.md#metadatarating_sources) the work has, out of 10. A source not listed never supplies it. An administrator's own rating, set from the title's admin sheet, is locked and stands in for it until unlocked.
+- `ratings.attribution()` credits a ratings plugin as `metadata.attribution()` does a metadata one, and `Work.attributions` names it on every title it rated.
+
 ## Account linking
 
 - **`link-start(user)`** returns a `LinkChallenge`: the `auth-url` the user opens, the `state` the host echoes back, and for a device flow the `user-code` they enter there, which clients show beside the link.
@@ -275,7 +297,7 @@ A viewer searches online for a file's subtitles from the player; the host asks e
 
 ## Attribution
 
-A provider's terms often require crediting it wherever its data shows, so `metadata` plugins answer `attribution()`, or `None` to ask for no credit:
+A provider's terms often require crediting it wherever its data shows, so `metadata` and `ratings` plugins answer `attribution()`, or `None` to ask for no credit:
 
 ```rust
 fn attribution() -> Option<metadata::ProviderAttribution> {
@@ -289,7 +311,7 @@ fn attribution() -> Option<metadata::ProviderAttribution> {
 
 - `logo` is an SVG document, or PNG, JPEG, WebP or GIF bytes, at most 256 KiB. The host tells them apart by content. Clients draw it unchanged at small sizes on a dark surface, so ship the variant made for dark backgrounds. A logo or URL the host rejects is dropped with a warning and the text stands alone.
 - The host reads it once per load and stores it, so titles stay credited after the plugin is removed.
-- A title is credited to the plugin that supplied its fields, then to any plugin whose artwork it is showing. Clients read `Work.attributions`; `providerAttributions` lists every credit by plugin id, for anything naming a provider.
+- A title is credited to the plugin that supplied its fields, then to any plugin whose artwork it is showing, then to those whose ratings it has. Clients read `Work.attributions`; `providerAttributions` lists every credit by plugin id, for anything naming a provider.
 - Logos are served from `/attributions/<plugin-id>/logo` without a credential, sandboxed by a content security policy.
 - Check the provider's terms before shipping its logo, and keep a `NOTICE.md` beside it saying where it came from and under what license: it isn't covered by your plugin's license.
 

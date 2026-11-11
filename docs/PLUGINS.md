@@ -17,7 +17,7 @@ They live in `backend/plugins/`, outside the main Cargo workspace because they b
 | `noflex-auth-oidc/`               | `oidc`          | OpenID Connect login and local-account linking                          |
 | `noflex-embeddings/`              | `embeddings`    | Local Model2Vec embeddings that fill the vector search index            |
 | `noflex-webhook/`                 | `webhook`       | Outbound webhooks for domain events (Gotify, ntfy, Discord, Slack, ...) |
-| `noflex-trakt/`                   | `trakt`         | Trakt scrobbling, linked per user by device flow                        |
+| `noflex-trakt/`                   | `trakt`         | Trakt scrobbling and two-way history sync, linked per user by device flow |
 | `noflex-subtitles-opensubtitles/` | `opensubtitles` | OpenSubtitles.com subtitle search; needs the operator's own API key     |
 
 Some have their own README with setup steps (`noflex-embeddings`, `noflex-webhook`, `noflex-subtitles-opensubtitles`). NoFlex ships no shared OpenSubtitles key, so that plugin answers `unavailable` until an administrator sets one.
@@ -170,12 +170,13 @@ The manifest is TOML embedded in the `.wasm` as a custom section named `noflex:m
 | `version`                                  | auto     | Stamped from the crate version                                                                                                                                                            |
 | `noflex_api_version`                       | auto     | Stamped to the host's plugin API; pre-1.0 hosts require an exact match                                                                                                                    |
 | `hooks`                                    | yes      | Interfaces you export: `["metadata", "image", ...]`                                                                                                                                       |
-| `capabilities`                             | yes      | Any of `http.egress`, `http.private-network`, `secrets.read`, `user-secrets.read`, `user-secrets.write`, `assets.read`, `background`. Unknown or duplicate entries fail the load; using an undeclared import answers `capability-denied`. |
+| `capabilities`                             | yes      | Any of `http.egress`, `http.private-network`, `secrets.read`, `user-secrets.read`, `user-secrets.write`, `assets.read`, `background`, `library.tags.write`, `library.collections.write`, `user-state.read`, `user-state.write`. Unknown or duplicate entries fail the load; using an undeclared import answers `capability-denied`. |
 | `http_egress_hosts`                        | optional | Allowlist for `host-net.request`: exact hosts (IP literals without brackets), `*.suffix`, or `"*"`. Requires `http.egress`                                                                |
 | `secrets_read`                             | optional | Keys read via `host-secrets.read`. Requires `secrets.read`                                                                                                                                |
 | `user_secrets_read` / `user_secrets_write` | optional | Per-user keys for `host-secrets.read-for-user` / `write-for-user`. Require `user-secrets.read` / `user-secrets.write`                                                                     |
+| `tag_namespaces`                           | optional | Tag namespaces `host-tags` writes, lowercase letters, digits and `-`. Requires `library.tags.write`, which requires at least one; see [Library writes](#library-writes)       |
 | `settings`                                 | optional | `[[settings]]` entries an administrator edits from the admin UI; see [Settings](#settings)                                                                                                |
-| `tasks`                                    | optional | `[[tasks]]` entries (`name`, `interval_ms`, optional `payload`) for `background`. Require `background`                                                                                    |
+| `tasks`                                    | optional | `[[tasks]]` entries (`name`, `interval_ms`, optional `payload` or `per_user`) for `background`. Require `background`; see [Background tasks](#background-tasks)               |
 | `events`                                   | optional | `notifier` only: event names to receive (`work-added`, `playback-started`, ...). Unset receives every kind                                                                               |
 | `priority.<hook>`                          | optional | Per-hook default priority; server config can override                                                                                                                                     |
 | `deadlines_secs.<hook>`                    | optional | Per-hook call deadline in seconds (default 30)                                                                                                                                            |
@@ -226,11 +227,39 @@ Plugins have no sockets, files, or database access of their own. They call back 
 - `host-secrets.read-for-user(user, key)` / `write-for-user(user, key, value)` — per-user tokens, bound to the call they run in: `user` must be the user that call acts for (`user-link` calls act for their user, `scrobbler` calls for the event's user, a `background` run for whoever's call enqueued it, through its `more(...)` chain). Anything else is `capability-denied`, or `unavailable` in a call that acts for no one.
 - `host-config.read()` — a TOML document: the plugin's `[plugin.per_plugin_config.<id>]` stanza, with the [settings](#settings) an administrator set over it and manifest defaults for the rest.
 - `host-library.lookup-work-by-id(id)` / `lookup-edition-by-id(id)` — read-only library lookups.
+- `host-library.find-works(id)` / `find-episode(series-ids, season, episode)` — the works carrying a provider id, and an episode by its show's ids and numbers. Values match exactly as metadata providers store them: TMDb and TheTVDB ids are paths (`movie/603`, `tv/1399`, `series/81189`), IMDb ids bare (`tt0133093`).
+- `host-tags.set-tags`, `host-collections.sync-collection`, `host-user-state.user-history` / `import-user-state` — writes to data the plugin owns; see [Library writes](#library-writes).
 - `host-tasks.enqueue(task, payload)` — queue a run of one of your `[[tasks]]`. Requires `background`.
 - `host-assets.read-file(name)` — a host-managed asset such as model weights. Requires `assets.read`.
 - `host-inference.embed-tokens(model, tokens)` — run an ONNX embedding model from the assets directory natively, on whichever device the operator chose. Requires `inference.run`.
 - `host-net.request(req)` — HTTP egress performed by the host. Requires `http.egress`, and the URL's host must match `http_egress_hosts`. Destinations are vetted after DNS, at connect time: loopback, private (RFC 1918 / ULA), link-local, CGNAT, and other special-purpose addresses — including IPv6 forms embedding them (NAT64, 6to4, IPv4-mapped) — are refused unless you also declare `http.private-network` (LAN webhooks, self-hosted IdPs). A name resolving to a mix of public and forbidden addresses is refused outright; proxy environment variables are ignored; redirects are never followed. Requests are audit-logged by origin and a digest of the path and query, never the full URL.
 - `host-metrics.histogram(name, value)` / `host-metrics.counter(name, delta)` — metrics.
+
+## Library writes
+
+Plugins never see `Storage`. What they write goes through three narrow imports, each behind its own capability and audit-logged, and lands as data marked as the plugin's. None of them is in a convenience world; import them beside yours (`import noflex:plugin/host-user-state@0.2.0;`, as `noflex-trakt` does). A call carries at most 500 tags, works or entries; chunk a bigger sync across `background` runs with `more(cursor)`.
+
+### Tags
+
+- **`set-tags(work, namespace, tags)`** replaces this plugin's tags in `namespace` on `work` with `tags` (`slug`, `display`, `weight` in [0, 1]). Repeating a call changes nothing, so a retried task can send it again. Requires `library.tags.write`.
+- **A namespace is claimed in the manifest** (`tag_namespaces`). A plugin claiming a core namespace (`genre`, `keyword`, `scale`, `studio`, `person`, `parental`, `category`, `mood`, `quality`, `edition`, `user`), or one another loaded plugin claims, fails to load.
+- Assignments are sourced `plugin:<id>`, and show to everyone who can see the title like any other tag in the namespace. Plugin namespaces don't feed search, embeddings or recommendations, which read the core ones.
+
+### Collections
+
+- **`sync-collection(key, title, overview, works)`** creates or replaces the collections this plugin keeps under `key`. Collections are library-scoped, so a list spanning libraries becomes one collection per library under the same key, each in list order; works that don't exist are skipped, a library the list no longer reaches loses its collection, and an empty list deletes them all. Requires `library.collections.write`.
+- Clients see the owner as `Collection.pluginId`. Administrators can't edit a plugin-owned collection (`PLUGIN_OWNED_COLLECTION`); **Detach** (`detachCollection`) makes it theirs, and the key is remembered for that library, so the plugin's later syncs never recreate it there.
+
+### User state
+
+- **`user-history(user, since, cursor)`** pages through what a user played, rated and favorited (`user-state.read`); **`import-user-state(user, items)`** applies what they did elsewhere (`user-state.write`). Both only within a call acting for that user, as with `host-secrets.read-for-user`; titles the user can't see are skipped.
+- **Imports only add.** Nothing is ever un-played, un-rated or un-favorited; a play counts when it's newer than the recorded one, a rating when its time is, and the play count takes the larger value, so importing the same history twice changes nothing. A play within an hour of the recorded one is the same viewing reported twice (a scrobble coming back), and becomes the import's.
+- **No echo.** Whatever an import changes is marked as the importing plugin's until this server changes it, and `user-history` leaves it out for that plugin, so a sync never reads its own imports back as new: import first, then export what's left. Imported state is never sent to scrobblers or notifiers as if it had just been played, to its source or any other plugin; another sync plugin picks it up from `user-history`, with its original times.
+- Ratings are on a 0–10 scale; times are milliseconds since the Unix epoch, and a time in the future counts as now.
+
+### Removal
+
+Removing or disabling a plugin keeps its data. **Remove its data** on the plugin's card in the admin Plugins tab (`removePluginData`, which takes any plugin id, installed or not) deletes its tags and the collections it still owns. Detached collections, and the watch state it imported, which is the users' own, stay. A plugin that's still installed writes its data again at its next sync.
 
 ## Priority and fallback
 
@@ -338,6 +367,7 @@ interval_ms = 60_000
 - **Long work chunks.** Return `more(cursor)` and the host reschedules promptly with that cursor rather than waiting for the interval. Background calls get no deadline exception, so chunk anything long.
 - **State survives.** Cursors and `host-tasks.enqueue` payloads are persisted host-side across instance recycling and restarts. The enqueue queue is FIFO per task and drains before the scheduled payload.
 - **User binding.** A payload enqueued from a user-bound call (`user-link`, `scrobbler`, or a run that is itself bound) runs bound to that user, as does its `more(...)` chain. Each user gets a chain of their own beside the task's unbound one, which its schedule and unbound enqueues drive: a user's payload only continues or replaces their own chain, and every chain that's due runs together. Chains are persisted with the user they're bound to, so a user's chain resumes at once, still bound, after a restart.
+- **Per-user schedules.** A task with `per_user = true` (which needs the `user-link` hook and no `payload`) runs on its schedule once for every user who has linked an account through the plugin and has no chain running, bound to them and with their id as the payload, in place of the unbound run. Someone whose unlink is in progress gets none.
 - **Supervision.** A trap recycles the instance with exponential backoff; five consecutive traps open the circuit breaker until the plugin is reloaded. Health is on the GraphQL `plugins` query (`instanceRestarts`, `circuitOpen`, and per-task `lastRun`, `consecutiveFailures`, `totalRuns`).
 
 ## Trust

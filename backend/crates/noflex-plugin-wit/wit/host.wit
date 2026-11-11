@@ -242,8 +242,9 @@ interface host-user-state {
     /// counts when it is newer than the recorded one, a rating when its
     /// time is, and a favorite when set; nothing is ever un-played,
     /// un-rated or un-favorited, and the play count becomes the larger of
-    /// the two, so importing the same history twice changes nothing. Works
-    /// the user can't see are skipped. Imported state is never sent to
+    /// the two, so importing the same history twice changes nothing. A play
+    /// within an hour of the recorded one is the same viewing reported
+    /// twice, and becomes the import's. Works the user can't see are skipped. Imported state is never sent to
     /// scrobblers or notifiers as if it had just been played. Returns how
     /// many titles changed.
     import-user-state: async func(user: user-id, items: list<state-import>)

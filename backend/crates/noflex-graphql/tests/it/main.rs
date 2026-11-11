@@ -39,6 +39,7 @@ mod search;
 mod sessions;
 mod setup_wizard;
 mod smart_marks;
+mod subtitles;
 mod taxonomy;
 mod ui_api;
 mod users;

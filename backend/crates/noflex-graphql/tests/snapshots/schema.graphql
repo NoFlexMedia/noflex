@@ -720,6 +720,22 @@ type DownloadedSubtitle {
 }
 
 """
+A downloaded subtitle as the media file now lists it.
+"""
+type DownloadedSubtitleTrack {
+	"""
+	Its position in `mediaFile.subtitleTracks`, the index `burnSubtitle`
+	and `subtitles` use.
+	"""
+	index: Int!
+	track: SubtitleTrack!
+	"""
+	With its tracks as they now are.
+	"""
+	mediaFile: MediaFile!
+}
+
+"""
 An edition is a specific cut of a work. Most works have one ("Default");
 collector-grade libraries have multiple ("Theatrical", "Director's Cut",
 "Extended"). Encodes of one cut, like 4K HDR and 1080p SDR, are that edition's
@@ -2172,6 +2188,22 @@ type Mutation {
 	scheduleRecording(channelId: ID!, programId: ID, startAt: DateTime!, endAt: DateTime!, paddingBeforeSecs: Int! = 0, paddingAfterSecs: Int! = 0): RecordingSchedule!
 	cancelRecordingSchedule(id: ID!): RecordingSchedule!
 	deleteRecording(id: ID!, deleteFile: Boolean!): Recording!
+	"""
+	Download what `provider` offered as `handle` in a recent
+	`searchSubtitles` for this media file. It becomes one of the file's
+	tracks for everyone who can see the title, kept in the server's own
+	cache, never in the media folder. Downloading one the file already
+	has returns it. A provider out of quota fails with code
+	`RATE_LIMITED` and `retryAfterSeconds`; one no longer on offer with
+	`NOT_OFFERED`.
+	"""
+	downloadSubtitle(mediaFileId: ID!, provider: String!, handle: String!): DownloadedSubtitleTrack!
+	"""
+	Remove a downloaded subtitle from its media file, for everyone.
+	Whoever downloaded it or an administrator may. Returns what was
+	removed, or null when there was nothing to remove.
+	"""
+	deleteDownloadedSubtitle(id: ID!): DownloadedSubtitle
 }
 
 type NetworkInterface {
@@ -3442,6 +3474,14 @@ type Query {
 	error.
 	"""
 	playSessions(range: StatsRange, userId: ID, libraryId: ID, rootWorkId: ID, utcOffsetMinutes: Int, first: Int, after: String): PlaySessionConnection!
+	"""
+	Search every subtitle plugin for a media file's subtitles in
+	`languages` (ISO 639 codes), or in the caller's preferred subtitle
+	languages when it's left out; any language when there are none.
+	What's found can be downloaded for the next hour. A provider that
+	fails is in `failures` and hides nothing the others found.
+	"""
+	searchSubtitles(mediaFileId: ID!, languages: [String!]): SubtitleSearchResult!
 }
 
 type Recording {
@@ -4063,6 +4103,78 @@ type SubtitleDelivery {
 	Token-bearing, so `<track src>` works without headers.
 	"""
 	url: String!
+}
+
+"""
+One subtitle a provider offers for a media file.
+"""
+type SubtitleOffer {
+	"""
+	The plugin offering it; pass it to `downloadSubtitle`.
+	"""
+	provider: String!
+	providerName: String!
+	"""
+	Pass it to `downloadSubtitle`.
+	"""
+	handle: String!
+	"""
+	ISO 639-2/T.
+	"""
+	language: String!
+	"""
+	BCP 47 where the provider tells regions apart (`pt-BR`).
+	"""
+	locale: String
+	"""
+	`srt`, `vtt`, `ass` or `ssa`.
+	"""
+	format: String!
+	"""
+	The release it was timed for.
+	"""
+	release: String
+	hearingImpaired: Boolean!
+	forced: Boolean!
+	"""
+	Found by the file's hash, so timed for this exact file.
+	"""
+	hashMatch: Boolean!
+	downloadCount: Int
+	"""
+	The provider's own rating; higher is better.
+	"""
+	score: Float
+}
+
+"""
+A provider that couldn't answer a search.
+"""
+type SubtitleProviderFailure {
+	provider: String!
+	providerName: String!
+	"""
+	What happened, to show as it is.
+	"""
+	message: String!
+	"""
+	When it's out of quota, the seconds until it resets.
+	"""
+	retryAfterSeconds: Int
+}
+
+"""
+What a subtitle search found.
+"""
+type SubtitleSearchResult {
+	"""
+	Best first: matches by the file's hash, then the most downloaded.
+	"""
+	offers: [SubtitleOffer!]!
+	"""
+	The providers that couldn't answer. The others' offers stand.
+	"""
+	failures: [SubtitleProviderFailure!]!
 }
 
 type SubtitleTrack {

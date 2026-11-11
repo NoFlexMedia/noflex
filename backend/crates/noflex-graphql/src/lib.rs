@@ -61,6 +61,7 @@ pub mod smart;
 mod smart_marks;
 mod stats;
 pub mod subscriptions;
+mod subtitles;
 mod users;
 mod watch;
 pub use admin_status::{AdminStatusError, AdminStatusService};
@@ -116,6 +117,7 @@ pub struct Query(
     connect::ConnectQuery,
     live_tv::LiveTvQuery,
     stats::StatsQuery,
+    subtitles::SubtitlesQuery,
 );
 
 #[derive(MergedObject, Default)]
@@ -142,6 +144,7 @@ pub struct Mutation(
     watch::WatchMutation,
     connect::ConnectMutation,
     live_tv::LiveTvMutation,
+    subtitles::SubtitlesMutation,
 );
 
 pub struct Subscription;
@@ -771,6 +774,10 @@ pub struct SchemaContext {
     /// `identifyWork`. Absent → built per request from `plugins`,
     /// `storage` and `priority_table`, without artwork fetching.
     pub metadata_service: Option<Arc<noflex_plugin_host::MetadataService>>,
+    /// Online subtitle search and the downloaded subtitles it keeps. Absent →
+    /// `searchSubtitles` and `downloadSubtitle` error with "subtitle search
+    /// not configured".
+    pub subtitles: Option<Arc<noflex_plugin_host::SubtitleService>>,
     /// Absent → `smartTranscoding` errors with "smart transcoding not
     /// configured".
     pub smart_transcoding: Option<devices::SmartTranscodingDefaults>,
@@ -874,6 +881,9 @@ pub fn build_schema(ctx: SchemaContext) -> NoflexSchema {
     if let Some(metadata_service) = ctx.metadata_service {
         builder = builder.data(metadata_service.indexing().clone());
         builder = builder.data(metadata_service);
+    }
+    if let Some(subtitles) = ctx.subtitles {
+        builder = builder.data(subtitles);
     }
     if let Some(smart_transcoding) = ctx.smart_transcoding {
         builder = builder.data(smart_transcoding);

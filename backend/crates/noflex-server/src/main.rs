@@ -544,6 +544,7 @@ async fn run(
         cast_sdk: Some(noflex_graphql::CastSdk(cfg.cast_sdk)),
         admin_status: Some(admin_status),
         metadata_service: Some(metadata_service.clone()),
+        subtitles: Some(subtitles.clone()),
         tonemap_curve: Some(cfg.transcoder.tonemap_curve),
         smart_transcoding: Some(noflex_graphql::SmartTranscodingDefaults {
             enabled: cfg.transcoder.optimize.enabled,

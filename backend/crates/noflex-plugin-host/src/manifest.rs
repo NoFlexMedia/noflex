@@ -124,7 +124,7 @@ pub struct SettingSpec {
     pub default: Option<toml::Value>,
 }
 
-/// What a [`SettingSpec`] holds, which picks its form field and how a value
+/// What a plugin setting holds, which picks its form field and how a value
 /// is checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Enum)]
 #[serde(rename_all = "lowercase")]

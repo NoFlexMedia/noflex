@@ -67,9 +67,8 @@ pub struct Plugin {
 impl Plugin {
     /// The settings the plugin's manifest declares, each with its value now
     /// and where that comes from. A secret's value is never included.
-    ///
-    /// Only administrators reach a `Plugin`, through `plugins` and
-    /// `setPluginSettings`, so this field needs no check of its own.
+    // Only administrators reach a `Plugin`, through `plugins` and
+    // `setPluginSettings`, so this field needs no check of its own.
     async fn settings(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<PluginSetting>> {
         let registry = ctx.data::<Arc<PluginRegistry>>()?;
         registry.settings(&self.manifest).await.map_err(|e| {

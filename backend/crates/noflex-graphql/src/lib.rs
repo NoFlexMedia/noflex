@@ -50,6 +50,7 @@ mod paging;
 mod playback;
 mod playback_session;
 mod plugin_links;
+mod plugin_settings;
 mod preferences;
 mod profile;
 mod recommend;
@@ -134,6 +135,7 @@ pub struct Mutation(
     metadata::MetadataMutation,
     external_auth::ExternalAuthMutation,
     plugin_links::PluginLinksMutation,
+    plugin_settings::PluginSettingsMutation,
     sessions::SessionsMutation,
     restrictions::RestrictionsMutation,
     watch::WatchMutation,

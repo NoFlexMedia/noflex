@@ -2078,6 +2078,13 @@ type Mutation {
 	"""
 	enqueuePluginTask(pluginId: String!, task: String!, payload: String): Boolean!
 	"""
+	Set or clear several of a loaded plugin's settings at once and reload
+	it with them. Every value is checked against the plugin's manifest
+	first, and any that fails (`INVALID_PLUGIN_SETTING`) leaves all of
+	them unchanged. Secret writes go in the audit log by key. Admin only.
+	"""
+	setPluginSettings(pluginId: String!, values: [PluginSettingInput!]!): Plugin!
+	"""
 	Revoke one session: the caller's own, or anyone's as admin. Its
 	refresh token and every access token minted from it stop working
 	on their next request, since each request re-checks the session.
@@ -2690,6 +2697,11 @@ type Plugin {
 	and stays down until the plugin is reloaded.
 	"""
 	circuitOpen: Boolean!
+	"""
+	The settings the plugin's manifest declares, each with its value now
+	and where that comes from. A secret's value is never included.
+	"""
+	settings: [PluginSetting!]!
 }
 
 """
@@ -2829,6 +2841,86 @@ type PluginOverrideEntry {
 	the server config; `clearPluginOverride` reverts it.
 	"""
 	adminSet: Boolean!
+}
+
+"""
+One setting a plugin's manifest declares, with its value now.
+"""
+type PluginSetting {
+	key: String!
+	label: String!
+	description: String
+	kind: PluginSettingKind!
+	required: Boolean!
+	"""
+	The values a choice allows; empty for any other kind.
+	"""
+	choices: [String!]!
+	default: String
+	"""
+	The value in effect, as a string (`true`, `42`). Always null for a
+	secret, whose value never leaves the server.
+	"""
+	value: String
+	isSet: Boolean!
+	source: PluginSettingSource!
+}
+
+"""
+One value for `setPluginSettings`.
+"""
+input PluginSettingInput {
+	key: String!
+	"""
+	In the form `PluginSetting.value` takes (`true`, `42`). Null or empty
+	clears the key, so config.toml or the default applies again.
+	"""
+	value: String
+}
+
+"""
+What a plugin setting holds, which picks its form field and how a value
+is checked.
+"""
+enum PluginSettingKind {
+	TEXT
+	"""
+	An absolute `http` or `https` URL.
+	"""
+	URL
+	"""
+	Read through `host-secrets.read`, never `host-config.read`, and
+	never readable back.
+	"""
+	SECRET
+	BOOLEAN
+	"""
+	A signed 64-bit integer.
+	"""
+	INTEGER
+	"""
+	One of the setting's `choices`.
+	"""
+	CHOICE
+}
+
+"""
+Where a setting's value comes from.
+"""
+enum PluginSettingSource {
+	"""
+	An administrator set it from the admin UI.
+	"""
+	ADMIN
+	"""
+	The server's config.toml, or for a secret, a secret file.
+	"""
+	CONFIG
+	"""
+	The manifest's default.
+	"""
+	DEFAULT
+	UNSET
 }
 
 """

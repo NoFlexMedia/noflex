@@ -38,11 +38,14 @@ mv "$work/ffmpeg" "$out/build"
 cat >"$out/README.txt" <<README
 The source of the ffmpeg in NoFlex's server bundles, under the GPL-3.0.
 
-  ffmpeg-$commit.tar.xz   FFmpeg at the commit build/ffmpeg.toml pins
-  dependencies/           every library it links, one archive per script in
-                          build/pipeline/scripts.d, as that script fetches it
-  build/                  the scripts that build them: build/pipeline for Linux
-                          and Windows, build/build-macos.sh for macOS
+ffmpeg-$commit.tar.xz
+    FFmpeg at the commit build/ffmpeg.toml pins.
+dependencies/
+    Every library it links, one archive per script in build/pipeline/scripts.d,
+    as that script fetches it.
+build/
+    The scripts that build them: build/pipeline for Linux and Windows,
+    build/build-macos.sh for macOS.
 
 build/pipeline/README.md says how it builds, and what it takes from the network
 beyond these archives.

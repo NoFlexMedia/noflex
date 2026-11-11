@@ -158,6 +158,67 @@ async fn loads_real_musicbrainz_plugin() {
 }
 
 #[tokio::test]
+async fn loads_real_omdb_plugin() {
+    use noflex_plugin_host::ratings::noflex::plugin::types as wit;
+
+    let Some(wasm) = plugin_wasm_path("noflex-ratings-omdb", "omdb") else {
+        eprintln!("skipping: build the plugin first with `cargo xtask plugin-build`");
+        return;
+    };
+    let engine = build_engine(&EngineConfig::default()).expect("engine builds");
+    let registry = PluginRegistry::new(engine).expect("registry");
+    let info = registry
+        .load_from(&wasm)
+        .unwrap_or_else(|e| panic!("load omdb plugin: {e}"));
+    assert_eq!(info.id, "omdb");
+    assert_eq!(info.hooks, vec![HookKind::Ratings]);
+    let plugin = registry
+        .get_plugin(&PluginId("omdb".into()))
+        .expect("registered");
+    let attribution = plugin
+        .call_attribution()
+        .await
+        .expect("answers through its ratings export")
+        .expect("asks for credit");
+    assert!(
+        attribution.text.contains("CC BY-NC 4.0"),
+        "{}",
+        attribution.text
+    );
+
+    let imdb = |value: &str| wit::ExternalId {
+        kind: wit::ExternalIdKind::Imdb,
+        value: value.into(),
+    };
+    // Nothing to look up asks for nothing, key or no key.
+    let tmdb_only = vec![wit::ExternalId {
+        kind: wit::ExternalIdKind::Tmdb,
+        value: "movie/603".into(),
+    }];
+    let outcome = plugin
+        .call_ratings(tmdb_only, wit::WorkKind::Movie)
+        .await
+        .expect("dispatch");
+    assert!(matches!(outcome, Ok(ref r) if r.is_empty()), "{outcome:?}");
+    let outcome = plugin
+        .call_ratings(vec![imdb("tt0944947")], wit::WorkKind::Episode)
+        .await
+        .expect("dispatch");
+    assert!(
+        matches!(outcome, Ok(ref r) if r.is_empty()),
+        "episodes only with the setting: {outcome:?}"
+    );
+    let outcome = plugin
+        .call_ratings(vec![imdb("tt0133093")], wit::WorkKind::Movie)
+        .await
+        .expect("dispatch");
+    assert!(
+        matches!(outcome, Err(wit::PluginError::Unavailable(ref m)) if m.contains("no API key")),
+        "{outcome:?}"
+    );
+}
+
+#[tokio::test]
 async fn loads_all_three_first_party_plugins_into_a_single_registry() {
     let tmdb = plugin_wasm_path("noflex-metadata-tmdb", "tmdb");
     let tvdb = plugin_wasm_path("noflex-metadata-tvdb", "tvdb");

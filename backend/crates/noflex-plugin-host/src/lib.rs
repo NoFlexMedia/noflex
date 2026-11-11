@@ -41,6 +41,7 @@ pub use bindings::{
     },
     notifier,
     notifier::NotifierPlugin,
+    ratings,
     user_link::{self, UserLinkPlugin},
 };
 pub use discovery::{PluginDir, SearchPath, Tier};

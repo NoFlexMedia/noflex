@@ -312,6 +312,24 @@ api_key = "replace-me"
 # pin = "replace-me"
 ```
 
+The first-party OMDb plugin adds IMDb, Rotten Tomatoes and Metacritic ratings to
+films and series that have an IMDb id. It needs your own key from
+<https://www.omdbapi.com/apikey.aspx> (a free one allows 1,000 lookups a day),
+set from its settings in the admin UI or stored as `omdb.toml` in a secret
+tier. OMDb's data is licensed CC BY-NC 4.0, for non-commercial use, and the
+plugin credits it on every title it rates. Rate episodes, in its settings or
+as `episodes = true`, looks episodes up too, one lookup each, as each is next
+identified or refreshed:
+
+```toml
+api_key = "replace-me"
+```
+
+```toml
+[plugin.per_plugin_config.omdb]
+episodes = true
+```
+
 The first-party Trakt plugin needs the credentials of an API app you create at
 <https://trakt.tv/oauth/applications>, stored as `trakt.toml`:
 

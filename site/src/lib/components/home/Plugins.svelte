@@ -10,6 +10,7 @@
     { id: "tmdb", name: "The Movie Database", hooks: ["metadata", "image"], caps: ["http.egress", "secrets.read"], hosts: ["api.themoviedb.org", "image.tmdb.org"], calls: ["GET api.themoviedb.org/3/search/movie", "GET image.tmdb.org/t/p/original/…", "GET api.themoviedb.org/3/movie/45745"] },
     { id: "tvdb", name: "TheTVDB", hooks: ["metadata", "image"], caps: ["http.egress", "secrets.read"], hosts: ["api4.thetvdb.com", "artworks.thetvdb.com"], calls: ["POST api4.thetvdb.com/v4/login", "GET api4.thetvdb.com/v4/search", "GET artworks.thetvdb.com/banners/…"] },
     { id: "musicbrainz", name: "MusicBrainz", hooks: ["metadata"], caps: ["http.egress"], hosts: ["musicbrainz.org"], calls: ["GET musicbrainz.org/ws/2/release", "GET musicbrainz.org/ws/2/artist"] },
+    { id: "omdb", name: "OMDb", hooks: ["ratings"], caps: ["http.egress", "secrets.read"], hosts: ["www.omdbapi.com"], calls: ["GET www.omdbapi.com/?i=tt0133093", "GET www.omdbapi.com/?i=tt0944947"] },
     { id: "trakt", name: "Trakt", hooks: ["scrobbler", "user-link"], caps: ["http.egress", "secrets.read", "user-secrets.read", "user-secrets.write", "background"], hosts: ["api.trakt.tv"], calls: ["POST api.trakt.tv/scrobble/start", "POST api.trakt.tv/scrobble/stop", "GET api.trakt.tv/sync/history"] },
     { id: "embeddings", name: "Local embeddings", hooks: ["embedder"], caps: ["assets.read", "inference.run"], hosts: [], calls: [] },
   ];

@@ -1,0 +1,25 @@
+manifest_version = 1
+plugin_id = "omdb"
+display_name = "OMDb"
+version = "0.0.1"
+noflex_api_version = "0.2"
+hooks = ["ratings"]
+capabilities = ["http.egress", "secrets.read"]
+http_egress_hosts = ["www.omdbapi.com"]
+secrets_read = ["api_key"]
+license = "AGPL-3.0-only"
+homepage = "https://www.omdbapi.com"
+
+[[settings]]
+key = "api_key"
+label = "API key"
+description = "Your key from omdbapi.com. A free one allows 1,000 lookups a day."
+kind = "secret"
+required = true
+
+[[settings]]
+key = "episodes"
+label = "Rate episodes"
+description = "Look episodes up too, one lookup each, from their next refresh on."
+kind = "boolean"
+default = false

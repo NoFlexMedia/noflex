@@ -1,0 +1,36 @@
+[package]
+name = "noflex-ratings-omdb"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "OMDb ratings provider for NoFlex: IMDb, Rotten Tomatoes and Metacritic (WASM plugin)"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# See noflex-metadata-tmdb for why this must stay a single direct
+# wit-bindgen dep with exactly these features.
+wit-bindgen = { version = "0.60", default-features = false, features = ["macros", "realloc", "bitflags", "async"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Keep debug info in the released `.wasm` so trap backtraces include
+# the source-level function names.
+[profile.release]
+debug = true
+strip = "none"
+
+[package.metadata.noflex-plugin]
+# The xtask reads this section to know what manifest to embed in the
+# `noflex:manifest` custom section of the final `.wasm`. The canonical
+# manifest is `src/manifest.toml`; keep the two in sync.
+plugin_id = "omdb"
+display_name = "OMDb"
+hooks = ["ratings"]
+capabilities = ["http.egress", "secrets.read"]
+http_egress_hosts = ["www.omdbapi.com"]
+secrets_read = ["api_key"]

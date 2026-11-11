@@ -615,6 +615,57 @@ mod tests {
         assert_eq!(c.cache.image_dir, "/srv/images");
     }
 
+    /// Service units, images and installers configure the server through its
+    /// environment, and a misspelled variable is silently ignored.
+    #[test]
+    fn packaging_sets_only_variables_the_server_reads() {
+        fn files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+            for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    files(&path, out);
+                } else {
+                    out.push(path);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let mut paths = Vec::new();
+        // What installs and runs the server, not the scripts that build it.
+        for dir in [
+            "nix",
+            "packaging/linux",
+            "packaging/container",
+            "packaging/windows",
+        ] {
+            files(&root.join(dir), &mut paths);
+        }
+        let known = |name: &str| {
+            name == CONFIG_FILE_ENV
+                || name == PLUGIN_SEARCH_PATH_ENV
+                || name == "NOFLEX_LOG"
+                || ENV_KEYS
+                    .iter()
+                    .any(|(env, _)| name.strip_prefix("NOFLEX_") == Some(env))
+        };
+        let mut unknown = Vec::new();
+        for path in paths {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            for (at, _) in text.match_indices("NOFLEX_") {
+                let name: String = text[at..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_')
+                    .collect();
+                if !known(&name) {
+                    unknown.push(format!("{} sets {name}", path.display()));
+                }
+            }
+        }
+        assert!(unknown.is_empty(), "{}", unknown.join("\n"));
+    }
+
     #[test]
     fn plugin_override_fields_are_optional() {
         let dir = tempfile::tempdir().expect("temp dir");

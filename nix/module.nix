@@ -114,11 +114,10 @@ in
     systemd.tmpfiles.rules = [
       "d ${cfg.dataDir}  0750 ${cfg.user} ${cfg.group} -"
       "d ${cfg.cacheDir} 0750 ${cfg.user} ${cfg.group} -"
-    ] ++ lib.optional (cfg.backupDir != null) [
+    ] ++ lib.optional (cfg.backupDir != null)
       "d ${toString cfg.backupDir} 0750 ${cfg.user} ${cfg.group} -"
-    ] ++ lib.optional (cfg.logFile != null) [
-      "d ${lib.toString (lib.dirOf (toString cfg.logFile))} 0750 ${cfg.user} ${cfg.group} -"
-    ];
+    ++ lib.optional (cfg.logFile != null)
+      "d ${dirOf (toString cfg.logFile)} 0750 ${cfg.user} ${cfg.group} -";
 
     systemd.services.noflex = {
       description = "NoFlex media server";
@@ -126,27 +125,31 @@ in
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
 
+      # Names from ENV_KEYS in noflex-server's config.rs; a test there fails
+      # on any it doesn't read.
       environment = {
-        NOFLEX_SERVER_BIND = cfg.bind;
-        NOFLEX_SERVER_DATA_DIR = toString cfg.dataDir;
-        NOFLEX_TRANSCODER_CACHE_DIR = toString cfg.cacheDir;
+        NOFLEX_BIND = cfg.bind;
+        NOFLEX_DATA_DIR = toString cfg.dataDir;
+        NOFLEX_CACHE_DIR = toString cfg.cacheDir;
         NOFLEX_TRANSCODER_HWACCEL = cfg.hwaccel;
         NOFLEX_CONFIG_FILE = toString cfg.configFile;
-        NOFLEX_PLUGIN_SEARCH_PATH = lib.concatStringsSep ":" cfg.pluginPath;
+      } // lib.optionalAttrs (cfg.pluginPath != [ ]) {
+        NOFLEX_PLUGIN_SEARCH_PATH = lib.concatStringsSep ":" (map toString cfg.pluginPath);
       } // lib.optionalAttrs (cfg.logFile != null) {
-        NOFLEX_SERVER_LOG_FILE = toString cfg.logFile;
+        NOFLEX_LOG_FILE = toString cfg.logFile;
       } // lib.optionalAttrs (cfg.backupDir != null) {
-        NOFLEX_SERVER_BACKUP_DIR = toString cfg.backupDir;
-        NOFLEX_SERVER_BACKUP_INTERVAL_HOURS = toString cfg.backupIntervalHours;
-        NOFLEX_SERVER_BACKUP_KEEP = toString cfg.backupKeep;
+        NOFLEX_BACKUP_DIR = toString cfg.backupDir;
+        NOFLEX_BACKUP_INTERVAL_HOURS = toString cfg.backupIntervalHours;
+        NOFLEX_BACKUP_KEEP = toString cfg.backupKeep;
       };
-
       serviceConfig = {
         ExecStart = "${lib.getExe cfg.package}";
         User = cfg.user;
         Group = cfg.group;
         Restart = "on-failure";
         RestartSec = "5s";
+        # VAAPI and QSV open the GPU's render node.
+        SupplementaryGroups = [ "render" "video" ];
 
         # Hardening.
         ProtectSystem = "strict";
@@ -154,7 +157,8 @@ in
         PrivateTmp = true;
         NoNewPrivileges = true;
         ReadWritePaths = [ cfg.dataDir cfg.cacheDir ]
-          ++ lib.optional (cfg.backupDir != null) [ (toString cfg.backupDir) ];
+          ++ lib.optional (cfg.backupDir != null) (toString cfg.backupDir)
+          ++ lib.optional (cfg.logFile != null) (dirOf (toString cfg.logFile));
         ReadOnlyPaths = cfg.mediaPaths;
         StateDirectory = baseNameOf cfg.dataDir;
         CacheDirectory = baseNameOf cfg.cacheDir;

@@ -411,10 +411,42 @@
             // androidEnvFor androidBuildSdk);
         };
 
-        checks = {
-          inherit noflex site;
-          fmt = craneLib.cargoFmt {inherit src;};
-        };
+        checks =
+          {
+            inherit noflex site;
+            fmt = craneLib.cargoFmt {inherit src;};
+          }
+          // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+            # Evaluates the module with every optional setting on, which the
+            # default configuration never reaches.
+            module = let
+              host = nixpkgs.lib.nixosSystem {
+                inherit system;
+                modules = [
+                  self.nixosModules.default
+                  {
+                    boot.isContainer = true;
+                    system.stateVersion = "25.11";
+                    services.noflex = {
+                      enable = true;
+                      package = pkgs.writeShellScriptBin "noflex-server" "";
+                      openFirewall = true;
+                      mediaPaths = ["/media"];
+                      pluginPath = ["/etc/noflex/plugins" "/var/lib/noflex/plugins"];
+                      logFile = "/var/log/noflex/noflex.log";
+                      backupDir = "/var/backups/noflex";
+                    };
+                  }
+                ];
+              };
+              service = host.config.systemd.services.noflex;
+            in
+              pkgs.writeText "noflex-module.json" (builtins.toJSON {
+                inherit (service) environment serviceConfig;
+                tmpfiles = host.config.systemd.tmpfiles.rules;
+                ports = host.config.networking.firewall.allowedTCPPorts;
+              });
+          };
       }
     )
     // {

@@ -60,7 +60,9 @@ pub fn model_fetch(root: &Path, assets: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Unpacks the pinned ONNX Runtime's libraries into `out/lib`, keeping its license.
+/// Unpacks the pinned ONNX Runtime's shared libraries into `out/lib`, keeping its
+/// license. The Windows archive also holds import libraries and half a gigabyte
+/// of debug symbols, which nothing loads.
 fn runtime_fetch(root: &Path, target: &str, cache: &Path, out: &Path) -> Result<()> {
     let pin: RuntimePin = read_toml(&root.join("packaging/onnxruntime.toml"))?;
     let asset = pin
@@ -90,7 +92,9 @@ fn runtime_fetch(root: &Path, target: &str, cache: &Path, out: &Path) -> Result<
     std::fs::create_dir_all(out.join("lib"))?;
     for entry in std::fs::read_dir(unpacked.join("lib"))? {
         let entry = entry?;
-        if entry.file_type()?.is_dir() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let shared = name.contains(".so") || name.ends_with(".dylib") || name.ends_with(".dll");
+        if entry.file_type()?.is_dir() || !shared {
             continue;
         }
         let dest = out.join("lib").join(entry.file_name());
@@ -125,10 +129,11 @@ pub struct BundleOptions {
     pub profile: String,
 }
 
-/// Builds `dist/noflex-<target>/` and its `.tar.zst`. Linux targets link through
-/// cargo-zigbuild against glibc 2.28, matching the ffmpeg image, because a binary
-/// linked in the Nix shell would only run on a machine with that Nix store. macOS
-/// targets need Apple's toolchain, and so a Mac: see `.github/workflows/macos.yml`.
+/// Builds `dist/noflex-<target>/` and its `.tar.zst`, or `.zip` for Windows. Linux
+/// targets link through cargo-zigbuild against glibc 2.28, matching the ffmpeg
+/// image, because a binary linked in the Nix shell would only run on a machine with
+/// that Nix store. macOS and Windows targets need their own toolchains, and so
+/// their own runners: see `release.yml` and `macos.yml` in `.github/workflows/`.
 pub fn bundle(root: &Path, options: &BundleOptions) -> Result<()> {
     let target = options.target.as_str();
     let dist = root.join("dist");
@@ -215,16 +220,21 @@ pub fn bundle(root: &Path, options: &BundleOptions) -> Result<()> {
     std::fs::copy(root.join("LICENSE"), out.join("LICENSE"))?;
     std::fs::write(out.join("README.txt"), NOTICE)?;
 
-    let archive = format!("noflex-{target}.tar.zst");
-    let status = Command::new("tar")
-        .current_dir(&dist)
+    let mut tar = Command::new("tar");
+    tar.current_dir(&dist);
+    let archive = if target.contains("windows") {
+        // Windows' own tar, which Command finds before Git's, writes zips.
+        let archive = format!("noflex-{target}.zip");
+        tar.args(["-a", "-cf", &archive]);
+        archive
+    } else {
+        let archive = format!("noflex-{target}.tar.zst");
         // Not `--zstd`, which macOS's tar may lack.
-        .args([
-            "--use-compress-program=zstd",
-            "-cf",
-            &archive,
-            &format!("noflex-{target}"),
-        ])
+        tar.args(["--use-compress-program=zstd", "-cf", &archive]);
+        archive
+    };
+    let status = tar
+        .arg(format!("noflex-{target}"))
         .status()
         .context("run tar")?;
     if !status.success() {
@@ -277,6 +287,7 @@ fn host_target() -> String {
     let (arch, os) = (std::env::consts::ARCH, std::env::consts::OS);
     match os {
         "macos" => format!("{arch}-apple-darwin"),
+        "windows" => format!("{arch}-pc-windows-msvc"),
         _ => format!("{arch}-unknown-linux-gnu"),
     }
 }

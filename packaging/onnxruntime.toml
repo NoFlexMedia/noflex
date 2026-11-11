@@ -10,6 +10,14 @@ base_url = "https://github.com/microsoft/onnxruntime/releases/download/v1.31.1"
 asset = "onnxruntime-linux-x64-1.31.1.tgz"
 sha256 = "c849e36a1ef3e22d4ff217b9d1ce4a3cf5b9467b975610913ae959ad5b16bdc9"
 
+[target.aarch64-unknown-linux-gnu]
+asset = "onnxruntime-linux-aarch64-1.31.1.tgz"
+sha256 = "5317505e2da99be65f8e2775ba3c2afd6d2961fd78aba1bd8f56159f48820c78"
+
+[target.x86_64-pc-windows-msvc]
+asset = "onnxruntime-win-x64-1.31.1.zip"
+sha256 = "5869e26bb25314375f2d5ef1877e3ea06b1543d6c710e6e4a1ec2f7177ab4b2c"
+
 # Microsoft publishes no Intel build for macOS, which is why bundles are Apple
 # Silicon only.
 [target.aarch64-apple-darwin]

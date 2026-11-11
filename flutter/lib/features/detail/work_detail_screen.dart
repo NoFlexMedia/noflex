@@ -892,6 +892,7 @@ class _Body extends StatelessWidget {
         if (withVersions) _Versions(controller: controller),
         if (work.isContainer) _Children(controller: controller),
         _Credits(controller: controller),
+        _Ratings(controller: controller, work: work),
         if (!work.isContainer) _TechSpecs(controller: controller),
         _Attributions(controller: controller),
       ],
@@ -1165,6 +1166,137 @@ class _Attributions extends SignalWidget {
         controller.query.data.value?.work?.attributions.toList() ?? const [],
     server: controller.server?.origin,
   );
+}
+
+/// Each source's rating on its own scale, as the web's title page shows them,
+/// and the parental rating beside them.
+class _Ratings extends SignalWidget {
+  const _Ratings({required this.controller, required this.work});
+  final WorkDetailController controller;
+  final WorkSummary work;
+
+  @override
+  Widget build(BuildContext context) {
+    final detail = controller.query.data.value?.work;
+    final ratings = detail?.ratings.toList() ?? const [];
+    final parental = detail?.tags
+        .where((tag) => tag.namespace == 'parental')
+        .firstOrNull
+        ?.display;
+    final rating = work.communityRating;
+    if (ratings.isEmpty && rating == null && parental == null) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 26),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const NfSectionHead('Ratings'),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final rating in ratings)
+                _Score(
+                  value: rating.display,
+                  outOf: rating.outOf,
+                  meter: rating.normalized / 10,
+                  label: [
+                    rating.name,
+                    if (rating.votes case final votes? when votes > 0)
+                      '${compactCount(votes)} votes',
+                  ].join(' · '),
+                ),
+              if (ratings.isEmpty && rating != null)
+                _Score(
+                  value: rating.toStringAsFixed(1),
+                  outOf: '/10',
+                  meter: rating / 10,
+                  label: 'Community score',
+                ),
+              if (parental != null)
+                _Score(value: parental, label: 'Parental rating'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Score extends StatelessWidget {
+  const _Score({
+    required this.value,
+    required this.label,
+    this.outOf,
+    this.meter,
+  });
+
+  final String value;
+  final String? outOf;
+  final String label;
+
+  /// How full the bar under the value is, 0 to 1; no bar without one.
+  final double? meter;
+
+  @override
+  Widget build(BuildContext context) {
+    final meter = this.meter;
+    return Container(
+      constraints: const BoxConstraints(minWidth: 150),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      decoration: BoxDecoration(
+        color: NfColors.surface,
+        border: Border.all(color: NfColors.line),
+        borderRadius: BorderRadius.circular(NfRadii.l),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Semantics(
+            label: '$value${outOf ?? ''}',
+            excludeSemantics: true,
+            child: Text.rich(
+              TextSpan(
+                text: value,
+                style: nfText(26, weight: 700, height: 1.1),
+                children: [
+                  if (outOf != null)
+                    TextSpan(
+                      text: outOf,
+                      style: nfText(13.5, weight: 550, color: NfColors.text3),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          if (meter != null) ...[
+            const SizedBox(height: 6),
+            Container(
+              width: 112,
+              height: 4,
+              clipBehavior: Clip.antiAlias,
+              alignment: Alignment.centerLeft,
+              decoration: BoxDecoration(
+                color: NfColors.surface3,
+                borderRadius: BorderRadius.circular(NfRadii.pill),
+              ),
+              child: FractionallySizedBox(
+                widthFactor: meter.clamp(0, 1),
+                heightFactor: 1,
+                child: const ColoredBox(color: NfColors.warning),
+              ),
+            ),
+          ],
+          const SizedBox(height: 6),
+          Text(label, style: nfText(13, color: NfColors.text3)),
+        ],
+      ),
+    );
+  }
 }
 
 class _Credits extends SignalWidget {

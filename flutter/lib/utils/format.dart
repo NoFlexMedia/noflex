@@ -46,6 +46,9 @@ String bytes(int? value) {
   return '${scaled.toStringAsFixed(power > 2 ? 1 : 0)} ${units[power]}';
 }
 
+/// A count at a glance: 1,234,567 is "1.2M".
+String compactCount(int value) => NumberFormat.compact().format(value);
+
 /// Player-style clock: "4:05", "1:02:03".
 String timecode(int milliseconds) {
   final total = math.max(0, milliseconds ~/ 1000);

@@ -18,6 +18,7 @@ query WorkDetail($id: ID!) {
     credits { personId name role character }
     tags(namespaces: ["parental", "genre"]) { id namespace display }
     userData { played positionMs playCount rating favorite lastPlayed }
+    ratings { source name display outOf normalized votes }
     attributions { ...ProviderAttributionFields }
   }
   editions(workId: $id) { ...EditionFull }

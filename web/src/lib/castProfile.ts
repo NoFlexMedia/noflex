@@ -38,6 +38,9 @@ function videoFor(model: string): VideoCodecSupport[] {
   if (/ultra/i.test(model)) return [h264(42, 1920, 1080), hevc(["SDR", "HDR10", "DOVI", "DOVI_WITH_HDR10"]), vp9(51, 3840, 2160, ["SDR", "HDR10"])];
   if (/google tv/i.test(model)) return [h264(51, 3840, 2160), hevc(UHD_HDR), vp9(51, 3840, 2160, UHD_HDR)];
   if (/nest hub/i.test(model)) return [h264(41, 1280, 720), vp9(40, 1280, 720, ["SDR"])];
+  // A TV with Cast built in (Android TV, Google TV) reports its own model. A 4K
+  // TV decodes HEVC and VP9 to stream at all; HDR is left to the probe.
+  if (!/chromecast/i.test(model) && /\b(4k|uhd|2160p|oled|qled)\b|bravia|android ?tv/i.test(model)) return [h264(51, 3840, 2160), hevc(["SDR"]), vp9(51, 3840, 2160, ["SDR"])];
   // The first Chromecasts stop at level 4.1, so a 1080p60 stream is beyond them.
   return [h264(41, 1920, 1080)];
 }

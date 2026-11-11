@@ -187,7 +187,8 @@ class Cast {
     }
     connect.external = [{
       online: true,
-      device: { id: this.#id(device), name: device.friendlyName, client: "Chromecast" },
+      // The model says what it is, as a TV with Cast built in reports its own.
+      device: { id: this.#id(device), name: device.friendlyName, client: [device.modelName, "Chromecast"].filter(Boolean).join(" · ") },
       playback: live ? {
         state: state === "PLAYING" ? "PLAYING" : state === "PAUSED" ? "PAUSED" : "BUFFERING",
         positionMs: this.#positionMs(),

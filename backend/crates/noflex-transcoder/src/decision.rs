@@ -894,6 +894,7 @@ mod tests {
             subtitle: vec![],
             format_bit_rate: Some(5_000_000),
             duration_ms: None,
+            chapters: Vec::new(),
         }
     }
 
@@ -1346,6 +1347,7 @@ mod tests {
             subtitle: vec![],
             format_bit_rate: None,
             duration_ms: None,
+            chapters: Vec::new(),
         };
         let mut caps = ClientCapabilities::web();
         let (plan, reasons) = transcoding(&decide_default(&p, &caps));

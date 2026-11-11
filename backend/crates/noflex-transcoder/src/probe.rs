@@ -24,6 +24,17 @@ pub struct ProbeReport {
     /// and some broken files.
     #[serde(default)]
     pub duration_ms: Option<u64>,
+    /// The container's chapters in start order (`-show_chapters`); empty
+    /// when it has none.
+    #[serde(default)]
+    pub chapters: Vec<ChapterProbe>,
+}
+
+/// One chapter as the container lists it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChapterProbe {
+    pub start_ms: i64,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,7 +120,8 @@ pub enum ProbeError {
 }
 
 impl ProbeReport {
-    /// Parse the output of `ffprobe -v error -show_streams -show_format -of json`.
+    /// Parse the output of
+    /// `ffprobe -v error -show_streams -show_format -show_chapters -of json`.
     ///
     /// The single source of truth for ffprobe's free-form
     /// string codec names ("h264", "hevc", "av1", "vp9", "vp8",
@@ -157,6 +169,13 @@ impl ProbeReport {
             .filter(|secs| secs.is_finite() && *secs > 0.0)
             .map(|secs| (secs * 1000.0).round() as u64);
 
+        let mut chapters: Vec<ChapterProbe> = json
+            .get("chapters")
+            .and_then(|c| c.as_array())
+            .map(|list| list.iter().filter_map(parse_chapter).collect())
+            .unwrap_or_default();
+        chapters.sort_by_key(|c| c.start_ms);
+
         Ok(ProbeReport {
             container,
             video,
@@ -164,8 +183,27 @@ impl ProbeReport {
             subtitle,
             format_bit_rate,
             duration_ms,
+            chapters,
         })
     }
+}
+
+/// A chapter with a usable `start_time`; its `title` tag when it has one.
+fn parse_chapter(raw: &serde_json::Value) -> Option<ChapterProbe> {
+    let start_ms = raw
+        .get("start_time")
+        .and_then(|v| v.as_str())
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|secs| secs.is_finite() && *secs >= 0.0)
+        .map(|secs| (secs * 1000.0).round() as i64)?;
+    let title = raw
+        .get("tags")
+        .and_then(|t| t.get("title"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string);
+    Some(ChapterProbe { start_ms, title })
 }
 
 fn parse_video_stream(raw: &serde_json::Value) -> Result<VideoStreamProbe, ProbeError> {
@@ -744,6 +782,37 @@ mod tests {
         assert!(r.audio[0].default);
         assert!(!r.audio[0].forced);
         assert_eq!(r.audio[0].language.as_deref(), Some("eng"));
+    }
+
+    #[test]
+    fn chapters_come_in_start_order_with_their_titles() {
+        let v = serde_json::json!({
+            "streams": [],
+            "chapters": [
+                {"id": 2, "start_time": "1290.500000", "tags": {"title": "End Credits"}},
+                {"id": 0, "start_time": "0.000000", "tags": {"title": " Opening "}},
+                {"id": 1, "start_time": "85.042000", "tags": {"title": ""}},
+                {"id": 3, "start_time": "N/A"}
+            ]
+        });
+        let r = parse(v).expect("parse");
+        assert_eq!(
+            r.chapters,
+            [
+                ChapterProbe {
+                    start_ms: 0,
+                    title: Some("Opening".into())
+                },
+                ChapterProbe {
+                    start_ms: 85_042,
+                    title: None
+                },
+                ChapterProbe {
+                    start_ms: 1_290_500,
+                    title: Some("End Credits".into())
+                },
+            ]
+        );
     }
 
     #[test]

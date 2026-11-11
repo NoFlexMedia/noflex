@@ -140,6 +140,7 @@ fn web_matching_probe() -> ProbeReport {
         subtitle: vec![],
         format_bit_rate: Some(5_000_000),
         duration_ms: None,
+        chapters: Vec::new(),
     }
 }
 

@@ -258,6 +258,7 @@ fn arb_probe_report() -> impl Strategy<Value = ProbeReport> {
                 subtitle,
                 format_bit_rate,
                 duration_ms: None,
+                chapters: Vec::new(),
             },
         )
 }

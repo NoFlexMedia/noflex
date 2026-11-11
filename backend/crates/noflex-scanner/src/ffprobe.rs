@@ -9,7 +9,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const ENV_BINARY: &str = "FFPROBE_BIN";
 const ENV_TIMEOUT: &str = "PROBE_TIMEOUT_SECS";
 
-/// Run `ffprobe -v error -show_streams -show_format -of json <path>`
+/// Run `ffprobe -v error -show_streams -show_format -show_chapters -of json <path>`
 /// and return a typed [`ProbeReport`].
 ///
 /// `binary` overrides the default `ffprobe` lookup:
@@ -35,6 +35,7 @@ pub async fn probe_media_file(
         .arg("error")
         .arg("-show_streams")
         .arg("-show_format")
+        .arg("-show_chapters")
         .arg("-of")
         .arg("json")
         .arg(path)
@@ -209,9 +210,10 @@ mod tests {
         assert_eq!(args[1], "error");
         assert_eq!(args[2], "-show_streams");
         assert_eq!(args[3], "-show_format");
-        assert_eq!(args[4], "-of");
-        assert_eq!(args[5], "json");
-        assert_eq!(args[6], "/data/sample.mkv");
+        assert_eq!(args[4], "-show_chapters");
+        assert_eq!(args[5], "-of");
+        assert_eq!(args[6], "json");
+        assert_eq!(args[7], "/data/sample.mkv");
     }
 
     #[tokio::test]

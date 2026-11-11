@@ -239,6 +239,7 @@ mod tests {
             ],
             format_bit_rate: None,
             duration_ms: None,
+            chapters: Vec::new(),
         };
         let tracks = embedded_tracks(&probe);
         assert_eq!(

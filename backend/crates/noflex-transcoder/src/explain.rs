@@ -283,6 +283,7 @@ mod tests {
             subtitle: vec![],
             format_bit_rate: Some(50_000_000),
             duration_ms: None,
+            chapters: Vec::new(),
         }
     }
 

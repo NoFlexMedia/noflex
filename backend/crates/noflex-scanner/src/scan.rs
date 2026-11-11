@@ -22,7 +22,8 @@ use noflex_core::{
 use noflex_storage::{
     Storage,
     domain::{
-        Edition, Image, ImageSource, ImageTarget, Library, LibraryKind, MediaFile, ScanEvent, Work,
+        Chapter, Edition, Image, ImageSource, ImageTarget, Library, LibraryKind, MediaFile,
+        ScanEvent, Work,
     },
     query::{ListWorksQuery, SortOrder},
     store::atomic,
@@ -1020,12 +1021,22 @@ enum WriteOp {
     MediaFile(MediaFile),
 }
 
-/// What a probed file says about its whole edition: only how long it runs, for an
-/// edition no metadata has given a runtime. The rest is true of that file alone, and
+/// What a probed file says about its whole edition: how long it runs and its
+/// chapters, for an edition without them. The rest is true of that file alone, and
 /// stays on it.
 fn populate_edition_from_probe(mut edition: Edition, probe: &ProbeReport) -> Edition {
     if edition.runtime_ms.is_none() {
         edition.runtime_ms = probe.duration_ms.and_then(|ms| i64::try_from(ms).ok());
+    }
+    if edition.chapters.is_empty() {
+        edition.chapters = probe
+            .chapters
+            .iter()
+            .map(|c| Chapter {
+                position_ms: c.start_ms,
+                title: c.title.clone(),
+            })
+            .collect();
     }
     edition
 }

@@ -3,7 +3,7 @@
 import { NativeScriptConfig } from "@nativescript/core";
 
 export default {
-  id: "live.noflex.tv",
+  id: "dev.noflex.tv",
   projectName: "NoFlex",
   appPath: "app",
   appResourcesPath: "App_Resources",

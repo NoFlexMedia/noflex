@@ -4,7 +4,7 @@
 // renderer, and playing through a <video> behind its canvas. This only hands it the
 // keys a WebView keeps to itself, and the two things a page can't do for itself.
 
-package live.noflex.tv;
+package dev.noflex.tv;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;

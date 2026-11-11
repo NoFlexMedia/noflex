@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="https://noflex.live/tv" version="0.0.1" viewmodes="maximized">
+<widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="https://noflex.dev/tv" version="0.0.1" viewmodes="maximized">
   <name>NoFlex</name>
   <icon src="icon.png"/>
   <content src="index.html"/>

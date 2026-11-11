@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "live.noflex.tv"
+    namespace = "dev.noflex.tv"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "live.noflex.tv"
+        applicationId = "dev.noflex.tv"
         // Android TV's floor. The app itself runs in whatever system WebView the box has.
         minSdk = 23
         targetSdk = 36

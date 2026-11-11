@@ -43,6 +43,7 @@ mod credentials;
 mod deletion;
 mod devices;
 mod embedding;
+mod erasure;
 mod external_auth;
 mod live_tv;
 mod paging;
@@ -64,6 +65,7 @@ mod watch;
 pub use admin_status::{AdminStatusError, AdminStatusService};
 pub use connect::ConnectHub;
 pub use devices::SmartTranscodingDefaults;
+pub use erasure::Erasure;
 pub use external_auth::{ExternalAuthChallenge, ExternalAuthError, ExternalAuthService};
 pub use live_tv::{LiveTvService, LiveTvServiceError};
 pub use playback_session::{
@@ -152,6 +154,12 @@ struct ServerInfo {
     version: String,
     backend: String,
     is_configured: bool,
+    /// Whether the server is erasing itself back to first-run setup, as its last
+    /// administrator deleted their account. Everything but `serverInfo` is
+    /// refused meanwhile, with code `SERVER_RESETTING`, and the server restarts
+    /// on the way: ask until it answers with this false and `isConfigured`
+    /// false.
+    resetting: bool,
     /// Whether this server offers its media for keeping on a device. A client
     /// asks the server a title came from, as each decides for itself.
     downloads_allowed: bool,
@@ -167,6 +175,21 @@ pub struct CastSdk(pub bool);
 #[Object]
 impl CoreQuery {
     async fn server_info(&self, ctx: &Context<'_>) -> async_graphql::Result<ServerInfo> {
+        // The erasure holds storage, so this answers without it.
+        if ctx
+            .data_opt::<Arc<Erasure>>()
+            .is_some_and(|erasure| erasure.is_resetting())
+        {
+            return Ok(ServerInfo {
+                name: "noflex".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                backend: String::new(),
+                is_configured: true,
+                resetting: true,
+                downloads_allowed: false,
+                cast_sdk: false,
+            });
+        }
         let storage = ctx
             .data::<Arc<dyn Storage>>()
             .map_err(|_| async_graphql::Error::new("storage not configured"))?;
@@ -183,6 +206,7 @@ impl CoreQuery {
             version: env!("CARGO_PKG_VERSION").to_string(),
             backend: health.backend,
             is_configured: !users.is_empty(),
+            resetting: false,
             downloads_allowed: storage
                 .downloads_allowed()
                 .await
@@ -751,6 +775,10 @@ pub struct SchemaContext {
     pub smart_transcode_wake: Option<Arc<tokio::sync::Notify>>,
     /// The configured tone-mapping curve, until an administrator picks one.
     pub tonemap_curve: Option<noflex_core::TonemapCurve>,
+    /// Told when a deleted account leaves something to purge, or the last
+    /// administrator's erases the server. Defaults to a fresh one when absent,
+    /// which nothing hears.
+    pub erasure: Option<Arc<Erasure>>,
 }
 
 impl SchemaContext {
@@ -774,6 +802,10 @@ pub fn build_schema(ctx: SchemaContext) -> NoflexSchema {
         .data(ctx.connect_hub.unwrap_or_default())
         .data(ctx.cast_sdk.unwrap_or_default())
         .data(Arc::new(noflex_auth::LoginThrottle::default()));
+    let erasure = ctx.erasure.unwrap_or_default();
+    builder = builder
+        .data(erasure.clone())
+        .extension(erasure::ResetGuard(erasure));
     if let Some(storage) = ctx.storage {
         builder = builder
             .data(DataLoader::new(

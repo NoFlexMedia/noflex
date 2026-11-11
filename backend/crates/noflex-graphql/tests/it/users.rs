@@ -592,3 +592,196 @@ async fn change_password_flow() {
         resp.errors
     );
 }
+
+/// `query` as `principal`, signed in the way a request through the server is.
+async fn run_as(
+    schema: &noflex_graphql::NoflexSchema,
+    principal: Principal,
+    query: &str,
+) -> async_graphql::Response {
+    schema
+        .execute(
+            Request::new(query)
+                .data(principal)
+                .data(as_request_user(principal)),
+        )
+        .await
+}
+
+fn code(response: &async_graphql::Response) -> Option<String> {
+    response.errors.iter().find_map(|error| {
+        error
+            .extensions
+            .as_ref()?
+            .get("code")
+            .map(|code| code.to_string().trim_matches('"').to_string())
+    })
+}
+
+#[tokio::test]
+async fn delete_account_takes_the_caller_and_nobody_else() {
+    let (schema, jwt, store) = authed_schema().await;
+    let admin = setup_admin(&schema, &jwt).await;
+    create_user(&schema, admin, "alice", "pw-alice", "USER").await;
+    create_user(&schema, admin, "bob", "pw-bob", "USER").await;
+    let (alice_token, alice_refresh) = login(&schema, "alice", "pw-alice").await;
+    let alice = principal_from_token(&jwt, &alice_token);
+    let (_, bob_refresh) = login(&schema, "bob", "pw-bob").await;
+
+    let resp = run_as(
+        &schema,
+        alice,
+        r#"mutation { deleteAccount(currentPassword: "nope") { user { id } } }"#,
+    )
+    .await;
+    assert!(
+        resp.errors
+            .iter()
+            .any(|e| e.message == "incorrect current password"),
+        "wrong password: {:?}",
+        resp.errors
+    );
+    assert!(store.get_user(alice.user_id).await.unwrap().is_some());
+
+    let resp = run_as(
+        &schema,
+        alice,
+        r#"mutation { deleteAccount(currentPassword: "pw-alice") { user { id } serverErased } }"#,
+    )
+    .await;
+    assert!(resp.errors.is_empty(), "deleteAccount: {:?}", resp.errors);
+    let data = resp.data.into_json().unwrap();
+    assert_eq!(
+        data["deleteAccount"]["user"]["id"],
+        alice.user_id.to_string()
+    );
+    assert_eq!(data["deleteAccount"]["serverErased"], false);
+
+    assert!(store.get_user(alice.user_id).await.unwrap().is_none());
+    let q =
+        format!(r#"mutation {{ refreshSession(refreshToken: "{alice_refresh}") {{ token }} }}"#);
+    assert!(
+        !schema.execute(q.as_str()).await.errors.is_empty(),
+        "their session is gone"
+    );
+    let purges = store.pending_account_purges().await.unwrap();
+    assert_eq!(
+        purges.iter().map(|purge| purge.user_id).collect::<Vec<_>>(),
+        [alice.user_id]
+    );
+
+    let q = format!(r#"mutation {{ refreshSession(refreshToken: "{bob_refresh}") {{ token }} }}"#);
+    let resp = schema.execute(q.as_str()).await;
+    assert!(
+        resp.errors.is_empty(),
+        "bob stays signed in: {:?}",
+        resp.errors
+    );
+    login(&schema, "bob", "pw-bob").await;
+    login(&schema, "admin", "hunter2").await;
+}
+
+#[tokio::test]
+async fn an_account_without_a_password_confirms_with_its_username() {
+    let (schema, jwt, store) = authed_schema().await;
+    setup_admin(&schema, &jwt).await;
+    let user = noflex_storage::domain::User {
+        id: UserId::new(),
+        username: "carol".to_string(),
+        display_name: None,
+        password_hash: String::new(),
+        is_admin: false,
+        role: noflex_core::UserRole::User,
+        created_at: time::OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
+        has_pin: false,
+    };
+    store.upsert_user(&user).await.unwrap();
+    let carol = Principal {
+        user_id: user.id,
+        is_admin: false,
+        session_id: None,
+    };
+
+    let resp = run_as(
+        &schema,
+        carol,
+        "{ accountDeletion { passwordRequired erasesServer } }",
+    )
+    .await;
+    assert!(resp.errors.is_empty(), "{:?}", resp.errors);
+    assert_eq!(
+        resp.data.into_json().unwrap()["accountDeletion"],
+        serde_json::json!({ "passwordRequired": false, "erasesServer": false })
+    );
+    let resp = run_as(
+        &schema,
+        carol,
+        r#"mutation { deleteAccount(username: "dave") { user { id } } }"#,
+    )
+    .await;
+    assert!(!resp.errors.is_empty(), "someone else's username");
+    let resp = run_as(
+        &schema,
+        carol,
+        r#"mutation { deleteAccount(username: "carol") { user { id } } }"#,
+    )
+    .await;
+    assert!(resp.errors.is_empty(), "{:?}", resp.errors);
+    assert!(store.get_user(user.id).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn the_last_administrator_takes_the_server_only_when_asked() {
+    let (schema, jwt, store) = authed_schema().await;
+    let admin = setup_admin(&schema, &jwt).await;
+    create_user(&schema, admin, "bob", "pw-bob", "USER").await;
+    let (_, bob_refresh) = login(&schema, "bob", "pw-bob").await;
+
+    let resp = run_as(
+        &schema,
+        admin,
+        "{ accountDeletion { passwordRequired erasesServer } }",
+    )
+    .await;
+    assert_eq!(
+        resp.data.into_json().unwrap()["accountDeletion"],
+        serde_json::json!({ "passwordRequired": true, "erasesServer": true })
+    );
+    let resp = run_as(
+        &schema,
+        admin,
+        r#"mutation { deleteAccount(currentPassword: "hunter2") { user { id } } }"#,
+    )
+    .await;
+    assert_eq!(code(&resp).as_deref(), Some("LAST_ADMINISTRATOR"));
+    assert!(store.get_user(admin.user_id).await.unwrap().is_some());
+    assert!(store.pending_server_reset().await.unwrap().is_none());
+
+    let resp = run_as(
+        &schema,
+        admin,
+        r#"mutation { deleteAccount(currentPassword: "hunter2", eraseServer: true) { serverErased } }"#,
+    )
+    .await;
+    assert!(resp.errors.is_empty(), "{:?}", resp.errors);
+    assert_eq!(
+        resp.data.into_json().unwrap()["deleteAccount"]["serverErased"],
+        true
+    );
+    assert!(store.pending_server_reset().await.unwrap().is_some());
+
+    let resp = schema.execute("{ serverInfo { resetting } }").await;
+    assert!(resp.errors.is_empty(), "{:?}", resp.errors);
+    assert_eq!(
+        resp.data.into_json().unwrap()["serverInfo"]["resetting"],
+        true
+    );
+    let q = format!(r#"mutation {{ refreshSession(refreshToken: "{bob_refresh}") {{ token }} }}"#);
+    let resp = schema.execute(q.as_str()).await;
+    assert_eq!(code(&resp).as_deref(), Some("SERVER_RESETTING"));
+    let resp = schema
+        .execute(r#"mutation { login(username: "bob", password: "pw-bob") { token } }"#)
+        .await;
+    assert_eq!(code(&resp).as_deref(), Some("SERVER_RESETTING"));
+}

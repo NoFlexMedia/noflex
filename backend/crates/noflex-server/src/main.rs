@@ -25,7 +25,7 @@ use axum::{
 };
 use noflex_auth::{JwtConfig, auth_middleware};
 use noflex_graphql::{
-    ExportEventBroadcaster, MetadataSearch, NoflexSchema, SchemaContext, build_schema,
+    Erasure, ExportEventBroadcaster, MetadataSearch, NoflexSchema, SchemaContext, build_schema,
 };
 use noflex_plugin_host::{
     EngineConfig, LifecycleBus, PluginRegistry, SearchPath, build_engine, spawn_epoch_ticker,
@@ -73,16 +73,35 @@ const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 /// How long a blocking task can hold up exit once asked to stop.
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// How long a server asked to erase itself keeps serving, so the answer to
+/// `deleteAccount` reaches whoever asked.
+const RESTART_GRACE: Duration = Duration::from_secs(1);
+
+/// Why [`run`] returned.
+enum Exit {
+    Stopped,
+    /// An erasure was recorded, which the next start carries out.
+    Restart,
+}
+
 fn main() -> anyhow::Result<()> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(WORKER_STACK_BYTES)
-        .build()
-        .context("start runtime")?;
-    let result = runtime.block_on(run());
-    // Drops every task, and with them the ffmpeg each one is watching.
-    runtime.shutdown_timeout(SHUTDOWN_GRACE);
-    result
+    let cfg = Config::load().context("load config")?;
+    let log_buffer = init_tracing(&cfg.log);
+    loop {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_stack_size(WORKER_STACK_BYTES)
+            .build()
+            .context("start runtime")?;
+        let result = runtime.block_on(run(&cfg, log_buffer.clone()));
+        // Drops every task, and with them the ffmpeg each one is watching, and
+        // every hold on the database before it's opened again.
+        runtime.shutdown_timeout(SHUTDOWN_GRACE);
+        match result? {
+            Exit::Stopped => return Ok(()),
+            Exit::Restart => info!("restarting to erase the server"),
+        }
+    }
 }
 
 /// Resolves when the process is asked to stop. Without a handler those signals
@@ -108,30 +127,12 @@ async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-async fn run() -> anyhow::Result<()> {
-    let cfg = Config::load().context("load config")?;
-    let log_buffer = init_tracing(&cfg.log);
-
+async fn run(
+    cfg: &Config,
+    log_buffer: Arc<noflex_server::system_status::LogBuffer>,
+) -> anyhow::Result<Exit> {
     std::fs::create_dir_all(&cfg.data_dir)
         .with_context(|| format!("create data dir {}", cfg.data_dir.display()))?;
-    // Cache directories. An empty `dir` field falls back to
-    // `<cache_dir>/<name>`. Three separate dirs by purpose so a
-    // deployer can put the transcode cache on a fast scratch
-    // disk without putting the image cache next to it.
-    for (name, configured) in [
-        ("transcode", &cfg.cache.transcode_dir),
-        ("image", &cfg.cache.image_dir),
-        ("embed", &cfg.cache.embed_dir),
-    ] {
-        let path = if configured.is_empty() {
-            cfg.cache_dir.join(name)
-        } else {
-            std::path::PathBuf::from(configured)
-        };
-        if let Err(e) = std::fs::create_dir_all(&path) {
-            tracing::warn!(error = %e, path = %path.display(), "cache dir create failed");
-        }
-    }
     let db_path = cfg.data_dir.join("noflex.db");
 
     let store = TursoStore::open(&db_path)
@@ -139,6 +140,19 @@ async fn run() -> anyhow::Result<()> {
         .context("open turso store")?;
     store.migrate().await.context("run migrations")?;
     let storage: Arc<dyn Storage> = Arc::new(store);
+    // Ahead of everything that reads what it erases, the signing key included.
+    let erased = match storage.pending_server_reset().await? {
+        Some(_) => finish_reset(cfg, storage.as_ref()).await?,
+        None => None,
+    };
+
+    // Separate by purpose, so a deployer can put the transcode cache on a fast
+    // scratch disk without putting the image cache next to it.
+    for path in [cfg.transcode_dir(), cfg.image_dir(), cfg.embed_dir()] {
+        if let Err(e) = std::fs::create_dir_all(&path) {
+            tracing::warn!(error = %e, path = %path.display(), "cache dir create failed");
+        }
+    }
     let jwt: Arc<JwtConfig> =
         Arc::new(JwtConfig::for_server(&cfg.data_dir).context("load or create JWT signing key")?);
 
@@ -328,23 +342,12 @@ async fn run() -> anyhow::Result<()> {
     let metadata = Arc::new(MetadataSearch::new(plugin_registry.clone()));
     let export_events = Arc::new(ExportEventBroadcaster::default());
     let ffmpeg_path = noflex_core::bundle::ffmpeg_tool("ffmpeg", "FFMPEG_BIN");
-    // Transcode jobs write into the resolved transcode cache
-    // dir (same resolution as the cache-dir bootstrap above).
-    let transcode_dir = if cfg.cache.transcode_dir.is_empty() {
-        cfg.cache_dir.join("transcode")
-    } else {
-        std::path::PathBuf::from(&cfg.cache.transcode_dir)
-    };
+    let transcode_dir = cfg.transcode_dir();
     let transcoder = Arc::new(noflex_transcoder::FfmpegJobManager::new(
         ffmpeg_path.clone(),
         transcode_dir.clone(),
     ));
-    // Image resize cache uses the same resolution rules as the transcode dir.
-    let image_cache_dir = if cfg.cache.image_dir.is_empty() {
-        cfg.cache_dir.join("image")
-    } else {
-        std::path::PathBuf::from(&cfg.cache.image_dir)
-    };
+    let image_cache_dir = cfg.image_dir();
     std::fs::create_dir_all(&image_cache_dir).ok();
     let trickplay_worker = Arc::new(noflex_server::trickplay::TrickplayWorker::new(
         storage.clone(),
@@ -468,15 +471,16 @@ async fn run() -> anyhow::Result<()> {
         },
     )
     .await;
-    let optimized_dir = cfg
-        .transcoder
-        .optimize
-        .dir
-        .clone()
-        .unwrap_or_else(|| cfg.data_dir.join("optimized"));
+    let optimized_dir = cfg.optimized_dir();
     std::fs::create_dir_all(&optimized_dir)
         .with_context(|| format!("create optimized dir {}", optimized_dir.display()))?;
     let smart_transcode_wake = Arc::new(tokio::sync::Notify::new());
+    let erasure = Arc::new(Erasure::default());
+    let _purge_worker = Arc::new(noflex_server::erasure::PurgeWorker {
+        storage: storage.clone(),
+        erasure: erasure.clone(),
+    })
+    .spawn();
     let schema = build_schema(SchemaContext {
         storage: Some(storage.clone()),
         scanner: Some(scan_registry.clone()),
@@ -508,12 +512,9 @@ async fn run() -> anyhow::Result<()> {
             max_version_gb: cfg.transcoder.optimize.max_version_gb,
         }),
         smart_transcode_wake: Some(smart_transcode_wake.clone()),
+        erasure: Some(erasure.clone()),
     });
-    let download_output_dir = if cfg.cache.transcode_dir.is_empty() {
-        cfg.data_dir.join("downloads")
-    } else {
-        std::path::PathBuf::from(&cfg.cache.transcode_dir)
-    };
+    let download_output_dir = cfg.download_dir();
     std::fs::create_dir_all(&download_output_dir)
         .with_context(|| format!("create download dir {}", download_output_dir.display()))?;
     let download_root = RootCapability::new(&download_output_dir)
@@ -543,7 +544,7 @@ async fn run() -> anyhow::Result<()> {
         wake: smart_transcode_wake,
     })
     .spawn();
-    let recordings_dir = cfg.data_dir.join("recordings");
+    let recordings_dir = cfg.recordings_dir();
     std::fs::create_dir_all(&recordings_dir)
         .with_context(|| format!("create recordings dir {}", recordings_dir.display()))?;
     let restricted_routes = noflex_server::restricted_routes::routes(
@@ -626,6 +627,9 @@ async fn run() -> anyhow::Result<()> {
         app
     };
 
+    if let Some(answering) = erased {
+        answering.stop().await;
+    }
     info!(bind = %cfg.bind, "noflex server listening");
     let listener = tokio::net::TcpListener::bind(&cfg.bind)
         .await
@@ -637,11 +641,82 @@ async fn run() -> anyhow::Result<()> {
     );
     // Not a graceful shutdown: a stream can stay open for hours, and a client
     // whose connection drops just reconnects.
+    let restart = async {
+        erasure.restart_requested().await;
+        tokio::time::sleep(RESTART_GRACE).await;
+    };
     tokio::select! {
         result = async { serve.await } => result.context("serve")?,
         () = shutdown_signal() => info!("shutting down"),
+        () = restart => return Ok(Exit::Restart),
     }
-    Ok(())
+    Ok(Exit::Stopped)
+}
+
+/// The configured address answering as a server being erased does while the
+/// real one starts: `serverInfo` says so, everything else is refused, and the
+/// web client loads to show it.
+struct AnsweringWhileErased {
+    stop: tokio::sync::oneshot::Sender<()>,
+    serving: tokio::task::JoinHandle<()>,
+}
+
+impl AnsweringWhileErased {
+    /// `None` when the address can't be had, which the erasure goes on without.
+    async fn start(bind: &str) -> Option<Self> {
+        let schema = build_schema(SchemaContext {
+            erasure: Some(Arc::new(Erasure::resetting())),
+            ..SchemaContext::default()
+        });
+        let app = Router::new()
+            .merge(noflex_server::web::routes())
+            .route("/health", get(|| async { "resetting" }))
+            .route_service("/graphql", async_graphql_axum::GraphQL::new(schema));
+        let listener = match tokio::net::TcpListener::bind(bind).await {
+            Ok(listener) => listener,
+            Err(error) => {
+                tracing::warn!(%error, bind, "can't answer while erasing");
+                return None;
+            }
+        };
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let serving = tokio::spawn(async move {
+            let serve = axum::serve(listener, app).with_graceful_shutdown(async {
+                stopped.await.ok();
+            });
+            if let Err(error) = serve.await {
+                tracing::warn!(%error, "answering while erasing failed");
+            }
+        });
+        Some(Self { stop, serving })
+    }
+
+    /// Free the address for the real server.
+    async fn stop(self) {
+        self.stop.send(()).ok();
+        self.serving.await.ok();
+    }
+}
+
+/// Carry out the pending erasure, answering on the configured address as a
+/// server being erased until [`AnsweringWhileErased::stop`] hands it over.
+async fn finish_reset(
+    cfg: &Config,
+    storage: &dyn Storage,
+) -> anyhow::Result<Option<AnsweringWhileErased>> {
+    let answering = AnsweringWhileErased::start(&cfg.bind).await;
+    let result = noflex_server::erasure::finish_reset(
+        storage,
+        &noflex_server::erasure::ResetPaths::for_config(cfg),
+    )
+    .await;
+    if let Err(error) = result {
+        if let Some(answering) = answering {
+            answering.stop().await;
+        }
+        return Err(error);
+    }
+    Ok(answering)
 }
 
 /// Serve a completed export job to its owner (or an admin). The

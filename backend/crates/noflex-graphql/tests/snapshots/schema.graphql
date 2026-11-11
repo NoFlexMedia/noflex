@@ -1,4 +1,21 @@
 """
+What deleting their own account asks of the viewer, and what it takes.
+"""
+type AccountDeletion {
+	"""
+	Whether `deleteAccount` takes their password. An account that only signs
+	in through another service has none, and confirms with its username.
+	"""
+	passwordRequired: Boolean!
+	"""
+	Whether they're the last administrator, so deleting their account erases
+	the whole server: every account, library, setting and cache, keeping
+	only media files and the server's configuration.
+	"""
+	erasesServer: Boolean!
+}
+
+"""
 An active playback, for the admin dashboard.
 """
 type ActiveStream {
@@ -443,6 +460,22 @@ format, but it is always normalized to the UTC (Z) offset, e.g.
 "2022-01-12T04:00:19.12345Z".
 """
 scalar DateTime
+
+"""
+What `deleteAccount` removed.
+"""
+type DeletedAccount {
+	"""
+	The account, as it was.
+	"""
+	user: User!
+	"""
+	Whether it was the last administrator's, so the whole server is being
+	erased: every account it holds is gone, and it comes back at first-run
+	setup. Watch `serverInfo { resetting isConfigured }`.
+	"""
+	serverErased: Boolean!
+}
 
 """
 What `deleteUser` removed: the account and the sessions that went with it.
@@ -1740,10 +1773,29 @@ type Mutation {
 	"""
 	updateUser(id: ID!, role: UserRole, libraryIds: [ID!]): User!
 	"""
-	Delete a user. Refuses the caller's own account and the last
-	administrator; sessions cascade away with the row. Admin only.
+	Delete a user, as `deleteAccount` does: everything of theirs goes, and
+	what can't go at once is purged in the background. Refuses the caller's
+	own account, which is `deleteAccount`'s, and the last administrator.
+	Admin only.
 	"""
 	deleteUser(id: ID!): DeletedUser!
+	"""
+	Delete the caller's own account, for good. Confirmed as signing in is:
+	with `currentPassword`, throttled the same way, or for an account with
+	none, by typing their `username`.
+	
+	Every session and API key of theirs goes before this answers, with
+	their history, devices, playlists, invites, linked services and
+	servers, picture and offline copies; what's left in the activity log
+	and on disk is purged in the background.
+	
+	The last administrator's account only goes with the server. Without
+	`eraseServer` that's refused with code `LAST_ADMINISTRATOR`; with it,
+	everyone is signed out, the server restarts to erase every account,
+	library, setting and cache it holds, keeping media files and its
+	configuration, and comes back at first-run setup.
+	"""
+	deleteAccount(currentPassword: String, username: String, eraseServer: Boolean! = false): DeletedAccount!
 	"""
 	Change the caller's own password. Revokes every session except
 	the caller's current one, signing other devices out on their next
@@ -3020,6 +3072,11 @@ type Query {
 	"""
 	viewer: User!
 	"""
+	What deleting their own account asks of the viewer, and whether it
+	erases the server.
+	"""
+	accountDeletion: AccountDeletion!
+	"""
 	The libraries a user has been explicitly granted. Admin only.
 	"""
 	userLibraryAccess(userId: ID!): [Library!]!
@@ -3405,6 +3462,14 @@ type ServerInfo {
 	version: String!
 	backend: String!
 	isConfigured: Boolean!
+	"""
+	Whether the server is erasing itself back to first-run setup, as its last
+	administrator deleted their account. Everything but `serverInfo` is
+	refused meanwhile, with code `SERVER_RESETTING`, and the server restarts
+	on the way: ask until it answers with this false and `isConfigured`
+	false.
+	"""
+	resetting: Boolean!
 	"""
 	Whether this server offers its media for keeping on a device. A client
 	asks the server a title came from, as each decides for itself.

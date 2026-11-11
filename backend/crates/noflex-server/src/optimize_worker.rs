@@ -562,16 +562,9 @@ impl OptimizeWorker {
         while let Some(entry) = entries.next_entry().await? {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            let Some((id, suffix)) = name.split_once('.') else {
+            let Some((id, suffix)) = version_file(&name) else {
                 continue;
             };
-            let Ok(parsed) = uuid::Uuid::parse_str(id) else {
-                continue;
-            };
-            if !matches!(suffix, "mp4" | "raw.mp4" | "staged.mp4") {
-                continue;
-            }
-            let id = OptimizedVersionId::from_uuid(parsed);
             let belongs =
                 running.contains(&id.to_string()) || (known.contains(&id) && suffix != "raw.mp4");
             if !belongs {
@@ -824,6 +817,16 @@ impl OptimizeWorker {
         }
         Ok(())
     }
+}
+
+/// The version and stage a file in a versions folder is named for, when it's
+/// one this worker wrote: `{id}.mp4`, or `{id}.raw.mp4` or `{id}.staged.mp4` on
+/// the way there. Anything else in the folder is someone else's.
+pub(crate) fn version_file(name: &str) -> Option<(OptimizedVersionId, &str)> {
+    let (id, suffix) = name.split_once('.')?;
+    let id = uuid::Uuid::parse_str(id).ok()?;
+    matches!(suffix, "mp4" | "raw.mp4" | "staged.mp4")
+        .then(|| (OptimizedVersionId::from_uuid(id), suffix))
 }
 
 fn raw_path(dir: &Path, id: OptimizedVersionId) -> PathBuf {

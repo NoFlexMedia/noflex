@@ -60,7 +60,7 @@ pub(crate) fn valid_pin(pin: &str) -> bool {
 /// # Errors
 ///
 /// "incorrect current password", or the throttle's refusal.
-async fn confirm_password(
+pub(crate) async fn confirm_password(
     ctx: &Context<'_>,
     user: &User,
     password: &str,

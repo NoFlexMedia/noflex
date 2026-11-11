@@ -369,6 +369,47 @@ impl Config {
         Ok(config)
     }
 
+    /// HLS segments and other ffmpeg output: `cache.transcode_dir`, or
+    /// `transcode/` under `cache_dir`.
+    pub fn transcode_dir(&self) -> PathBuf {
+        cache_subdir(&self.cache.transcode_dir, &self.cache_dir, "transcode")
+    }
+
+    /// Posters, backdrops, thumbnails, trickplay and channel logos:
+    /// `cache.image_dir`, or `image/` under `cache_dir`.
+    pub fn image_dir(&self) -> PathBuf {
+        cache_subdir(&self.cache.image_dir, &self.cache_dir, "image")
+    }
+
+    /// `cache.embed_dir`, or `embed/` under `cache_dir`.
+    pub fn embed_dir(&self) -> PathBuf {
+        cache_subdir(&self.cache.embed_dir, &self.cache_dir, "embed")
+    }
+
+    /// Finished export copies: the transcode cache when one is configured, or
+    /// `downloads/` under `data_dir`.
+    pub fn download_dir(&self) -> PathBuf {
+        if self.cache.transcode_dir.is_empty() {
+            self.data_dir.join("downloads")
+        } else {
+            PathBuf::from(&self.cache.transcode_dir)
+        }
+    }
+
+    /// Where optimized versions go until an administrator picks somewhere else.
+    pub fn optimized_dir(&self) -> PathBuf {
+        self.transcoder
+            .optimize
+            .dir
+            .clone()
+            .unwrap_or_else(|| self.data_dir.join("optimized"))
+    }
+
+    /// Live TV recordings, always under `data_dir`.
+    pub fn recordings_dir(&self) -> PathBuf {
+        self.data_dir.join("recordings")
+    }
+
     fn validate(&self) -> Result<(), ConfigError> {
         use noflex_core::{VideoCodec, VideoProfile};
         for rung in &self.transcoder.ladder {
@@ -406,6 +447,15 @@ impl Config {
             }
         }
         Ok(())
+    }
+}
+
+/// An empty `configured` falls back to `<cache_dir>/<name>`.
+fn cache_subdir(configured: &str, cache_dir: &std::path::Path, name: &str) -> PathBuf {
+    if configured.is_empty() {
+        cache_dir.join(name)
+    } else {
+        PathBuf::from(configured)
     }
 }
 

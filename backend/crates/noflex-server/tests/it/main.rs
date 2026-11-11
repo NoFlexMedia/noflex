@@ -11,6 +11,7 @@ mod attributions;
 mod channel_logos;
 mod download;
 mod episode_thumbs;
+mod erasure;
 mod external_auth;
 mod fixtures;
 mod graphql_ws;

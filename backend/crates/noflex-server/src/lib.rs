@@ -19,6 +19,7 @@ pub mod config;
 pub mod download;
 pub mod download_serve;
 pub mod episode_thumbs;
+pub mod erasure;
 pub mod external_auth;
 pub mod file_serve;
 pub mod graphql_ws;

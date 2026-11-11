@@ -21,6 +21,7 @@ pub(crate) mod optimized_versions;
 pub(crate) mod play_sessions;
 pub(crate) mod playlists;
 pub(crate) mod plugin_overrides;
+pub(crate) mod plugin_settings;
 pub(crate) mod plugin_tasks;
 pub(crate) mod provider_attributions;
 pub(crate) mod restrictions;

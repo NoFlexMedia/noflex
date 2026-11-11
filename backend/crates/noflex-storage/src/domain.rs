@@ -2754,6 +2754,18 @@ pub struct PluginOverrideRow {
     pub priority: i32,
 }
 
+/// One change to a plugin's admin-set settings, applied by
+/// [`Storage::update_plugin_settings`](crate::store::Storage::update_plugin_settings).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginSettingWrite {
+    pub key: String,
+    /// The value to keep, already checked against the plugin's schema;
+    /// `None` clears it.
+    pub value: Option<String>,
+    /// Whether the value is a secret, which is kept apart and never listed.
+    pub secret: bool,
+}
+
 /// A channel discovered from a Live TV source.
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
 #[graphql(complex)]

@@ -18,10 +18,10 @@ use noflex_storage::{
         AccountPurge, ActivityKind, ApiKey, Collection, DeviceCode, Edition, EpgProgram, ExportJob,
         ExportJobStatus, ExternalIdentity, Image, ImageSource, ImageTarget, IntroMarkers, Library,
         LiveTvChannel, LiveTvSource, MediaFile, MediaRemoval, Playlist, PluginOverrideRow,
-        PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule, RecordingStatus,
-        RefreshTokenLookup, ScanEvent, ServerReset, Session, Tag, TagAssignment, TagSummary,
-        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
-        WatchRoom, WatchRoomMember, WatchRoomState, Work,
+        PluginSettingWrite, PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule,
+        RecordingStatus, RefreshTokenLookup, ScanEvent, ServerReset, Session, Tag, TagAssignment,
+        TagSummary, TrickplayAsset, User, UserData, UserPluginSecret, UserPreference,
+        UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, Work,
     },
     error::{StorageError, StorageResult},
     query::{
@@ -1287,6 +1287,38 @@ impl Storage for TursoStore {
     ) -> StorageResult<bool> {
         transact!(self, Lane::Concurrent, |conn| {
             repo::plugin_overrides::delete(conn, plugin_id, hook, work_kind)
+        })
+    }
+
+    async fn plugin_settings(
+        &self,
+        plugin_id: &str,
+    ) -> StorageResult<std::collections::BTreeMap<String, String>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::plugin_settings::list(&conn, plugin_id).await
+    }
+
+    async fn plugin_secret_setting_keys(&self, plugin_id: &str) -> StorageResult<Vec<String>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::plugin_settings::secret_keys(&conn, plugin_id).await
+    }
+
+    async fn plugin_secret_setting(
+        &self,
+        plugin_id: &str,
+        key: &str,
+    ) -> StorageResult<Option<String>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::plugin_settings::secret(&conn, plugin_id, key).await
+    }
+
+    async fn update_plugin_settings(
+        &self,
+        plugin_id: &str,
+        writes: &[PluginSettingWrite],
+    ) -> StorageResult<()> {
+        transact!(self, Lane::Concurrent, |conn| {
+            repo::plugin_settings::update(conn, plugin_id, writes)
         })
     }
 

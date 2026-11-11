@@ -129,6 +129,7 @@ where
     session_prune_idle(store).await;
     session_refresh_token_lookup(store).await;
     plugin_override_persistence(store).await;
+    plugin_settings_round_trip(store).await;
     provider_attribution_lifecycle(store).await;
     session_rotate_refresh_token(store).await;
     session_retired_refresh_tokens_die_with_session(store).await;
@@ -2504,6 +2505,97 @@ async fn plugin_override_persistence<S: Storage + ?Sized>(store: &S) {
     assert_eq!(
         mine(store.list_plugin_overrides().await.expect("list")),
         [row("ovr-anidb", "series", 0)]
+    );
+}
+
+async fn plugin_settings_round_trip<S: Storage + ?Sized>(store: &S) {
+    let write = |key: &str, value: Option<&str>, secret| crate::domain::PluginSettingWrite {
+        key: key.to_string(),
+        value: value.map(str::to_string),
+        secret,
+    };
+    store
+        .update_plugin_settings(
+            "settings-webhook",
+            &[
+                write("url", Some("https://one.example"), false),
+                write("retries", Some("3"), false),
+                write("auth_token", Some("hunter2"), true),
+            ],
+        )
+        .await
+        .expect("set");
+    store
+        .update_plugin_settings(
+            "settings-other",
+            &[write("url", Some("https://other.example"), false)],
+        )
+        .await
+        .expect("set another plugin");
+    store
+        .update_plugin_settings(
+            "settings-webhook",
+            &[
+                write("url", Some("https://two.example"), false),
+                write("retries", None, false),
+                write("never-set", None, true),
+            ],
+        )
+        .await
+        .expect("replace and clear");
+
+    let plain = store
+        .plugin_settings("settings-webhook")
+        .await
+        .expect("plain");
+    assert_eq!(
+        plain.into_iter().collect::<Vec<_>>(),
+        [("url".to_string(), "https://two.example".to_string())],
+        "a secret is never listed with the plain values"
+    );
+    assert_eq!(
+        store
+            .plugin_secret_setting_keys("settings-webhook")
+            .await
+            .expect("secret keys"),
+        ["auth_token"]
+    );
+    assert_eq!(
+        store
+            .plugin_secret_setting("settings-webhook", "auth_token")
+            .await
+            .expect("secret")
+            .as_deref(),
+        Some("hunter2")
+    );
+    assert_eq!(
+        store
+            .plugin_secret_setting("settings-webhook", "url")
+            .await
+            .expect("plain key read as a secret"),
+        None,
+        "plain and secret values live apart"
+    );
+    assert_eq!(
+        store
+            .plugin_settings("settings-other")
+            .await
+            .expect("other")
+            .get("url")
+            .map(String::as_str),
+        Some("https://other.example")
+    );
+
+    store
+        .update_plugin_settings("settings-webhook", &[write("auth_token", None, true)])
+        .await
+        .expect("clear secret");
+    assert!(
+        store
+            .plugin_secret_setting_keys("settings-webhook")
+            .await
+            .expect("secret keys")
+            .is_empty()
     );
 }
 

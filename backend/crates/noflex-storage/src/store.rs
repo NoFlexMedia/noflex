@@ -20,11 +20,12 @@ use crate::{
         ExportJob, ExportJobStatus, ExternalIdentity, HistoryPage, Image, ImageSource, ImageTarget,
         IntroMarkers, Invite, Library, LinkedServer, LiveTvChannel, LiveTvSource, MediaFile,
         OptimizedVersion, OptimizedVersionStats, OptimizedVersionStatus, PlaySession, Playlist,
-        PluginOverrideRow, PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule,
-        RecordingStatus, RefreshTokenLookup, ScanEvent, ServerReset, Session, SmartTranscodeMark,
-        SmartTranscodeOutcome, SmartTranscodingSettings, Tag, TagAssignment, TagSummary,
-        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
-        WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork, Work, WorkFeatures,
+        PluginOverrideRow, PluginSettingWrite, PluginTaskPayload, PluginTaskState, Recording,
+        RecordingSchedule, RecordingStatus, RefreshTokenLookup, ScanEvent, ServerReset, Session,
+        SmartTranscodeMark, SmartTranscodeOutcome, SmartTranscodingSettings, Tag, TagAssignment,
+        TagSummary, TrickplayAsset, User, UserData, UserPluginSecret, UserPreference,
+        UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork, Work,
+        WorkFeatures,
     },
     error::StorageResult,
     query::{
@@ -746,6 +747,38 @@ pub trait Storage: Send + Sync + 'static {
         hook: &str,
         work_kind: &str,
     ) -> StorageResult<bool>;
+
+    // ---- Plugin settings ------------------------------------------------
+    /// The values an administrator has set for `plugin_id`'s non-secret
+    /// settings, by key. Keys are whatever was written, so a caller checks
+    /// them against the plugin's current schema.
+    async fn plugin_settings(
+        &self,
+        plugin_id: &str,
+    ) -> StorageResult<std::collections::BTreeMap<String, String>>;
+
+    /// The keys of `plugin_id`'s secret settings an administrator has set,
+    /// ordered. Never the values: those are for
+    /// [`plugin_secret_setting`][Storage::plugin_secret_setting] alone.
+    async fn plugin_secret_setting_keys(&self, plugin_id: &str) -> StorageResult<Vec<String>>;
+
+    /// One secret setting's value. Host-internal: the plugin host reads it
+    /// on the plugin's behalf for `host-secrets.read`, and it must never
+    /// reach the GraphQL surface.
+    async fn plugin_secret_setting(
+        &self,
+        plugin_id: &str,
+        key: &str,
+    ) -> StorageResult<Option<String>>;
+
+    /// Apply `writes` to `plugin_id`'s settings in one transaction: each
+    /// sets or clears one key, plain or secret. Clearing a key that isn't
+    /// set is a no-op.
+    async fn update_plugin_settings(
+        &self,
+        plugin_id: &str,
+        writes: &[PluginSettingWrite],
+    ) -> StorageResult<()>;
 
     // ---- Plugin background tasks ---------------------------------------
     /// Current cursor + health row for one plugin background task.

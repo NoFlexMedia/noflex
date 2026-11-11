@@ -354,6 +354,26 @@ CREATE TABLE IF NOT EXISTS plugin_overrides (
     PRIMARY KEY (plugin_id, hook, work_kind)
 );
 
+-- Plugin settings an administrator set from the admin UI, over the
+-- server's config.toml stanza; clearing a row falls back to it. Secrets
+-- sit in a table of their own, which only the host's `host-secrets.read`
+-- reads values from. No FK on plugin_id: plugins are not storage rows.
+CREATE TABLE IF NOT EXISTS plugin_settings (
+    plugin_id   TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (plugin_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS plugin_secret_settings (
+    plugin_id   TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (plugin_id, key)
+);
+
 -- Append-only activity log. Three flavors of event:
 --   - admin actions (user create/delete, library create/delete, ...)
 --   - scan events (already persisted in scan_events; logged here

@@ -5,10 +5,11 @@
 // images all delegate here. Bodies stream via `ReaderStream`;
 // nothing is buffered whole.
 
+#[cfg(unix)]
+use std::sync::Arc;
 use std::{
     io,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
 use axum::{
@@ -193,8 +194,12 @@ impl RootCapability {
         #[cfg(unix)]
         return self.open_unix(&relative, canonical).await;
 
+        // Without openat, the prefix check is all the confinement there is.
         #[cfg(not(unix))]
-        self.open_non_unix(canonical).await
+        {
+            let _ = relative;
+            self.open_non_unix(canonical).await
+        }
     }
 
     #[cfg(unix)]

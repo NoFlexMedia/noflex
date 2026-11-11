@@ -369,10 +369,6 @@ fn write_new_key(
     data_dir: &std::path::Path,
     key_path: &std::path::Path,
 ) -> Result<Vec<u8>, AuthError> {
-    let io_err = |path: &std::path::Path| {
-        let path = path.to_owned();
-        move |source| AuthError::SigningKeyIo { path, source }
-    };
     let temp_path = data_dir.join(format!(".jwt.key.{}.tmp", uuid::Uuid::new_v4()));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -401,7 +397,10 @@ fn write_new_key(
     #[cfg(unix)]
     std::fs::File::open(data_dir)
         .and_then(|dir| dir.sync_all())
-        .map_err(io_err(data_dir))?;
+        .map_err(|source| AuthError::SigningKeyIo {
+            path: data_dir.to_owned(),
+            source,
+        })?;
     Ok(bytes.to_vec())
 }
 

@@ -740,12 +740,12 @@ impl OptimizeWorker {
                     let idle = self.playback_idle().await;
                     match (idle, paused_since) {
                         (false, None) => {
-                            signal(child, libc::SIGSTOP);
+                            set_paused(child, true);
                             paused_since = Some(Instant::now());
                             tracing::debug!(version = %version.id, "paused for playback");
                         }
                         (true, Some(_)) => {
-                            signal(child, libc::SIGCONT);
+                            set_paused(child, false);
                             paused_since = None;
                             tracing::debug!(version = %version.id, "resumed");
                         }
@@ -893,14 +893,46 @@ fn device_target(device: &Device, policy_limit: Option<u64>) -> Option<DeviceTar
     })
 }
 
-fn signal(child: &Child, signal: libc::c_int) {
-    let Some(pid) = child.id() else {
-        return;
-    };
-    // SAFETY: kill(2) takes plain integers and touches no memory. `pid` is our
-    // own child, not yet reaped because this runs before `wait` resolves.
-    let result = unsafe { libc::kill(pid as libc::pid_t, signal) };
-    if result != 0 {
-        tracing::warn!(pid, signal, "signalling ffmpeg failed");
+/// Holds a running ffmpeg where it is, or lets it go on, without ending it.
+fn set_paused(child: &Child, paused: bool) {
+    #[cfg(unix)]
+    {
+        let Some(pid) = child.id() else {
+            return;
+        };
+        let signal = if paused { libc::SIGSTOP } else { libc::SIGCONT };
+        // SAFETY: kill(2) takes plain integers and touches no memory. `pid` is our
+        // own child, not yet reaped because this runs before `wait` resolves.
+        let result = unsafe { libc::kill(pid as libc::pid_t, signal) };
+        if result != 0 {
+            tracing::warn!(pid, signal, "signalling ffmpeg failed");
+        }
+    }
+    #[cfg(windows)]
+    {
+        // Windows has no stop signal. These suspend every thread of a process
+        // at once; they're ntdll's, undocumented but stable since XP, and what
+        // Task Manager and Process Explorer use.
+        #[link(name = "ntdll")]
+        unsafe extern "system" {
+            fn NtSuspendProcess(process: std::os::windows::raw::HANDLE) -> i32;
+            fn NtResumeProcess(process: std::os::windows::raw::HANDLE) -> i32;
+        }
+        let Some(handle) = child.raw_handle() else {
+            return;
+        };
+        // SAFETY: the handle is our own child's, with every access right, and
+        // stays open until `wait` resolves, which this runs before.
+        let status = unsafe {
+            if paused {
+                NtSuspendProcess(handle)
+            } else {
+                NtResumeProcess(handle)
+            }
+        };
+        // An NTSTATUS is an error when negative.
+        if status < 0 {
+            tracing::warn!(status, paused, "suspending ffmpeg failed");
+        }
     }
 }

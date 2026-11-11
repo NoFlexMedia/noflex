@@ -2,6 +2,7 @@
 
 import { CachePolicy, ChildPageStore, MediaFilesStore, StartPlaybackStore, StopPlaybackStore, WorkDetailStore } from "$houdini";
 import { clientCapabilities } from "$codecs";
+import { decodeChoice, encodeChoice, sessionQuality, type QualityChoice, type StreamQuality } from "$quality";
 import { connect } from "$lib/connect.svelte.js";
 import { app } from "$lib/session.svelte.js";
 import { syncWatchState } from "$lib/sync.js";
@@ -40,6 +41,10 @@ export interface Session {
   startPositionMs?: number;
   decision?: PlaybackDecision;
   subtitles?: SubtitleDelivery[];
+  /** The ladder this file is offered at, for the quality menu. */
+  qualities?: StreamQuality[];
+  /** `url` is a ladder the player adapts along. */
+  adaptive?: boolean;
 }
 
 export interface Playback extends Session {
@@ -58,18 +63,39 @@ export interface Playback extends Session {
   /** The subtitle track to start with, as a text track or burned in. */
   subtitleIndex?: number | null;
   burnedSubtitle?: number | null;
+  quality?: QualityChoice;
+  /** Auto moved this title off the original because it struggled. */
+  leftOriginal?: boolean;
 }
 
 export const player = $state<{ current: Playback | null; preparing: string | null }>({ current: null, preparing: null });
+
+const QUALITY_KEY = "noflex.quality";
+
+/** The last stream's bandwidth estimate, so the next one starts at a quality it can hold. */
+export const measured: { bandwidthBps: number | null } = { bandwidthBps: null };
+
+/** The quality this browser plays at, Original until the viewer picks another. */
+export function qualityChoice(): QualityChoice {
+  try { return decodeChoice(localStorage.getItem(QUALITY_KEY)); } catch { return { kind: "original" }; }
+}
+
+export function rememberQuality(choice: QualityChoice): void {
+  try { localStorage.setItem(QUALITY_KEY, encodeChoice(choice)); } catch { /* storage unavailable */ }
+}
+
+/** What a session asks the server for at `choice`; see `sessionQuality`. */
+export interface QualityRequest { adaptive: boolean; maxBitrateBps: number | null }
 
 // Probe while the user browses so the first play doesn't wait on it.
 if (typeof window !== "undefined") (window.requestIdleCallback ?? setTimeout)(() => { clientCapabilities().catch(() => {}); });
 
 /** Open a session; a transcode starts at `startPositionMs` so far seeks don't wait on ffmpeg. */
-export async function startSession(mediaFileId: string, subtitle: number | null = null, startPositionMs = 0, audioStream: number | null = null, profile?: unknown): Promise<Session> {
+export async function startSession(mediaFileId: string, subtitle: number | null = null, startPositionMs = 0, audioStream: number | null = null, profile?: any, quality: QualityRequest = sessionQuality(qualityChoice(), null)): Promise<Session> {
   // A device other than this browser plays it when `profile` says what that device decodes.
-  const capabilities = profile ?? await clientCapabilities();
-  const data = await request(new StartPlaybackStore(), { media: mediaFileId, capabilities, subtitle, start: Math.max(0, Math.round(startPositionMs)), audio: audioStream });
+  const measured = profile ?? await clientCapabilities();
+  const capabilities = quality.maxBitrateBps ? { ...measured, maxBitrateBps: quality.maxBitrateBps } : measured;
+  const data = await request(new StartPlaybackStore(), { media: mediaFileId, capabilities, subtitle, start: Math.max(0, Math.round(startPositionMs)), audio: audioStream, adaptive: quality.adaptive });
   const session = data.startPlaybackSession as Session;
   return { ...session, url: mediaUrl(session.url), subtitles: session.subtitles?.map((track: any) => ({ ...track, url: mediaUrl(track.url) })) } as Session;
 }
@@ -130,7 +156,8 @@ export async function playWork(work: any, options: PlayOptions = {}): Promise<bo
       return await connect.cast(work, { editionId: options.editionId, mediaFileId: options.mediaFileId, positionMs: options.fromStart ? 0 : options.positionMs });
     }
     const { detail, edition, mediaFileId, audioStream, subtitleIndex, burnedSubtitle, resume } = await resolvePlayable(work, options);
-    const session = await startSession(mediaFileId, burnedSubtitle, resume, audioStream);
+    const quality = qualityChoice();
+    const session = await startSession(mediaFileId, burnedSubtitle, resume, audioStream, undefined, sessionQuality(quality, null));
     player.current = {
       ...session,
       workId: work.id,
@@ -144,6 +171,7 @@ export async function playWork(work: any, options: PlayOptions = {}): Promise<bo
       audioStream,
       subtitleIndex,
       burnedSubtitle,
+      quality,
     };
     return true;
   } catch (cause) {
@@ -200,16 +228,20 @@ export async function nextSibling(work: any): Promise<any | null> {
 
 /**
  * Replace the current session with one starting at `positionMs` — to burn
- * in a different subtitle, or to seek a transcode far from its offset.
- * Resolves false (after a toast) when no new session could be opened.
+ * in a different subtitle, seek a transcode far from its offset, or play at
+ * another quality. Resolves false (after a toast) when no new session could
+ * be opened.
  */
-export async function restartSession(subtitle: number | null, positionMs: number): Promise<boolean> {
+export async function restartSession(subtitle: number | null, positionMs: number, change: { quality?: QualityChoice; leftOriginal?: boolean } = {}): Promise<boolean> {
   const current = player.current;
   if (!current?.mediaFileId) return false;
+  const quality = change.quality ?? current.quality ?? qualityChoice();
+  const leftOriginal = change.leftOriginal ?? (change.quality ? false : current.leftOriginal ?? false);
   try {
     await stopSession(current.sessionId);
-    const session = await startSession(current.mediaFileId, subtitle, positionMs, current.audioStream ?? null);
-    player.current = { ...current, ...session, resumeMs: positionMs };
+    const session = await startSession(current.mediaFileId, subtitle, positionMs, current.audioStream ?? null, undefined, sessionQuality(quality, current.decision?.source ?? null, leftOriginal));
+    // The ladder a session offers depends on the limit it was asked with; the first one's is the whole of it.
+    player.current = { ...current, ...session, qualities: current.qualities?.length ? current.qualities : session.qualities, resumeMs: positionMs, quality, leftOriginal };
     return true;
   } catch (cause) {
     toast(cause instanceof Error ? cause.message : String(cause), "error");

@@ -104,6 +104,7 @@ export default defineConfig(({ mode }) => {
         { find: /^\$pages\//, replacement: `${here("./src/pages")}/` },
         { find: "$codecs", replacement: here("../lib/ts/codecSupport.ts") },
         { find: "$devices", replacement: here("../lib/ts/device.ts") },
+        { find: "$quality", replacement: here("../lib/ts/quality.ts") },
       ],
       conditions: ["@solidtv/source", "browser", ...(mode === "development" ? ["development"] : [])],
       dedupe: ["solid-js", "solid-js/universal", "@solidjs/router", "@solidtv/renderer", "@solidtv/solid", "@solidtv/solid/primitives"],

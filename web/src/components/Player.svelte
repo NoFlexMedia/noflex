@@ -32,7 +32,8 @@
   import { mediaUrl } from "$lib/tokens.js";
   import { request, writeUserData } from "$lib/graphql.js";
   import { onReconnect } from "$lib/live.js";
-  import { closePlayer, nextSibling, player, playWork, restartSession, stopSession } from "$lib/playback.svelte.js";
+  import { closePlayer, measured, nextSibling, player, playWork, rememberQuality, restartSession, stopSession } from "$lib/playback.svelte.js";
+  import { AutoQuality, frameLabel, megabits, sameChoice } from "$quality";
   import { reportSoon } from "$lib/receiver.svelte.js";
   import { transport } from "$lib/transport.svelte.js";
   import { poll, toast } from "$lib/ui.svelte.js";
@@ -79,6 +80,9 @@
   let suppressRoomEcho = false;
   /** Source position (s) a restarted transcode is coming up at; null otherwise. */
   let restarting = $state(null);
+  /** The ladder step hls.js is playing, when there's a ladder. */
+  let level = $state(null);
+  let switching = false;
 
   let edition = $derived(playback.edition);
   let trick = $derived(edition?.trickplay);
@@ -95,6 +99,17 @@
   // Live sessions started elsewhere may only carry the job id, which is
   // the session id on the transcode route.
   let sessionId = $derived(playback.sessionId ?? playback.jobId);
+  let choice = $derived(playback.quality ?? { kind: "original" });
+  // One per title, so leaving the original holds across the sessions Auto opens.
+  let auto = $derived.by(() => { playback.mediaFileId; return new AutoQuality(); });
+  let stepName = $derived(level ? playback.qualities?.find((q) => q.height === level.height)?.label ?? `${level.height}p` : null);
+  let routeLabel = $derived(
+    playback.route === "OPTIMIZED" ? "Optimized"
+    // A remux, or a transcode of the audio alone, still shows the original picture.
+    : playback.route !== "TRANSCODE" || ["REMUX", "TRANSCODE_AUDIO"].includes(playback.decision?.plan) ? (choice.kind === "auto" ? "Auto · original" : "Direct")
+    : playback.adaptive ? `Auto${stepName ? ` · ${stepName}` : ""}`
+    : playback.qualities?.find((q) => choice.kind === "pinned" && q.bitrateBps === choice.bitrateBps)?.label ?? "Transcoding",
+  );
   let delivered = $derived(playback.subtitles ?? []);
   // Tracks without an out-of-band rendition can only be burned in; ASS
   // can be either, since WebVTT drops its styling.
@@ -133,6 +148,8 @@
     finalized = false;
     error = "";
     waiting = true;
+    level = null;
+    untrack(() => auto.settle());
     let disposed = false;
     // Prefer hls.js wherever MSE exists: it retries playlists the transcoder
     // hasn't finished writing, which native HLS (Safari, newer Chrome) won't.
@@ -147,9 +164,18 @@
         }
         const retry = { maxNumRetry: 8, retryDelayMs: 500, maxRetryDelayMs: 3000, shouldRetry: (config, count) => count < config.maxNumRetry };
         const policy = { default: { maxTimeToFirstByteMs: 15_000, maxLoadTimeMs: 30_000, timeoutRetry: retry, errorRetry: retry } };
-        // A transcode's playlist grows as it encodes, which hls.js would take for
-        // a live stream and join at the edge; its time zero is where to start.
-        hls = new Hls({ enableWorker: false, backBufferLength: 60, maxBufferLength: 30, manifestLoadPolicy: policy, playlistLoadPolicy: policy, ...(live ? {} : { startPosition: 0 }) });
+        // The server encodes a segment when it's asked for, and holds the request for up to 45 s.
+        const fragments = { default: { maxTimeToFirstByteMs: 50_000, maxLoadTimeMs: 120_000, timeoutRetry: retry, errorRetry: retry } };
+        // A linear transcode's playlist grows as it encodes, which hls.js would take for a
+        // live stream and join at the edge; its time zero is the offset, so this is where to start.
+        const start = Math.max(0, (playback.resumeMs ?? 0) / 1000 - offset);
+        hls = new Hls({
+          enableWorker: false, backBufferLength: 60, maxBufferLength: 30,
+          manifestLoadPolicy: policy, playlistLoadPolicy: policy, fragLoadPolicy: fragments,
+          // A ladder starts as high as the last stream held, or at the top: Auto tries the best first.
+          abrEwmaDefaultEstimate: measured.bandwidthBps ?? 50_000_000,
+          ...(live ? {} : { startPosition: start }),
+        });
         hls.loadSource(url);
         hls.attachMedia(video);
         // AirPlay sends the target to fetch the stream itself, and Safari offers that for a
@@ -170,6 +196,10 @@
           chosen = null;
         });
         hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_event, data) => { audioTrack = data.id; });
+        hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+          const switched = hls?.levels?.[data.level];
+          level = switched && hls.levels.length > 1 ? { height: switched.height, bitrate: switched.bitrate } : null;
+        });
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (!data.fatal) return;
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
@@ -183,6 +213,7 @@
     }
     return () => {
       disposed = true;
+      if (hls?.bandwidthEstimate) measured.bandwidthBps = hls.bandwidthEstimate;
       hls?.destroy();
       hls = null;
       alternate?.remove();
@@ -270,6 +301,7 @@
   }
   function onPlaying() {
     restarting = null;
+    auto.resumed();
     waiting = false; paused = false;
     clearInterval(heartbeat);
     reportSoon();
@@ -389,6 +421,36 @@
     tracks.addEventListener("change", apply);
     return () => tracks.removeEventListener("change", apply);
   });
+
+  // ---- quality -------------------------------------------------------------
+  async function changeQuality(change, message) {
+    if (switching) return;
+    switching = true;
+    const at = positionMs();
+    waiting = true;
+    clearInterval(heartbeat);
+    if ((await restartSession(burned, at, change)) && message) toast(message);
+    switching = false;
+  }
+  function setQuality(next) {
+    rememberQuality(next);
+    if (!sameChoice(next, choice)) changeQuality({ quality: next });
+  }
+  // Auto moves between the original and the ladder; along the ladder, hls.js adapts.
+  $effect(() => {
+    if (choice.kind !== "auto" || live || playback.room) return;
+    return poll(() => {
+      if (switching || restarting != null || !video || video.paused) return;
+      // Once the original has been left, a session that still isn't a ladder had none to give.
+      if (!playback.adaptive && !playback.leftOriginal && auto.struggling()) {
+        auto.leftOriginal();
+        changeQuality({ leftOriginal: true }, "Lowered the quality to keep up with your connection");
+      } else if (playback.adaptive && playback.leftOriginal && auto.recovered(hls?.bandwidthEstimate, playback.decision?.source?.bitrateBps)) {
+        changeQuality({ leftOriginal: false }, "Back to the original quality");
+      }
+    }, 1000);
+  });
+  const sourceText = (s) => [frameLabel(s?.width, s?.height), megabits(s?.bitrateBps)].filter(Boolean).join(" · ");
 
   const trackLabel = (track) => track.title || track.language?.toUpperCase() || `Track ${track.index + 1}`;
 
@@ -645,7 +707,8 @@
     ontimeupdate={onTime}
     onplaying={onPlaying}
     onpause={onPause}
-    onwaiting={() => { waiting = true; reportSoon(); }}
+    onwaiting={() => { waiting = true; reportSoon(); if (!video.seeking) auto.stalled(); }}
+    onseeking={() => auto.settle()}
     oncanplay={() => (waiting = false)}
     onseeked={() => { if (restarting == null) roomSend(video.paused ? "PAUSE" : "SEEK"); }}
     onended={onEnded}
@@ -669,7 +732,7 @@
       <strong>{playback.title}</strong>
       {#if playback.subtitle || playback.room}<small>{#if playback.room}<span class="dot live"></span>Watch room · {playback.room.isHost ? "you’re hosting" : "synced to host"}{#if playback.subtitle}{" · "}{/if}{/if}{playback.subtitle ?? ""}</small>{/if}
     </div>
-    <button class="route" aria-pressed={infoOpen} aria-label="Playback info" onclick={() => (infoOpen = !infoOpen)}>{playback.route === "TRANSCODE" ? "Adaptive" : playback.route === "OPTIMIZED" ? "Optimized" : "Direct"}</button>
+    <button class="route" aria-pressed={infoOpen} aria-label="Playback info" onclick={() => (infoOpen = !infoOpen)}>{routeLabel}</button>
   </header>
 
   {#if infoOpen}
@@ -686,6 +749,7 @@
           {#if decision.encoder}<dt>Encoder</dt><dd>{decision.encoder}{decision.hardware ? " (hardware)" : ""}{decision.audioEncoder ? ` · audio ${decision.audioEncoder}` : ""}{decision.tonemap ? " · HDR → SDR tonemap" : ""}</dd>{/if}
           {#if rate(decision.target.bitrateBps)}<dt>Bitrate</dt><dd>{rate(decision.target.bitrateBps)}</dd>{/if}
         {/if}
+        {#if !live}<dt>Quality</dt><dd>{choice.kind === "auto" ? "Auto" : choice.kind === "original" ? "Original" : "Pinned"}{stepName ? ` · ${stepName}${level?.bitrate ? ` at ${megabits(level.bitrate)}` : ""}` : ""}</dd>{/if}
         {#if stats}
           <dt>Decoded</dt><dd class="tabular">{stats.size}</dd>
           <dt>Dropped</dt><dd class="tabular">{stats.dropped}</dd>
@@ -783,9 +847,18 @@
           {#each burnable as track (track.index)}<MenuItem icon={burned === track.index ? Check : null} hint={delivered.some((item) => item.index === track.index) ? "styled" : "burn in"} onSelect={() => chooseSubtitle(track.index, true)}>{trackLabel(track)}</MenuItem>{/each}
         </Menu>
       {/if}
-      <Menu portal={root} side="top" width={220}>
+      <Menu portal={root} side="top" width={240}>
         {#snippet trigger(props)}<button {...props} class="ctl" aria-label="Settings"><Gear size={20} /></button>{/snippet}
         <MenuItem icon={infoOpen ? Check : Info} hint="i" onSelect={() => (infoOpen = !infoOpen)}>Playback info</MenuItem>
+        {#if !live && !isGuest && playback.qualities?.length}
+          <div class="nf-menu-sep"></div>
+          <div class="nf-menu-label">Quality</div>
+          <MenuItem icon={choice.kind === "original" ? Check : null} onSelect={() => setQuality({ kind: "original" })}><span class="quality">Original<small>{sourceText(playback.decision?.source)}</small></span></MenuItem>
+          <MenuItem icon={choice.kind === "auto" ? Check : null} onSelect={() => setQuality({ kind: "auto" })}><span class="quality">Auto<small>adapts to your connection</small></span></MenuItem>
+          {#each playback.qualities as quality (quality.bitrateBps)}
+            <MenuItem icon={choice.kind === "pinned" && choice.bitrateBps === quality.bitrateBps ? Check : null} onSelect={() => setQuality({ kind: "pinned", bitrateBps: quality.bitrateBps })}><span class="quality">{quality.label}<small>{megabits(quality.bitrateBps)}</small></span></MenuItem>
+          {/each}
+        {/if}
       </Menu>
       {#if airplay.available}<Tip portal={root} text={airplay.active ? "Playing with AirPlay" : "AirPlay"}>{#snippet children(props)}<button {...props} class="ctl" class:on={airplay.active} aria-label="AirPlay" aria-pressed={airplay.active} onclick={() => video.webkitShowPlaybackTargetPicker()}><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d={siAirplayvideo.path} /></svg></button>{/snippet}</Tip>{/if}
       {#if document.pictureInPictureEnabled}<Tip portal={root} text="Picture in picture" hint="p">{#snippet children(props)}<button {...props} class="ctl" aria-label="Picture in picture" onclick={togglePip}><PictureInPicture size={20} /></button>{/snippet}</Tip>{/if}
@@ -795,6 +868,8 @@
 </div>
 
 <style>
+  .quality { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; width: 100%; }
+  .quality small { color: var(--text-3); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
   .player { position: fixed; inset: 0; z-index: 70; background: #000; color: #fff; outline: none; animation: player-in 420ms var(--ease-out); overflow: hidden; }
   @keyframes player-in { from { opacity: 0; transform: scale(1.02); } }
   .player.idle { cursor: none; }

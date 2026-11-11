@@ -5,7 +5,7 @@ import adapter from "@sveltejs/adapter-static";
 export default {
   kit: {
     adapter: adapter({ fallback: "index.html", strict: true }),
-    alias: { $codecs: "../lib/ts/codecSupport.ts", $devices: "../lib/ts/device.ts", $components: "src/components", $houdini: ".houdini", "$houdini/*": ".houdini/*" },
+    alias: { $codecs: "../lib/ts/codecSupport.ts", $devices: "../lib/ts/device.ts", $quality: "../lib/ts/quality.ts", $components: "src/components", $houdini: ".houdini", "$houdini/*": ".houdini/*" },
     csp: {
       mode: "hash",
       directives: {

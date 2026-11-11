@@ -236,12 +236,19 @@ priorities.metadata.movie = 200
 ```
 
 ### `plugin.per_plugin_config.<id>`
-- **Type:** `toml::Value` (free-form)
+- **Type:** table (free-form)
 - **Default:** empty
 - **Env:** not supported (use TOML)
 
-Per-plugin TOML blob passed to the plugin via `host_config::read()`. Use
-this for plugin-specific settings (e.g. TMDb API base URL).
+Per-plugin settings, handed to the plugin as a TOML document through
+`host_config::read()`.
+
+Most first-party plugins can also be set up from the admin UI: Plugins,
+then Settings on the plugin. A value set there wins over this table and
+over the secret files below, and the plugin reloads with it; reset it
+there to use the files' value again. The form says which values come
+from `config.toml` or a secret file, and never shows a secret, only
+whether one is set.
 
 For the first-party OIDC plugin, register
 `${public_url}/auth/oidc/callback` with the identity provider and configure:
@@ -291,6 +298,17 @@ use your own from <https://thetvdb.com/api-information>, store it as
 api_key = "replace-me"
 # pin = "replace-me"
 ```
+
+The first-party Trakt plugin needs the credentials of an API app you create at
+<https://trakt.tv/oauth/applications>, stored as `trakt.toml`:
+
+```toml
+client_id = "replace-me"
+client_secret = "replace-me"
+```
+
+The webhook plugin's URL and token are in its
+[README](../backend/plugins/noflex-webhook/README.md).
 
 ### Live TV source URLs
 

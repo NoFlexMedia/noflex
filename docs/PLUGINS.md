@@ -153,7 +153,7 @@ NoFlex searches three directories at startup and watches all three. Later tiers 
 | State  | `/var/lib/noflex/plugins/`         | Downloads                      |
 | User   | `$XDG_CONFIG_HOME/noflex/plugins/` | Dev installs, home-manager     |
 
-Secrets follow the same tiers under `secrets/`, one flat `<plugin-id>.toml` per plugin.
+Secrets follow the same tiers under `secrets/`, one flat `<plugin-id>.toml` per plugin. A value an administrator sets from the admin UI wins over every tier; see [Settings](#settings).
 
 `[plugin.overrides.<id>] disabled = true` in the server config keeps a plugin from loading at all, whichever tier it's in: no hook, task, event or account link reaches it (see [`CONFIGURATION.md`](CONFIGURATION.md#pluginoverridesid)).
 
@@ -172,6 +172,7 @@ The manifest is TOML embedded in the `.wasm` as a custom section named `noflex:m
 | `http_egress_hosts`                        | optional | Allowlist for `host-net.request`: exact hosts (IP literals without brackets), `*.suffix`, or `"*"`. Requires `http.egress`                                                                |
 | `secrets_read`                             | optional | Keys read via `host-secrets.read`. Requires `secrets.read`                                                                                                                                |
 | `user_secrets_read` / `user_secrets_write` | optional | Per-user keys for `host-secrets.read-for-user` / `write-for-user`. Require `user-secrets.read` / `user-secrets.write`                                                                     |
+| `settings`                                 | optional | `[[settings]]` entries an administrator edits from the admin UI; see [Settings](#settings)                                                                                                |
 | `tasks`                                    | optional | `[[tasks]]` entries (`name`, `interval_ms`, optional `payload`) for `background`. Require `background`                                                                                    |
 | `events`                                   | optional | `notifier` only: event names to receive (`work-added`, `scan-completed`, ...). Unset receives every kind                                                                                  |
 | `priority.<hook>`                          | optional | Per-hook default priority; server config can override                                                                                                                                     |
@@ -179,14 +180,49 @@ The manifest is TOML embedded in the `.wasm` as a custom section named `noflex:m
 | `memory_limit_mb`                          | optional | Default 64                                                                                                                                                                                |
 | `license`, `author`, `homepage`            | optional | Display only                                                                                                                                                                              |
 
+## Settings
+
+A manifest's `[[settings]]` say what an administrator can configure, and the admin UI's Plugins tab draws a form from them. Each is a top-level key of the plugin's config stanza, or of its secrets:
+
+```toml
+secrets_read = ["auth_token"]
+
+[[settings]]
+key = "url"
+label = "URL"
+description = "Every event is posted here as JSON."
+kind = "url"
+required = true
+
+[[settings]]
+key = "auth_token"
+label = "Bearer token"
+kind = "secret"
+```
+
+| Field         | Required | Notes                                                                                                   |
+| ------------- | -------- | ------------------------------------------------------------------------------------------------------- |
+| `key`         | yes      | Unique within the manifest                                                                              |
+| `label`       | yes      | Shown beside the field, in sentence case. Refusals lead with it: "Retries must be a whole number"       |
+| `description` | optional | One short line under the field                                                                          |
+| `kind`        | yes      | `text`, `url` (absolute `http` or `https`), `secret`, `boolean`, `integer`, or `choice`                 |
+| `choices`     | `choice` | The values a `choice` allows; any other kind with `choices` fails the load                              |
+| `required`    | optional | Default `false`. The plugin still loads without one, but an administrator can't clear the last source   |
+| `default`     | optional | Must fit `kind` (`default = 3` for an integer). Not allowed for a `secret`                              |
+
+- **Values reach the guest unchanged in shape.** A non-secret setting is a key of the document `host-config.read` returns, a TOML boolean or integer for those kinds and a string otherwise. A `secret` is read with `host-secrets.read(key)`, never through config, and its key must be in `secrets_read`, which stays the one list of secrets a plugin reads.
+- **Precedence:** a value set from the admin UI, then `config.toml` (or for a secret, the secret files), then `default`. Clearing a value in the admin UI falls back.
+- **A change reloads the plugin**, secrets included, so reading config and secrets once at start is fine.
+- A secret's value never leaves the server: the admin UI shows only whether one is set, and where from.
+
 ## Host imports
 
 Plugins have no sockets, files, or database access of their own. They call back into the host through narrow, capability-gated imports, and every capability use is audit-logged.
 
 - `host-log.log(level, namespace, message, fields)` — structured logs into the server's `tracing` output. Use `Level::Audit` for security-relevant events.
-- `host-secrets.read(key)` — an API key declared in `secrets_read`.
+- `host-secrets.read(key)` — an API key declared in `secrets_read`: an administrator's value from the admin UI, else the secret files.
 - `host-secrets.read-for-user(user, key)` / `write-for-user(user, key, value)` — per-user tokens, bound to the call they run in: `user` must be the user that call acts for (`user-link` calls act for their user, `scrobbler` calls for the event's user, a `background` run for whoever's call enqueued it, through its `more(...)` chain). Anything else is `capability-denied`, or `unavailable` in a call that acts for no one.
-- `host-config.read()` — the plugin's `[plugin.per_plugin_config.<id>]` stanza.
+- `host-config.read()` — a TOML document: the plugin's `[plugin.per_plugin_config.<id>]` stanza, with the [settings](#settings) an administrator set over it and manifest defaults for the rest.
 - `host-library.lookup-work-by-id(id)` / `lookup-edition-by-id(id)` — read-only library lookups.
 - `host-tasks.enqueue(task, payload)` — queue a run of one of your `[[tasks]]`. Requires `background`.
 - `host-assets.read-file(name)` — a host-managed asset such as model weights. Requires `assets.read`.

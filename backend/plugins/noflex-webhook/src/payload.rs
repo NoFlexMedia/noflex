@@ -163,7 +163,8 @@ mod tests {
 
     #[test]
     fn config_parses_plain_document() {
-        let cfg = parse_config("url = \"https://ntfy.example.com/noflex\"\n").expect("valid stanza");
+        let cfg =
+            parse_config("url = \"https://ntfy.example.com/noflex\"\n").expect("valid stanza");
         assert_eq!(cfg.url, "https://ntfy.example.com/noflex");
     }
 

@@ -120,7 +120,9 @@ impl notifier::Guest for Webhook {
             Err(e) => {
                 log(
                     host_log::Level::Warn,
-                    &format!("webhook: auth_token unreadable, sending without Authorization: {e:?}"),
+                    &format!(
+                        "webhook: auth_token unreadable, sending without Authorization: {e:?}"
+                    ),
                 );
                 None
             }

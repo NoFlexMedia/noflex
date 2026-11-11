@@ -1,0 +1,36 @@
+manifest_version = 1
+plugin_id = "opensubtitles"
+display_name = "OpenSubtitles"
+version = "0.0.1"
+noflex_api_version = "0.2"
+hooks = ["subtitle"]
+capabilities = ["http.egress", "secrets.read"]
+# The API, the VIP API a VIP account's login points at, and where download
+# links lead.
+http_egress_hosts = ["api.opensubtitles.com", "vip-api.opensubtitles.com", "www.opensubtitles.com"]
+secrets_read = ["api_key", "username", "password"]
+license = "AGPL-3.0-only"
+homepage = "https://www.opensubtitles.com"
+
+# A search may take two requests and a download two more (a login, then the
+# file), each paced at 5 a second.
+[deadlines_secs]
+subtitle = 45
+
+[[settings]]
+key = "api_key"
+label = "API key"
+description = "From your OpenSubtitles.com account's API consumers page. Searching needs one; NoFlex has no shared key."
+kind = "secret"
+required = true
+
+[[settings]]
+key = "username"
+label = "Username"
+description = "Optional: signing in raises the daily download quota to your account's."
+kind = "secret"
+
+[[settings]]
+key = "password"
+label = "Password"
+kind = "secret"

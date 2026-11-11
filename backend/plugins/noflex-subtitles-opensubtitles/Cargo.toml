@@ -1,0 +1,35 @@
+[package]
+name = "noflex-subtitles-opensubtitles"
+version = "0.0.1"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "OpenSubtitles.com subtitle search for NoFlex (WASM plugin)"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Async wasip2 stack (WASI 0.3 native async + streams; `async-spawn` for
+# writing `subtitle::download` streams after returning). Single direct
+# wit-bindgen dep, as in noflex-metadata-tmdb.
+wit-bindgen = { version = "0.60", default-features = false, features = ["macros", "realloc", "bitflags", "async", "async-spawn"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Keep debug info in the released `.wasm` so trap backtraces include
+# source-level function names.
+[profile.release]
+debug = true
+strip = "none"
+
+[package.metadata.noflex-plugin]
+# The canonical manifest is `src/manifest.toml`, embedded in the `.wasm`;
+# keep the two in sync.
+plugin_id = "opensubtitles"
+display_name = "OpenSubtitles"
+hooks = ["subtitle"]
+capabilities = ["http.egress", "secrets.read"]
+http_egress_hosts = ["api.opensubtitles.com", "vip-api.opensubtitles.com", "www.opensubtitles.com"]
+secrets_read = ["api_key", "username", "password"]

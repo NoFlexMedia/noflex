@@ -81,6 +81,49 @@ async fn loads_real_tvdb_plugin() {
 }
 
 #[tokio::test]
+async fn opensubtitles_without_a_key_says_how_to_set_one() {
+    let Some(wasm) = plugin_wasm_path("noflex-subtitles-opensubtitles", "opensubtitles") else {
+        eprintln!("skipping: build the plugin first with `cargo xtask plugin-build opensubtitles`");
+        return;
+    };
+    let engine = build_engine(&EngineConfig::default()).expect("engine builds");
+    let registry = PluginRegistry::new(engine).expect("registry");
+    let info = registry
+        .load_from(&wasm)
+        .unwrap_or_else(|e| panic!("load opensubtitles plugin: {e}"));
+    assert_eq!(info.id, "opensubtitles");
+    assert!(info.hooks.contains(&HookKind::Subtitle));
+
+    let search = registry
+        .search_subtitles(&noflex_core::providers::SubtitleQuery {
+            moviehash: None,
+            file_size: 0,
+            file_name: "Alien.mkv".into(),
+            title: "Alien".into(),
+            year: Some(1979),
+            kind: noflex_core::model::WorkKind::Movie,
+            external_ids: vec![],
+            series_external_ids: vec![],
+            season: None,
+            episode: None,
+            languages: vec!["eng".into()],
+        })
+        .await;
+    assert!(search.matches.is_empty());
+    assert!(
+        matches!(
+            &search.failures[..],
+            [failure] if matches!(
+                &failure.error,
+                noflex_plugin_host::ProviderError::Unavailable(why) if why.contains("API key")
+            )
+        ),
+        "{:?}",
+        search.failures
+    );
+}
+
+#[tokio::test]
 async fn loads_real_musicbrainz_plugin() {
     let Some(wasm) = plugin_wasm_path("noflex-metadata-musicbrainz", "musicbrainz") else {
         eprintln!("skipping: build the plugin first with `cargo xtask plugin-build`");

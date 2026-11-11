@@ -1,0 +1,52 @@
+{
+  "total_pages": 1,
+  "total_count": 1,
+  "per_page": 60,
+  "page": 1,
+  "data": [
+    {
+      "id": "2492310",
+      "type": "subtitle",
+      "attributes": {
+        "subtitle_id": "2492310",
+        "language": "pt-BR",
+        "download_count": 7056,
+        "new_download_count": 27,
+        "hearing_impaired": false,
+        "hd": true,
+        "fps": 25.0,
+        "votes": 0,
+        "ratings": 0.0,
+        "from_trusted": false,
+        "foreign_parts_only": true,
+        "upload_date": "2014-11-08T00:39:41Z",
+        "ai_translated": false,
+        "machine_translated": false,
+        "release": "Show.S02E06.720p.WEB-DL.DD5.1.H.264",
+        "comments": "",
+        "legacy_subtitle_id": 5885999,
+        "uploader": { "uploader_id": 3282, "name": "example-uploader", "rank": "member" },
+        "feature_details": {
+          "feature_id": 149353,
+          "feature_type": "Episode",
+          "year": 2014,
+          "title": "A Fractured House",
+          "movie_name": "Show - S02E06 A Fractured House",
+          "imdb_id": 4078580,
+          "tmdb_id": 1010684,
+          "season_number": 2,
+          "episode_number": 6,
+          "parent_imdb_id": 2364582,
+          "parent_title": "Show",
+          "parent_tmdb_id": 1403,
+          "parent_feature_id": 13370
+        },
+        "url": "https://www.opensubtitles.com/pt-BR/subtitles/show-s02e06-720p-web-dl",
+        "related_links": [],
+        "files": [
+          { "file_id": 2568816, "cd_number": 1, "file_name": "Show.S02E06.720p.WEB-DL.DD5.1.H.264" }
+        ]
+      }
+    }
+  ]
+}

@@ -8,17 +8,18 @@ First-party plugins get no special treatment: they ship as `.wasm` and cross the
 
 They live in `backend/plugins/`, outside the main Cargo workspace because they build for `wasm32-wasip2`.
 
-| Path                           | Plugin ID     | Purpose                                                                 |
-| ------------------------------ | ------------- | ----------------------------------------------------------------------- |
-| `noflex-metadata-tmdb/`        | `tmdb`        | The Movie Database — movies and series metadata and artwork             |
-| `noflex-metadata-tvdb/`        | `tvdb`        | TheTVDB — series and movie metadata and artwork                         |
-| `noflex-metadata-musicbrainz/` | `musicbrainz` | MusicBrainz — albums, artists, tracks                                   |
-| `noflex-auth-oidc/`            | `oidc`        | OpenID Connect login and local-account linking                          |
-| `noflex-embeddings/`           | `embeddings`  | Local Model2Vec embeddings that fill the vector search index            |
-| `noflex-webhook/`              | `webhook`     | Outbound webhooks for domain events (Gotify, ntfy, Discord, Slack, ...) |
-| `noflex-trakt/`                | `trakt`       | Trakt scrobbling, linked per user by device flow                        |
+| Path                              | Plugin ID       | Purpose                                                                 |
+| --------------------------------- | --------------- | ----------------------------------------------------------------------- |
+| `noflex-metadata-tmdb/`           | `tmdb`          | The Movie Database — movies and series metadata and artwork             |
+| `noflex-metadata-tvdb/`           | `tvdb`          | TheTVDB — series and movie metadata and artwork                         |
+| `noflex-metadata-musicbrainz/`    | `musicbrainz`   | MusicBrainz — albums, artists, tracks                                   |
+| `noflex-auth-oidc/`               | `oidc`          | OpenID Connect login and local-account linking                          |
+| `noflex-embeddings/`              | `embeddings`    | Local Model2Vec embeddings that fill the vector search index            |
+| `noflex-webhook/`                 | `webhook`       | Outbound webhooks for domain events (Gotify, ntfy, Discord, Slack, ...) |
+| `noflex-trakt/`                   | `trakt`         | Trakt scrobbling, linked per user by device flow                        |
+| `noflex-subtitles-opensubtitles/` | `opensubtitles` | OpenSubtitles.com subtitle search; needs the operator's own API key     |
 
-Some have their own README with setup steps (`noflex-embeddings`, `noflex-webhook`).
+Some have their own README with setup steps (`noflex-embeddings`, `noflex-webhook`, `noflex-subtitles-opensubtitles`). NoFlex ships no shared OpenSubtitles key, so that plugin answers `unavailable` until an administrator sets one.
 
 ## Hooks
 
@@ -258,9 +259,19 @@ When several plugins implement the same hook, the host:
 The host turns the domain bus into `scrobble-event`s and enriches each from storage, so a scrobbler needs no library lookups. Users who never linked are skipped.
 
 - `action` is `started` when playback starts, and `stopped` with `position-ms` for the progress reported when it stops; the session's own end isn't scrobbled apart from that. A `stopped` without a position is a title marked played.
+- When a session's progress reports turn from playing to paused, `paused` comes once with `position-ms`, and `started` again with one when they turn back: Trakt's `/scrobble/pause` and `/scrobble/start`. Heartbeats in the same state send nothing.
 - `external-ids` are the work's provider ids, without the scanner's own keys. Match on these, never on titles.
 - For an episode, `series-external-ids`, `season-number` and `episode-number` name it by its show, since an episode's provider ids are paths through its series.
 - `runtime-ms` is the edition's runtime when known; the plugin derives its own progress percent and watched threshold.
+
+## Subtitles
+
+A viewer searches online for a file's subtitles from the player; the host asks every subtitle plugin at once and keeps what each found, so one that's down or out of quota hides nothing the others offer.
+
+- **`search(subtitle-query)`** gets everything the host knows, as a hash match often misses: the OpenSubtitles `moviehash` and `file-size` (the host reads the file; plugins never see it), the `file-name`, `title`, `year`, `kind` and `external-ids` (without the scanner's own keys), for an episode its `series-external-ids`, `season` and `episode`, and the wanted `languages` as ISO 639-2/T (`eng`, `deu`; empty for any). Search by hash, then ids, then title.
+- Answer `subtitle-match`es with a `handle` of your own, the `language` in the same spelling (a `locale` like `pt-BR` where regions differ), the `format` `download` returns, the `release`, `hearing-impaired`, `forced`, `hash-match`, and a `download-count` and `score` when the provider has them. The host ranks them: hash matches first, then by downloads.
+- **`download(handle)`** returns the format (`srt`, `vtt`, `ass` or `ssa`) and the bytes, up to 8 MiB. The host decodes them to UTF-8 and keeps them in its own subtitle cache (`cache.subtitle_dir`), never in the media folder, as one of the file's tracks for everyone who can see the title. It plays and burns in like a sidecar, and goes once nobody has used it for `cache.subtitle_keep_days`.
+- A used-up quota is `rate-limited(seconds-until-reset)`, which the player shows as when to try again; a provider that isn't set up is `unavailable` with a sentence saying what's missing.
 
 ## Attribution
 

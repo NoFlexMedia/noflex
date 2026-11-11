@@ -23,6 +23,7 @@
   import Hero from "$components/Hero.svelte";
   import SimpleIcon from "$components/SimpleIcon.svelte";
   import Terminal from "$components/Terminal.svelte";
+  import Adaptive from "$components/home/Adaptive.svelte";
   import Decision from "$components/home/Decision.svelte";
   import Devices from "$components/home/Devices.svelte";
   import Friends from "$components/home/Friends.svelte";
@@ -120,6 +121,11 @@
       <p>Encodes try AV1 first for any device that decodes it, on whichever GPU you have. When something does have to transcode, every app can show you why, in plain words.</p>
     </header>
     <div use:reveal><Decision /></div>
+    <header class="section-head sub" use:reveal>
+      <h3>The original, until the connection says otherwise.</h3>
+      <p>A title plays as stored whenever the device can. Pick a quality yourself, or turn on Auto: when the original stalls, NoFlex reopens it at the same second as a ladder of qualities, encoded piece by piece as the player asks, and the player moves along it as the connection changes. Once there's room again, it goes back to the original. Every transcode covers the whole title from the start, so you can jump anywhere in it.</p>
+    </header>
+    <div use:reveal><Adaptive /></div>
   </div>
 </section>
 

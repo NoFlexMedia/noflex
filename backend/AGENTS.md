@@ -182,7 +182,7 @@ Don't break these without an architecture discussion in the PR description.
 ### Adding a first-party plugin
 
 1. New `cdylib` crate under `plugins/<name>/`, using the same `wit-bindgen` version and features as the existing plugins.
-2. Declare `[package.metadata.noflex-plugin]` in its `Cargo.toml` (`plugin_id`, `hooks`, `capabilities`, ...).
+2. Write its manifest in `src/manifest.toml` (`plugin_id`, `hooks`, `capabilities`, ...) and embed it as the `noflex:manifest` section with `include_bytes!`. It's the only copy; xtask reads `plugin_id` from it.
 3. Implement the WIT `Guest` traits; stub `background::run_task` if you register no tasks.
 4. Test parsing against recorded fixtures — no network in tests.
 5. `cargo xtask plugin-build <name>`, then `cargo xtask plugin-dev <name>` to hot-reload it into a running server.

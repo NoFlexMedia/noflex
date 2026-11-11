@@ -23,13 +23,3 @@ serde_json = "1"
 [profile.release]
 debug = true
 strip = "none"
-
-[package.metadata.noflex-plugin]
-# The canonical manifest is `src/manifest.toml`, embedded in the `.wasm`;
-# keep the two in sync.
-plugin_id = "opensubtitles"
-display_name = "OpenSubtitles"
-hooks = ["subtitle"]
-capabilities = ["http.egress", "secrets.read"]
-http_egress_hosts = ["api.opensubtitles.com", "vip-api.opensubtitles.com", "www.opensubtitles.com"]
-secrets_read = ["api_key", "username", "password"]

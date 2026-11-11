@@ -63,15 +63,22 @@ Hooks are `async func`s on the WASI 0.3 native-async ABI: one instance serves ma
    [dependencies]
    noflex-plugin-sdk = { path = "../../crates/noflex-plugin-sdk" }
    wit-bindgen = { version = "…", default-features = false, features = ["macros", "realloc", "bitflags", "async"] }
+   ```
 
-   [package.metadata.noflex-plugin]
+   Write its [manifest](#manifest) next to the source:
+
+   ```toml
+   # backend/plugins/my-plugin/src/manifest.toml
+   manifest_version = 1
    plugin_id = "my-plugin"
    display_name = "My Plugin"
+   version = "0.1.0"
+   noflex_api_version = "0.2"
    hooks = ["metadata"]
    capabilities = ["http.egress"]
    http_egress_hosts = ["api.example.com"]
 
-   [package.metadata.noflex-plugin.priority]
+   [priority]
    metadata = 50
    ```
 
@@ -88,6 +95,12 @@ Hooks are `async func`s on the WASI 0.3 native-async ABI: one instance serves ma
    });
 
    use exports::noflex::plugin::{background, metadata};
+
+   // The host reads the manifest from this custom section at load.
+   #[unsafe(link_section = "noflex:manifest")]
+   #[used]
+   static NOFLEX_MANIFEST: [u8; include_bytes!("manifest.toml").len()] =
+       *include_bytes!("manifest.toml");
 
    struct MyPlugin;
 
@@ -137,7 +150,7 @@ Hooks are `async func`s on the WASI 0.3 native-async ABI: one instance serves ma
 4. **Build and hot-reload:**
 
    ```sh
-   cargo xtask plugin-build my-plugin   # compiles and embeds the manifest
+   cargo xtask plugin-build my-plugin   # compiles to a component
    cargo xtask plugin-dev my-plugin     # symlinks into $XDG_CONFIG_HOME/noflex/plugins/
    ```
 
@@ -161,7 +174,7 @@ Secrets follow the same tiers under `secrets/`, one flat `<plugin-id>.toml` per 
 
 ## Manifest
 
-The manifest is TOML embedded in the `.wasm` as a custom section named `noflex:manifest`. `cargo xtask plugin-build` derives it from `[package.metadata.noflex-plugin]`.
+The manifest is TOML embedded in the `.wasm` as a custom section named `noflex:manifest`. A first-party plugin keeps it in `src/manifest.toml` and embeds it with `include_bytes!`, as above, so it's the only copy; `cargo xtask` reads `plugin_id` from it.
 
 | Field                                      | Required | Notes                                                                                                                                                                                     |
 | ------------------------------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

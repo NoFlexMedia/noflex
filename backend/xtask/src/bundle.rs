@@ -197,7 +197,7 @@ pub fn bundle(root: &Path, options: &BundleOptions) -> Result<()> {
     for plugin in discover_plugins()? {
         std::fs::copy(
             plugin.output_wasm()?,
-            plugins.join(format!("{}.wasm", plugin.manifest.plugin_id)),
+            plugins.join(format!("{}.wasm", plugin.plugin_id)),
         )?;
     }
 

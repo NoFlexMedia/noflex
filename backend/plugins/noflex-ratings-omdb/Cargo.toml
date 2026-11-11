@@ -23,14 +23,3 @@ toml = "0.8"
 [profile.release]
 debug = true
 strip = "none"
-
-[package.metadata.noflex-plugin]
-# The xtask reads this section to know what manifest to embed in the
-# `noflex:manifest` custom section of the final `.wasm`. The canonical
-# manifest is `src/manifest.toml`; keep the two in sync.
-plugin_id = "omdb"
-display_name = "OMDb"
-hooks = ["ratings"]
-capabilities = ["http.egress", "secrets.read"]
-http_egress_hosts = ["www.omdbapi.com"]
-secrets_read = ["api_key"]

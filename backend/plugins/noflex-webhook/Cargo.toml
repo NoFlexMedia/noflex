@@ -28,16 +28,3 @@ toml = "0.8"
 [profile.release]
 debug = true
 strip = "none"
-
-[package.metadata.noflex-plugin]
-# The xtask reads this section to know what manifest to embed in the
-# `noflex:manifest` custom section of the final `.wasm`. The canonical
-# manifest is `src/manifest.toml`; keep the two in sync.
-plugin_id = "webhook"
-display_name = "Webhook Notifier"
-hooks = ["notifier"]
-capabilities = ["http.egress", "http.private-network", "secrets.read"]
-# The destination is operator-configured, so the allowlist cannot be
-# enumerated at build time — see src/manifest.toml for the full comment.
-http_egress_hosts = ["*"]
-secrets_read = ["auth_token"]

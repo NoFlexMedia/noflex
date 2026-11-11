@@ -27,15 +27,3 @@ tokenizers = { version = "0.21", default-features = false, features = ["fancy-re
 [profile.release]
 debug = true
 strip = "none"
-
-[package.metadata.noflex-plugin]
-# The xtask reads this section to know what manifest to embed in the
-# `noflex:manifest` custom section of the final `.wasm`. See
-# `xtask/src/main.rs` (PluginManifestSnippet) — its schema has no
-# `[embedding]` table, so the namespace/model/dimensions claim lives
-# only in `src/manifest.toml`.
-plugin_id = "embeddings"
-display_name = "Local Embeddings (EmbeddingGemma 2)"
-hooks = ["embedder"]
-capabilities = ["assets.read", "inference.run"]
-memory_limit_mb = 512

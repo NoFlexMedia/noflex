@@ -27,18 +27,3 @@ serde_json = "1"
 [profile.release]
 debug = true
 strip = "none"
-
-[package.metadata.noflex-plugin]
-# The xtask reads this section to know what manifest to embed in the
-# `noflex:manifest` custom section of the final `.wasm`. The canonical
-# manifest is `src/manifest.toml`; keep the two in sync.
-plugin_id = "trakt"
-display_name = "Trakt"
-hooks = ["scrobbler", "user-link", "background"]
-capabilities = ["http.egress", "secrets.read", "user-secrets.read", "user-secrets.write", "background", "user-state.read", "user-state.write"]
-http_egress_hosts = ["api.trakt.tv"]
-secrets_read = ["client_id", "client_secret"]
-user_secrets_read = ["access_token", "refresh_token", "sync_state"]
-user_secrets_write = ["access_token", "refresh_token", "sync_state"]
-tasks = [{ name = "poll-link", interval_ms = 5000 }, { name = "sync", interval_ms = 900000, per_user = true }]
-deadlines_secs = { background = 120 }

@@ -6,8 +6,9 @@
 //
 // Available commands:
 //   - `plugin-build [<name>...]` — compile first-party plugins to
-//     `wasm32-wasip2` components and embed the `noflex:manifest` custom
-//     section. With no arguments, builds every plugin under `plugins/`.
+//     `wasm32-wasip2` components. Each embeds its own `src/manifest.toml` as
+//     the `noflex:manifest` custom section. With no arguments, builds every
+//     plugin under `plugins/`.
 //   - `plugin-dev <name>` — same as plugin-build, then symlinks the
 //     output into `$XDG_CONFIG_HOME/noflex/plugins/` so the running
 //     server picks it up via hot-reload.
@@ -175,7 +176,7 @@ fn plugin_build(names: &[String]) -> Result<()> {
             .map(|n| {
                 plugins
                     .iter()
-                    .find(|p| &p.crate_name == n || &p.manifest.plugin_id == n)
+                    .find(|p| &p.crate_name == n || &p.plugin_id == n)
                     .ok_or_else(|| anyhow::anyhow!("no plugin named `{n}` under plugins/"))
             })
             .collect::<Result<Vec<_>>>()?
@@ -221,10 +222,10 @@ fn plugin_dev(names: &[String]) -> Result<()> {
     for name in names {
         let plugin = plugins
             .iter()
-            .find(|p| &p.crate_name == name || &p.manifest.plugin_id == name)
+            .find(|p| &p.crate_name == name || &p.plugin_id == name)
             .ok_or_else(|| anyhow::anyhow!("no plugin named `{name}` under plugins/"))?;
         let wasm = plugin.output_wasm()?;
-        let dest = user_dir.join(format!("{}.wasm", plugin.manifest.plugin_id));
+        let dest = user_dir.join(format!("{}.wasm", plugin.plugin_id));
         let _ = std::fs::remove_file(&dest);
         std::os::unix::fs::symlink(&wasm, &dest)
             .with_context(|| format!("symlink {} -> {}", wasm.display(), dest.display()))?;
@@ -249,7 +250,7 @@ struct PluginDef {
     crate_name: String,
     manifest_path: PathBuf,
     target_dir_relative: PathBuf,
-    manifest: PluginManifestSnippet,
+    plugin_id: String,
 }
 
 impl PluginDef {
@@ -270,50 +271,10 @@ impl PluginDef {
     }
 }
 
-#[derive(Debug, Deserialize, serde::Serialize, Clone)]
-struct PluginManifestSnippet {
+/// The one manifest field xtask needs: the name the server loads a plugin by.
+#[derive(Debug, Deserialize)]
+struct EmbeddedManifest {
     plugin_id: String,
-    display_name: String,
-    #[serde(default)]
-    hooks: Vec<String>,
-    #[serde(default)]
-    capabilities: Vec<String>,
-    #[serde(default)]
-    http_egress_hosts: Vec<String>,
-    #[serde(default)]
-    secrets_read: Vec<String>,
-    #[serde(default)]
-    priority: toml::value::Table,
-    #[serde(default)]
-    deadlines_secs: toml::value::Table,
-    #[serde(default)]
-    memory_limit_mb: Option<u32>,
-    // Set by xtask from the crate's `[package].version`.
-    #[serde(default = "default_version")]
-    version: String,
-    // The host's expected API version. Stamped in here so plugins built
-    // against an older noflex are rejected at load time.
-    #[serde(default = "default_api_version")]
-    noflex_api_version: String,
-    // Schema version of the manifest itself. Bumped when fields shift.
-    #[serde(default = "default_manifest_version")]
-    manifest_version: u32,
-    #[serde(default)]
-    license: Option<String>,
-    #[serde(default)]
-    author: Option<String>,
-    #[serde(default)]
-    homepage: Option<String>,
-}
-
-fn default_version() -> String {
-    "0.0.0".into()
-}
-fn default_api_version() -> String {
-    "0.2".into()
-}
-fn default_manifest_version() -> u32 {
-    1
 }
 
 fn discover_plugins() -> Result<Vec<PluginDef>> {
@@ -335,17 +296,12 @@ fn discover_plugins() -> Result<Vec<PluginDef>> {
         let parsed: CrateToml =
             toml::from_str(&raw).with_context(|| format!("parse {}", cargo_toml.display()))?;
         let crate_name = parsed.package.name.clone();
-        let mut manifest = parsed
-            .package
-            .metadata
-            .and_then(|m| m.noflex_plugin)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "{} is missing [package.metadata.noflex-plugin]",
-                    cargo_toml.display()
-                )
-            })?;
-        manifest.version = parsed.package.version.clone();
+        let manifest_toml = path.join("src/manifest.toml");
+        let manifest: EmbeddedManifest = toml::from_str(
+            &std::fs::read_to_string(&manifest_toml)
+                .with_context(|| format!("read {}", manifest_toml.display()))?,
+        )
+        .with_context(|| format!("parse {}", manifest_toml.display()))?;
         let target_subpath: PathBuf = format!(
             "target/{}/release/{}.wasm",
             WASI_TARGET,
@@ -356,7 +312,7 @@ fn discover_plugins() -> Result<Vec<PluginDef>> {
             crate_name,
             manifest_path: cargo_toml,
             target_dir_relative: target_subpath,
-            manifest,
+            plugin_id: manifest.plugin_id,
         });
     }
     Ok(out)
@@ -381,13 +337,4 @@ struct CrateToml {
 #[derive(Debug, Deserialize)]
 struct CratePackage {
     name: String,
-    version: String,
-    #[serde(default)]
-    metadata: Option<CrateMetadata>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CrateMetadata {
-    #[serde(rename = "noflex-plugin")]
-    noflex_plugin: Option<PluginManifestSnippet>,
 }

@@ -193,7 +193,7 @@ pub struct PluginConfig {
     #[serde(default)]
     pub assets_dir: Option<PathBuf>,
     pub overrides: std::collections::HashMap<String, PluginOverride>,
-    pub per_plugin_config: std::collections::HashMap<String, toml::Value>,
+    pub per_plugin_config: std::collections::HashMap<String, toml::Table>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

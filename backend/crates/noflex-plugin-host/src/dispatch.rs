@@ -417,8 +417,9 @@ impl host_log::Host for PluginCtx {
 }
 
 // ----------------------------------------------------------------------
-// `host-secrets`: enforce the manifest allowlist, then search configured secret
-// tiers. Undeclared and missing keys remain distinguishable to the guest.
+// `host-secrets`: enforce the manifest allowlist, then take an administrator's
+// value from storage, else search the configured secret tiers. Undeclared and
+// missing keys remain distinguishable to the guest.
 // ----------------------------------------------------------------------
 
 // The async `HostWithStore` impls below carry the real logic; the `Host`
@@ -432,12 +433,13 @@ impl host_secrets::HostWithStore<PluginCtx> for HasSelf<PluginCtx> {
         accessor: &Accessor<PluginCtx, Self>,
         key: String,
     ) -> wasmtime::Result<Result<String, types::PluginError>> {
-        let (plugin_id, capabilities, declared_secrets) = accessor.with(|mut access| {
+        let (plugin_id, capabilities, declared_secrets, storage) = accessor.with(|mut access| {
             let ctx = access.get();
             (
                 ctx.plugin_id.clone(),
                 ctx.declared_capabilities.clone(),
                 ctx.declared_secrets.clone(),
+                ctx.storage.clone(),
             )
         });
         if !valid_secret_key(&key) {
@@ -459,8 +461,26 @@ impl host_secrets::HostWithStore<PluginCtx> for HasSelf<PluginCtx> {
                 key
             ))));
         }
-        let store = crate::secrets::SecretStore::with_default_tiers();
-        let found = store.read(&plugin_id, &key, &declared_secrets);
+        // An administrator's value from the admin UI wins over the files.
+        let admin_set = match &storage {
+            Some(storage) => match storage.plugin_secret_setting(&plugin_id.0, &key).await {
+                Ok(value) => value,
+                Err(e) => {
+                    crate::audit::secret_read(&plugin_id.0, &key, false);
+                    return Ok(Err(types::PluginError::Internal(format!(
+                        "read secret setting: {e}"
+                    ))));
+                }
+            },
+            None => None,
+        };
+        let found = admin_set.or_else(|| {
+            crate::secrets::SecretStore::with_default_tiers().read(
+                &plugin_id,
+                &key,
+                &declared_secrets,
+            )
+        });
         crate::audit::secret_read(&plugin_id.0, &key, found.is_some());
         match found {
             Some(value) if value.len() <= MAX_SECRET_VALUE_BYTES => Ok(Ok(value)),

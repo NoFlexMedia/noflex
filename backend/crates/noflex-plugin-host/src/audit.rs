@@ -108,6 +108,20 @@ pub fn user_secret_read(plugin_id: &str, user: &str, key: &str, granted: bool) {
     );
 }
 
+/// Helper: log an administrator setting or clearing one of a plugin's
+/// secret settings. The value is never logged; the plugin, key, and who
+/// wrote it are.
+pub fn secret_setting_write(plugin_id: &str, key: &str, actor: &str, cleared: bool) {
+    tracing::info!(
+        target: TARGET,
+        plugin = plugin_id,
+        event = "secret_setting_write",
+        key,
+        actor,
+        cleared,
+    );
+}
+
 /// Helper: log a per-user secret write after a completed link flow.
 /// The value is never logged; the plugin, user, and key are.
 pub fn user_secret_write(plugin_id: &str, user: &str, key: &str) {

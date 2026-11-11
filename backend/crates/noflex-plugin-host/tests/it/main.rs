@@ -16,6 +16,7 @@ mod host_library;
 mod intro_detector;
 mod metadata_service;
 mod net;
+mod plugin_settings;
 mod post_scan;
 mod real_plugin;
 mod remote_embedder;

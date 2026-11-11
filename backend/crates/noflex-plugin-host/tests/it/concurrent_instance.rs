@@ -43,25 +43,27 @@ async fn hot_reload_reuses_unchanged_plugin_and_retains_config() {
     let installed = dir.path().join("fixture.wasm");
     std::fs::copy(wasm, &installed).unwrap();
     let engine = build_engine(&EngineConfig::default()).expect("engine builds");
-    let registry = PluginRegistry::new(engine).expect("registry");
+    let registry = PluginRegistry::new(engine)
+        .expect("registry")
+        .with_plugin_config(HashMap::from([(
+            "concurrency-fixture".to_string(),
+            toml::toml! { token = "real-config" },
+        )]));
     let search_path = SearchPath::from_explicit([dir.path()]);
     let bus = LifecycleBus::default();
-    let configs = HashMap::from([(
-        "concurrency-fixture".to_string(),
-        "token = \"real-config\"".to_string(),
-    )]);
 
-    watcher::sync_once_with_config(&registry, &bus, &search_path, &configs);
+    watcher::sync_once(&registry, &bus, &search_path).await;
     let id = PluginId("concurrency-fixture".into());
     let first = registry.get_plugin(&id).expect("fixture loaded");
-    assert_eq!(first.config_toml, "token = \"real-config\"");
+    let config: toml::Table = toml::from_str(&first.config_toml).expect("a TOML document");
+    assert_eq!(config["token"].as_str(), Some("real-config"));
 
-    watcher::sync_once_with_config(&registry, &bus, &search_path, &configs);
+    watcher::sync_once(&registry, &bus, &search_path).await;
     let second = registry.get_plugin(&id).expect("fixture remains loaded");
     assert!(Arc::ptr_eq(&first, &second));
 
     std::fs::write(&installed, b"not wasm").unwrap();
-    watcher::sync_once_with_config(&registry, &bus, &search_path, &configs);
+    watcher::sync_once(&registry, &bus, &search_path).await;
     let after_failed_change = registry.get_plugin(&id).expect("old plugin retained");
     assert!(Arc::ptr_eq(&first, &after_failed_change));
 }

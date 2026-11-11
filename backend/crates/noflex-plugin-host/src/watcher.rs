@@ -47,16 +47,16 @@ impl Drop for PluginWatcher {
     }
 }
 
-/// Start watching every directory in the search path. The supplied config is
-/// retained for every reload, not only the initial scan.
-pub fn start(
+/// Load every plugin in the search path, then watch its directories and
+/// reconcile on change. Each load's config comes from the registry (see
+/// [`PluginRegistry::with_plugin_config`]), so a settings change survives
+/// later syncs.
+pub async fn start(
     registry: Arc<PluginRegistry>,
     bus: LifecycleBus,
     search_path: SearchPath,
-    per_plugin_config_toml: HashMap<String, String>,
 ) -> anyhow::Result<PluginWatcher> {
-    let configs = Arc::new(per_plugin_config_toml);
-    sync_once_with_config(&registry, &bus, &search_path, &configs);
+    sync_once(&registry, &bus, &search_path).await;
 
     let (event_tx, mut event_rx) = mpsc::channel::<()>(1);
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
@@ -96,7 +96,7 @@ pub fn start(
                 }
                 _ = async { if let Some(s) = next_tick { s.await } }, if pending_until.is_some() => {
                     pending_until = None;
-                    sync_once_with_config(&registry, &bus, &search_path, &configs);
+                    sync_once(&registry, &bus, &search_path).await;
                 }
             }
         }
@@ -118,12 +118,8 @@ struct Candidate {
 /// Reconcile one discovered snapshot. Later search-path tiers win. Unchanged
 /// path, binary, and config triples keep their existing component and store.
 /// A plugin the registry has disabled counts as absent, so it never loads.
-pub fn sync_once_with_config(
-    registry: &PluginRegistry,
-    bus: &LifecycleBus,
-    search_path: &SearchPath,
-    per_plugin_config_toml: &HashMap<String, String>,
-) {
+pub async fn sync_once(registry: &PluginRegistry, bus: &LifecycleBus, search_path: &SearchPath) {
+    let _loading = registry.load_lock().await;
     let mut candidates = HashMap::<PluginId, Candidate>::new();
     let mut failed_paths = HashSet::new();
 
@@ -166,10 +162,16 @@ pub fn sync_once_with_config(
 
     let on_disk: HashSet<PluginId> = candidates.keys().cloned().collect();
     for (id, candidate) in candidates {
-        let config_toml = per_plugin_config_toml
-            .get(&id.0)
-            .cloned()
-            .unwrap_or_default();
+        let config_toml = match registry.config_for(&candidate.manifest).await {
+            Ok(config) => config,
+            Err(error) => {
+                bus.emit(PluginLifecycleEvent::LoadFailed {
+                    path: candidate.path,
+                    reason: format!("reading its settings: {error}"),
+                });
+                continue;
+            }
+        };
         if registry.loaded_matches(&id, &candidate.path, &candidate.sha256, &config_toml) {
             continue;
         }

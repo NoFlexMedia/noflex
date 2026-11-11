@@ -28,6 +28,7 @@ pub mod resource_limits;
 mod scheduler;
 pub mod scrobbler;
 pub mod secrets;
+mod settings;
 pub mod watcher;
 
 pub use bindings::{
@@ -68,4 +69,5 @@ pub use remote_embedder::{RemoteEmbedError, RemoteEmbedder};
 pub use resource_limits::{PluginLimitState, PluginLimits};
 pub use scrobbler::spawn_scrobble_dispatcher;
 pub use secrets::SecretStore;
+pub use settings::{ConfigStanzas, PluginSetting, SettingSource, SettingsError};
 pub use watcher::PluginWatcher;

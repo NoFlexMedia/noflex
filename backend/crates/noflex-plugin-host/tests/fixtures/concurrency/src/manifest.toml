@@ -4,5 +4,23 @@ display_name = "Concurrency Test Fixture"
 version = "0.0.1"
 noflex_api_version = "0.2"
 hooks = ["metadata", "image"]
-capabilities = []
+capabilities = ["secrets.read"]
+secrets_read = ["password"]
 license = "AGPL-3.0-only"
+
+# Exercised by the host's settings tests; the guest reads none of them.
+[[settings]]
+key = "token"
+label = "Token"
+kind = "text"
+
+[[settings]]
+key = "retries"
+label = "Retries"
+kind = "integer"
+default = 3
+
+[[settings]]
+key = "password"
+label = "Password"
+kind = "secret"

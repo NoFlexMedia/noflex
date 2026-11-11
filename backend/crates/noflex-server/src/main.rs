@@ -228,7 +228,9 @@ async fn run(
                     .iter()
                     .filter(|(_, o)| o.disabled)
                     .map(|(id, _)| id.clone()),
-            ),
+            )
+            // What admin-set settings layer over in each plugin's config.
+            .with_plugin_config(cfg.plugin.per_plugin_config.clone()),
     );
     let plugin_links = Arc::new(noflex_server::plugin_links::ServerPluginLinks::new(
         plugin_registry.clone(),
@@ -249,8 +251,8 @@ async fn run(
         plugin_registry.clone(),
         lifecycle_bus.clone(),
         search_path.clone(),
-        per_plugin_config_toml(&cfg.plugin.per_plugin_config),
     )
+    .await
     .context("start plugin watcher")?;
 
     // An administrator's embeddings API wins over any plugin, from the first sweep.
@@ -829,24 +831,6 @@ async fn external_auth_callback(
     .await
 }
 
-fn per_plugin_config_toml(
-    map: &std::collections::HashMap<String, toml::Value>,
-) -> std::collections::HashMap<String, String> {
-    let mut out = std::collections::HashMap::new();
-    for (k, v) in map {
-        // `Value::to_string` renders a table as a bare inline table
-        // (`{ url = "..." }`), which is not a parseable TOML document —
-        // and host-config::read promises the guest a stanza it can feed
-        // straight to a TOML parser.
-        let rendered = match v {
-            toml::Value::Table(_) => toml::to_string(v).unwrap_or_else(|_| v.to_string()),
-            _ => v.to_string(),
-        };
-        out.insert(k.clone(), rendered);
-    }
-    out
-}
-
 /// Install the global subscriber; returns the ring buffer the admin
 /// `recentLogs` query reads.
 fn init_tracing(
@@ -1215,33 +1199,5 @@ mod tests {
         )
         .await;
         assert_eq!(response.errors[0].message, "GraphQL request timed out");
-    }
-
-    #[test]
-    fn per_plugin_config_toml_preserves_keys() {
-        let mut map = std::collections::HashMap::new();
-        map.insert(
-            "tmdb".to_string(),
-            toml::Value::Table(toml::map::Map::from_iter([(
-                "api_key".to_string(),
-                toml::Value::String("secret".to_string()),
-            )])),
-        );
-        let out = per_plugin_config_toml(&map);
-        assert!(out.contains_key("tmdb"));
-        let s = &out["tmdb"];
-        // Must come back as a TOML document the guest can parse directly.
-        let parsed: toml::Value = toml::from_str(s).expect("renders a TOML document");
-        assert_eq!(
-            parsed.get("api_key").and_then(toml::Value::as_str),
-            Some("secret")
-        );
-    }
-
-    #[test]
-    fn per_plugin_config_toml_empty_map() {
-        let map = std::collections::HashMap::new();
-        let out = per_plugin_config_toml(&map);
-        assert!(out.is_empty());
     }
 }

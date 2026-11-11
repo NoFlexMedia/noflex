@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
-use async_graphql::SimpleObject;
+use async_graphql::{ComplexObject, Context, SimpleObject};
 use noflex_storage::Storage;
 use time::OffsetDateTime;
 use tokio::{sync::Notify, task::JoinHandle};
@@ -14,11 +14,12 @@ use wasmtime::{Engine, component::Linker};
 
 use crate::{
     EmbedInput, EngineConfig, HostError, LoadedPlugin, PluginCtx, PluginId, PluginManifest,
-    RemoteEmbedder, attribution,
+    RemoteEmbedder, SecretStore, attribution,
     bindings::embedder::noflex::plugin::types as embedder_types,
     manifest::{EmbeddingClaim, HookKind},
     priority::{Overrides, PriorityTable},
     scheduler,
+    settings::{self, ConfigStanzas, PluginSetting, SettingsError},
 };
 
 /// Largest batch one `embed` dispatch accepts. Model-bound plugins pay
@@ -31,7 +32,7 @@ const MAX_EMBED_BATCH: usize = 64;
 /// objects. The internal [`LoadedPlugin`] is not `Clone` (Components aren't),
 /// so the registry returns these snapshots instead.
 #[derive(Debug, Clone, SimpleObject)]
-#[graphql(name = "Plugin")]
+#[graphql(name = "Plugin", complex)]
 pub struct Plugin {
     pub id: String,
     pub display_name: String,
@@ -60,6 +61,22 @@ pub struct Plugin {
     /// Circuit breaker: the instance is disabled after repeated traps
     /// and stays down until the plugin is reloaded.
     pub circuit_open: bool,
+}
+
+#[ComplexObject]
+impl Plugin {
+    /// The settings the plugin's manifest declares, each with its value now
+    /// and where that comes from. A secret's value is never included.
+    ///
+    /// Only administrators reach a `Plugin`, through `plugins` and
+    /// `setPluginSettings`, so this field needs no check of its own.
+    async fn settings(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<PluginSetting>> {
+        let registry = ctx.data::<Arc<PluginRegistry>>()?;
+        registry.settings(&self.manifest).await.map_err(|e| {
+            tracing::warn!(plugin = %self.id, error = %e, "reading plugin settings failed");
+            async_graphql::Error::new("plugin settings are unavailable")
+        })
+    }
 }
 
 /// GraphQL view of one background task's scheduler health.
@@ -149,6 +166,13 @@ pub struct PluginRegistry {
     dispatcher_handle: Mutex<Option<JoinHandle<()>>>,
     /// Plugin ids an operator disabled, which never load.
     disabled: HashSet<String>,
+    /// The server's config.toml stanzas, which admin-set settings layer
+    /// over (see [`Self::config_for`]).
+    config: ConfigStanzas,
+    /// Held while a plugin's config is read and the plugin (re)loaded with
+    /// it, so a sync that read settings before a change can't load over the
+    /// reload that change made.
+    load_lock: tokio::sync::Mutex<()>,
 }
 
 impl PluginRegistry {
@@ -176,6 +200,8 @@ impl PluginRegistry {
             task_handles: Mutex::new(HashMap::new()),
             dispatcher_handle: Mutex::new(None),
             disabled: HashSet::new(),
+            config: ConfigStanzas::new(),
+            load_lock: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -189,6 +215,14 @@ impl PluginRegistry {
     /// Whether an operator disabled `id`.
     pub fn is_disabled(&self, id: &str) -> bool {
         self.disabled.contains(id)
+    }
+
+    /// Give the registry the server's `[plugin.per_plugin_config.<id>]`
+    /// stanzas. A plugin's config is its stanza with admin-set settings
+    /// over it; see [`Self::config_for`].
+    pub fn with_plugin_config(mut self, config: ConfigStanzas) -> Self {
+        self.config = config;
+        self
     }
 
     /// Give the registry (and every plugin it loads) a storage handle.
@@ -293,6 +327,95 @@ impl PluginRegistry {
             }
         }
         Ok(info)
+    }
+
+    /// The config `host-config.read` hands `manifest`'s plugin: its
+    /// config.toml stanza, with each non-secret setting an administrator
+    /// set in storage over it and manifest defaults for the rest.
+    ///
+    /// # Errors
+    ///
+    /// Storage failing to read the settings.
+    pub(crate) async fn config_for(
+        &self,
+        manifest: &PluginManifest,
+    ) -> Result<String, noflex_storage::error::StorageError> {
+        let admin = match &self.storage {
+            Some(storage) => storage.plugin_settings(&manifest.plugin_id).await?,
+            None => Default::default(),
+        };
+        Ok(settings::render(
+            manifest,
+            self.config.get(&manifest.plugin_id),
+            &admin,
+        ))
+    }
+
+    /// Taken around reading a plugin's config and loading it with that.
+    pub(crate) async fn load_lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.load_lock.lock().await
+    }
+
+    /// `manifest`'s settings, each resolved to its value and source.
+    ///
+    /// # Errors
+    ///
+    /// Storage failing to read the settings.
+    pub async fn settings(
+        &self,
+        manifest: &PluginManifest,
+    ) -> Result<Vec<PluginSetting>, SettingsError> {
+        let (admin, admin_secrets) = match &self.storage {
+            Some(storage) => (
+                storage.plugin_settings(&manifest.plugin_id).await?,
+                storage
+                    .plugin_secret_setting_keys(&manifest.plugin_id)
+                    .await?,
+            ),
+            None => Default::default(),
+        };
+        Ok(settings::view(
+            manifest,
+            self.config.get(&manifest.plugin_id),
+            &admin,
+            &admin_secrets,
+            &SecretStore::with_default_tiers(),
+        ))
+    }
+
+    /// Set or clear several of a loaded plugin's settings at once, then
+    /// reload it with them, as plugins may have read their config and
+    /// secrets at start. A `None` or empty value clears the key, falling
+    /// back to config.toml or a secret file, then the manifest default.
+    /// Each secret written is audit-logged against `actor`, without its
+    /// value.
+    ///
+    /// # Errors
+    ///
+    /// [`SettingsError::is_bad_input`] when `changes` don't fit the
+    /// plugin's schema, and nothing is written. Otherwise storage or the
+    /// reload failing; a failed reload keeps the values written.
+    pub async fn update_settings(
+        &self,
+        id: &PluginId,
+        changes: Vec<(String, Option<String>)>,
+        actor: &str,
+    ) -> Result<Plugin, SettingsError> {
+        let plugin = self.get_plugin(id).ok_or(SettingsError::NotLoaded)?;
+        let storage = self.storage.as_ref().ok_or(SettingsError::NoStorage)?;
+        let writes = settings::plan(
+            &plugin.manifest,
+            self.config.get(&id.0),
+            &SecretStore::with_default_tiers(),
+            changes,
+        )?;
+        storage.update_plugin_settings(&id.0, &writes).await?;
+        for write in writes.iter().filter(|w| w.secret) {
+            crate::audit::secret_setting_write(&id.0, &write.key, actor, write.value.is_none());
+        }
+        let _loading = self.load_lock().await;
+        let config = self.config_for(&plugin.manifest).await?;
+        Ok(self.load_from_with_config(&plugin.path, config)?)
     }
 
     pub(crate) fn loaded_matches(

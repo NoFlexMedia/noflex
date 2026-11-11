@@ -35,6 +35,7 @@ use tokio::sync::Mutex;
 use crate::{
     ScanSummary,
     artwork::{ArtClaims, ArtRole},
+    markers::ChapterMarkers,
     parser::{
         EpisodeClassification, MovieClassification, MovieIdentity, MusicClassification,
         PhotoClassification, classify_episode, classify_movie, classify_music, classify_photo,
@@ -1022,8 +1023,8 @@ enum WriteOp {
 }
 
 /// What a probed file says about its whole edition: how long it runs and its
-/// chapters, for an edition without them. The rest is true of that file alone, and
-/// stays on it.
+/// chapters, for an edition without them, and the intro and credits those chapters
+/// name. The rest is true of that file alone, and stays on it.
 fn populate_edition_from_probe(mut edition: Edition, probe: &ProbeReport) -> Edition {
     if edition.runtime_ms.is_none() {
         edition.runtime_ms = probe.duration_ms.and_then(|ms| i64::try_from(ms).ok());
@@ -1038,6 +1039,7 @@ fn populate_edition_from_probe(mut edition: Edition, probe: &ProbeReport) -> Edi
             })
             .collect();
     }
+    ChapterMarkers::mark(&mut edition);
     edition
 }
 
@@ -1171,8 +1173,60 @@ mod tests {
     use std::collections::HashMap;
 
     use noflex_core::{EditionId, WorkId};
+    use noflex_storage::domain::Edition;
+    use noflex_transcoder::probe::{ChapterProbe, ProbeReport};
 
-    use super::reconcile_edition_cache;
+    use super::{populate_edition_from_probe, reconcile_edition_cache};
+
+    #[test]
+    fn a_probe_gives_a_new_edition_its_chapters_and_the_markers_they_name() {
+        let edition = Edition {
+            id: EditionId::new(),
+            work_id: WorkId::new(),
+            name: "Default".into(),
+            runtime_ms: None,
+            intro_start_ms: None,
+            intro_end_ms: None,
+            credits_start_ms: None,
+            chapters: vec![],
+        };
+        let chapter = |start_ms, title: &str| ChapterProbe {
+            start_ms,
+            title: Some(title.into()),
+        };
+        let probe = ProbeReport {
+            duration_ms: Some(1_400_000),
+            chapters: vec![
+                chapter(0, "Opening"),
+                chapter(85_000, "Episode"),
+                chapter(1_300_000, "End Credits"),
+            ],
+            ..Default::default()
+        };
+        let edition = populate_edition_from_probe(edition, &probe);
+        assert_eq!(edition.runtime_ms, Some(1_400_000));
+        let chapters: Vec<_> = edition
+            .chapters
+            .iter()
+            .map(|c| (c.position_ms, c.title.as_deref()))
+            .collect();
+        assert_eq!(
+            chapters,
+            [
+                (0, Some("Opening")),
+                (85_000, Some("Episode")),
+                (1_300_000, Some("End Credits"))
+            ]
+        );
+        assert_eq!(
+            (
+                edition.intro_start_ms,
+                edition.intro_end_ms,
+                edition.credits_start_ms
+            ),
+            (Some(0), Some(85_000), Some(1_300_000))
+        );
+    }
 
     #[test]
     fn committed_aliases_replace_planned_edition_ids() {

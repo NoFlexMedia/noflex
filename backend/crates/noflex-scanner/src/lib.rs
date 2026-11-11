@@ -16,6 +16,7 @@ use noflex_storage::Storage;
 
 mod artwork;
 pub mod ffprobe;
+mod markers;
 pub mod parser;
 pub mod registry;
 mod scan;

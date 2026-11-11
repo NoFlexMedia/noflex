@@ -9,8 +9,47 @@
     <!-- Google's receiver framework, which a receiver has to load from Google. -->
     <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
   </head>
-  <body>
-    <cast-media-player></cast-media-player>
+  <body class="idle">
+    <video id="media" class="castMediaElement"></video>
+    <div class="art" aria-hidden="true"><img id="backdrop" alt="" /></div>
+
+    <section class="splash" aria-label="Ready to cast">
+      <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M32 2C61.6 2 62 2.4 62 32S61.6 62 32 62 2 61.6 2 32 2.4 2 32 2Z" fill="#d4ff5a" />
+        <rect x="13.5" y="14" width="6.5" height="36" rx="3.25" fill="#10150a" />
+        <path d="M23.5 15 37 20 30.5 26.5 50 32 30.5 37.5 37 44 23.5 49Z" fill="#10150a" stroke="#10150a" stroke-width="3" stroke-linejoin="round" />
+      </svg>
+      <strong>Ready to cast</strong>
+      <span>Pick something in NoFlex to play it here.</span>
+    </section>
+
+    <div class="spinner" aria-hidden="true"></div>
+    <div class="pulse" aria-hidden="true"><svg viewBox="0 0 256 256"><path id="pulse-glyph" /></svg></div>
+
+    <aside class="stats" aria-label="Stream info"><strong>Stream info</strong><dl id="stats"></dl></aside>
+    <div class="notice" role="status" id="notice"></div>
+
+    <section class="chrome" aria-label="Now playing">
+      <div class="now">
+        <img id="poster" alt="" />
+        <div class="text">
+          <small id="subtitle"></small>
+          <h1 id="title"></h1>
+          <ul class="badges" id="badges"></ul>
+        </div>
+      </div>
+      <div class="touch">
+        <button id="back" aria-label="Back 10 seconds"><svg viewBox="0 0 256 256"><path d="M224,128a96,96,0,0,1-94.71,96H128A95.38,95.38,0,0,1,62.1,197.8a8,8,0,0,1,11-11.63A80,80,0,1,0,71.43,71.39a3.07,3.07,0,0,1-.26.25L44.59,96H72a8,8,0,0,1,0,16H24a8,8,0,0,1-8-8V56a8,8,0,0,1,16,0V85.8L60.25,60A96,96,0,0,1,224,128Z" /></svg></button>
+        <button id="toggle" class="big" aria-label="Pause"><svg viewBox="0 0 256 256"><path id="toggle-glyph" /></svg></button>
+        <button id="forward" aria-label="Forward 10 seconds"><svg viewBox="0 0 256 256"><path d="M240,56v48a8,8,0,0,1-8,8H184a8,8,0,0,1,0-16H211.4L184.81,71.64l-.25-.24a80,80,0,1,0-1.67,114.78,8,8,0,0,1,11,11.63A95.44,95.44,0,0,1,128,224h-1.32A96,96,0,1,1,195.75,60L224,85.8V56a8,8,0,1,1,16,0Z" /></svg></button>
+      </div>
+      <div class="timeline">
+        <span id="position" class="tabular">0:00</span>
+        <div class="rail"><span id="buffered"></span><span id="played"></span></div>
+        <span id="duration" class="tabular">0:00</span>
+      </div>
+    </section>
+
     <script src="receiver.js"></script>
   </body>
 </html>

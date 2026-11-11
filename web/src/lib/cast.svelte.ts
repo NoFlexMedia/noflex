@@ -9,11 +9,12 @@
 
 import { MarkPlayedStore, ReportProgressStore } from "$houdini";
 import type { ClientCapabilities } from "$codecs";
+import { AutoQuality, frameLabel, sameChoice, sessionQuality, type QualityChoice, type StreamQuality } from "$quality";
 import { castCapabilities, probeCast, type CastDevice } from "$lib/castProfile.js";
 import { connect, type Control, type RemoteDevice } from "$lib/connect.svelte.js";
 import { request, writeUserData } from "$lib/graphql.js";
 import { pickImage } from "$lib/images.js";
-import { resolvePlayable, startSession, stopSession, subtitleFor } from "$lib/playback.svelte.js";
+import { qualityChoice, rememberQuality, resolvePlayable, startSession, stopSession, subtitleFor, type PlaybackDecision } from "$lib/playback.svelte.js";
 import { app } from "$lib/session.svelte.js";
 import { mediaUrl } from "$lib/tokens.js";
 import { toast } from "$lib/ui.svelte.js";
@@ -44,7 +45,16 @@ interface Loaded {
   offsetMs: number;
   /** The real length, as a growing transcode doesn't know it. */
   durationMs: number | null;
+  quality: QualityChoice;
+  /** Auto moved this title off the original because it struggled. */
+  leftOriginal: boolean;
+  /** The stream is a ladder the receiver adapts along. */
+  adaptive: boolean;
+  /** The original file, for Auto to weigh the connection against. */
+  source: PlaybackDecision["source"] | null;
 }
+
+const PLAN: Record<string, string> = { DIRECT_PLAY: "Direct play", REMUX: "Direct stream (remux)", TRANSCODE_AUDIO: "Transcoding audio", TRANSCODE_VIDEO: "Transcoding video", TRANSCODE: "Transcoding" };
 
 /** A Chromecast can't reach this browser's own loopback address. */
 const loopback = () => /^(localhost|127\.|\[?::1\]?$)/.test(location.hostname);
@@ -61,6 +71,15 @@ async function playlistReady(url: string): Promise<void> {
 class Cast {
   /** Whether the sender script loaded and Cast devices are on the network. */
   nearby = $state(false);
+  /** The ladder the title on the device is offered at, for the quality menu. */
+  qualities = $state<StreamQuality[]>([]);
+  choice = $state<QualityChoice>({ kind: "original" });
+  /** The receiver is showing its stream info panel. */
+  statsOnTv = $state(false);
+  #auto = new AutoQuality();
+  /** The receiver's latest report on playback. */
+  #health: { estimatedBandwidthBps?: number | null } | null = null;
+  #switching = false;
   #loaded: Loaded | null = null;
   #remote: any = null;
   #controller: any = null;
@@ -110,7 +129,8 @@ class Cast {
           session.addMessageListener(NAMESPACE, (_namespace: string, data: string) => {
             try {
               const message = JSON.parse(data);
-              this.#replies.get(message.id)?.(message);
+              if (message.type === "health") this.#onHealth(message);
+              else this.#replies.get(message.id)?.(message);
             } catch { /* not ours to read */ }
           });
           // Probe while the viewer picks a title, so loading doesn't wait on it.
@@ -120,12 +140,60 @@ class Cast {
       if (event.sessionState === SessionState.SESSION_ENDED) void this.#finish(false);
       this.#publish();
     });
+    setInterval(() => this.#steer(), 1000);
     connect.routes.set("cast", { cast: (work, options) => this.load(work, options), control: (device, action, positionMs) => this.control(device, action, positionMs) });
     this.nearby = context.getCastState() !== cast.framework.CastState.NO_DEVICES_AVAILABLE;
     this.#publish();
   }
 
   #session(): any { return sdk().cast.framework.CastContext.getInstance().getCurrentSession(); }
+
+  #onHealth(health: any): void {
+    this.#health = health;
+    if (health.kind === "loaded") this.#auto.settle();
+    else if (health.kind === "stalled" && !health.seeking) this.#auto.stalled();
+    else if (health.kind === "resumed") this.#auto.resumed();
+  }
+
+  /** Auto moves between the original and the ladder; along the ladder, the receiver adapts. */
+  #steer(): void {
+    const loaded = this.#loaded;
+    if (!loaded || this.#switching || loaded.quality.kind !== "auto" || this.#remote?.isPaused) return;
+    if (!loaded.adaptive && !loaded.leftOriginal && this.#auto.struggling()) {
+      this.#auto.leftOriginal();
+      void this.#reload({ leftOriginal: true }, "Lowered the quality to keep up with the connection");
+    } else if (loaded.adaptive && loaded.leftOriginal && this.#auto.recovered(this.#health?.estimatedBandwidthBps, loaded.source?.bitrateBps)) {
+      void this.#reload({ leftOriginal: false }, "Back to the original quality");
+    }
+  }
+
+  /** Load what's playing again from where it is, at another quality. */
+  async #reload(change: { quality?: QualityChoice; leftOriginal?: boolean }, notice?: string): Promise<void> {
+    const loaded = this.#loaded;
+    if (!loaded) return;
+    this.#switching = true;
+    try {
+      const done = await this.load(loaded.work, { editionId: loaded.editionId, mediaFileId: loaded.mediaFileId, positionMs: this.#positionMs(), quality: change.quality ?? loaded.quality, leftOriginal: change.leftOriginal ?? false });
+      if (done && notice) {
+        toast(notice);
+        this.#session()?.sendMessage(NAMESPACE, { type: "notice", text: notice }).catch(() => {});
+      }
+    } finally {
+      this.#switching = false;
+    }
+  }
+
+  /** Play what's on the device at `choice` from now on, as this browser does. */
+  setQuality(choice: QualityChoice): void {
+    rememberQuality(choice);
+    if (this.#loaded && !sameChoice(choice, this.#loaded.quality)) void this.#reload({ quality: choice });
+  }
+
+  /** Show or hide the receiver's stream info panel. */
+  showStats(show: boolean): void {
+    this.statsOnTv = show;
+    this.#session()?.sendMessage(NAMESPACE, { type: "stats", show }).catch(() => {});
+  }
 
   /** Send the receiver `message` and wait for its reply. */
   #ask(session: any, message: object, timeoutMs: number): Promise<any> {
@@ -213,6 +281,7 @@ class Cast {
     if (!loaded) return;
     this.#loaded = null;
     this.#last = null;
+    this.qualities = [];
     clearInterval(this.#beat);
     this.#report("STOPPED");
     if (ended) request(new MarkPlayedStore(), { id: loaded.work.id }).then((data) => writeUserData(loaded.work.id, data.markPlayed), () => {});
@@ -220,7 +289,7 @@ class Cast {
   }
 
   /** Start `work` on the device in this session, from the viewer's place unless told otherwise. */
-  async load(work: { id: string; title?: string }, options: { editionId?: string; mediaFileId?: string; positionMs?: number } = {}): Promise<boolean> {
+  async load(work: { id: string; title?: string }, options: { editionId?: string; mediaFileId?: string; positionMs?: number; quality?: QualityChoice; leftOriginal?: boolean } = {}): Promise<boolean> {
     const session = this.#session();
     if (!session) return false;
     if (loopback()) {
@@ -230,11 +299,20 @@ class Cast {
     const { chrome } = sdk();
     try {
       const playable = await resolvePlayable(work, options);
+      const quality = options.quality ?? qualityChoice();
+      const leftOriginal = options.leftOriginal ?? false;
+      const same = this.#loaded?.mediaFileId === playable.mediaFileId;
+      // Leaving the original asks for less than it; only the session that played it knows its rate.
+      const original = same ? this.#loaded?.source ?? null : null;
+      if (!same) this.#auto = new AutoQuality();
+      // The receiver buffers while it loads, which is no sign of struggling.
+      this.#auto.settle();
+      const qualities = same ? this.qualities : [];
       await this.#finish(false);
       // From here the bar shows it loading, through opening the session and the encoder's first segments.
       this.#preparing = { work: playable.detail.work ?? work, positionMs: playable.resume };
       this.#publish();
-      const stream = await startSession(playable.mediaFileId, playable.burnedSubtitle, playable.resume, playable.audioStream, await this.#profile(session));
+      const stream = await startSession(playable.mediaFileId, playable.burnedSubtitle, playable.resume, playable.audioStream, await this.#profile(session), sessionQuality(quality, original, leftOriginal));
       const url = absolute(stream.url);
       const transcode = stream.route === "TRANSCODE";
       if (stream.route !== "DIRECT") await playlistReady(url);
@@ -247,6 +325,7 @@ class Cast {
       info.metadata.subtitle = subtitleFor(detail);
       const poster = pickImage(detail.images, "poster");
       if (poster) info.metadata.images = [new chrome.cast.Image(absolute(poster))];
+      const backdrop = pickImage(detail.images, "backdrop");
       const subtitles = stream.subtitles ?? [];
       info.tracks = subtitles.map((item, position) => {
         const track = new chrome.cast.media.Track(position + 1, chrome.cast.media.TrackType.TEXT);
@@ -257,19 +336,46 @@ class Cast {
         track.language = item.language ?? undefined;
         return track;
       });
-      info.customData = { protocol: PROTOCOL, workId: detail.id };
+      const runtime = (playable.edition?.runtimeMs ?? detail.runtimeMs ?? 0) || null;
+      const offsetMs = transcode ? (stream.startPositionMs ?? 0) : 0;
+      const decision = stream.decision;
+      // The ladder is the whole of it on the first session; a capped one offers less.
+      const ladder = qualities.length ? qualities : stream.qualities ?? [];
+      const pinned = quality.kind === "pinned" ? ladder.find((step) => step.bitrateBps === quality.bitrateBps)?.label : null;
+      info.customData = {
+        protocol: PROTOCOL,
+        workId: detail.id,
+        offsetMs,
+        durationMs: runtime,
+        backdrop: backdrop ? absolute(backdrop) : null,
+        stream: decision ? {
+          route: stream.route,
+          adaptive: !!stream.adaptive,
+          container: decision.target.container,
+          encodes: decision.plan === "TRANSCODE_VIDEO" || decision.plan === "TRANSCODE",
+          mode: PLAN[decision.plan] ?? decision.plan,
+          reasons: decision.reasons.map((reason) => reason.description),
+          source: decision.source,
+          target: decision.target,
+          encoder: decision.encoder ?? null,
+          hardware: decision.hardware,
+          quality: pinned ?? frameLabel(decision.target.width, decision.target.height),
+        } : null,
+      };
       const request_ = new chrome.cast.media.LoadRequest(info);
       request_.autoplay = true;
-      // A transcode already starts at the resume point; a file seeks to it.
-      request_.currentTime = transcode ? 0 : playable.resume / 1000;
+      // A linear transcode starts at the resume point; a file or an on-demand playlist seeks to it.
+      request_.currentTime = Math.max(0, playable.resume - offsetMs) / 1000;
       const chosen = subtitles.findIndex((item) => item.index === playable.subtitleIndex);
       if (chosen >= 0) request_.activeTrackIds = [chosen + 1];
 
-      const runtime = (playable.edition?.runtimeMs ?? detail.runtimeMs ?? 0) || null;
       this.#loaded = {
         work: detail, mediaFileId: playable.mediaFileId, editionId: playable.edition.id, sessionId: stream.sessionId,
-        transcode, offsetMs: transcode ? (stream.startPositionMs ?? 0) : 0, durationMs: runtime,
+        transcode, offsetMs, durationMs: runtime,
+        quality, leftOriginal, adaptive: !!stream.adaptive, source: decision?.source ?? null,
       };
+      this.qualities = ladder;
+      this.choice = quality;
       await session.loadMedia(request_);
       this.#preparing = null;
       clearInterval(this.#beat);
@@ -301,9 +407,10 @@ class Cast {
       const produced = this.#remote?.duration ?? 0;
       // Beyond what a transcode has produced, a new session starting there beats waiting for the encoder.
       if (loaded.transcode && (local < 0 || local > produced + TRANSCODE_REACH)) {
-        await this.load(loaded.work, { editionId: loaded.editionId, mediaFileId: loaded.mediaFileId, positionMs });
+        await this.load(loaded.work, { editionId: loaded.editionId, mediaFileId: loaded.mediaFileId, positionMs, quality: loaded.quality, leftOriginal: loaded.leftOriginal });
         return;
       }
+      this.#auto.settle();
       this.#remote.currentTime = local;
       controller.seek();
     } else if ((action === "PAUSE") !== this.#remote.isPaused) {

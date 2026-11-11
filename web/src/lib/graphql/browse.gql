@@ -31,6 +31,7 @@ query WorkDetail($id: ID!) {
     ...WorkFull
     credits { personId name role character photo { kind url } }
     tags(namespaces: ["parental", "genre"]) { id namespace display }
+    ratings { source name display outOf normalized votes }
     attributions { provider name text url logoUrl }
   }
   editions(workId: $id) { ...EditionFull }

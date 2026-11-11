@@ -104,7 +104,7 @@ export const FIELDS: Field[] = [
     label: "Rating",
     section: "About the title",
     quick: true,
-    hint: "The community rating, out of 10. Unrated titles never count as at least anything.",
+    hint: "The title’s rating out of 10, from the first rating source it has: IMDb, then TMDb, unless the server says otherwise. Unrated titles never count as at least anything.",
     operators: [
       { id: "at_least", label: "is at least", match: "ANY", input: "number", encode: trimmed },
       { id: "below", label: "isn’t at least", match: "NONE", input: "number", encode: trimmed },

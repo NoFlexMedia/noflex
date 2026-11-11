@@ -43,7 +43,7 @@
   } from "$houdini";
   import { addToCollection } from "$lib/collections.js";
   import { tilt } from "$lib/actions/index.js";
-  import { bytes, runtime, techBadges, timecode, titleCase, versionLabel } from "$lib/format.js";
+  import { bytes, count, runtime, techBadges, timecode, titleCase, versionLabel } from "$lib/format.js";
   import { failure, fetchQuery, refetch, writeUserData } from "$lib/graphql.js";
   import { ambientColor, pickImage } from "$lib/images.js";
   import { fetchChildren, player, playWork, subtitleFor } from "$lib/playback.svelte.js";
@@ -475,17 +475,25 @@
 
     <Credits {credits} />
 
-    {#if work.communityRating || parental}
+    {#if work.ratings.length || work.communityRating || parental}
       <section class="section ratings">
         <div class="section-head"><h2>Ratings</h2></div>
         <div class="scores">
-          {#if work.communityRating}
+          {#each work.ratings as rating (rating.source)}
             <div class="score">
-              <strong class="tabular">{work.communityRating.toFixed(1)}<small>/10</small></strong>
-              <span class="stars" role="img" aria-label="{work.communityRating.toFixed(1)} out of 10"><span class="meter" style:width="{work.communityRating * 10}%"></span></span>
-              <span class="faint">Community score</span>
+              <strong class="tabular">{rating.display}{#if rating.outOf}<small>{rating.outOf}</small>{/if}</strong>
+              <span class="stars" role="img" aria-label="{rating.display}{rating.outOf ?? ''} on {rating.name}"><span class="meter" style:width="{rating.normalized * 10}%"></span></span>
+              <span class="faint">{rating.name}{#if rating.votes} · {count(rating.votes)} votes{/if}</span>
             </div>
-          {/if}
+          {:else}
+            {#if work.communityRating}
+              <div class="score">
+                <strong class="tabular">{work.communityRating.toFixed(1)}<small>/10</small></strong>
+                <span class="stars" role="img" aria-label="{work.communityRating.toFixed(1)} out of 10"><span class="meter" style:width="{work.communityRating * 10}%"></span></span>
+                <span class="faint">Community score</span>
+              </div>
+            {/if}
+          {/each}
           {#if parental}
             <div class="score"><strong>{parental}</strong><span class="faint">Parental rating</span></div>
           {/if}

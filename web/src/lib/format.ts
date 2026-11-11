@@ -23,6 +23,11 @@ export function bytes(value?: number | null): string {
   return `${(value / (1024 ** power)).toFixed(power > 2 ? 1 : 0)} ${units[power]}`;
 }
 
+/** A count at a glance: 1,234,567 is "1.2M". */
+export function count(value: number): string {
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
 export function splitList(value: FormDataEntryValue | string | null): string[] {
   return String(value ?? "").split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
 }

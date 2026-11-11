@@ -49,7 +49,7 @@ echo "==> linkage"
 "$root/packaging/macos/check-linkage.sh" "$bundle"
 
 echo "==> ffmpeg"
-"$root/packaging/macos/smoke-ffmpeg.sh" "$bundle/ffmpeg/bin/ffmpeg"
+"$root/packaging/smoke/ffmpeg.sh" "$bundle/ffmpeg/bin/ffmpeg" h264_videotoolbox hevc_videotoolbox
 
 echo "==> real model through the plugin host"
 ORT_DYLIB_PATH="$bundle/onnxruntime/lib/libonnxruntime.dylib" \
@@ -57,7 +57,7 @@ ORT_DYLIB_PATH="$bundle/onnxruntime/lib/libonnxruntime.dylib" \
     cargo test -p noflex-plugin-host --test it real_plugin::loads_real_embeddings_plugin -- --nocapture
 
 echo "==> server from the bundle"
-"$root/packaging/macos/smoke-server.sh" "$bundle"
+"$root/packaging/smoke/server.sh" "$bundle"
 
 echo "==> benchmark"
 bench=$root/dist/bench

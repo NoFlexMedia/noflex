@@ -63,6 +63,29 @@ void main() {
     }
   });
 
+  test('builds for Apple’s platforms draw none of its marks', () {
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    for (final platform in [TargetPlatform.iOS, TargetPlatform.macOS]) {
+      debugDefaultTargetPlatformOverride = platform;
+      for (final (device, client, icon) in [
+        ('Apple TV', 'NoFlex TV', PhosphorIconsRegular.television),
+        (
+          'Chris’s MacBook Pro',
+          'NoFlex for macOS',
+          PhosphorIconsRegular.desktop,
+        ),
+        ('Safari on iPad', 'NoFlex Web', PhosphorIconsRegular.browser),
+        ('Firefox on Android', 'NoFlex Web', SimpleIcons.firefoxbrowser),
+      ]) {
+        expect(
+          deviceIconFor(device, client),
+          icon,
+          reason: '$platform: $device',
+        );
+      }
+    }
+  });
+
   testWidgets('a picture goes up as a small square', (tester) async {
     await tester.runAsync(() async {
       expect(await _size(await pictureForUpload(await _png(3000, 1500))), (

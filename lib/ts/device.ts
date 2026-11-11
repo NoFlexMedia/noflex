@@ -6,10 +6,10 @@
 // flutter/lib/utils/device_icon.dart ports the table, so a change here goes there too.
 
 export type DeviceBrand =
-  | "googletv" | "apple" | "nvidia" | "television"
+  | "googletv" | "appletv" | "nvidia" | "television"
   | "playstation" | "steamdeck" | "gamepad"
   | "brave" | "vivaldi" | "opera" | "duckduckgo" | "firefox" | "safari" | "chrome" | "browser"
-  | "tablet" | "phone"
+  | "tablet" | "phone" | "mac"
   | "windows" | "ubuntu" | "fedora" | "archlinux" | "debian" | "nixos" | "linuxmint" | "popos" | "manjaro" | "opensuse" | "linux" | "android"
   | "laptop" | "desktop";
 
@@ -17,7 +17,7 @@ export type DeviceBrand =
 // browser as itself rather than as whatever it runs on.
 const BRANDS: readonly (readonly [RegExp, DeviceBrand])[] = [
   [/\bgoogle ?tv\b/i, "googletv"],
-  [/\bapple ?tv\b|\btvos\b/i, "apple"],
+  [/\bapple ?tv\b|\btvos\b/i, "appletv"],
   [/\bshield\b|\bnvidia\b/i, "nvidia"],
   [/\b(tv|roku|fire ?stick|chromecast|bravia|vidaa)\b|\bwebos\b|\btizen\b/i, "television"],
   [/playstation/i, "playstation"],
@@ -33,7 +33,7 @@ const BRANDS: readonly (readonly [RegExp, DeviceBrand])[] = [
   [/\bedge\b|samsung internet|browser/i, "browser"],
   [/ipad|tablet/i, "tablet"],
   [/iphone|\bios\b|phone|mobile/i, "phone"],
-  [/\bmac|\bimac\b/i, "apple"],
+  [/\bmac|\bimac\b/i, "mac"],
   [/windows/i, "windows"],
   [/ubuntu/i, "ubuntu"],
   [/fedora/i, "fedora"],

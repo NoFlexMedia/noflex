@@ -103,11 +103,15 @@ function SectionItem(props: NodeProps & { section: (typeof SECTIONS)[number]; ch
 
 const PROFILE_QR = 170;
 
+// NativeScript is the tvOS and iOS host, and App Review rejects apps that draw Apple's
+// marks, so there its devices and Safari get the plain icon for what they are.
+const appleMarks = __TARGET__ !== "nativescript";
+
 const BRAND_ICONS: Record<DeviceBrand, IconName> = {
-  android: "android-logo-fill", apple: "apple-logo-fill", archlinux: "mark-archlinux", brave: "mark-brave", browser: "browser", chrome: "mark-chrome", debian: "mark-debian", desktop: "desktop",
-  duckduckgo: "mark-duckduckgo", fedora: "mark-fedora", firefox: "mark-firefox", gamepad: "game-controller", googletv: "mark-googletv", laptop: "laptop", linux: "linux-logo-fill", linuxmint: "mark-linuxmint",
+  android: "android-logo-fill", appletv: appleMarks ? "apple-logo-fill" : "television", archlinux: "mark-archlinux", brave: "mark-brave", browser: "browser", chrome: "mark-chrome", debian: "mark-debian", desktop: "desktop",
+  duckduckgo: "mark-duckduckgo", fedora: "mark-fedora", firefox: "mark-firefox", gamepad: "game-controller", googletv: "mark-googletv", laptop: "laptop", linux: "linux-logo-fill", linuxmint: "mark-linuxmint", mac: appleMarks ? "apple-logo-fill" : "desktop",
   manjaro: "mark-manjaro", nixos: "mark-nixos", nvidia: "mark-nvidia", opensuse: "mark-opensuse", opera: "mark-opera", phone: "device-mobile", playstation: "mark-playstation", popos: "mark-popos",
-  safari: "mark-safari", steamdeck: "mark-steamdeck", tablet: "device-tablet", television: "television", ubuntu: "mark-ubuntu", vivaldi: "mark-vivaldi", windows: "windows-logo-fill",
+  safari: appleMarks ? "mark-safari" : "browser", steamdeck: "mark-steamdeck", tablet: "device-tablet", television: "television", ubuntu: "mark-ubuntu", vivaldi: "mark-vivaldi", windows: "windows-logo-fill",
 };
 
 const Note = (props: { text: string }) => (

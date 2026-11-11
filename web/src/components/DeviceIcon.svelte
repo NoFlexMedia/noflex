@@ -20,7 +20,7 @@
   const MARKS = { archlinux: siArchlinux, brave: siBrave, chrome: siGooglechrome, debian: siDebian, duckduckgo: siDuckduckgo, fedora: siFedora, firefox: siFirefoxbrowser, googletv: siGoogletv, linuxmint: siLinuxmint, manjaro: siManjaro, nixos: siNixos, nvidia: siNvidia, opensuse: siOpensuse, opera: siOpera, playstation: siPlaystation, popos: siPopos, safari: siSafari, steamdeck: siSteamdeck, ubuntu: siUbuntu, vivaldi: siVivaldi };
   // Phosphor's own logos where Simple Icons has none or draws too much for this size,
   // filled to sit with its solid marks. What isn't a brand stays an outline.
-  const LOGOS = { android: AndroidLogo, apple: AppleLogo, linux: LinuxLogo, windows: WindowsLogo };
+  const LOGOS = { android: AndroidLogo, appletv: AppleLogo, linux: LinuxLogo, mac: AppleLogo, windows: WindowsLogo };
   const OUTLINES = { browser: Browser, desktop: Desktop, gamepad: GameController, laptop: Laptop, phone: DeviceMobile, tablet: DeviceTablet, television: Television };
 
   let brand = $derived(deviceBrand(device, client));

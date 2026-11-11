@@ -325,7 +325,7 @@ context.addCustomMessageListener(NAMESPACE, (event) => {
 });
 
 context.addEventListener(cast.framework.system.EventType.READY, () => {
-  body.classList.toggle("touch", capabilities().touch_input_supported === true);
+  body.classList.toggle("touchscreen", capabilities().touch_input_supported === true);
 });
 
 const options = new cast.framework.CastReceiverOptions();

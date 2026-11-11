@@ -78,7 +78,7 @@ body.seeking #played { transition: none; }
 
 /* Smart displays get buttons; a TV is steered from the sender or its remote. */
 .touch { display: none; justify-content: center; align-items: center; gap: 5vh; }
-body.touch .touch { display: flex; }
+body.touchscreen .touch { display: flex; }
 .touch button { display: grid; place-items: center; width: 9vh; height: 9vh; padding: 0; border: 0; border-radius: 50%; background: var(--surface-3); color: var(--text); transition: transform var(--t) var(--ease-spring), background var(--t) var(--ease-out); }
 .touch button:active { transform: scale(0.92); background: var(--line-strong); }
 .touch button.big { width: 12vh; height: 12vh; background: var(--text); color: var(--accent-ink); }

@@ -21,6 +21,7 @@ import '../../widgets/user_avatar.dart';
 import '../player/decoder_probe.dart';
 import '../player/decoders.dart';
 import '../player/playback_service.dart';
+import '../player/quality.dart';
 import 'account_controller.dart';
 import 'account_widgets.dart';
 import 'delete_account.dart';
@@ -716,39 +717,48 @@ class _PlaybackPanelState extends State<_PlaybackPanel> {
   );
 }
 
+/// The player's own choices, and limits for a title it hasn't seen the ladder of.
 const _qualities = [
-  (null, 'Auto', 'Whatever this device can play'),
-  (20000000, '20 Mbps', null),
-  (8000000, '8 Mbps', null),
-  (4000000, '4 Mbps', 'Data saver'),
+  (
+    QualityChoice.original,
+    'Original',
+    'The file as it is, when this device plays it',
+  ),
+  (QualityChoice.auto, 'Auto', 'Adapts to your connection'),
+  (QualityChoice.pinned(20000000), 'Up to 20 Mb/s', null),
+  (QualityChoice.pinned(8000000), 'Up to 8 Mb/s', null),
+  (QualityChoice.pinned(4000000), 'Up to 4 Mb/s', 'Data saver'),
 ];
+
+String _qualityName(QualityChoice choice) =>
+    _qualities.where((q) => q.$1 == choice).firstOrNull?.$2 ??
+    'Up to ${megabits(choice.bitrateBps)}';
 
 class _ThisDevicePanel extends SignalWidget {
   const _ThisDevicePanel({required this.controller});
   final AccountController controller;
 
   Future<void> _chooseQuality(PlaybackService playback) async {
-    // A sheet dismissed answers null, which can't also mean Auto.
-    const auto = -1;
-    final choice = await pickOption<int>(
+    final current = playback.quality.value;
+    final choice = await pickOption<QualityChoice>(
       title: 'Streaming quality',
-      selected: playback.maxBitrateBps.value ?? auto,
+      selected: current,
       options: [
         for (final (value, label, detail) in _qualities)
-          NfOption(value ?? auto, label, detail: detail),
+          NfOption(value, label, detail: detail),
+        // A step picked in the player, which this list doesn't have.
+        if (!_qualities.any((q) => q.$1 == current))
+          NfOption(current, _qualityName(current)),
       ],
     );
     if (choice == null) return;
-    await playback.setMaxBitrate(choice == auto ? null : choice);
+    await playback.rememberQuality(choice);
   }
 
   @override
   Widget build(BuildContext context) {
     final playback = getIt<PlaybackService>();
-    final limit = playback.maxBitrateBps.value;
-    final label = _qualities
-        .firstWhere((q) => q.$1 == limit, orElse: () => _qualities.first)
-        .$2;
+    final label = _qualityName(playback.quality.value);
     final cap = controller.streamCapBps.value;
     final profile = getIt<DecoderProbeService>().profile.value;
     final remeasuring = controller.remeasuring.value;

@@ -39,6 +39,7 @@ import 'capabilities.dart';
 import 'decoder_probe.dart';
 import 'decoders.dart';
 import 'player_screen.dart';
+import 'quality.dart';
 
 typedef PlaybackDecision = GStartPlaybackData_startPlaybackSession_decision;
 
@@ -70,6 +71,8 @@ class SessionInfo {
     this.startPositionMs = 0,
     this.decision,
     this.subtitles = const [],
+    this.adaptive = false,
+    this.qualities = const [],
   });
 
   final String sessionId;
@@ -84,7 +87,19 @@ class SessionInfo {
   final PlaybackDecision? decision;
   final List<DeliveredSubtitle> subtitles;
 
+  /// [url] is a ladder of variants rather than one stream.
+  final bool adaptive;
+
+  /// What this file can be transcoded to for this device, best first.
+  final List<StreamQuality> qualities;
+
   bool get transcoding => route == GPlaybackRouteKind.TRANSCODE;
+
+  /// The original picture, as it is or in new segments.
+  bool get originalPicture =>
+      !transcoding ||
+      decision?.plan == GPlaybackPlanKind.REMUX ||
+      decision?.plan == GPlaybackPlanKind.TRANSCODE_AUDIO;
 }
 
 class RoomRef {
@@ -113,6 +128,9 @@ class ActivePlayback {
     this.live = false,
     this.room,
     this.offline,
+    this.quality = QualityChoice.original,
+    this.leftOriginal = false,
+    this.qualities = const [],
   });
 
   final WorkSummary? work;
@@ -142,6 +160,14 @@ class ActivePlayback {
   final bool live;
   final RoomRef? room;
   final OfflineItem? offline;
+  final QualityChoice quality;
+
+  /// Auto moved this title off the original because it struggled.
+  final bool leftOriginal;
+
+  /// The first session's ladder. Later ones are asked with a limit, and what a
+  /// session offers depends on it.
+  final List<StreamQuality> qualities;
 
   String get url => localPath ?? session!.url;
   bool get transcoding => session?.transcoding ?? false;
@@ -155,6 +181,8 @@ class ActivePlayback {
     bool clearBurned = false,
     int? subtitleIndex,
     bool clearSubtitle = false,
+    QualityChoice? quality,
+    bool? leftOriginal,
   }) => ActivePlayback(
     title: title,
     subtitle: subtitle,
@@ -175,6 +203,11 @@ class ActivePlayback {
     live: live,
     room: room,
     offline: offline,
+    quality: quality ?? this.quality,
+    leftOriginal: leftOriginal ?? this.leftOriginal,
+    qualities: qualities.isNotEmpty
+        ? qualities
+        : (session ?? this.session)?.qualities ?? const [],
   );
 }
 
@@ -214,7 +247,7 @@ int displayPixels() {
   return pixels > 0 ? pixels : pixels1080p;
 }
 
-const _maxBitrateKey = 'noflex.maxBitrateBps';
+const _qualityKey = 'noflex.quality';
 
 class PlaybackService {
   PlaybackService() {
@@ -230,22 +263,22 @@ class PlaybackService {
   /// The id of the work a session is being opened for.
   final preparing = signal<String?>(null);
 
-  /// A ceiling the viewer set for streaming; null is whatever the device plays.
-  final maxBitrateBps = signal<int?>(null);
+  /// The quality this device streams at, Original until the viewer picks.
+  final quality = signal(QualityChoice.original);
+
+  /// The last stream's bandwidth estimate, so the next starts at a step it
+  /// can hold.
+  int? measuredBps;
 
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    maxBitrateBps.value = prefs.getInt(_maxBitrateKey);
+    quality.value = decodeChoice(prefs.getString(_qualityKey));
   }
 
-  Future<void> setMaxBitrate(int? value) async {
-    maxBitrateBps.value = value;
+  Future<void> rememberQuality(QualityChoice value) async {
+    quality.value = value;
     final prefs = await SharedPreferences.getInstance();
-    if (value == null) {
-      await prefs.remove(_maxBitrateKey);
-    } else {
-      await prefs.setInt(_maxBitrateKey, value);
-    }
+    await prefs.setString(_qualityKey, encodeChoice(value));
   }
 
   String _absolute(String url, ServerRef? server) => url.startsWith('/')
@@ -262,11 +295,13 @@ class PlaybackService {
     int? burn,
     int startMs = 0,
     int? audio,
+    SessionQuality? quality,
   }) async {
     final profile = await _decoders.ready();
+    final asked = quality ?? sessionQuality(this.quality.value, null);
     final capabilities = buildCapabilities(
       profile,
-      maxBitrateBps: maxBitrateBps.value,
+      maxBitrateBps: asked.maxBitrateBps,
     );
     final data = await _graphql.run(
       GStartPlaybackReq(
@@ -275,7 +310,8 @@ class PlaybackService {
           ..capabilities.replace(capabilities)
           ..subtitle = burn
           ..start = startMs < 0 ? 0 : startMs
-          ..audio = audio,
+          ..audio = audio
+          ..adaptive = asked.adaptive,
       ),
       server: server,
     );
@@ -290,6 +326,16 @@ class PlaybackService {
       },
       startPositionMs: session.startPositionMs,
       decision: session.decision,
+      adaptive: session.adaptive,
+      qualities: [
+        for (final step in session.qualities)
+          StreamQuality(
+            label: step.label,
+            width: step.width,
+            height: step.height,
+            bitrateBps: step.bitrateBps,
+          ),
+      ],
       subtitles: [
         for (final track in session.subtitles)
           DeliveredSubtitle(
@@ -475,10 +521,13 @@ class PlaybackService {
 
     // Everything plays through libmpv, which switches in-file tracks and draws
     // image subtitles itself. Only a transcode needs the server to do either.
+    final quality = this.quality.value;
+    final asked = sessionQuality(quality, null);
     var opened = await startSession(
       chosenFile.id,
       server: server,
       startMs: resume,
+      quality: asked,
     );
     final burn =
         opened.transcoding && subtitle != null && tracks[subtitle].isImage
@@ -497,6 +546,7 @@ class PlaybackService {
         burn: burn,
         startMs: resume,
         audio: audio,
+        quality: asked,
       );
     }
 
@@ -522,6 +572,8 @@ class PlaybackService {
       burnedSubtitle: burn,
       subtitleTracks: tracks,
       room: room,
+      quality: quality,
+      qualities: opened.qualities,
     );
   }
 
@@ -651,6 +703,8 @@ class PlaybackService {
           session: session,
           resumeMs: positionMs,
           room: room,
+          quality: quality.value,
+          qualities: session.qualities,
         ),
       );
     } on Exception catch (error) {
@@ -667,17 +721,24 @@ class PlaybackService {
   }
 
   /// Replace the session with one starting at [positionMs]: to burn in a
-  /// different subtitle, change a transcode's audio, or seek one far from its
-  /// offset. False (after a toast) when no new session could be opened.
+  /// different subtitle, change a transcode's audio, seek one far from its
+  /// offset, or play at another quality. False (after a toast) when no new
+  /// session could be opened.
   Future<bool> restart({
     required int positionMs,
     int? burn,
     bool clearBurn = false,
     int? audio,
+    QualityChoice? quality,
+    bool? leftOriginal,
   }) async {
     final playing = current.value;
     final version = playing?.version;
     if (playing == null || version == null) return false;
+    final choice = quality ?? playing.quality;
+    // A new choice starts on what it asks for; Auto leaves the original only on its own.
+    final left =
+        leftOriginal ?? (quality != null ? false : playing.leftOriginal);
     try {
       await stopSession(playing.session?.sessionId, server: playing.server);
       final session = await startSession(
@@ -686,6 +747,11 @@ class PlaybackService {
         burn: clearBurn ? null : (burn ?? playing.burnedSubtitle),
         startMs: positionMs,
         audio: audio ?? playing.audioStream,
+        quality: sessionQuality(
+          choice,
+          playing.session?.decision?.source.bitrateBps,
+          leftOriginal: left,
+        ),
       );
       current.value = playing.copyWith(
         session: session,
@@ -693,6 +759,8 @@ class PlaybackService {
         audioStream: audio,
         burnedSubtitle: burn,
         clearBurned: clearBurn,
+        quality: choice,
+        leftOriginal: left,
       );
       return true;
     } on Exception catch (error) {
@@ -719,6 +787,8 @@ class PlaybackService {
         nextParts: playing.nextParts.sublist(1),
         session: session,
         room: playing.room,
+        quality: playing.quality,
+        qualities: session.qualities,
       );
       return true;
     } on Exception catch (error) {

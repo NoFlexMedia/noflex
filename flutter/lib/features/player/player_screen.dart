@@ -27,6 +27,7 @@ import 'decoder_probe.dart';
 import 'decoders.dart';
 import 'playback_service.dart';
 import 'player_controller.dart';
+import 'quality.dart';
 
 bool get _isDesktop =>
     Platform.isLinux || Platform.isMacOS || Platform.isWindows;
@@ -354,10 +355,17 @@ class _TopBar extends StatelessWidget {
           ],
         ),
       ),
-      NfIconButton(
-        icon: PhosphorIconsRegular.info,
-        label: 'Playback info',
-        onPressed: player.toggleInfo,
+      const SizedBox(width: 8),
+      // How this is reaching the screen, and the way into the details.
+      SignalBuilder(
+        builder: (context) => Semantics(
+          label: 'Playback info',
+          child: NfChoiceChip(
+            label: player.routeLabel.value,
+            selected: player.infoOpen.value,
+            onTap: player.toggleInfo,
+          ),
+        ),
       ),
     ],
   );
@@ -731,6 +739,14 @@ class _BottomBar extends SignalWidget {
             label: 'Audio track',
             onPressed: () => _chooseAudio(player, audio),
           ),
+        if (!current.live &&
+            !player.isGuest.value &&
+            current.qualities.isNotEmpty)
+          NfIconButton(
+            icon: PhosphorIconsRegular.gear,
+            label: 'Quality',
+            onPressed: () => _chooseQuality(player, current),
+          ),
         if (hasSubtitles)
           NfIconButton(
             icon: player.subtitleIndex.value != null
@@ -785,6 +801,39 @@ Future<void> _chooseAudio(
     ],
   );
   if (choice != null) await player.chooseAudio(choice);
+}
+
+Future<void> _chooseQuality(
+  PlayerController player,
+  ActivePlayback current,
+) async {
+  final source = current.session?.decision?.source;
+  final choice = await pickOption<QualityChoice>(
+    title: 'Quality',
+    selected: current.quality,
+    options: [
+      NfOption(
+        QualityChoice.original,
+        'Original',
+        detail: [
+          ?frameLabel(source?.width, source?.height),
+          megabits(source?.bitrateBps),
+        ].where((part) => part.isNotEmpty).join(' · ').ifEmptyNull,
+      ),
+      const NfOption(
+        QualityChoice.auto,
+        'Auto',
+        detail: 'Adapts to your connection',
+      ),
+      for (final step in current.qualities)
+        NfOption(
+          QualityChoice.pinned(step.bitrateBps),
+          step.label,
+          detail: megabits(step.bitrateBps),
+        ),
+    ],
+  );
+  if (choice != null) await player.setQuality(choice);
 }
 
 Future<void> _chooseSubtitles(
@@ -877,6 +926,21 @@ class _InfoPanel extends SignalWidget {
           'Encoder',
           '${decision!.encoder}${decision.hardware ? ' (hardware)' : ''}',
         ),
+      if (current != null && current.session != null && !current.live)
+        (
+          'Quality',
+          [
+            switch (current.quality.kind) {
+              QualityKind.auto => 'Auto',
+              QualityKind.original => 'Original',
+              QualityKind.pinned => 'Pinned',
+            },
+            if (player.stepName.value case final step?)
+              '$step at ${megabits(player.variant.value?.bandwidth)}',
+          ].join(' · '),
+        ),
+      if (player.estimateBps.value case final estimate?)
+        ('Connection', megabits(estimate)),
       if (stats != null) ...[
         ('Picture', stats.size),
         ('Frame rate', stats.fps),

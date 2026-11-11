@@ -9,6 +9,7 @@
 // so source time is `offset + player position`.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:ferry/ferry.dart';
@@ -39,8 +40,10 @@ import '../../services/watch_state.dart';
 import '../downloads/downloads_service.dart';
 import 'decoder_probe.dart';
 import 'decoders.dart';
+import 'ladder.dart';
 import 'playback_position.dart';
 import 'playback_service.dart';
+import 'quality.dart';
 
 /// libmpv's GL output can't get a context under the Android emulator's EGL
 /// translation, so test devices build with `mediacodec_embed`; see AGENTS.md.
@@ -55,6 +58,11 @@ const _heartbeat = Duration(seconds: 15);
 const _streamLost = 'The stream stopped before the end.';
 
 const _landingPatience = Duration(seconds: 30);
+
+const _bufferBytes = 64 * 1024 * 1024;
+
+/// The server holds a segment request for up to 45 s while it encodes it.
+const _segmentPatience = '50';
 
 bool get _isDesktop =>
     Platform.isLinux || Platform.isMacOS || Platform.isWindows;
@@ -83,7 +91,7 @@ class PlayerController {
     _player = Player(
       configuration: const PlayerConfiguration(
         title: 'NoFlex',
-        bufferSize: 64 * 1024 * 1024,
+        bufferSize: _bufferBytes,
         libass: true,
         libassAndroidFont: 'assets/fonts/Inter-Variable.ttf',
         libassAndroidFontName: 'Inter',
@@ -102,9 +110,16 @@ class PlayerController {
       _player.stream.duration.listen((_) => _updateDuration()),
       _player.stream.buffer.listen(_onBuffer),
       _player.stream.playing.listen(_onPlaying),
-      _player.stream.buffering.listen(
-        (value) => waiting.value = value || restarting.value != null,
-      ),
+      _player.stream.buffering.listen((value) {
+        waiting.value = value || restarting.value != null;
+        if (!value) {
+          _auto.resumed();
+          _ladder?.resumed();
+        } else if (restarting.value == null && _player.state.playing) {
+          _auto.stalled();
+          _ladder?.stalled();
+        }
+      }),
       _player.stream.completed.listen((done) {
         // A stream on its way out running dry isn't the title ending.
         if (done && restarting.value == null) unawaited(_onEnded());
@@ -128,6 +143,10 @@ class PlayerController {
       _openedUrl = url;
       untracked(() => unawaited(_open(playing)));
     });
+    _qualityTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => unawaited(_qualityTick()),
+    );
     showChrome();
   }
 
@@ -147,7 +166,20 @@ class PlayerController {
   Timer? _flashTimer;
   Timer? _statsTimer;
   Timer? _hwCheck;
+  Timer? _qualityTimer;
   bool _finalized = false;
+
+  /// The stream's playlist covers the whole title, so every seek is native.
+  bool _wholeTitle = false;
+
+  /// Auto's moves between the original and the ladder, one per file so that
+  /// leaving the original holds across the sessions it opens.
+  AutoQuality _auto = AutoQuality();
+  String? _autoFor;
+
+  /// Where on an adaptive session's ladder libmpv is playing; see ladder.dart.
+  LadderSteps? _ladder;
+  bool _switching = false;
 
   /// Where playback has really got to, in source time.
   int _reached = 0;
@@ -189,6 +221,12 @@ class PlayerController {
   /// Source position (ms) a restarted transcode is coming up at.
   final restarting = signal<int?>(null);
 
+  /// The ladder variant playing, for an adaptive session.
+  final variant = signal<Variant?>(null);
+
+  /// Throughput while the stream fills its buffer, in bits per second.
+  final estimateBps = signal<int?>(null);
+
   late final inIntro = computed(() {
     final edition = _service.current.value?.edition;
     final end = edition?.introEndMs;
@@ -200,6 +238,37 @@ class PlayerController {
   late final inCredits = computed(() {
     final start = _service.current.value?.edition?.creditsStartMs;
     return start != null && position.value >= start;
+  });
+
+  /// The ladder step playing, by the server's name for it.
+  late final stepName = computed(() {
+    final playing = variant.value;
+    if (playing == null) return null;
+    final steps = _service.current.value?.qualities ?? const [];
+    return steps.where((q) => q.height == playing.height).firstOrNull?.label ??
+        frameLabel(playing.width, playing.height);
+  });
+
+  /// What the chip over the picture says: how this is reaching the screen.
+  late final routeLabel = computed(() {
+    final current = _service.current.value;
+    final session = current?.session;
+    if (current == null) return '';
+    if (session == null) return 'Downloaded';
+    final auto = current.quality == QualityChoice.auto;
+    if (session.route == GPlaybackRouteKind.OPTIMIZED) return 'Optimized';
+    // A remux, or a transcode of the audio alone, still shows the original picture.
+    if (session.originalPicture) return auto ? 'Auto · original' : 'Direct';
+    if (session.adaptive) {
+      final step = stepName.value;
+      return step == null ? 'Auto' : 'Auto · $step';
+    }
+    final pinned = current.quality.bitrateBps;
+    return current.qualities
+            .where((q) => pinned != null && q.bitrateBps == pinned)
+            .firstOrNull
+            ?.label ??
+        'Transcoding';
   });
 
   late final isGuest = computed(() {
@@ -222,19 +291,23 @@ class PlayerController {
   /// failed fetch, with a timeout shorter than the server will hold the request
   /// for, and a live channel can't have one until its first segment has aired.
   /// Whatever's still wrong at the deadline is left for libmpv to report.
-  Future<void> _awaitPlaylist(String master) async {
+  /// Answers the master's variants, and whether the playlist is the whole title.
+  Future<(List<Variant>, bool)> _awaitPlaylist(String master) async {
     final Uri media;
+    final List<Variant> variants;
     try {
       final uri = Uri.parse(master);
-      final entry = (await http.get(uri)).body
+      final body = (await http.get(uri)).body;
+      variants = parseMaster(body, uri);
+      final entry = body
           .split('\n')
           .map((line) => line.trim())
           .where((line) => line.isNotEmpty && !line.startsWith('#'))
           .firstOrNull;
-      if (entry == null) return;
+      if (entry == null) return (variants, false);
       media = uri.resolve(entry);
     } on Exception {
-      return;
+      return (const <Variant>[], false);
     }
     final deadline = DateTime.now().add(_playlistPatience);
     while (!_disposed &&
@@ -244,12 +317,15 @@ class PlayerController {
         final response = await http
             .get(media)
             .timeout(const Duration(seconds: 20));
-        if (response.statusCode == 200) return;
+        if (response.statusCode == 200) {
+          return (variants, response.body.contains('#EXT-X-ENDLIST'));
+        }
       } on Exception {
         // Not there yet, or the request was held too long. Both clear up.
       }
       await Future<void>.delayed(const Duration(milliseconds: 500));
     }
+    return (variants, false);
   }
 
   Future<void> _open(ActivePlayback next) async {
@@ -265,7 +341,16 @@ class PlayerController {
       subtitleIndex.value = next.subtitleIndex;
       burned.value = next.burnedSubtitle;
       audioIndex.value = next.audioStream;
+      variant.value = null;
     });
+    _wholeTitle = false;
+    _ladder = null;
+    final title = next.version?.id ?? next.url;
+    if (title != _autoFor) {
+      _autoFor = title;
+      _auto = AutoQuality();
+    }
+    _auto.settle();
     if (next.transcoding || next.live) {
       // A transcode's playlist grows as it encodes, which ffmpeg would take for
       // a live stream and join at the edge; its time zero is where to start.
@@ -280,6 +365,10 @@ class PlayerController {
       await _native.setProperty('demuxer-lavf-o', '');
       await _native.setProperty('force-seekable', 'no');
     }
+    await _native.setProperty(
+      'network-timeout',
+      next.transcoding && !next.live ? _segmentPatience : '5',
+    );
     // SurfaceTexture's conversion knows nothing of PQ or HLG: HDR has to come
     // back to libmpv as frames for its tone-mapping.
     if (Platform.isAndroid && _androidVo.isEmpty) {
@@ -295,10 +384,20 @@ class PlayerController {
         buffered.value = 0;
       });
       if (_player.state.playing) await _player.pause();
-      await _awaitPlaylist(next.url);
+      final (variants, whole) = await _awaitPlaylist(next.url);
       if (_disposed || _openedUrl != next.url) return;
+      _wholeTitle = whole;
+      if (next.session!.adaptive && variants.length > 1) {
+        final ladder = LadderSteps(
+          variants,
+          LadderSteps.pick(variants, _service.measuredBps),
+        );
+        _ladder = ladder;
+        variant.value = variants[ladder.at];
+      }
     }
-    // A transcode already starts at the resume point; direct play seeks to it.
+    // A linear transcode already starts at the resume point; everything else
+    // seeks to it.
     final local = next.resumeMs - next.offsetMs;
     // Android's libmpv can't seek in the HLS form of a ready file: it reads on
     // to the end without ever landing. The file itself seeks, but having no index
@@ -309,7 +408,7 @@ class PlayerController {
     _onReadyHls = file != null && !openFile;
     await _player.open(
       Media(
-        openFile ? file : next.url,
+        openFile ? file : variant.value?.uri.toString() ?? next.url,
         start: !next.live && local > 1000
             ? Duration(milliseconds: local)
             : null,
@@ -318,6 +417,7 @@ class PlayerController {
     // A restarted transcode's time zero is its target, so source time is right
     // again from here.
     if (restarting.value != null) restarting.value = null;
+    _auto.settle();
     await WakelockPlus.enable();
     _updateDuration();
     if (next.work != null && !next.live) {
@@ -623,12 +723,14 @@ class PlayerController {
     final local = target - current.offsetMs;
     final buffered = local >= 0 && local <= _player.state.buffer.inMilliseconds;
     final reachable = current.transcoding
-        ? buffered
+        ? buffered || (local >= 0 && _wholeTitle)
         // Ahead into what's already here is the only seek its HLS form can do.
         : !_onReadyHls || (buffered && target >= from);
     if (reachable) {
       _restartTimer?.cancel();
       if (restarting.value == null) {
+        _auto.settle();
+        _ladder?.settle();
         unawaited(_player.seek(Duration(milliseconds: local)));
         _roomSend(
           _player.state.playing
@@ -895,21 +997,135 @@ class PlayerController {
   }
 
   /// The same place in a stream the server makes differently.
-  Future<void> _replaceStream({
+  Future<bool> _replaceStream({
     int? burn,
     bool clearBurn = false,
     int? audio,
+    QualityChoice? quality,
+    bool? leftOriginal,
   }) async {
     final at = _sourceTime;
     restarting.value = at;
+    _heartbeatTimer?.cancel();
     _openedUrl = null;
     final ok = await _service.restart(
       positionMs: at,
       burn: burn,
       clearBurn: clearBurn,
       audio: audio,
+      quality: quality,
+      leftOriginal: leftOriginal,
     );
     if (!ok) restarting.value = null;
+    return ok;
+  }
+
+  // ---- quality ----------------------------------------------------------
+
+  /// Kept for this device, and played from here on.
+  Future<void> setQuality(QualityChoice next) async {
+    unawaited(_service.rememberQuality(next));
+    if (_switching || next == _current?.quality) return;
+    _switching = true;
+    await _replaceStream(quality: next);
+    _switching = false;
+  }
+
+  /// Auto's moves, once a second. Between the original and the ladder is a new
+  /// session; along the ladder, another of this session's variants.
+  Future<void> _qualityTick() async {
+    final current = _current;
+    if (_disposed || current == null || current.session == null) return;
+    if (current.live) return;
+    await _sampleBandwidth();
+    if (current.quality != QualityChoice.auto || current.room != null) return;
+    if (_switching || restarting.value != null || !_player.state.playing) {
+      return;
+    }
+    final session = current.session!;
+    // Once the original has been left, a session that still isn't a ladder had
+    // none to give.
+    if (!session.adaptive && !current.leftOriginal && _auto.struggling()) {
+      _auto.leftOriginal();
+      await _changeQuality(
+        leftOriginal: true,
+        message: 'Lowered the quality to keep up with your connection',
+      );
+    } else if (session.adaptive &&
+        current.leftOriginal &&
+        _auto.recovered(
+          estimateBps.value,
+          session.decision?.source.bitrateBps,
+        )) {
+      await _changeQuality(
+        leftOriginal: false,
+        message: 'Back to the original quality',
+      );
+    } else if (_ladder?.next(estimateBps.value) case final to?) {
+      await _stepTo(to);
+    }
+  }
+
+  Future<void> _changeQuality({
+    required bool leftOriginal,
+    required String message,
+  }) async {
+    _switching = true;
+    if (await _replaceStream(leftOriginal: leftOriginal)) {
+      getIt<ToastService>().show(message);
+    }
+    _switching = false;
+  }
+
+  /// libmpv's input rate, taken only while the buffer is filling: once it's
+  /// full the stream is read as fast as it plays, which says nothing of the
+  /// connection. Before anything has arrived it's the server starting up.
+  Future<void> _sampleBandwidth() async {
+    final Object? state;
+    try {
+      state = jsonDecode(await _native.getProperty('demuxer-cache-state'));
+    } on FormatException {
+      return;
+    }
+    if (state is! Map<String, dynamic>) return;
+    final rate = state['raw-input-rate'];
+    final forward = state['fw-bytes'];
+    if (rate is! num || forward is! num || state['idle'] == true) return;
+    if (forward <= 0 || forward >= _bufferBytes * 0.9) return;
+    final sample = (rate * 8).round();
+    final previous = estimateBps.value;
+    final next = previous == null
+        ? sample
+        : (previous * 0.7 + sample * 0.3).round();
+    estimateBps.value = next;
+    _service.measuredBps = next;
+  }
+
+  /// Reopen at another of the ladder's variants, at the same place.
+  Future<void> _stepTo(int index) async {
+    final ladder = _ladder;
+    if (ladder == null) return;
+    _switching = true;
+    final at = _sourceTime;
+    final next = ladder.variants[index];
+    batch(() {
+      restarting.value = at;
+      waiting.value = true;
+      variant.value = next;
+    });
+    _requested = at;
+    _reached = at;
+    _landingUntil = DateTime.now().add(_landingPatience);
+    _appliedResume = false;
+    await _player.open(
+      Media(next.uri.toString(), start: Duration(milliseconds: at)),
+    );
+    if (!_disposed) {
+      restarting.value = null;
+      _auto.settle();
+      ladder.settle();
+    }
+    _switching = false;
   }
 
   // ---- watch rooms ------------------------------------------------------
@@ -1093,6 +1309,7 @@ class PlayerController {
       _statsTimer,
       _hwCheck,
       _roomResync,
+      _qualityTimer,
     ]) {
       timer?.cancel();
     }

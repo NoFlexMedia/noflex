@@ -139,6 +139,17 @@ Ferry, against `lib/graphql/schema.graphql`, a symlink to `backend/crates/noflex
 - The file has no index, so opening it walks every fragment. Measured at 50 ms round trip on a 30 minute film: 21 s to start and 35 s to reach 25:00, against 1 and 2 s for HLS. FFmpeg's global `sidx` didn't help, and `use_mfra_for` ends playback a couple of seconds after a seek.
 - libmpv reports a lost stream just as it does a finished film, and may jump to the last frame on the way. `playback_position.dart` tells them apart, so a server going away mid-film shows an error with Try again rather than marking the title watched.
 - Live sets `force-seekable=no`. libmpv seeks to attach its video output once playing, and a live stream that claims it can seek never recovers from that.
+- **A video transcode is on demand** (see `backend/AGENTS.md`): its playlist is the whole title, so `startPositionMs` is `0`, the player opens at the resume point, and every seek is native (`_wholeTitle`, from the `#EXT-X-ENDLIST` `_awaitPlaylist` reads). A copied-video one (remux, or audio alone) is still linear, from its offset, and a seek past the buffer opens a new session.
+- Server-encoded streams set `network-timeout` to 50 s, as the server holds a segment request for up to 45 s while it encodes it; media_kit's 5 s would drop the segment. Everything else keeps 5 s.
+
+### Quality
+
+- **Quality is Original until the viewer picks**: the player's Quality sheet or You → On this device → Streaming quality, one value per device (`noflex.quality`, `encodeChoice`). A pinned step is its `bitrateBps` as `maxBitrateBps`; the sheet offers the first session's `qualities`, as later ones are asked with a limit.
+- `features/player/quality.dart` ports `lib/ts/quality.ts`, and `test/quality_test.dart` mirrors the TV's tests of it: a threshold changes in both.
+- Auto asks for `adaptive` sessions. On the original, `AutoQuality`'s stalls reopen the session at the same place on the ladder below the original's bitrate; comfortably over the original for a minute, three minutes on, it goes back. Both toast.
+- **libmpv doesn't adapt along a ladder.** FFmpeg's HLS demuxer plays whichever variant it's given, and given a master it fetches the first segment of every variant to probe them. So the app reads an adaptive master itself (`parseMaster`) and opens one variant's playlist, and `LadderSteps` (`ladder.dart`) moves: down on the stalls that would leave the original, up once a better variant has fit the estimate for 20 s after 45 s on one. Each move reopens that variant at the same place, a short wait where hls.js or ExoPlayer would switch seamlessly.
+- **The bandwidth estimate is `demuxer-cache-state`'s `raw-input-rate`, only while the buffer fills**: not `idle`, and `fw-bytes` above nothing and under 90% of the 64 MB buffer. A full buffer reads as fast as it plays, and an empty one is the server starting. `PlaybackService.measuredBps` carries it to the next play's first variant.
+- Seen on Linux behind a throttling proxy, Big Buck Bunny's 1080p H.264 original: at 1.2 Mb/s it stalled, Auto left for the AV1 ladder at 480p (estimate 1.1 Mb/s); at 0.65 Mb/s it stepped to 360p; unthrottled it went up to 720p and back to the original within two minutes.
 
 ### Tracks and display
 

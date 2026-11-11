@@ -2,27 +2,18 @@
 <script>
   import ArrowSquareOut from "phosphor-svelte/lib/ArrowSquareOut";
   import Check from "phosphor-svelte/lib/Check";
+  import Copy from "phosphor-svelte/lib/Copy";
   import Link from "phosphor-svelte/lib/Link";
   import Plug from "phosphor-svelte/lib/Plug";
   import User from "phosphor-svelte/lib/User";
   import { graphql } from "$houdini";
   import { newExternalNonce, webUrl } from "$lib/api.js";
   import { date } from "$lib/format.js";
-  import { fetchQuery, refetch } from "$lib/graphql.js";
-  import { app } from "$lib/session.svelte.js";
+  import { refetch } from "$lib/graphql.js";
   import { ApiError } from "$lib/tokens.js";
-  import { attempt, confirmAction, toast } from "$lib/ui.svelte.js";
+  import { attempt, confirmAction, poll, toast } from "$lib/ui.svelte.js";
 
   let { account } = $props();
-
-  // `plugins` is admin-only on most servers; without it we can still list
-  // existing links, just not offer new ones.
-  const plugins = graphql(`
-    query AccountPlugins @cache(policy: CacheOrNetwork) {
-      plugins { id displayName hooks tasks { name } }
-    }
-  `);
-  $effect(() => { if (app.viewer.isAdmin) fetchQuery(plugins); });
   const startIdentityLink = graphql(`
     mutation StartIdentityLink($provider: String!, $nonce: String!) {
       startExternalIdentityLink(provider: $provider, clientNonce: $nonce) { authorizationUrl }
@@ -32,7 +23,7 @@
     mutation RevokeExternalIdentity($provider: String!) { revokeExternalIdentity(provider: $provider) { ...MyExternalIdentities_remove } }
   `);
   const startPluginLink = graphql(`
-    mutation StartPluginLink($plugin: String!) { startPluginLink(pluginId: $plugin) { authUrl state } }
+    mutation StartPluginLink($plugin: String!) { startPluginLink(pluginId: $plugin) { authUrl state userCode } }
   `);
   const unlinkPlugin = graphql(`
     mutation UnlinkPluginAccount($plugin: String!) { unlinkPluginAccount(pluginId: $plugin) { ...MyPluginLinks_remove } }
@@ -45,13 +36,24 @@
   // An account made by signing in through a provider has no password.
   let hasPassword = $derived(data?.accountDeletion.passwordRequired ?? true);
   let links = $derived(data?.myPluginLinks ?? []);
-  let linkable = $derived.by(() => {
-    if (!$plugins.data) return null;
-    const list = $plugins.data.plugins.filter((plugin) => plugin.hooks.includes("USER_LINK"));
-    return list.map((plugin) => ({ id: plugin.id, name: plugin.displayName, link: links.find((link) => link.pluginId === plugin.id) }));
-  });
-  let pluginRows = $derived(linkable ?? links.map((link) => ({ id: link.pluginId, name: link.pluginId, link })));
+  let linkable = $derived(data?.linkablePlugins ?? []);
+  // A link stays listed after its plugin stops being linkable, so it can still be undone.
+  let pluginRows = $derived([
+    ...linkable.map((plugin) => ({ id: plugin.id, name: plugin.displayName, link: links.find((link) => link.pluginId === plugin.id) })),
+    ...links.filter((link) => !linkable.some((plugin) => plugin.id === link.pluginId)).map((link) => ({ id: link.pluginId, name: link.pluginId, link })),
+  ]);
   let busy = $state("");
+  /** A device-flow link waiting on the user: where to go and the code to type there. */
+  let pending = $state(null);
+
+  // The plugin finishes a device flow on its own, so watch for the link to land.
+  $effect(() => { if (pending) return poll(() => refetch(account), 3000); });
+  $effect(() => {
+    if (pending && links.some((link) => link.pluginId === pending.id)) {
+      toast(`${pending.name} connected`, "success");
+      pending = null;
+    }
+  });
 
   const providerName = (id) => providers.find((provider) => provider.id === id)?.displayName ?? id;
 
@@ -93,10 +95,27 @@
     const result = await attempt(() => startPluginLink.mutate({ plugin: row.id }));
     busy = "";
     if (!result) return;
-    const url = webUrl(result.data.startPluginLink.authUrl);
+    const { authUrl, userCode } = result.data.startPluginLink;
+    const url = webUrl(authUrl);
     if (!url) { toast(`${row.name} returned an unusable link`, "error"); return; }
+    if (userCode) {
+      pending = { id: row.id, name: row.name, url, code: userCode };
+      window.open(url, "_blank", "noopener,noreferrer");
+      return;
+    }
     window.open(url, "_blank", "noopener,noreferrer");
     toast(`Finish connecting ${row.name} in the new tab`, "info", { label: "I’m done", run: () => refetch(account) });
+  }
+
+  function copyCode() {
+    navigator.clipboard?.writeText(pending.code).then(() => toast("Code copied", "success"), () => toast("Couldn’t access the clipboard", "error"));
+  }
+
+  async function cancelLink() {
+    const { id } = pending;
+    pending = null;
+    // Unlinking stops the plugin waiting for the code.
+    await attempt(() => unlinkPlugin.mutate({ plugin: id }));
   }
 
   async function unlink(row) {
@@ -141,26 +160,36 @@
     <section class="panel" style:--i={1}>
       <header class="panel-head">
         <span class="panel-icon"><Plug size={19} /></span>
-        <div><h2>Connected services</h2><p>Scrobblers, watch-history sync and other plugin accounts</p></div>
+        <div><h2>Connected services</h2><p>Scrobblers and other plugin accounts</p></div>
       </header>
-      {#if plugins.loading && app.viewer.isAdmin}
-        <div class="skeleton line"></div><div class="skeleton line short"></div>
-      {:else if pluginRows.length}
+      {#if pluginRows.length}
         <ul class="list">
           {#each pluginRows as row (row.id)}
             <li>
               <span class="mark" class:on={row.link}>{#if row.link}<Check size={16} />{:else}<Plug size={16} />{/if}</span>
-              <span class="what"><strong>{row.name}</strong><small>{row.link ? `Connected${row.link.keys.length ? ` · ${row.link.keys.join(", ")}` : ""} · ${date(row.link.updatedAt)}` : "Not connected"}</small></span>
+              <span class="what"><strong>{row.name}</strong><small>{row.link ? `Connected${row.link.keys.length ? ` · ${row.link.keys.join(", ")}` : ""} · ${date(row.link.updatedAt)}` : pending?.id === row.id ? "Waiting for you to enter the code" : "Not connected"}</small></span>
               {#if row.link}
                 <button class="btn ghost sm" onclick={() => unlink(row)}>Unlink</button>
-              {:else}
-                <button class="btn sm" onclick={() => connect(row)} disabled={busy === row.id}>{#if busy === row.id}<span class="spinner sm"></span>{:else}<ArrowSquareOut size={14} />{/if}Connect</button>
+              {:else if pending?.id !== row.id}
+                <button class="btn sm" onclick={() => connect(row)} disabled={!!busy || !!pending}>{#if busy === row.id}<span class="spinner sm"></span>{:else}<ArrowSquareOut size={14} />{/if}Connect</button>
               {/if}
             </li>
+            {#if pending?.id === row.id && !row.link}
+              <li class="code-card fade-up" aria-live="polite">
+                <span class="eyebrow">Enter this code at {new URL(pending.url).host}</span>
+                <strong class="link-code mono">{pending.code}</strong>
+                <small><span class="spinner sm"></span>Waiting for {row.name}</small>
+                <div class="row">
+                  <button class="btn sm" onclick={copyCode}><Copy size={14} />Copy code</button>
+                  <a class="btn outline sm" href={pending.url} target="_blank" rel="noopener noreferrer"><ArrowSquareOut size={14} />Open {new URL(pending.url).host}</a>
+                  <button class="btn ghost sm" onclick={cancelLink}>Cancel</button>
+                </div>
+              </li>
+            {/if}
           {/each}
         </ul>
       {:else}
-        <p class="empty-note">{linkable ? "No account-linking plugins are installed on this server." : "Nothing connected yet. Ask your administrator which services this server can link to."}</p>
+        <p class="empty-note">Nothing to connect yet. An administrator can add services like Trakt with a plugin.</p>
       {/if}
     </section>
   </div>
@@ -177,4 +206,8 @@
   .what small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .providers { display: flex; flex-wrap: wrap; gap: 8px; }
   .providers.spaced { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .code-card { display: grid; justify-items: center; gap: 8px; padding: 18px; border-radius: var(--r); background: var(--surface); border: 1px dashed var(--line-strong); text-align: center; }
+  .code-card small { display: inline-flex; align-items: center; gap: 8px; color: var(--text-3); font-size: 0.84rem; }
+  .code-card .row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 4px; }
+  .link-code { font-size: 1.9rem; font-weight: 700; letter-spacing: 0.22em; padding-left: 0.22em; color: var(--text); overflow-wrap: anywhere; }
 </style>

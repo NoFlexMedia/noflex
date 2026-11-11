@@ -10,6 +10,7 @@ query Account {
   externalAuthProviders { id displayName }
   accountDeletion { passwordRequired }
   myPluginLinks @list(name: "MyPluginLinks") { pluginId keys updatedAt }
+  linkablePlugins { id displayName }
   exportJobs(first: 100) @list(name: "ExportJobs") { edges { node { ...ExportJobFields } } }
 }
 

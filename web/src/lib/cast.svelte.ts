@@ -7,9 +7,9 @@
 // resolves the title, opens the playback session, resumes from the viewer's
 // place and reports progress, for as long as the session lasts.
 
-import { MarkPlayedStore, ReportProgressStore } from "$houdini";
+import { CachePolicy, MarkPlayedStore, ReportProgressStore, WorkDetailStore } from "$houdini";
 import type { ClientCapabilities } from "$codecs";
-import { AutoQuality, frameLabel, sameChoice, sessionQuality, type QualityChoice, type StreamQuality } from "$quality";
+import { AutoQuality, decodeChoice, encodeChoice, frameLabel, sameChoice, sessionQuality, type QualityChoice, type StreamQuality } from "$quality";
 import { castCapabilities } from "$lib/castProfile.js";
 import { connect, type Control, type RemoteDevice } from "$lib/connect.svelte.js";
 import { request, writeUserData } from "$lib/graphql.js";
@@ -85,6 +85,10 @@ class Cast {
   #controller: any = null;
   #beat: ReturnType<typeof setInterval> | undefined;
   #last: "PLAYING" | "PAUSED" | null = null;
+  /** Where the device last said it was, for when it stops saying: an idle or lost device reads 0. */
+  #heardMs = 0;
+  /** The server session of a title being taken up, so it's tried once. */
+  #adopting: string | null = null;
   #started = false;
   /** A title being started, which the Cast device hasn't answered for yet. */
   #preparing: { work: any; positionMs: number } | null = null;
@@ -248,6 +252,9 @@ class Cast {
     const state = remote.playerState as string | null;
     const live = loaded && remote.isMediaLoaded && state && state !== "IDLE";
     const preparing = !live ? this.#preparing : null;
+    if (live) this.#heardMs = this.#positionMs();
+    // A title this browser or the app cast before, found as the session resumes: take it up.
+    if (!loaded && !this.#preparing && remote.isMediaLoaded) void this.#adopt(remote.mediaInfo);
     // A finished or stopped title leaves the device idle; what it was is then ours to close out.
     if (loaded && !live && state === "IDLE" && !remote.isMediaLoaded) {
       void this.#finish(this.#session()?.getMediaSession?.()?.idleReason === "FINISHED");
@@ -274,8 +281,42 @@ class Cast {
   #report(state: "PLAYING" | "PAUSED" | "STOPPED"): void {
     const loaded = this.#loaded;
     if (!loaded?.work?.id) return;
-    request(new ReportProgressStore(), { id: loaded.work.id, position: this.#positionMs(), state })
+    const position = this.#remote?.isMediaLoaded ? this.#positionMs() : this.#heardMs;
+    request(new ReportProgressStore(), { id: loaded.work.id, position, state })
       .then((data) => writeUserData(loaded.work.id, data.reportProgress), () => {});
+  }
+
+  /** Take up a title cast before this page loaded, from what its load request carried. */
+  async #adopt(info: any): Promise<void> {
+    const custom = info?.customData;
+    const sender = custom?.sender;
+    // Someone else's, or a linked server's, which this browser doesn't reach.
+    if (!sender?.sessionId || sender.user !== app.viewer?.id || sender.server || this.#adopting === sender.sessionId) return;
+    this.#adopting = sender.sessionId;
+    try {
+      const detail = await request(new WorkDetailStore(), { id: custom.workId }, { policy: CachePolicy.NetworkOnly });
+      if (!detail.work || this.#loaded || this.#preparing || !this.#remote?.isMediaLoaded) return;
+      const quality = decodeChoice(sender.quality);
+      this.#loaded = {
+        work: detail.work, mediaFileId: sender.mediaFileId, editionId: sender.editionId, sessionId: sender.sessionId,
+        transcode: !!sender.transcode, offsetMs: custom.offsetMs ?? 0, durationMs: custom.durationMs ?? null,
+        quality, leftOriginal: !!sender.leftOriginal, adaptive: !!custom.stream?.adaptive, source: custom.stream?.source ?? null,
+      };
+      this.qualities = sender.qualities ?? [];
+      this.choice = quality;
+      this.#auto = new AutoQuality();
+      this.#auto.settle();
+      this.#last = null;
+      this.#startBeat();
+      this.#publish();
+    } catch {
+      // Not ours to take up after all; it plays on regardless.
+    }
+  }
+
+  #startBeat(): void {
+    clearInterval(this.#beat);
+    this.#beat = setInterval(() => { if (this.#last === "PLAYING") this.#report("PLAYING"); }, REPORT_MS);
   }
 
   /** End what was playing: its last position, its watched mark if it ran out, and its server session. */
@@ -369,6 +410,18 @@ class Cast {
           hardware: decision.hardware,
           quality: pinned ?? frameLabel(decision.target.width, decision.target.height),
         } : null,
+        // What a sender needs to take this up should this one close: the device keeps it with the media.
+        sender: {
+          user: app.viewer?.id ?? null,
+          server: null,
+          sessionId: stream.sessionId,
+          mediaFileId: playable.mediaFileId,
+          editionId: playable.edition.id,
+          transcode,
+          quality: encodeChoice(quality),
+          leftOriginal,
+          qualities: ladder,
+        },
       };
       const request_ = new chrome.cast.media.LoadRequest(info);
       request_.autoplay = true;
@@ -384,10 +437,10 @@ class Cast {
       };
       this.qualities = ladder;
       this.choice = quality;
+      this.#heardMs = playable.resume;
       await session.loadMedia(request_);
       this.#preparing = null;
-      clearInterval(this.#beat);
-      this.#beat = setInterval(() => { if (this.#last === "PLAYING") this.#report("PLAYING"); }, REPORT_MS);
+      this.#startBeat();
       this.#publish();
       return true;
     } catch (cause) {

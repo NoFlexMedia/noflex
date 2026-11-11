@@ -221,7 +221,9 @@ export default function Title() {
       ["Audio", chosenAudio() ? audioFormat(chosenAudio()) : null],
       ["Container", file()?.container?.toUpperCase()],
       ["File size", bytes(file()?.sizeBytes)],
-      ["Community score", work()?.communityRating ? `${work()!.communityRating!.toFixed(1)} / 10` : null],
+      ...(work()?.ratings?.length
+        ? work()!.ratings!.map((rating): [string, string] => [rating.name, `${rating.display}${rating.outOf ?? ""}`])
+        : [["Community score", work()?.communityRating ? `${work()!.communityRating!.toFixed(1)}/10` : null] as [string, string | null]]),
     ];
     return rows.filter(([, value]) => value) as [string, string][];
   };

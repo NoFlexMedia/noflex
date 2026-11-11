@@ -191,6 +191,7 @@ query WorkDetail($id: ID!) {
     tagline
     credits { personId name role character }
     tags(namespaces: ["parental", "genre"]) { id namespace display }
+    ratings { source name display outOf }
   }
   editions(workId: $id) { ...EditionFull }
 }`, WORK_CARD, EDITION);

@@ -29,6 +29,8 @@ export interface Work {
   seriesTitle?: string | null;
   tags?: { id: string; namespace: string; display: string }[] | null;
   credits?: { personId: string; name: string; role: string; character?: string | null }[] | null;
+  /** Each source's, on its own scale: `display` then `outOf` ("7.8" "/10", "87%"). */
+  ratings?: { source: string; name: string; display: string; outOf?: string | null }[] | null;
 }
 export interface Edition {
   id: string;

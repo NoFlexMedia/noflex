@@ -29,9 +29,10 @@ use noflex_graphql::{
     ActiveStreamRecord, PlaybackRouteKind, PlaybackSession, PlaybackSessionService, PlaybackStart,
     PlaybackState, SmartDownloadFile, StreamQuality, SubtitleDelivery, TranscodeProgress,
 };
+use noflex_plugin_host::SubtitleService;
 use noflex_storage::{
     Storage,
-    domain::{MediaFile, OptimizedVersion, OptimizedVersionStatus},
+    domain::{MediaFile, OptimizedVersion, OptimizedVersionStatus, SubtitleTrack},
 };
 use noflex_transcoder::{
     AudioPlan, ClientCapabilities, DecideOptions, EncodedVideo, Encoder, FetchError, Fetched,
@@ -382,12 +383,14 @@ pub async fn serve_media_file(
 /// Serve subtitle track `index` of a media file as WebVTT. Sidecars are
 /// converted in-process; muxed-in text tracks are extracted with ffmpeg
 /// once and cached under `cache_dir`, keyed by the file's size and mtime
-/// so a replaced file never serves stale cues. Bitmap tracks are `404`
-/// (they can only be burned in).
+/// so a replaced file never serves stale cues. Downloaded tracks are read
+/// from `downloads`' cache, which counts as a use; without it they're `404`.
+/// Bitmap tracks are `404` (they can only be burned in).
 pub async fn serve_subtitle(
     storage: &Arc<dyn Storage>,
     ffmpeg: &Path,
     cache_dir: &Path,
+    downloads: Option<&SubtitleService>,
     id: MediaFileId,
     index: usize,
 ) -> Response {
@@ -399,11 +402,38 @@ pub async fn serve_subtitle(
             return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response();
         }
     };
+    let tracks = match subtitle_tracks(storage.as_ref(), &media).await {
+        Ok(tracks) => tracks,
+        Err(e) => {
+            tracing::error!(error = %e, "storage error reading downloaded subtitles");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "storage error").into_response();
+        }
+    };
 
-    let Some(track) = media.subtitle_tracks.get(index) else {
+    let Some(track) = tracks.get(index) else {
         return (StatusCode::NOT_FOUND, "subtitle track not found").into_response();
     };
     let vtt = match (track.path.as_deref(), track.stream_index) {
+        (None, None) if track.downloaded.is_some() => {
+            let (Some(downloaded), Some(downloads)) = (&track.downloaded, downloads) else {
+                return (StatusCode::NOT_FOUND, "subtitle track not found").into_response();
+            };
+            let text = match tokio::fs::read(downloads.path(downloaded)).await {
+                Ok(bytes) => subtitles::decode_text(&bytes),
+                Err(error) => {
+                    tracing::warn!(%error, subtitle = %downloaded.id, "downloaded subtitle unreadable");
+                    return (StatusCode::NOT_FOUND, "subtitle track not found").into_response();
+                }
+            };
+            downloads.record_use(downloaded).await;
+            match subtitles::to_webvtt(downloaded.format, &text) {
+                Some(vtt) => vtt,
+                None => {
+                    return (StatusCode::NOT_FOUND, "subtitle track not convertible")
+                        .into_response();
+                }
+            }
+        }
         (Some(path), _) => {
             let Some(codec) =
                 sidecar_codec(&track.codec).filter(|c| subtitles::converts_to_webvtt(*c))
@@ -514,6 +544,16 @@ async fn extract_embedded_vtt(
 
 /// The scanner records sidecar codecs as `SubtitleCodec::as_str`; `srt`
 /// and `vtt` are accepted as the extension spellings.
+/// Every subtitle track of `media` as `subtitleTracks` lists them, so the
+/// indexes clients send mean the same here.
+async fn subtitle_tracks(
+    storage: &dyn Storage,
+    media: &MediaFile,
+) -> noflex_storage::StorageResult<Vec<SubtitleTrack>> {
+    let downloaded = storage.downloaded_subtitles_for_media(media.id).await?;
+    Ok(media.subtitle_tracks_with(&downloaded))
+}
+
 fn sidecar_codec(raw: &str) -> Option<SubtitleCodec> {
     match raw {
         "srt" => Some(SubtitleCodec::SubRip),
@@ -573,6 +613,8 @@ pub struct ServerPlaybackSessions {
     vaapi_device: Option<PathBuf>,
     jwt: Arc<JwtConfig>,
     events: Option<DomainEventBus>,
+    /// Downloaded subtitles, to burn in; none without it.
+    subtitles: Option<Arc<SubtitleService>>,
     transcode_accounting: tokio::sync::Mutex<TranscodeAccounting>,
     active: tokio::sync::Mutex<HashMap<String, ActiveSession>>,
 }
@@ -655,6 +697,7 @@ impl ServerPlaybackSessions {
             encode_video,
             gpu_tonemap: false,
             events: None,
+            subtitles: None,
             transcode_accounting: tokio::sync::Mutex::new(TranscodeAccounting::default()),
             active: tokio::sync::Mutex::new(HashMap::new()),
         }
@@ -677,6 +720,13 @@ impl ServerPlaybackSessions {
     /// so tests and lean embeddings stay silent.
     pub fn with_events(mut self, events: DomainEventBus) -> Self {
         self.events = Some(events);
+        self
+    }
+
+    /// Where downloaded subtitles are, so they're delivered and burned in as
+    /// sidecars are. Without it they're listed but can't be played.
+    pub fn with_subtitles(mut self, subtitles: Arc<SubtitleService>) -> Self {
+        self.subtitles = Some(subtitles);
         self
     }
 
@@ -917,29 +967,35 @@ impl ServerPlaybackSessions {
         steps
     }
 
-    /// Sidecar text tracks the client can render once converted to a
-    /// format it declared. The URL reuses the direct-file token scope,
-    /// which the subtitle route checks.
+    /// Text tracks among `tracks` (`media`'s, as [`subtitle_tracks`] lists
+    /// them) the client can render once converted to a format it declared.
+    /// The URL reuses the direct-file token scope, which the subtitle route
+    /// checks.
     fn subtitle_deliveries(
         &self,
         user: UserId,
         login: Option<SessionId>,
         media: &MediaFile,
+        tracks: &[SubtitleTrack],
         caps: &ClientCapabilities,
     ) -> anyhow::Result<Vec<SubtitleDelivery>> {
         if !caps.subtitle_codecs.contains(&SubtitleCodec::WebVtt) {
             return Ok(Vec::new());
         }
-        let deliverable: Vec<(usize, &noflex_storage::domain::SubtitleTrack)> = media
-            .subtitle_tracks
+        let deliverable: Vec<(usize, &SubtitleTrack)> = tracks
             .iter()
             .enumerate()
-            .filter(|(_, t)| match (&t.path, t.stream_index) {
-                (Some(_), _) => sidecar_codec(&t.codec).is_some_and(subtitles::converts_to_webvtt),
-                (None, Some(_)) => {
+            .filter(|(_, t)| match (&t.path, t.stream_index, &t.downloaded) {
+                (Some(_), _, _) => {
+                    sidecar_codec(&t.codec).is_some_and(subtitles::converts_to_webvtt)
+                }
+                (None, Some(_), _) => {
                     sidecar_codec(&t.codec).is_some_and(subtitles::extracts_to_webvtt)
                 }
-                (None, None) => false,
+                (None, None, Some(downloaded)) => {
+                    self.subtitles.is_some() && subtitles::converts_to_webvtt(downloaded.format)
+                }
+                (None, None, None) => false,
             })
             .collect();
         if deliverable.is_empty() {
@@ -1199,23 +1255,34 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                 .map_err(|e| anyhow::anyhow!("cannot probe media file: {e}"))?,
         };
 
+        let tracks = subtitle_tracks(self.storage.as_ref(), &media)
+            .await
+            .map_err(|e| anyhow::anyhow!("storage error: {e}"))?;
         // Resolve a burn-in request before deciding: a bad index or a
         // non-sidecar track is a client error regardless of route.
         let burn_source = match burn_subtitle {
             Some(i) => {
                 let i =
                     usize::try_from(i).map_err(|_| anyhow::anyhow!("subtitle track not found"))?;
-                let track = media
-                    .subtitle_tracks
+                let track = tracks
                     .get(i)
                     .ok_or_else(|| anyhow::anyhow!("subtitle track not found"))?;
-                match (track.path.as_deref(), track.stream_index) {
-                    (Some(p), _) => Some(SubtitleBurnSource::External(PathBuf::from(p))),
-                    (None, Some(stream)) => Some(SubtitleBurnSource::Embedded(
+                match (track.path.as_deref(), track.stream_index, &track.downloaded) {
+                    (Some(p), _, _) => Some(SubtitleBurnSource::External(PathBuf::from(p))),
+                    (None, Some(stream), _) => Some(SubtitleBurnSource::Embedded(
                         usize::try_from(stream)
                             .map_err(|_| anyhow::anyhow!("subtitle track not found"))?,
                     )),
-                    (None, None) => anyhow::bail!("subtitle track not found"),
+                    // Burned in from the cache just as a sidecar is from beside the file.
+                    (None, None, Some(downloaded)) => {
+                        let downloads = self
+                            .subtitles
+                            .as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("subtitle track not found"))?;
+                        downloads.record_use(downloaded).await;
+                        Some(SubtitleBurnSource::External(downloads.path(downloaded)))
+                    }
+                    (None, None, None) => anyhow::bail!("subtitle track not found"),
                 }
             }
             None => None,
@@ -1259,7 +1326,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
         let subtitles = if burn_source.is_some() {
             Vec::new()
         } else {
-            self.subtitle_deliveries(user, login, &media, &capabilities)?
+            self.subtitle_deliveries(user, login, &media, &tracks, &capabilities)?
         };
         let now = OffsetDateTime::now_utc();
         let mut active = ActiveSession {
@@ -1711,11 +1778,14 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                 true,
             )
         };
+        let tracks = subtitle_tracks(self.storage.as_ref(), media)
+            .await
+            .map_err(|e| anyhow::anyhow!("storage error: {e}"))?;
         Ok(Some(SmartDownloadFile {
             url,
             size_bytes,
             optimized,
-            subtitles: self.subtitle_deliveries(user, login, media, capabilities)?,
+            subtitles: self.subtitle_deliveries(user, login, media, &tracks, capabilities)?,
         }))
     }
 

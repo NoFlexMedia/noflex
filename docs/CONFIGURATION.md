@@ -97,16 +97,28 @@ secrets store and the scan event log also live here.
 Transcode cache, image cache, and the embed model cache. Sized for
 heavy IO; not backed up.
 
-### `cache.transcode_dir`, `cache.image_dir`, `cache.embed_dir`
+### `cache.transcode_dir`, `cache.image_dir`, `cache.embed_dir`, `cache.subtitle_dir`
 - **Type:** path
-- **Default:** `transcode/`, `image/`, `embed/` under `cache_dir`
-- **Env:** `NOFLEX_CACHE_TRANSCODE_DIR`, `NOFLEX_CACHE_IMAGE_DIR`, `NOFLEX_CACHE_EMBED_DIR`
+- **Default:** `transcode/`, `image/`, `embed/`, `subtitles/` under `cache_dir`
+- **Env:** `NOFLEX_CACHE_TRANSCODE_DIR`, `NOFLEX_CACHE_IMAGE_DIR`, `NOFLEX_CACHE_EMBED_DIR`, `NOFLEX_CACHE_SUBTITLE_DIR`
 
 Move one cache onto a different volume, e.g. transcodes onto fast scratch
 storage. The image cache holds downloaded artwork and generated thumbnails.
-Give each a folder of its own: erasing the server, when its last
+The subtitle cache holds subtitles viewers downloaded from a subtitle
+plugin (such as OpenSubtitles); NoFlex never writes them into the media
+folder. Give each a folder of its own: erasing the server, when its last
 administrator deletes their account, empties them whole. A configured
 transcode cache also holds offline copies.
+
+### `cache.subtitle_keep_days`
+- **Type:** integer
+- **Default:** `30`
+- **Env:** `NOFLEX_CACHE_SUBTITLE_KEEP_DAYS`
+
+How long a downloaded subtitle is kept once nobody plays it. Serving it or
+burning it in counts as playing it. A sweep at start and every six hours
+removes those unused for longer, and any left behind when their media file
+went; searching again downloads it afresh.
 
 ### `backup.dir`
 - **Type:** path

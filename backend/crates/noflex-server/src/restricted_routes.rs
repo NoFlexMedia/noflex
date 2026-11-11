@@ -29,6 +29,8 @@ pub struct RestrictedRouteState {
     pub transcode_cache_dir: PathBuf,
     pub image_cache_dir: PathBuf,
     pub recordings_dir: PathBuf,
+    /// Downloaded subtitles; without it their tracks are `404`.
+    pub subtitles: Option<Arc<noflex_plugin_host::SubtitleService>>,
 }
 
 pub fn routes(state: RestrictedRouteState) -> Router {
@@ -337,6 +339,7 @@ async fn stream_subtitle(
         &state.storage,
         state.transcoder.ffmpeg_path(),
         &state.transcode_cache_dir,
+        state.subtitles.as_deref(),
         id,
         index,
     )

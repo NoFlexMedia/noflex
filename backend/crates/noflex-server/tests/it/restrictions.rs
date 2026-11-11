@@ -414,6 +414,7 @@ fn router(
         transcode_cache_dir: fixture.root.path().join("jobs"),
         image_cache_dir: fixture.root.path().join("image"),
         recordings_dir: fixture.root.path().join("recordings"),
+        subtitles: None,
     })
 }
 

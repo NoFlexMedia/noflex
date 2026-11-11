@@ -61,7 +61,7 @@ async fn one_provider_failing_hides_nothing_the_others_found() {
     };
     // `en` and `ger` are spellings of languages the host canonicalizes.
     let search = registry
-        .search_subtitles(&episode_query(&["en", "ger"]), &[])
+        .search_subtitles(&episode_query(&["en", "ger"]))
         .await;
 
     assert_eq!(search.failures.len(), 1, "{:?}", search.failures);
@@ -102,9 +102,7 @@ async fn the_whole_query_reaches_the_plugin_without_scanner_keys() {
         eprintln!("skipping: could not build the subtitle fixture");
         return;
     };
-    let search = registry
-        .search_subtitles(&episode_query(&["eng"]), &[])
-        .await;
+    let search = registry.search_subtitles(&episode_query(&["eng"])).await;
     let echoed = search
         .matches
         .iter()
@@ -120,18 +118,16 @@ async fn the_whole_query_reaches_the_plugin_without_scanner_keys() {
 }
 
 #[tokio::test]
-async fn skipped_providers_are_not_asked() {
-    let Some(registry) = registry(&["subtitle", "subtitle-quota"]) else {
-        eprintln!("skipping: could not build the subtitle fixtures");
+async fn no_languages_asked_for_means_any() {
+    let Some(registry) = registry(&["subtitle"]) else {
+        eprintln!("skipping: could not build the subtitle fixture");
         return;
     };
-    let search = registry
-        .search_subtitles(&episode_query(&[]), &["fixture-subtitle-quota".into()])
-        .await;
+    let search = registry.search_subtitles(&episode_query(&[])).await;
     assert!(search.failures.is_empty());
     assert!(
         search.matches.iter().any(|m| m.language == "spa"),
-        "no languages asked for means any"
+        "Spanish, which the fixture always offers"
     );
 }
 

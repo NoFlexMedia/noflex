@@ -408,6 +408,14 @@ async fn run(
     );
     let _metadata_worker =
         noflex_plugin_host::spawn_metadata_worker(metadata_service.clone(), &event_bus);
+    // Downloaded subtitles live in the server's cache, never beside the media.
+    let subtitles = Arc::new(noflex_plugin_host::SubtitleService::new(
+        plugin_registry.clone(),
+        storage.clone(),
+        cfg.subtitle_dir(),
+    ));
+    let _subtitle_sweeper =
+        noflex_plugin_host::spawn_subtitle_sweeper(subtitles.clone(), cfg.subtitle_unused_for());
     // Probe the local ffmpeg once at startup and resolve a single
     // hardware backend. Detection never fails startup; a missing or
     // limited ffmpeg just means we transcode in software.
@@ -476,7 +484,8 @@ async fn run(
             &live_codecs,
         ))
         .with_gpu_tonemap(hw_detect.gpu_tonemap)
-        .with_events(event_bus.clone()),
+        .with_events(event_bus.clone())
+        .with_subtitles(subtitles.clone()),
     );
     let live_tv = Arc::new(noflex_server::live_tv_runtime::ServerLiveTv::new(
         storage.clone(),
@@ -587,6 +596,7 @@ async fn run(
             transcode_cache_dir: transcode_dir,
             image_cache_dir,
             recordings_dir,
+            subtitles: Some(subtitles.clone()),
         },
     );
     let artwork_candidate_routes = noflex_server::artwork_candidates::routes(

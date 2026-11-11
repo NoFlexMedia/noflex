@@ -107,16 +107,15 @@ impl From<HostError> for ProviderError {
 }
 
 impl PluginRegistry {
-    /// Ask every loaded subtitle plugin but those in `skip` for `query`, all
-    /// at once. Matches come tagged with their provider, in the wanted
-    /// languages only (any when `query.languages` is empty), spelled as
-    /// [`canonical_language`] spells them, and ranked: hash matches first,
+    /// Ask every loaded subtitle plugin for `query`, all at once; a disabled
+    /// one never loads. Matches come tagged with their provider, in the
+    /// wanted languages only (any when `query.languages` is empty), spelled
+    /// as [`canonical_language`] spells them, and ranked: hash matches first,
     /// then by downloads and the provider's score.
-    pub async fn search_subtitles(&self, query: &SubtitleQuery, skip: &[String]) -> SubtitleSearch {
+    pub async fn search_subtitles(&self, query: &SubtitleQuery) -> SubtitleSearch {
         let targets: Vec<_> = self
             .exporters_of(HookKind::Subtitle)
             .into_iter()
-            .filter(|id| !skip.contains(&id.0))
             .filter_map(|id| self.get_plugin(&id).map(|plugin| (id, plugin)))
             .collect();
         let wanted: Vec<String> = query
@@ -228,7 +227,6 @@ pub struct SubtitleService {
     registry: Arc<PluginRegistry>,
     storage: Arc<dyn Storage>,
     dir: PathBuf,
-    disabled: Vec<String>,
     offers: Mutex<Offers>,
 }
 
@@ -240,16 +238,8 @@ impl SubtitleService {
             registry,
             storage,
             dir,
-            disabled: Vec::new(),
             offers: Mutex::new(HashMap::new()),
         }
-    }
-
-    /// Leave these plugins out of every search, as the server config's
-    /// `disabled` overrides ask.
-    pub fn with_disabled(mut self, disabled: Vec<String>) -> Self {
-        self.disabled = disabled;
-        self
     }
 
     /// Where `subtitle`'s text is.
@@ -272,7 +262,7 @@ impl SubtitleService {
         languages: &[String],
     ) -> Result<SubtitleSearch, SubtitleError> {
         let query = self.query_for(media, languages).await?;
-        let search = self.registry.search_subtitles(&query, &self.disabled).await;
+        let search = self.registry.search_subtitles(&query).await;
         let now = Instant::now();
         let mut offers = self.offers.lock().unwrap_or_else(PoisonError::into_inner);
         offers.retain(|_, (at, _)| now.duration_since(*at) < OFFER_TTL);

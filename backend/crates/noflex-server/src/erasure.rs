@@ -102,6 +102,7 @@ impl ResetPaths {
                 cfg.transcode_dir(),
                 cfg.image_dir(),
                 cfg.embed_dir(),
+                cfg.subtitle_dir(),
                 cfg.download_dir(),
                 cfg.recordings_dir(),
             ],

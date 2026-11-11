@@ -720,7 +720,15 @@ async fn serve_subtitle_returns_bytes_and_content_type() {
         ),
         (1, std::str::from_utf8(vtt_payload).expect("utf8")),
     ] {
-        let resp = serve_subtitle(&store, std::path::Path::new("ffmpeg"), &dir, id, index).await;
+        let resp = serve_subtitle(
+            &store,
+            std::path::Path::new("ffmpeg"),
+            &dir,
+            None,
+            id,
+            index,
+        )
+        .await;
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
         assert_eq!(
             resp.headers()
@@ -754,9 +762,9 @@ async fn serve_subtitle_missing_track_returns_404() {
     .await;
 
     let ffmpeg = std::path::Path::new("ffmpeg");
-    let resp = serve_subtitle(&store, ffmpeg, &dir, id, 0).await;
+    let resp = serve_subtitle(&store, ffmpeg, &dir, None, id, 0).await;
     assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
-    let resp = serve_subtitle(&store, ffmpeg, &dir, id, 7).await;
+    let resp = serve_subtitle(&store, ffmpeg, &dir, None, id, 7).await;
     assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
 }
 
@@ -795,7 +803,7 @@ async fn embedded_text_subtitles_are_extracted_once_and_cached() {
             .expect("body");
         String::from_utf8(bytes.to_vec()).expect("utf8")
     };
-    let first = body(serve_subtitle(&store, &ffmpeg, &cache, id, 1).await).await;
+    let first = body(serve_subtitle(&store, &ffmpeg, &cache, None, id, 1).await).await;
     assert!(first.starts_with("WEBVTT"), "{first}");
     let argv = std::fs::read_to_string(dir.join("argv")).expect("argv");
     assert!(argv.contains("0:s:1"), "{argv}");
@@ -807,12 +815,12 @@ async fn embedded_text_subtitles_are_extracted_once_and_cached() {
     // A second request is served from the cache, not a new ffmpeg run.
     write_ffmpeg("#!/bin/sh\nexit 1\n");
     assert_eq!(
-        body(serve_subtitle(&store, &ffmpeg, &cache, id, 1).await).await,
+        body(serve_subtitle(&store, &ffmpeg, &cache, None, id, 1).await).await,
         first
     );
 
     // Bitmap tracks can only be burned in.
-    let resp = serve_subtitle(&store, &ffmpeg, &cache, id, 0).await;
+    let resp = serve_subtitle(&store, &ffmpeg, &cache, None, id, 0).await;
     assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
 }
 
@@ -913,6 +921,141 @@ async fn session_burn_subtitle_forces_transcode() {
         "burned track isn't also delivered"
     );
 
+    stop_and_wait(&service, &transcoder, user, &job_id).await;
+}
+
+/// A subtitle downloaded for media file `id`, kept by `service`, as one
+/// line of SubRip.
+async fn downloaded_subtitle(
+    store: &Arc<dyn Storage>,
+    service: &noflex_plugin_host::SubtitleService,
+    id: noflex_core::MediaFileId,
+) -> noflex_storage::domain::DownloadedSubtitle {
+    let at = OffsetDateTime::now_utc() - time::Duration::days(1);
+    let sub_id = noflex_core::DownloadedSubtitleId::new();
+    let subtitle = noflex_storage::domain::DownloadedSubtitle {
+        id: sub_id,
+        media_file_id: id,
+        provider: "opensubtitles".into(),
+        handle: "file-1".into(),
+        language: "fra".into(),
+        format: noflex_core::SubtitleCodec::SubRip,
+        release: Some("Movie.2024.1080p".into()),
+        hearing_impaired: false,
+        forced: false,
+        hash_match: true,
+        file_name: format!("{sub_id}.srt"),
+        downloaded_by: None,
+        created_at: at,
+        last_used_at: at,
+    };
+    let path = service.path(&subtitle);
+    std::fs::create_dir_all(path.parent().expect("cache dir")).expect("cache dir");
+    std::fs::write(&path, "1\n00:00:01,000 --> 00:00:02,000\nBonjour\n").expect("write");
+    store
+        .insert_downloaded_subtitle(&subtitle)
+        .await
+        .expect("insert")
+}
+
+#[tokio::test]
+async fn downloaded_subtitles_play_and_burn_in_like_sidecars() {
+    let dir = temp_dir("downloaded");
+    let (store, edition, user) = seed_store().await;
+    let srt_path = dir.join("movie.en.srt");
+    std::fs::write(&srt_path, b"1\n00:00:01,000 --> 00:00:02,000\nHi\n").expect("write srt");
+    let probe = serde_json::to_value(web_matching_probe()).expect("probe json");
+    let (id, _path) = insert_media_file_with_tracks(
+        &store,
+        edition,
+        &dir,
+        b"fake mp4",
+        probe,
+        vec![sidecar_track(&srt_path, "srt")],
+    )
+    .await;
+    let engine = noflex_plugin_host::build_engine(&noflex_plugin_host::EngineConfig::default())
+        .expect("engine");
+    let downloads = Arc::new(noflex_plugin_host::SubtitleService::new(
+        Arc::new(noflex_plugin_host::PluginRegistry::new(engine).expect("registry")),
+        store.clone(),
+        temp_dir("downloaded-cache").join("subtitles"),
+    ));
+    let subtitle = downloaded_subtitle(&store, &downloads, id).await;
+
+    let ffmpeg_dir = temp_dir("downloaded-ffmpeg");
+    let transcoder = Arc::new(FfmpegJobManager::new(
+        make_mock_ffmpeg(&ffmpeg_dir),
+        ffmpeg_dir.join("cache"),
+    ));
+    let service = session_service(&store, &transcoder).with_subtitles(downloads.clone());
+
+    // After the file's own track, as `subtitleTracks` lists it.
+    let session = service
+        .start(
+            user,
+            None,
+            PlaybackStart::new(id, ClientCapabilities::web()),
+        )
+        .await
+        .expect("start");
+    let delivered: Vec<_> = session
+        .subtitles
+        .iter()
+        .map(|s| (s.index, s.language.clone()))
+        .collect();
+    assert_eq!(
+        delivered,
+        [(0, Some("eng".to_string())), (1, Some("fra".to_string()))]
+    );
+
+    let resp = serve_subtitle(
+        &store,
+        std::path::Path::new("ffmpeg"),
+        &dir,
+        Some(&downloads),
+        id,
+        1,
+    )
+    .await;
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    assert_eq!(
+        std::str::from_utf8(&body).expect("utf8"),
+        "WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\nBonjour\n"
+    );
+    let used = store
+        .get_downloaded_subtitle(subtitle.id)
+        .await
+        .expect("get")
+        .expect("kept");
+    assert!(
+        used.last_used_at > subtitle.last_used_at,
+        "serving is a use"
+    );
+    let without = serve_subtitle(&store, std::path::Path::new("ffmpeg"), &dir, None, id, 1).await;
+    assert_eq!(without.status(), axum::http::StatusCode::NOT_FOUND);
+
+    let burned = service
+        .start(
+            user,
+            None,
+            PlaybackStart {
+                burn_subtitle: Some(1),
+                ..PlaybackStart::new(id, ClientCapabilities::web())
+            },
+        )
+        .await
+        .expect("burn");
+    let job_id = burned.job_id.expect("job_id").to_string();
+    let job = transcoder.registry().get(&job_id).await.expect("job");
+    assert_eq!(
+        job.request.subtitle_burn,
+        Some(SubtitleBurnSource::External(downloads.path(&subtitle))),
+        "burned in from the cache, as a sidecar is from beside the file"
+    );
     stop_and_wait(&service, &transcoder, user, &job_id).await;
 }
 

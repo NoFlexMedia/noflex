@@ -249,6 +249,10 @@ pub struct CacheConfig {
     pub image_dir: String,
     /// Embedding cache (raw vectors, optional).
     pub embed_dir: String,
+    /// Subtitles viewers downloaded from a provider; never the media folder.
+    pub subtitle_dir: String,
+    /// Days a downloaded subtitle nobody plays is kept.
+    pub subtitle_keep_days: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,6 +312,8 @@ impl Default for Config {
                 transcode_dir: String::new(),
                 image_dir: String::new(),
                 embed_dir: String::new(),
+                subtitle_dir: String::new(),
+                subtitle_keep_days: 30,
             },
             external_auth: ExternalAuthConfig::default(),
         }
@@ -389,6 +395,17 @@ impl Config {
     /// `cache.embed_dir`, or `embed/` under `cache_dir`.
     pub fn embed_dir(&self) -> PathBuf {
         cache_subdir(&self.cache.embed_dir, &self.cache_dir, "embed")
+    }
+
+    /// Downloaded subtitles: `cache.subtitle_dir`, or `subtitles/` under
+    /// `cache_dir`.
+    pub fn subtitle_dir(&self) -> PathBuf {
+        cache_subdir(&self.cache.subtitle_dir, &self.cache_dir, "subtitles")
+    }
+
+    /// How long a downloaded subtitle nobody plays is kept.
+    pub fn subtitle_unused_for(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(u64::from(self.cache.subtitle_keep_days) * 24 * 60 * 60)
     }
 
     /// Finished export copies: the transcode cache when one is configured, or
@@ -534,6 +551,8 @@ pub const ENV_KEYS: &[(&str, &str)] = &[
     ("CACHE_TRANSCODE_DIR", "cache.transcode_dir"),
     ("CACHE_IMAGE_DIR", "cache.image_dir"),
     ("CACHE_EMBED_DIR", "cache.embed_dir"),
+    ("CACHE_SUBTITLE_DIR", "cache.subtitle_dir"),
+    ("CACHE_SUBTITLE_KEEP_DAYS", "cache.subtitle_keep_days"),
     (
         "EXTERNAL_AUTH_AUTO_PROVISION",
         "external_auth.auto_provision",

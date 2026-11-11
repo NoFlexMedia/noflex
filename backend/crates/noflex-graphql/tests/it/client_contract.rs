@@ -547,14 +547,21 @@ async fn browse_filters_watched_rating_and_title_cursor() {
     let lib = seed_library();
     store.upsert_library(&lib).await.expect("library");
 
-    let mut alien = seed_work(lib.id, WorkKind::Movie, "alien", Some(1979));
-    alien.community_rating = Some(8.5);
-    let mut bladerunner = seed_work(lib.id, WorkKind::Movie, "Blade Runner", Some(1982));
-    bladerunner.community_rating = Some(8.1);
-    let mut starman = seed_work(lib.id, WorkKind::Movie, "Starman", Some(1984));
-    starman.community_rating = Some(6.9);
-    for w in [&alien, &bladerunner, &starman] {
+    let alien = seed_work(lib.id, WorkKind::Movie, "alien", Some(1979));
+    let bladerunner = seed_work(lib.id, WorkKind::Movie, "Blade Runner", Some(1982));
+    let starman = seed_work(lib.id, WorkKind::Movie, "Starman", Some(1984));
+    for (w, value) in [(&alien, 8.5), (&bladerunner, 8.1), (&starman, 6.9)] {
         store.upsert_work(w).await.expect("work");
+        let imdb = noflex_core::providers::Rating {
+            source: "imdb".into(),
+            value,
+            scale: 10.0,
+            votes: None,
+        };
+        store
+            .replace_work_ratings(w.id, "omdb", &[imdb])
+            .await
+            .expect("rating");
     }
 
     // markPlayed makes `alien` the only watched work for this user.

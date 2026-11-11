@@ -18,6 +18,7 @@ pub mod image;
 pub mod metadata;
 pub mod notifier;
 pub mod post_scan;
+pub mod ratings;
 pub mod resolver;
 pub mod scrobbler;
 pub mod search;
@@ -31,6 +32,9 @@ pub use image::{ImageCandidate, ImageProvider};
 pub use metadata::{MetadataMatch, MetadataPayload, MetadataProvider, SearchQuery};
 pub use notifier::{Notifier, NotifyEvent};
 pub use post_scan::PostScanTask;
+pub use ratings::{
+    DEFAULT_RATING_SOURCES, Rating, RatingsProvider, is_source_slug, rating_source_name,
+};
 pub use resolver::{ItemResolver, ResolvedItem};
 pub use scrobbler::{ScrobbleAction, ScrobbleEvent, Scrobbler};
 pub use search::{SearchHit, SearchProvider};

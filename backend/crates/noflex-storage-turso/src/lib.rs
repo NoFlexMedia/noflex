@@ -1608,6 +1608,43 @@ impl Storage for TursoStore {
         repo::provider_attributions::logo(&conn, provider).await
     }
 
+    // ---- Ratings -------------------------------------------------------
+    async fn replace_work_ratings(
+        &self,
+        work: WorkId,
+        provider: &str,
+        ratings: &[noflex_core::providers::Rating],
+    ) -> StorageResult<()> {
+        transact!(self, Lane::Concurrent, |conn| repo::ratings::replace(
+            conn, work, provider, ratings
+        ))
+    }
+
+    async fn work_ratings(
+        &self,
+        work: WorkId,
+    ) -> StorageResult<Vec<noflex_storage::domain::WorkRating>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::ratings::list(&conn, work).await
+    }
+
+    async fn set_rating_sources(&self, sources: &[String]) -> StorageResult<()> {
+        // Rewrites every work's rating, so nothing else writes meanwhile.
+        transact!(self, Lane::Serial, |conn| repo::ratings::set_sources(
+            conn, sources
+        ))
+    }
+
+    async fn identified_works_unrated_by(
+        &self,
+        provider: &str,
+        limit: u32,
+        cursor: Option<PageCursor>,
+    ) -> StorageResult<Page<Work>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::ratings::identified_unrated_by(&conn, provider, limit, cursor.as_ref()).await
+    }
+
     // ---- Images --------------------------------------------------------
     async fn upsert_image(&self, image: &Image) -> StorageResult<()> {
         transact!(self, Lane::Concurrent, |conn| repo::images::upsert(

@@ -84,6 +84,10 @@ pub trait Storage: Send + Sync + 'static {
     /// left out, as are those with no list to offer: years are offered by decade,
     /// and ratings, watch state, favorites and match status not at all.
     async fn work_facets(&self, q: &WorkFacetsQuery) -> StorageResult<Vec<WorkFacetValues>>;
+    /// Inserts or replaces `work`. Its `community_rating` is written only
+    /// while [`noflex_core::WorkField::CommunityRating`] is locked, as an
+    /// administrator's own; otherwise the store derives it from the work's
+    /// ratings (see [`Storage::replace_work_ratings`]).
     async fn upsert_work(&self, work: &Work) -> StorageResult<()>;
     async fn delete_work(&self, id: WorkId) -> StorageResult<()>;
     async fn works_by_external_id(
@@ -968,6 +972,43 @@ pub trait Storage: Send + Sync + 'static {
         &self,
         provider: &str,
     ) -> StorageResult<Option<crate::domain::AttributionLogo>>;
+
+    // ---- Ratings -------------------------------------------------------
+    /// Makes `ratings` everything `provider` says about `work`'s ratings:
+    /// the rows `provider` reported before go, each of `ratings` replaces
+    /// any row for its source (whichever plugin reported it), and `work`
+    /// counts as rated by `provider` for
+    /// [`Storage::identified_works_unrated_by`]. The work's
+    /// `community_rating` is taken again from its rows, unless
+    /// [`noflex_core::WorkField::CommunityRating`] is locked. Callers pass
+    /// only [`noflex_core::providers::Rating::is_valid`] ratings, one per
+    /// source. A missing work is [`StorageError::NotFound`].
+    async fn replace_work_ratings(
+        &self,
+        work: WorkId,
+        provider: &str,
+        ratings: &[noflex_core::providers::Rating],
+    ) -> StorageResult<()>;
+    /// `work`'s ratings: [`Storage::set_rating_sources`]' sources in their
+    /// order, then the rest by source.
+    async fn work_ratings(&self, work: WorkId) -> StorageResult<Vec<crate::domain::WorkRating>>;
+    /// Which sources a work's `community_rating` is taken from, first
+    /// preferred: the normalized rating of the first it has, else none.
+    /// Sources not listed never supply it. Every work whose
+    /// [`noflex_core::WorkField::CommunityRating`] isn't locked is
+    /// rederived. A fresh store starts with
+    /// [`noflex_core::providers::DEFAULT_RATING_SOURCES`].
+    async fn set_rating_sources(&self, sources: &[String]) -> StorageResult<()>;
+    /// Works carrying at least one non-[`ExternalIdKind::Custom`] external
+    /// id that `provider` hasn't rated through
+    /// [`Storage::replace_work_ratings`], keyset-paginated by work id.
+    /// Malformed cursors are a [`StorageError::InvalidInput`].
+    async fn identified_works_unrated_by(
+        &self,
+        provider: &str,
+        limit: u32,
+        cursor: Option<PageCursor>,
+    ) -> StorageResult<Page<Work>>;
 
     // ---- Images --------------------------------------------------------
     /// Inserts or replaces the row keyed by (target, kind, source); rows

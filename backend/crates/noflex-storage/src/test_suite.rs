@@ -102,6 +102,8 @@ where
     image_sources_coexist_and_resolve_by_order(store).await;
     works_missing_image_honors_sources(store).await;
     identified_works_missing_image_source_sweep(store).await;
+    ratings_derive_the_community_rating(store).await;
+    identified_works_unrated_by_sweep(store).await;
     image_source_order_follows_library_preference(store).await;
     search_lexical_match(store).await;
     search_lexical_miss(store).await;
@@ -3624,6 +3626,7 @@ async fn work_features_collect_comparison_facts<S: Storage + ?Sized>(store: &S) 
     let hidden = make_work(hidden_library.id, "Hidden movie", now);
     for work in [&movie, &series, &season, &album, &hidden] {
         store.upsert_work(work).await.expect("work");
+        rate(store, work).await;
     }
     let mut short = make_edition(movie.id, "Short");
     short.runtime_ms = Some(1_000);
@@ -5781,6 +5784,252 @@ async fn identified_works_missing_image_source_sweep<S: Storage + ?Sized>(store:
     store.delete_library(lib.id).await.ok();
 }
 
+fn rating(source: &str, value: f32, scale: f32) -> noflex_core::providers::Rating {
+    noflex_core::providers::Rating {
+        source: source.to_string(),
+        value,
+        scale,
+        votes: None,
+    }
+}
+
+/// Gives `work` its `community_rating` as an IMDb rating, since the store
+/// derives that column rather than writing what it's handed.
+async fn rate<S: Storage + ?Sized>(store: &S, work: &Work) {
+    if let Some(value) = work.community_rating {
+        store
+            .replace_work_ratings(work.id, "test-ratings", &[rating("imdb", value, 10.0)])
+            .await
+            .expect("rate");
+    }
+}
+
+/// A work keeps one rating per source, each plugin's replaced only by that
+/// plugin, and its `community_rating` follows the first rating source it has
+/// unless an administrator locked their own.
+async fn ratings_derive_the_community_rating<S: Storage + ?Sized>(store: &S) {
+    let lib = test_library("Ratings Lib");
+    store.upsert_library(&lib).await.expect("library");
+    let mut work = make_work(lib.id, "Rated", OffsetDateTime::now_utc());
+    store.upsert_work(&work).await.expect("work");
+    let id = work.id;
+    let community = || async move {
+        store
+            .get_work(id)
+            .await
+            .expect("get")
+            .expect("present")
+            .community_rating
+    };
+    let rows = || async move {
+        store
+            .work_ratings(id)
+            .await
+            .expect("ratings")
+            .into_iter()
+            .map(|r| (r.source, r.value, r.provider))
+            .collect::<Vec<_>>()
+    };
+    let row = |source: &str, value: f32, provider: &str| {
+        (source.to_string(), value, provider.to_string())
+    };
+
+    store
+        .replace_work_ratings(
+            id,
+            "tmdb",
+            &[
+                rating("tmdb", 7.0, 10.0),
+                rating("rotten-tomatoes", 90.0, 100.0),
+            ],
+        )
+        .await
+        .expect("tmdb");
+    assert_eq!(
+        community().await,
+        Some(7.0),
+        "a source the list doesn't name never supplies it"
+    );
+
+    let mut imdb = rating("imdb", 8.1, 10.0);
+    imdb.votes = Some(1_234_567);
+    store
+        .replace_work_ratings(id, "omdb", &[imdb, rating("rotten-tomatoes", 87.0, 100.0)])
+        .await
+        .expect("omdb");
+    assert_eq!(community().await, Some(8.1));
+    let ratings = store.work_ratings(id).await.expect("ratings");
+    assert_eq!(ratings[0].votes, Some(1_234_567));
+    assert_eq!(ratings[2].scale, 100.0);
+    assert!((ratings[2].normalized - 8.7).abs() < 1e-5);
+    assert_eq!(
+        rows().await,
+        vec![
+            row("imdb", 8.1, "omdb"),
+            row("tmdb", 7.0, "tmdb"),
+            row("rotten-tomatoes", 87.0, "omdb"),
+        ],
+        "listed sources in order, then the rest; a source's latest report wins"
+    );
+
+    store
+        .replace_work_ratings(id, "tmdb", &[rating("tmdb", 7.2, 10.0)])
+        .await
+        .expect("tmdb again");
+    store
+        .replace_work_ratings(id, "omdb", &[])
+        .await
+        .expect("omdb has nothing now");
+    assert_eq!(rows().await, vec![row("tmdb", 7.2, "tmdb")]);
+    assert_eq!(community().await, Some(7.2));
+
+    work.title = "Rated, renamed".to_string();
+    work.community_rating = Some(1.0);
+    store.upsert_work(&work).await.expect("rename");
+    assert_eq!(
+        community().await,
+        Some(7.2),
+        "an unlocked rating isn't the caller's to write"
+    );
+
+    work.community_rating = Some(5.0);
+    work.locked_fields = vec![WorkField::CommunityRating];
+    store.upsert_work(&work).await.expect("lock");
+    store
+        .replace_work_ratings(
+            id,
+            "omdb",
+            &[
+                rating("imdb", 9.0, 10.0),
+                rating("rotten-tomatoes", 80.0, 100.0),
+            ],
+        )
+        .await
+        .expect("omdb while locked");
+    assert_eq!(community().await, Some(5.0), "the locked rating stands");
+
+    work.locked_fields = vec![];
+    store.upsert_work(&work).await.expect("unlock");
+    assert_eq!(community().await, Some(9.0), "unlocking derives it again");
+
+    store
+        .set_rating_sources(&["rotten-tomatoes".to_string(), "imdb".to_string()])
+        .await
+        .expect("sources");
+    assert_eq!(community().await, Some(8.0));
+    assert_eq!(
+        rows().await,
+        vec![
+            row("rotten-tomatoes", 80.0, "omdb"),
+            row("imdb", 9.0, "omdb"),
+            row("tmdb", 7.2, "tmdb"),
+        ]
+    );
+    let defaults: Vec<String> = noflex_core::providers::DEFAULT_RATING_SOURCES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    store
+        .set_rating_sources(&defaults)
+        .await
+        .expect("default sources");
+    assert_eq!(community().await, Some(9.0));
+
+    let err = store
+        .replace_work_ratings(WorkId::new(), "omdb", &[rating("imdb", 5.0, 10.0)])
+        .await
+        .expect_err("no such work");
+    assert!(matches!(err, StorageError::NotFound), "{err:?}");
+
+    store.delete_work(id).await.expect("delete");
+    assert!(
+        store.work_ratings(id).await.expect("ratings").is_empty(),
+        "ratings go with their work"
+    );
+    store.delete_library(lib.id).await.ok();
+}
+
+/// `identified_works_unrated_by` lists identified works a provider hasn't
+/// rated, an empty answer counting as rated, paging by cursor.
+async fn identified_works_unrated_by_sweep<S: Storage + ?Sized>(store: &S) {
+    let lib = test_library("Unrated Lib");
+    store.upsert_library(&lib).await.expect("library");
+    let now = OffsetDateTime::now_utc();
+    let identified = |title: &str, value: &str| {
+        let mut work = make_work(lib.id, title, now);
+        work.external_ids = vec![ExternalId {
+            kind: ExternalIdKind::Imdb,
+            value: value.to_string(),
+        }];
+        work
+    };
+    let rated = identified("Rated", "tt1");
+    let answered_empty = identified("Answered Empty", "tt2");
+    let unrated = identified("Unrated", "tt3");
+    let rated_elsewhere = identified("Rated Elsewhere", "tt4");
+    let mut unidentified = make_work(lib.id, "Unidentified", now);
+    unidentified.external_ids = vec![ExternalId {
+        kind: ExternalIdKind::Custom,
+        value: "scan:unidentified".to_string(),
+    }];
+    let works = [
+        &rated,
+        &answered_empty,
+        &unrated,
+        &rated_elsewhere,
+        &unidentified,
+    ];
+    for work in works {
+        store.upsert_work(work).await.expect("work");
+    }
+    store
+        .replace_work_ratings(rated.id, "omdb", &[rating("imdb", 7.0, 10.0)])
+        .await
+        .expect("rated");
+    store
+        .replace_work_ratings(answered_empty.id, "omdb", &[])
+        .await
+        .expect("answered");
+    store
+        .replace_work_ratings(rated_elsewhere.id, "other", &[rating("imdb", 6.0, 10.0)])
+        .await
+        .expect("other");
+
+    let mut walked = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = store
+            .identified_works_unrated_by("omdb", 1, cursor)
+            .await
+            .expect("page");
+        assert!(page.items.len() <= 1);
+        walked.extend(
+            page.items
+                .iter()
+                .filter(|w| w.library_id == lib.id)
+                .map(|w| w.id),
+        );
+        match page.next_cursor {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+    let mut expected = vec![unrated.id, rated_elsewhere.id];
+    expected.sort_by_key(|id| id.into_uuid());
+    assert_eq!(walked, expected);
+
+    let err = store
+        .identified_works_unrated_by("omdb", 10, Some(PageCursor("nope".into())))
+        .await
+        .expect_err("malformed cursor");
+    assert!(matches!(err, StorageError::InvalidInput(_)), "{err:?}");
+
+    for work in works {
+        store.delete_work(work.id).await.ok();
+    }
+    store.delete_library(lib.id).await.ok();
+}
+
 /// `ImageTarget::source_order` follows the owning library's artwork preference
 /// for works and editions and reads it fresh on every call, so flipping
 /// the preference changes the effective image without touching rows.
@@ -6879,6 +7128,7 @@ async fn rules_fixture<S: Storage + ?Sized>(store: &S, name: &str) -> RulesFixtu
         &finished_episode,
     ] {
         store.upsert_work(work).await.expect("work");
+        rate(store, work).await;
     }
 
     let track = |language: &str, codec: &str, channels: u32, object: Option<&str>| serde_json::json!({ "language": language, "codec": codec, "channels": channels, "audio_object_type": object });
@@ -7975,6 +8225,8 @@ async fn list_works_rating_and_added_filters<S: Storage + ?Sized>(store: &S) {
     store.upsert_work(&low).await.expect("low");
     store.upsert_work(&high).await.expect("high");
     store.upsert_work(&unrated).await.expect("unrated");
+    rate(store, &low).await;
+    rate(store, &high).await;
 
     let ids = |q: ListWorksQuery| async move {
         let page = store.list_works(&q).await.expect("list");

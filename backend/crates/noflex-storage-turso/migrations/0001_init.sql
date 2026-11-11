@@ -79,6 +79,7 @@ CREATE INDEX IF NOT EXISTS works_root ON works(root_id);
 CREATE INDEX IF NOT EXISTS works_added ON works(added_at, id);
 CREATE INDEX IF NOT EXISTS works_year ON works(year, id);
 CREATE INDEX IF NOT EXISTS works_released ON works(release_date, id);
+CREATE INDEX IF NOT EXISTS works_rating ON works(community_rating, id);
 
 CREATE TABLE IF NOT EXISTS work_external_ids (
     kind    TEXT NOT NULL,
@@ -281,6 +282,39 @@ CREATE TABLE IF NOT EXISTS provider_attributions (
     logo_mime   TEXT,
     logo_digest TEXT
 );
+
+-- One rating per work and source, from whichever plugin last reported that
+-- source. `normalized` is `value` out of 10; `works.community_rating` is the
+-- `normalized` of the work's first row in `rating_sources` order.
+CREATE TABLE IF NOT EXISTS work_ratings (
+    work_id    BLOB NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    source     TEXT NOT NULL,
+    provider   TEXT NOT NULL,
+    value      REAL NOT NULL,
+    scale      REAL NOT NULL,
+    normalized REAL NOT NULL,
+    votes      INTEGER,
+    PRIMARY KEY (work_id, source)
+);
+
+-- The plugins that have rated a work, whether or not they had a rating, so one
+-- loaded later is asked about the works it hasn't seen.
+CREATE TABLE IF NOT EXISTS work_rating_checks (
+    work_id  BLOB NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    PRIMARY KEY (work_id, provider)
+);
+
+-- The sources `works.community_rating` is taken from, `rank` 0 first. The
+-- server writes its configured list at every start; these are its defaults
+-- (`DEFAULT_RATING_SOURCES`).
+CREATE TABLE IF NOT EXISTS rating_sources (
+    rank   INTEGER PRIMARY KEY,
+    source TEXT NOT NULL UNIQUE
+);
+
+INSERT INTO rating_sources (rank, source) VALUES
+    (0, 'imdb'), (1, 'tmdb'), (2, 'tvdb'), (3, 'musicbrainz');
 
 -- Lexical search ranks with BM25 over Tantivy indexes. Names index every
 -- 1- to 3-gram so part of a word finds them as someone types; a synopsis

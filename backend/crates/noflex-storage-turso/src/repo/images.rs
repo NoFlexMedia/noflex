@@ -39,7 +39,7 @@ const LIST_FOR_LIBRARY_WORKS: &str = "SELECT i.target_kind, i.target_id, i.kind,
 const DELETE: &str =
     "DELETE FROM images WHERE target_kind = ?1 AND target_id = ?2 AND kind = ?3 AND source = ?4";
 
-const WORK_COLUMNS: &str = "w.id, w.kind, w.parent_id, w.library_id, w.title, \
+pub(crate) const WORK_COLUMNS: &str = "w.id, w.kind, w.parent_id, w.library_id, w.title, \
     w.sort_title, w.year, w.release_date, w.overview, w.external_ids_json, w.index_number, \
     w.index_end, w.parent_index, w.metadata_status, w.added_at, w.updated_at, w.tagline, \
     w.original_title, w.community_rating, w.locked_fields_json, w.metadata_provider";
@@ -47,7 +47,7 @@ const WORK_COLUMNS: &str = "w.id, w.kind, w.parent_id, w.library_id, w.title, \
 /// serde writes ids as `{"kind":"Tmdb","value":…}` without spaces and
 /// escapes quotes inside values, so a `"kind":"` that survives removing
 /// every `"kind":"Custom"` means some id has another kind.
-const HAS_PROVIDER_ID: &str =
+pub(crate) const HAS_PROVIDER_ID: &str =
     r#"REPLACE(w.external_ids_json, '"kind":"Custom"', '') LIKE '%"kind":"%'"#;
 
 /// `?{first}, …` placeholders for `n` values.
@@ -203,7 +203,7 @@ pub(crate) async fn identified_works_missing_source(
     page_of_works(conn, sql, params, limit).await
 }
 
-async fn page_of_works(
+pub(crate) async fn page_of_works(
     conn: &Connection,
     mut sql: String,
     params: Vec<Value>,

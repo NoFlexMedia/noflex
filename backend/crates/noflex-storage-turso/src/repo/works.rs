@@ -18,6 +18,8 @@ use crate::{
 /// Leaves an unchanged row alone, `updated_at` included, so a rescan
 /// rewrites neither it nor its search index. Every column the update sets
 /// belongs in its WHERE, or a change to that column alone is dropped.
+/// `?23` says whether the community rating is locked: only then is the
+/// caller's written, the work's ratings deciding it otherwise.
 const UPSERT_WORK: &str = "INSERT INTO works (\
     id, kind, parent_id, library_id, title, sort_title, year, release_date, overview, \
     external_ids_json, index_number, index_end, parent_index, metadata_status, added_at, updated_at, \
@@ -40,7 +42,7 @@ ON CONFLICT(id) DO UPDATE SET \
     metadata_status = excluded.metadata_status, \
     tagline = excluded.tagline, \
     original_title = excluded.original_title, \
-    community_rating = excluded.community_rating, \
+    community_rating = CASE WHEN ?23 THEN excluded.community_rating ELSE works.community_rating END, \
     locked_fields_json = excluded.locked_fields_json, \
     metadata_provider = excluded.metadata_provider, \
     updated_at = excluded.updated_at \
@@ -60,7 +62,7 @@ WHERE works.kind IS NOT excluded.kind OR \
     works.metadata_status IS NOT excluded.metadata_status OR \
     works.tagline IS NOT excluded.tagline OR \
     works.original_title IS NOT excluded.original_title OR \
-    works.community_rating IS NOT excluded.community_rating OR \
+    (?23 AND works.community_rating IS NOT excluded.community_rating) OR \
     works.locked_fields_json IS NOT excluded.locked_fields_json OR \
     works.metadata_provider IS NOT excluded.metadata_provider";
 
@@ -112,6 +114,7 @@ pub(crate) async fn upsert(conn: &Connection, work: &Work) -> StorageResult<()> 
         None => id_blob.clone(),
     };
     let previous_root = stored_root(conn, &id_blob).await?;
+    let rating_locked = work.locked_fields.contains(&WorkField::CommunityRating);
     let params: Vec<Value> = vec![
         Value::Blob(id_blob.clone()),
         Value::Text(work_kind_to_text(work.kind).to_string()),
@@ -152,6 +155,7 @@ pub(crate) async fn upsert(conn: &Connection, work: &Work) -> StorageResult<()> 
             .map(Value::Text)
             .unwrap_or(Value::Null),
         work.community_rating
+            .filter(|_| rating_locked)
             .map(|r| Value::Real(r as f64))
             .unwrap_or(Value::Null),
         Value::Text(to_json(&work.locked_fields)?),
@@ -160,10 +164,15 @@ pub(crate) async fn upsert(conn: &Connection, work: &Work) -> StorageResult<()> 
             .map(Value::Text)
             .unwrap_or(Value::Null),
         Value::Blob(root.clone()),
+        Value::Integer(i64::from(rating_locked)),
     ];
     let written = conn.execute(UPSERT_WORK, params).await.map_err(map_turso)?;
     if written == 0 {
         return Ok(());
+    }
+    if !rating_locked {
+        // An administrator's rating stays in the column until this unlocks it.
+        crate::repo::ratings::derive(conn, Some(&id_blob)).await?;
     }
 
     // Whatever sits beneath it moved too. Parents nest two levels at most.

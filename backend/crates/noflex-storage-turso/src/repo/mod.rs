@@ -25,6 +25,7 @@ pub(crate) mod plugin_overrides;
 pub(crate) mod plugin_settings;
 pub(crate) mod plugin_tasks;
 pub(crate) mod provider_attributions;
+pub(crate) mod ratings;
 pub(crate) mod restrictions;
 pub(crate) mod scan_events;
 pub(crate) mod search;

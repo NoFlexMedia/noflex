@@ -34,6 +34,9 @@ pub struct Work {
     pub tagline: Option<String>,
     #[serde(default)]
     pub original_title: Option<String>,
+    /// Out of 10: the rating of the first of the server's rating sources
+    /// the work has (see [`WorkRating`]), or an administrator's own while
+    /// [`WorkField::CommunityRating`] is locked.
     #[serde(default)]
     pub community_rating: Option<f32>,
     pub external_ids: Vec<ExternalId>,
@@ -1752,6 +1755,34 @@ impl ProviderAttribution {
 pub struct AttributionLogo {
     pub mime: String,
     pub bytes: Vec<u8>,
+}
+
+/// One source's rating of a work, as a plugin reported it. A work keeps one
+/// per source; the source most preferred (`Storage::set_rating_sources`) is
+/// its `community_rating`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
+#[graphql(name = "Rating", complex)]
+pub struct WorkRating {
+    /// Whose rating it is, as a slug: `imdb`, `tmdb`, `rotten-tomatoes`, ...
+    pub source: String,
+    /// On the source's own scale, as it shows there.
+    pub value: f32,
+    /// The best `value` can be: 10 for "7.8/10", 100 for "87%".
+    pub scale: f32,
+    /// `value` out of 10, comparable across sources.
+    pub normalized: f32,
+    /// How many ratings `value` summarises, when the source says.
+    pub votes: Option<u64>,
+    /// The plugin that reported it, as `providerAttributions` names it.
+    pub provider: String,
+}
+
+#[async_graphql::ComplexObject]
+impl WorkRating {
+    /// The source's name, to show beside its rating.
+    async fn name(&self) -> String {
+        noflex_core::providers::rating_source_name(&self.source)
+    }
 }
 
 impl Image {

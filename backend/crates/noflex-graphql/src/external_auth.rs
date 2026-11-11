@@ -2,13 +2,17 @@
 
 use std::sync::Arc;
 
-use async_graphql::{Context, Object, SimpleObject};
+use async_graphql::{Context, ErrorExtensions as _, Object, SimpleObject};
 use noflex_auth::Principal;
 use noflex_core::UserId;
 use noflex_plugin_host::{HookKind, PluginRegistry};
 use noflex_storage::{Storage, StorageError, domain::ExternalIdentity};
 
 use crate::auth::{LoginResult, mint_session};
+
+/// `extensions.code` of an unlink that would leave an account with no way to
+/// sign in.
+const LAST_SIGN_IN_METHOD: &str = "LAST_SIGN_IN_METHOD";
 
 #[derive(SimpleObject)]
 pub struct ExternalAuthProvider {
@@ -237,6 +241,11 @@ impl ExternalAuthMutation {
 
     /// Unlink the caller's identity with a provider. Returns it, or null when
     /// they had none.
+    ///
+    /// Refused with code `LAST_SIGN_IN_METHOD` when it's their last identity
+    /// and the account has no password, as nothing could sign in to it again.
+    // Two concurrent unlinks of an account's last two identities can both pass
+    // the check; acceptable until it moves into storage.
     async fn revoke_external_identity(
         &self,
         ctx: &Context<'_>,
@@ -244,21 +253,38 @@ impl ExternalAuthMutation {
     ) -> async_graphql::Result<Option<ExternalIdentity>> {
         let user_id = authenticated(ctx)?;
         let storage = ctx.data::<Arc<dyn Storage>>()?;
-        let identity = storage
+        let mut identities = storage
             .list_external_identities(user_id)
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?
-            .into_iter()
-            .find(|identity| identity.plugin_id == provider);
-        let Some(identity) = identity else {
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let Some(index) = identities
+            .iter()
+            .position(|identity| identity.plugin_id == provider)
+        else {
             return Ok(None);
         };
+        let identity = identities.swap_remove(index);
+        if identities.is_empty() {
+            let user = storage
+                .get_user(user_id)
+                .await
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?
+                .ok_or_else(|| async_graphql::Error::new("user not found"))?;
+            if user.password_hash.is_empty() {
+                return Err(last_sign_in_method());
+            }
+        }
         let removed = storage
             .unlink_external_identity(user_id, &provider)
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
         Ok(removed.then_some(identity))
     }
+}
+
+fn last_sign_in_method() -> async_graphql::Error {
+    async_graphql::Error::new("this is the only way you can sign in, so it can't be disconnected")
+        .extend_with(|_, ext| ext.set("code", LAST_SIGN_IN_METHOD))
 }
 
 fn authenticated(ctx: &Context<'_>) -> async_graphql::Result<UserId> {

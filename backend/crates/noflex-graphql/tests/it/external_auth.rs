@@ -4,12 +4,15 @@ use std::sync::{Arc, Mutex};
 
 use async_graphql::Request;
 use noflex_auth::{JwtConfig, Principal, verify_jwt};
-use noflex_core::{SessionId, UserId};
+use noflex_core::{SessionId, UserId, UserRole};
 use noflex_graphql::{
     ExternalAuthChallenge, ExternalAuthError, ExternalAuthService, SchemaContext, build_schema,
 };
 use noflex_plugin_host::{EngineConfig, PluginRegistry, build_engine};
-use noflex_storage::{Storage, domain::ExternalIdentity};
+use noflex_storage::{
+    Storage,
+    domain::{ExternalIdentity, User},
+};
 use noflex_storage_turso::TursoStore;
 use time::OffsetDateTime;
 
@@ -270,6 +273,73 @@ async fn identity_queries_link_and_revoke_require_authentication() {
     assert!(response.errors.is_empty(), "revoke: {:?}", response.errors);
     assert_eq!(
         response.data.into_json().expect("revoke JSON")["revokeExternalIdentity"]["pluginId"],
-        "oidc"
+        "oidc",
+        "an account with a password may drop its last identity"
+    );
+}
+
+fn identity(plugin_id: &str, user_id: UserId) -> ExternalIdentity {
+    ExternalIdentity {
+        plugin_id: plugin_id.into(),
+        issuer: format!("https://{plugin_id}.example"),
+        subject: user_id.to_string(),
+        user_id,
+        username: None,
+        display_name: None,
+        email: None,
+        linked_at: OffsetDateTime::now_utc(),
+    }
+}
+
+#[tokio::test]
+async fn an_account_without_a_password_keeps_its_last_identity() {
+    let (schema, store, _service, jwt) = fixture().await;
+    setup_admin(&schema, &jwt).await;
+    let user = User {
+        id: UserId::new(),
+        username: "sso".into(),
+        display_name: None,
+        password_hash: String::new(),
+        is_admin: false,
+        role: UserRole::User,
+        created_at: OffsetDateTime::now_utc(),
+        avatar_updated_at: None,
+        has_pin: false,
+    };
+    store.upsert_user(&user).await.expect("seed user");
+    for plugin in ["oidc", "other"] {
+        store
+            .link_external_identity(&identity(plugin, user.id))
+            .await
+            .expect("seed identity");
+    }
+    let principal = Principal {
+        user_id: user.id,
+        is_admin: false,
+        session_id: None,
+    };
+    let revoke = |provider: &str| {
+        Request::new(format!(
+            r#"mutation {{ revokeExternalIdentity(provider: "{provider}") {{ pluginId }} }}"#
+        ))
+        .data(principal)
+    };
+
+    let response = schema.execute(revoke("oidc")).await;
+    assert!(response.errors.is_empty(), "revoke: {:?}", response.errors);
+
+    let response = schema.execute(revoke("other")).await;
+    assert_eq!(
+        serde_json::to_value(&response.errors[0].extensions).expect("extensions")["code"],
+        "LAST_SIGN_IN_METHOD"
+    );
+    assert_eq!(
+        store
+            .list_external_identities(user.id)
+            .await
+            .expect("identities")
+            .len(),
+        1,
+        "the refusal unlinked nothing"
     );
 }

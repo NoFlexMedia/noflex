@@ -1982,6 +1982,9 @@ type Mutation {
 	"""
 	Unlink the caller's identity with a provider. Returns it, or null when
 	they had none.
+	
+	Refused with code `LAST_SIGN_IN_METHOD` when it's their last identity
+	and the account has no password, as nothing could sign in to it again.
 	"""
 	revokeExternalIdentity(provider: String!): ExternalIdentity
 	"""

@@ -15,13 +15,13 @@ use noflex_core::{
 };
 use noflex_storage::{
     domain::{
-        ActivityKind, ApiKey, Collection, DeviceCode, Edition, EpgProgram, ExportJob,
+        AccountPurge, ActivityKind, ApiKey, Collection, DeviceCode, Edition, EpgProgram, ExportJob,
         ExportJobStatus, ExternalIdentity, Image, ImageSource, ImageTarget, IntroMarkers, Library,
         LiveTvChannel, LiveTvSource, MediaFile, MediaRemoval, Playlist, PluginOverrideRow,
         PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule, RecordingStatus,
-        RefreshTokenLookup, ScanEvent, Session, Tag, TagAssignment, TagSummary, TrickplayAsset,
-        User, UserData, UserPluginSecret, UserPreference, UserRestrictions, WatchRoom,
-        WatchRoomMember, WatchRoomState, Work,
+        RefreshTokenLookup, ScanEvent, ServerReset, Session, Tag, TagAssignment, TagSummary,
+        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
+        WatchRoom, WatchRoomMember, WatchRoomState, Work,
     },
     error::{StorageError, StorageResult},
     query::{
@@ -469,6 +469,52 @@ impl Storage for TursoStore {
     async fn list_users(&self) -> StorageResult<Vec<User>> {
         let (_schema, conn) = self.reader().await?;
         repo::users::list_all(&conn).await
+    }
+
+    async fn delete_account(
+        &self,
+        user: UserId,
+        at: OffsetDateTime,
+    ) -> StorageResult<Option<AccountPurge>> {
+        transact!(self, Lane::Serial, |conn| repo::erasure::delete_account(
+            conn, user, at
+        ))
+    }
+    async fn pending_account_purges(&self) -> StorageResult<Vec<AccountPurge>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::erasure::pending_purges(&conn).await
+    }
+    async fn forget_user_activity(&self, user: UserId) -> StorageResult<u64> {
+        transact!(self, Lane::Concurrent, |conn| {
+            repo::erasure::forget_activity(conn, user)
+        })
+    }
+    async fn finish_account_purge(&self, user: UserId) -> StorageResult<()> {
+        transact!(self, Lane::Concurrent, |conn| repo::erasure::finish_purge(
+            conn, user
+        ))
+    }
+    async fn request_server_reset(
+        &self,
+        admin: UserId,
+        reset: &ServerReset,
+    ) -> StorageResult<bool> {
+        transact!(self, Lane::Serial, |conn| repo::erasure::request_reset(
+            conn, admin, reset
+        ))
+    }
+    async fn pending_server_reset(&self) -> StorageResult<Option<ServerReset>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::erasure::pending_reset(&conn).await
+    }
+    async fn erase_all_data(&self) -> StorageResult<()> {
+        // Held as a migration holds it, so no query sees a table half emptied.
+        let _schema = self.gates.schema.write().await;
+        let conn = self.writers.acquire().await?;
+        repo::erasure::erase_all(&conn).await
+    }
+    async fn finish_server_reset(&self) -> StorageResult<()> {
+        transact!(self, Lane::Serial, |conn| repo::erasure::finish_reset(conn))
     }
 
     async fn external_identity(

@@ -172,6 +172,298 @@ where
     batch_work_reads_preserve_order_and_access(store).await;
     watch_room_lifecycle(store).await;
     lookup_and_cleanup_operations(store).await;
+    account_deletion_queues_a_purge_and_spares_others(store).await;
+    // Empties the store, so it runs last.
+    server_reset_erases_back_to_first_run(store).await;
+}
+
+async fn account_deletion_queues_a_purge_and_spares_others<S: Storage + ?Sized>(store: &S) {
+    let now = OffsetDateTime::now_utc();
+    let leaving = make_user("purge-leaving", false);
+    let staying = make_user("purge-staying", false);
+    let admin = make_user("purge-admin", true);
+    for user in [&leaving, &staying, &admin] {
+        store.upsert_user(user).await.expect("user");
+    }
+    let leaving_session = make_session(leaving.id);
+    let staying_session = make_session(staying.id);
+    store
+        .create_session(&leaving_session)
+        .await
+        .expect("leaving session");
+    store
+        .create_session(&staying_session)
+        .await
+        .expect("staying session");
+
+    let lib = test_library("Purge");
+    store.upsert_library(&lib).await.expect("library");
+    let work = make_work(lib.id, "Purged", now);
+    store.upsert_work(&work).await.expect("work");
+    let edition = make_edition(work.id, "Purged");
+    store.upsert_edition(&edition).await.expect("edition");
+    let target = PlayTarget::Work(work.id);
+    for user in [leaving.id, staying.id] {
+        store
+            .record_playback_progress(user, target, 1_000)
+            .await
+            .expect("progress");
+    }
+    let export = |user: UserId, output: &str| crate::domain::ExportJob {
+        id: noflex_core::ExportJobId::new(),
+        user_id: user,
+        edition_id: edition.id,
+        format: crate::domain::ExportFormat::Mp4,
+        status: crate::domain::ExportJobStatus::Completed,
+        progress: 1.0,
+        output_path: Some(output.to_string()),
+        error: None,
+        created_at: now,
+        started_at: Some(now),
+        finished_at: Some(now),
+    };
+    store
+        .create_export_job(&export(leaving.id, "/out/purge-own.mp4"))
+        .await
+        .expect("own export");
+    store
+        .create_export_job(&export(leaving.id, "/out/purge-shared.mp4"))
+        .await
+        .expect("shared export");
+    store
+        .create_export_job(&export(staying.id, "/out/purge-shared.mp4"))
+        .await
+        .expect("someone else's copy");
+
+    let (gone, other, them) = (
+        leaving.id.to_string(),
+        staying.id.to_string(),
+        admin.id.to_string(),
+    );
+    let subject = work.id.to_string();
+    let rows = [
+        (ActivityKind::PlayStarted, gone.as_str(), subject.as_str()),
+        (ActivityKind::PlayStarted, other.as_str(), subject.as_str()),
+        (ActivityKind::RefreshTokenReuse, gone.as_str(), "a-session"),
+        (
+            ActivityKind::DeviceApprovedFor,
+            them.as_str(),
+            gone.as_str(),
+        ),
+        (ActivityKind::ItemRemoved, gone.as_str(), subject.as_str()),
+    ];
+    for (kind, actor, subject) in rows {
+        store
+            .append_activity(kind, Some(actor), Some(subject), None, now)
+            .await
+            .expect("activity");
+    }
+
+    let purge = store
+        .delete_account(leaving.id, now)
+        .await
+        .expect("delete account")
+        .expect("they existed");
+    assert_eq!(purge.user_id, leaving.id);
+    let mut files = purge.files.clone();
+    files.sort();
+    assert_eq!(files, ["/out/purge-own.mp4", "/out/purge-shared.mp4"]);
+    assert!(store.get_user(leaving.id).await.expect("get").is_none());
+    assert!(
+        store
+            .get_session(leaving_session.id)
+            .await
+            .expect("their session")
+            .is_none()
+    );
+    assert!(
+        store
+            .get_session(staying_session.id)
+            .await
+            .expect("other session")
+            .is_some()
+    );
+    assert_eq!(
+        store
+            .user_data(staying.id, target)
+            .await
+            .expect("other history")
+            .position_ms,
+        Some(1_000)
+    );
+    assert!(
+        store
+            .export_output_in_use("/out/purge-shared.mp4")
+            .await
+            .expect("shared copy")
+    );
+    assert!(
+        !store
+            .export_output_in_use("/out/purge-own.mp4")
+            .await
+            .expect("own copy")
+    );
+    assert!(
+        store
+            .pending_account_purges()
+            .await
+            .expect("pending")
+            .contains(&purge)
+    );
+    assert!(
+        store
+            .delete_account(leaving.id, now)
+            .await
+            .expect("again")
+            .is_none()
+    );
+
+    assert_eq!(
+        store
+            .forget_user_activity(leaving.id)
+            .await
+            .expect("forget"),
+        4
+    );
+    let left = store
+        .list_activity(&[], Some(now - time::Duration::minutes(1)), 1_000, None)
+        .await
+        .expect("activity")
+        .items;
+    let ours = [subject.as_str(), gone.as_str(), "a-session"];
+    let left = left
+        .iter()
+        .filter(|row| row.subject.as_deref().is_some_and(|it| ours.contains(&it)))
+        .map(|row| (row.kind, row.actor.as_deref(), row.subject.as_deref()))
+        .collect::<Vec<_>>();
+    assert!(left.contains(&(
+        ActivityKind::PlayStarted,
+        Some(other.as_str()),
+        Some(subject.as_str())
+    )));
+    assert!(left.contains(&(ActivityKind::ItemRemoved, None, Some(subject.as_str()))));
+    assert!(left.iter().all(
+        |(_, actor, subject)| *actor != Some(gone.as_str()) && *subject != Some(gone.as_str())
+    ));
+
+    store
+        .finish_account_purge(leaving.id)
+        .await
+        .expect("finish");
+    assert!(
+        !store
+            .pending_account_purges()
+            .await
+            .expect("pending")
+            .iter()
+            .any(|pending| pending.user_id == leaving.id)
+    );
+
+    store.delete_work(work.id).await.ok();
+    store.delete_library(lib.id).await.ok();
+    store.delete_user(staying.id).await.ok();
+    store.delete_user(admin.id).await.ok();
+}
+
+async fn server_reset_erases_back_to_first_run<S: Storage + ?Sized>(store: &S) {
+    store
+        .erase_all_data()
+        .await
+        .expect("erase what came before");
+    assert!(store.list_users().await.expect("users").is_empty());
+
+    let admin = make_user("reset-admin", true);
+    assert!(
+        store
+            .create_initial_admin(&admin)
+            .await
+            .expect("first admin")
+    );
+    let viewer = make_user("reset-viewer", false);
+    store.upsert_user(&viewer).await.expect("viewer");
+    let session = make_session(viewer.id);
+    store.create_session(&session).await.expect("session");
+    store
+        .upsert_library(&test_library("Reset"))
+        .await
+        .expect("library");
+    let reset = crate::domain::ServerReset {
+        folders: vec!["/srv/optimized".to_string()],
+        requested_at: OffsetDateTime::now_utc(),
+    };
+
+    assert!(
+        !store
+            .request_server_reset(viewer.id, &reset)
+            .await
+            .expect("not an administrator")
+    );
+    let second = make_user("reset-second-admin", true);
+    store.upsert_user(&second).await.expect("second admin");
+    assert!(
+        !store
+            .request_server_reset(admin.id, &reset)
+            .await
+            .expect("not the only administrator")
+    );
+    assert!(
+        matches!(
+            store.delete_account(admin.id, reset.requested_at).await,
+            Ok(Some(_))
+        ),
+        "with another administrator, deleting one is ordinary"
+    );
+    assert!(matches!(
+        store.delete_account(second.id, reset.requested_at).await,
+        Err(StorageError::Conflict(_))
+    ));
+    assert!(store.get_user(second.id).await.expect("get").is_some());
+    assert!(store.pending_server_reset().await.expect("none").is_none());
+
+    assert!(
+        store
+            .request_server_reset(second.id, &reset)
+            .await
+            .expect("request")
+    );
+    assert!(
+        store
+            .get_session(session.id)
+            .await
+            .expect("session")
+            .is_none(),
+        "nobody stays signed in"
+    );
+    assert_eq!(
+        store.pending_server_reset().await.expect("pending"),
+        Some(reset.clone())
+    );
+
+    store.erase_all_data().await.expect("erase");
+    assert!(store.list_users().await.expect("users").is_empty());
+    assert!(store.list_libraries().await.expect("libraries").is_empty());
+    assert!(
+        store
+            .pending_account_purges()
+            .await
+            .expect("purges")
+            .is_empty()
+    );
+    assert_eq!(
+        store.pending_server_reset().await.expect("still pending"),
+        Some(reset),
+        "the reset outlives the rows it erases"
+    );
+    store.migrate().await.expect("migrations still recorded");
+
+    store.finish_server_reset().await.expect("finish");
+    assert!(store.pending_server_reset().await.expect("done").is_none());
+    assert!(
+        store
+            .create_initial_admin(&make_user("reset-new-admin", true))
+            .await
+            .expect("first-run setup")
+    );
 }
 
 async fn batch_work_reads_preserve_order_and_access<S: Storage + ?Sized>(store: &S) {

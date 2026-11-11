@@ -406,6 +406,32 @@ impl User {
     }
 }
 
+/// What a deleted account left that doesn't cascade from its user row, for the
+/// server to clear in the background. Written by
+/// [`Storage::delete_account`](crate::Storage::delete_account) in the same
+/// transaction that deletes the user, so one never exists without the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountPurge {
+    /// The user, who no longer exists.
+    pub user_id: UserId,
+    /// Their export copies and recordings, as stored. An export copy another
+    /// user's job shares is still theirs, and stays.
+    pub files: Vec<String>,
+    pub requested_at: OffsetDateTime,
+}
+
+/// The server erasing itself back to first-run setup, once its last
+/// administrator deleted their account. Pending from
+/// [`Storage::request_server_reset`](crate::Storage::request_server_reset) until
+/// [`Storage::finish_server_reset`](crate::Storage::finish_server_reset).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerReset {
+    /// Folders holding optimized versions that the configuration doesn't name:
+    /// where an administrator pointed smart transcoding.
+    pub folders: Vec<String>,
+    pub requested_at: OffsetDateTime,
+}
+
 /// Per-user content and playback policy. A user with no stored policy is
 /// unrestricted. Library grants apply independently, and administrators
 /// bypass this policy entirely.

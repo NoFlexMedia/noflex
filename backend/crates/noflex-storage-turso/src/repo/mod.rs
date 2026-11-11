@@ -6,6 +6,7 @@ pub(crate) mod collections;
 pub(crate) mod device_codes;
 pub(crate) mod devices;
 pub(crate) mod editions;
+pub(crate) mod erasure;
 pub(crate) mod export_jobs;
 pub(crate) mod external_identities;
 pub(crate) mod images;

@@ -916,3 +916,25 @@ CREATE TABLE IF NOT EXISTS subtitle_streams (
     external  INTEGER NOT NULL,
     forced    INTEGER NOT NULL
 );
+
+-- Deleting an account. The user row and everything cascading from it go at
+-- once; what can't cascade waits here to be cleared in the background: rows
+-- naming them in `activity_log`, which has no foreign key, and files on disk.
+-- A row left by a restart is finished at the next start. No foreign key, as
+-- the user it names is already gone.
+CREATE TABLE IF NOT EXISTS account_purges (
+    user_id      BLOB PRIMARY KEY,
+    -- Their export copies and recordings. A copy someone else's job shares stays.
+    files_json   TEXT NOT NULL,
+    requested_at TEXT NOT NULL
+);
+
+-- The last administrator deleted their account, which erases the server back
+-- to first-run setup. Every other table is emptied at the next start, and this
+-- row goes last, so an erasure cut short is taken up again.
+CREATE TABLE IF NOT EXISTS server_reset (
+    id           INTEGER PRIMARY KEY CHECK (id = 1),
+    -- Folders the configuration doesn't name that hold optimized versions.
+    folders_json TEXT NOT NULL,
+    requested_at TEXT NOT NULL
+);

@@ -15,13 +15,13 @@ use tokio::io::AsyncWrite;
 
 use crate::{
     domain::{
-        ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount, Device, DeviceCode,
-        Edition, EmbeddingEndpoint, EmbeddingModel, EpgProgram, ExportFormat, ExportJob,
-        ExportJobStatus, ExternalIdentity, HistoryPage, Image, ImageSource, ImageTarget,
+        AccountPurge, ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount,
+        Device, DeviceCode, Edition, EmbeddingEndpoint, EmbeddingModel, EpgProgram, ExportFormat,
+        ExportJob, ExportJobStatus, ExternalIdentity, HistoryPage, Image, ImageSource, ImageTarget,
         IntroMarkers, Invite, Library, LinkedServer, LiveTvChannel, LiveTvSource, MediaFile,
         OptimizedVersion, OptimizedVersionStats, OptimizedVersionStatus, PlaySession, Playlist,
         PluginOverrideRow, PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule,
-        RecordingStatus, RefreshTokenLookup, ScanEvent, Session, SmartTranscodeMark,
+        RecordingStatus, RefreshTokenLookup, ScanEvent, ServerReset, Session, SmartTranscodeMark,
         SmartTranscodeOutcome, SmartTranscodingSettings, Tag, TagAssignment, TagSummary,
         TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
         WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork, Work, WorkFeatures,
@@ -237,6 +237,48 @@ pub trait Storage: Send + Sync + 'static {
     async fn delete_user_avatar(&self, user: UserId) -> StorageResult<bool>;
     async fn delete_user(&self, id: UserId) -> StorageResult<()>;
     async fn list_users(&self) -> StorageResult<Vec<User>>;
+
+    // ---- Account deletion and server reset -----------------------------
+    /// Delete `user` with everything that cascades from them, and queue an
+    /// [`AccountPurge`] for what doesn't, in one transaction. Their sessions and
+    /// API keys go with the row, so nothing they hold authenticates afterwards.
+    /// `None`, writing nothing, when there's no such user.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::Conflict`] when `user` is the only administrator, checked
+    /// in the same transaction: only [`Self::request_server_reset`] removes them.
+    async fn delete_account(
+        &self,
+        user: UserId,
+        at: OffsetDateTime,
+    ) -> StorageResult<Option<AccountPurge>>;
+    /// Every purge [`Self::delete_account`] queued and
+    /// [`Self::finish_account_purge`] hasn't cleared, oldest first.
+    async fn pending_account_purges(&self) -> StorageResult<Vec<AccountPurge>>;
+    /// Forget what the activity log says about `user`: rows about them, and
+    /// their own playback and security events, go. Where they only acted on
+    /// something else, as an administrator removing a title, the row stays
+    /// without them. Returns how many rows changed.
+    async fn forget_user_activity(&self, user: UserId) -> StorageResult<u64>;
+    /// Clear `user`'s purge once it's done; a no-op without one.
+    async fn finish_account_purge(&self, user: UserId) -> StorageResult<()>;
+    /// Begin erasing the server, as its only administrator, `admin`, deletes
+    /// their account: record `reset` for [`Self::pending_server_reset`], and
+    /// revoke every session, API key, device code and invite, so nobody is
+    /// signed in or can sign in meanwhile. Returns `false`, writing nothing,
+    /// unless `admin` is an administrator and no other user is, checked in the
+    /// same transaction.
+    async fn request_server_reset(&self, admin: UserId, reset: &ServerReset)
+    -> StorageResult<bool>;
+    async fn pending_server_reset(&self) -> StorageResult<Option<ServerReset>>;
+    /// Delete every row the server has stored, except the record of applied
+    /// migrations and the pending [`ServerReset`], leaving the database as
+    /// first-run setup finds it. Holds off every other query while it runs, and
+    /// can be run again after being cut short.
+    async fn erase_all_data(&self) -> StorageResult<()>;
+    /// Clear the pending [`ServerReset`] once it's done; a no-op without one.
+    async fn finish_server_reset(&self) -> StorageResult<()>;
 
     // ---- External identities -------------------------------------------
     async fn external_identity(

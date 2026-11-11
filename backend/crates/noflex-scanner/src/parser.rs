@@ -16,6 +16,7 @@
 // the metadata provider's job — the scanner emits one per location.
 
 use std::{
+    ops::Range,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -130,12 +131,22 @@ const JUNK_TAGS: &[&str] = &[
     "pdtv",
     "remux",
     "uhd",
+    "ultrahd",
+    "blu-ray",
+    "stv",
+    // Streaming services
+    "amzn",
+    "dsnp",
+    "hmax",
+    "atvp",
     // HDR
     "hdr",
     "hdr10",
     "hdr10+",
+    "hdr10plus",
     "sdr",
     "dv",
+    "dovi",
     "dolby-vision",
     // Codec
     "x264",
@@ -152,6 +163,9 @@ const JUNK_TAGS: &[&str] = &[
     "aac",
     "ac3",
     "eac3",
+    "ddp",
+    "ddp5",
+    "dd5",
     "dts",
     "dts-hd",
     "dts-x",
@@ -164,15 +178,43 @@ const JUNK_TAGS: &[&str] = &[
     "10bit",
     "8bit",
     "12bit",
-    // Release tags
+    // Release tags. Cuts like "Extended" are editions (`EDITIONS`); a
+    // remaster or another framing is a version of one.
     "repack",
     "proper",
-    "extended",
-    "unrated",
+    "remastered",
+    "open matte",
     "internal",
     "limited",
-    "imax",
 ];
+
+/// Edition labels a filename may carry besides `{edition-…}`, each with the
+/// name it's stored under, so every spelling of a cut lands in one edition.
+const EDITIONS: &[(&str, &str)] = &[
+    (r"director'?s?[\s-]+cut", "Director's Cut"),
+    (
+        r"extended(?:[\s-]+(?:edition|cut|version))?",
+        "Extended Edition",
+    ),
+    (
+        r"theatrical(?:[\s-]+(?:cut|edition|version|release))?",
+        "Theatrical Cut",
+    ),
+    (r"unrated(?:[\s-]+(?:edition|cut|version))?", "Unrated"),
+    (r"uncut", "Uncut"),
+    (r"final[\s-]+cut", "Final Cut"),
+    (r"special[\s-]+edition", "Special Edition"),
+    (r"ultimate[\s-]+(?:edition|cut)", "Ultimate Edition"),
+    (r"collector'?s?[\s-]+edition", "Collector's Edition"),
+    (r"imax(?:[\s-]+edition)?", "IMAX"),
+];
+
+/// Abbreviated labels. "DC" starts titles too ("DC League of Super-Pets"),
+/// so these only count between a release year and the quality tags.
+const EDITION_ABBREVIATIONS: &[(&str, &str)] = &[("dc", "Director's Cut")];
+
+/// Words for "season" that name a season folder.
+const SEASON_WORDS: &str = r"season|staffel|stagione|saison|temporada|seizoen|säsong|sæson|sesong|kausi|sezon|sezona|sezóna|sezonul|series|시즌|シーズン|сезон";
 
 // ---- Regex helpers ---------------------------------------------------------
 
@@ -194,6 +236,40 @@ fn edition_brace_re() -> &'static Regex {
     R.get_or_init(|| Regex::new(r"\{edition-([^}]+)\}").unwrap())
 }
 
+fn edition_label_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| label_re(EDITIONS))
+}
+
+fn edition_abbreviation_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| label_re(EDITION_ABBREVIATIONS))
+}
+
+/// One capture group per label, in order, so the group says which matched.
+fn label_re(labels: &[(&str, &str)]) -> Regex {
+    let alternatives: Vec<_> = labels.iter().map(|(p, _)| format!("({p})")).collect();
+    Regex::new(&format!(r"(?i)\b(?:{})\b", alternatives.join("|"))).unwrap()
+}
+
+/// Every label in `s[range]`, as its span in `s` and the edition it names.
+fn labels_in<'a>(
+    re: &'a Regex,
+    labels: &'static [(&'static str, &'static str)],
+    s: &'a str,
+    range: Range<usize>,
+) -> impl Iterator<Item = (Range<usize>, &'static str)> + 'a {
+    let offset = range.start;
+    re.captures_iter(&s[range]).filter_map(move |c| {
+        let (i, m) = c
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find_map(|(i, m)| Some((i, m?)))?;
+        Some((m.start() + offset..m.end() + offset, labels[i - 1].1))
+    })
+}
+
 fn part_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"(?i)\s*-?\s*(?:cd|part|disc)\s*0*(\d+)\b").unwrap())
@@ -209,21 +285,39 @@ fn whitespace_re() -> &'static Regex {
     R.get_or_init(|| Regex::new(r"\s+").unwrap())
 }
 
+/// An episode marker: `S01E02`, `s1e2`, `S01xE02`, `S01.E02`, `S1 E2`,
+/// `S01x02`, `1x02` or `Season 1 Episode 2`, then any further episodes of a
+/// multi-episode file (`E01E02`, `E23-E24-E26`, `E01-02`, `02x03x04`). The
+/// match starts one separator early, as the regex crate has no lookbehind.
 fn episode_marker_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(
             r"(?ix)
-            (?P<prefix>.*?)
-            \s*-?\s*
-            [Ss](?P<season>\d{1,3})[Ee](?P<ep>\d{1,3})
-            (?:[-]?[Ee](?P<ep_end>\d{1,3}))?
-            (?P<rest>.*?)
-            \.[A-Za-z0-9]+
-            $
+            (?:^|[\s._\[(-])
+            (?P<marker>
+                (?:
+                    s(?P<s1>\d{1,4})[\s._-]?x?[\s._-]?e(?P<e1>\d{1,4})
+                  | s(?P<s2>\d{1,4})x(?P<e2>\d{1,4})
+                  | (?P<s3>\d{1,2})x(?P<e3>\d{2,3})
+                  | season[\s._-]*(?P<s4>\d{1,4})[\s._-]*episode[\s._-]*(?P<e4>\d{1,4})
+                )
+                (?P<more>(?:(?:-?e|x|-)\d{1,4})*)
+            )
+            \b
             ",
         )
         .unwrap()
+    })
+}
+
+/// A file in a season folder named by its episode alone: `Episode 16`,
+/// `Episode 16 - Title`, `02 - Title`, `2. Title`, `02`. A bare number needs
+/// a separator before any title, so `12 Angry Men` isn't episode 12.
+fn bare_episode_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        Regex::new(r"(?i)^(?:ep(?:isode)?[\s._-]*)?(\d{1,4})(?:\s*[-.]\s*(.*))?$").unwrap()
     })
 }
 
@@ -277,10 +371,15 @@ pub fn parse_filename_movie(input: &str) -> ParsedMovie {
         .rev()
         .find(|y| bracketed(y))
         .or_else(|| candidates.last());
+    let label = edition_label(&normalised, chosen.map(|y| y.end()), junk_cut);
     let (cut, year) = match chosen {
         Some(y) => (y.start(), y.as_str().parse().ok()),
-        None => (junk_cut, None),
+        None => (
+            label.as_ref().map_or(junk_cut, |l| l.0.start.min(junk_cut)),
+            None,
+        ),
     };
+    let edition = edition.or_else(|| label.map(|l| l.1.to_string()));
 
     let title_prefix = &normalised[..cut];
     let title = clean_title(title_prefix);
@@ -290,6 +389,33 @@ pub fn parse_filename_movie(input: &str) -> ParsedMovie {
         year,
         edition,
         part,
+    }
+}
+
+/// The edition a cut named among the release tags gives: anywhere after the
+/// release year, or with no year, only trailing the title ("Léon Extended",
+/// not "The Extended Family"). Abbreviations only count after a year.
+fn edition_label(
+    normalised: &str,
+    year_end: Option<usize>,
+    junk_cut: usize,
+) -> Option<(Range<usize>, &'static str)> {
+    let full = |range| labels_in(edition_label_re(), EDITIONS, normalised, range);
+    match year_end {
+        Some(from) => full(from..normalised.len()).next().or_else(|| {
+            labels_in(
+                edition_abbreviation_re(),
+                EDITION_ABBREVIATIONS,
+                normalised,
+                from..junk_cut.max(from),
+            )
+            .next()
+        }),
+        None => full(0..normalised.len()).find(|(span, _)| {
+            let between = &normalised[span.end..junk_cut.max(span.end)];
+            !clean_title(&normalised[..span.start]).is_empty()
+                && clean_title(&edition_label_re().replace_all(between, "")).is_empty()
+        }),
     }
 }
 
@@ -322,20 +448,37 @@ fn clean_title(s: &str) -> String {
 /// an optional show prefix when the folder combines both
 /// (e.g. "Game of Thrones Season 1 (1080p ...)").
 ///
-/// Supported forms:
-///   - `Season 1`, `Season 01`, `Season 1 (anything)`
-///   - `<Show> Season 1`, `<Show> Season 1 (anything)`
+/// Supported forms, with "Season" in any language of `SEASON_WORDS`:
+///   - `Season 1`, `Season 01`, `Season1`, `Season 1 (anything)`,
+///     `Season 1 1080p BluRay`
+///   - `<Show> Season 1`, with the same tails
+///   - `3. Staffel`
 ///   - `Specials` → season 0
-///   - `S01`, `S1` (short)
+///   - `S01`, `S1`, and a release's `<Show>.S01.1080p.WEB-DL-GRP`
 pub fn parse_season_folder(name: &str) -> Option<SeasonFolderInfo> {
     let n = name.trim();
 
-    static STRICT: OnceLock<Regex> = OnceLock::new();
-    let strict =
-        STRICT.get_or_init(|| Regex::new(r"(?i)^season\s*0*(\d+)(?:\s*\(.+\))?\s*$").unwrap());
-    if let Some(c) = strict.captures(n) {
+    static NAMED: OnceLock<Regex> = OnceLock::new();
+    let named = NAMED.get_or_init(|| {
+        Regex::new(&format!(
+            r"(?i)^(?:(?P<show>.+?)[\s._-]+)?(?:{SEASON_WORDS})[\s._-]*(?P<n>\d{{1,4}})(?P<tail>.*)$"
+        ))
+        .unwrap()
+    });
+    if let Some(c) = named.captures(n)
+        && is_season_tail(&c["tail"])
+    {
         return Some(SeasonFolderInfo {
-            number: c.get(1)?.as_str().parse().ok()?,
+            number: c["n"].parse().ok()?,
+            show: c.name("show").map(|m| show_name(m.as_str())),
+        });
+    }
+
+    static ORDINAL: OnceLock<Regex> = OnceLock::new();
+    let ordinal = ORDINAL.get_or_init(|| Regex::new(r"(?i)^(\d{1,3})\.\s*staffel$").unwrap());
+    if let Some(c) = ordinal.captures(n) {
+        return Some(SeasonFolderInfo {
+            number: c[1].parse().ok()?,
             show: None,
         });
     }
@@ -349,36 +492,45 @@ pub fn parse_season_folder(name: &str) -> Option<SeasonFolderInfo> {
         });
     }
 
-    static COMBINED: OnceLock<Regex> = OnceLock::new();
-    let combined = COMBINED.get_or_init(|| {
-        Regex::new(r"(?i)^(?P<show>.+?)\s+season\s*0*(?P<n>\d+)(?:\s*\(.+\))?\s*$").unwrap()
-    });
-    if let Some(c) = combined.captures(n) {
-        let show_raw = c.name("show")?.as_str().trim();
-        // Run the show prefix through the fuzzy parser to strip any junk
-        // suffixes (e.g. "Show Name 1080p" → "Show Name").
-        let cleaned = parse_filename_movie(show_raw);
-        let show = if cleaned.title.is_empty() {
-            Some(show_raw.to_string())
-        } else {
-            Some(cleaned.title)
-        };
-        return Some(SeasonFolderInfo {
-            number: c.name("n")?.as_str().parse().ok()?,
-            show,
-        });
-    }
-
     static SHORT: OnceLock<Regex> = OnceLock::new();
-    let short = SHORT.get_or_init(|| Regex::new(r"(?i)^s0*(\d{1,3})\s*$").unwrap());
-    if let Some(c) = short.captures(n) {
+    let short = SHORT.get_or_init(|| {
+        Regex::new(r"(?i)^\[?(?:(?P<show>.+?)[\s._\[-]+)?s(?P<n>\d{1,4})(?P<tail>[\s._\]-].*)?$")
+            .unwrap()
+    });
+    if let Some(c) = short.captures(n)
+        && c.name("tail").is_none_or(|t| is_season_tail(t.as_str()))
+    {
         return Some(SeasonFolderInfo {
-            number: c.get(1)?.as_str().parse().ok()?,
-            show: None,
+            number: c["n"].parse().ok()?,
+            show: c.name("show").map(|m| show_name(m.as_str())),
         });
     }
 
     None
+}
+
+/// What may follow a season number in a folder name: nothing, something
+/// bracketed, or release tags. Anything else ("Season 1 Episode 2") means
+/// the folder isn't a season's.
+fn is_season_tail(tail: &str) -> bool {
+    let t = tail.trim_start_matches([' ', '.', '_', '-', ']']);
+    t.is_empty()
+        || t.starts_with(['(', '['])
+        || junk_re()
+            .find(&normalise_separators(t))
+            .is_some_and(|m| m.start() == 0)
+}
+
+/// A show name from a season folder's prefix, without any release tags
+/// (e.g. "Show Name 1080p" → "Show Name").
+fn show_name(raw: &str) -> String {
+    let raw = raw.trim();
+    let cleaned = parse_filename_movie(raw);
+    if cleaned.title.is_empty() {
+        raw.to_string()
+    } else {
+        cleaned.title
+    }
 }
 
 // ---- Episode filename parser -----------------------------------------------
@@ -409,21 +561,22 @@ fn episode_title(rest: &str) -> Option<String> {
 }
 
 fn parse_episode_filename(name: &str) -> Option<FilenameEpisode> {
-    let caps = episode_marker_re().captures(name)?;
-    let season = caps.name("season")?.as_str().parse().ok()?;
-    let episode = caps.name("ep")?.as_str().parse().ok()?;
+    let stem = file_stem(name);
+    let caps = episode_marker_re().captures(stem)?;
+    let marker = caps.name("marker")?;
+    let (season, episode) = [("s1", "e1"), ("s2", "e2"), ("s3", "e3"), ("s4", "e4")]
+        .into_iter()
+        .find_map(|(s, e)| Some((caps.name(s)?, caps.name(e)?)))?;
+    let season = season.as_str().parse().ok()?;
+    let episode = episode.as_str().parse().ok()?;
     let episode_end = caps
-        .name("ep_end")
-        .and_then(|m| m.as_str().parse::<u32>().ok());
-    let title = caps.name("rest").and_then(|m| episode_title(m.as_str()));
-    let show_prefix = caps.name("prefix").and_then(|m| {
-        let cleaned = clean_title(&normalise_separators(m.as_str()));
-        if cleaned.is_empty() {
-            None
-        } else {
-            Some(cleaned)
-        }
-    });
+        .name("more")
+        .and_then(|m| m.as_str().rsplit(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|n| n.parse::<u32>().ok())
+        .filter(|&end| end > episode);
+    let title = episode_title(&stem[marker.end()..]);
+    let show_prefix =
+        Some(clean_title(&normalise_separators(&stem[..marker.start()]))).filter(|p| !p.is_empty());
     Some(FilenameEpisode {
         season,
         episode,
@@ -431,6 +584,29 @@ fn parse_episode_filename(name: &str) -> Option<FilenameEpisode> {
         title,
         show_prefix,
     })
+}
+
+/// An episode named by its number alone, as a file directly in a season
+/// folder may be.
+fn parse_bare_episode(name: &str, season: u32) -> Option<FilenameEpisode> {
+    let caps = bare_episode_re().captures(file_stem(name).trim())?;
+    Some(FilenameEpisode {
+        season,
+        episode: caps[1].parse().ok()?,
+        episode_end: None,
+        title: caps.get(2).and_then(|m| episode_title(m.as_str())),
+        show_prefix: None,
+    })
+}
+
+/// `name` without its extension.
+fn file_stem(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !ext.is_empty() && ext.chars().all(|c| c.is_ascii_alphanumeric()) => {
+            stem
+        }
+        _ => name,
+    }
 }
 
 // ---- Movie classifier ------------------------------------------------------
@@ -489,7 +665,14 @@ pub fn classify_movie(file: &Path, roots: &[PathBuf]) -> Option<MovieClassificat
 pub fn classify_episode(file: &Path, roots: &[PathBuf]) -> Option<EpisodeClassification> {
     let root = find_root(file, roots)?;
     let filename = file.file_name()?.to_str()?;
-    let from_file = parse_episode_filename(filename)?;
+    let from_file = match parse_episode_filename(filename) {
+        Some(parsed) => parsed,
+        None => {
+            let parent = file.parent().filter(|p| p != &root.as_path())?;
+            let folder = parse_season_folder(parent.file_name()?.to_str()?)?;
+            parse_bare_episode(filename, folder.number)?
+        }
+    };
 
     // Walk parent dirs from the file's parent up to (but not including) the
     // root, looking for a season-bearing directory.
@@ -507,31 +690,40 @@ pub fn classify_episode(file: &Path, roots: &[PathBuf]) -> Option<EpisodeClassif
         cursor = dir.parent();
     }
 
-    let (season_folder_path, season_info) = match season_folder {
+    let (season_folder_path, season_info, show_dir) = match season_folder {
         Some(sf) => {
             // If a season folder was found it MUST agree with the filename —
             // guards against misclassifying loose files.
             if sf.1.number != from_file.season {
                 return None;
             }
-            sf
+            let show_dir = sf.0.parent().map(Path::to_path_buf);
+            (sf.0, sf.1, show_dir)
         }
         None => {
             // No season folder anywhere up the tree: the file's parent
-            // stands in (it is then the show folder, for artwork).
+            // stands in (it is then the show folder, for artwork), and names
+            // the show unless it's one episode's release folder.
+            let parent = file.parent()?.to_path_buf();
+            let show_dir = parent
+                .file_name()
+                .and_then(|n| n.to_str())
+                .filter(|n| !episode_marker_re().is_match(n))
+                .map(|_| parent.clone());
             (
-                file.parent()?.to_path_buf(),
+                parent,
                 SeasonFolderInfo {
                     number: from_file.season,
                     show: None,
                 },
+                show_dir,
             )
         }
     };
 
     // Show name resolution priority:
     //   1. Combined form (`<Show> Season N` folder).
-    //   2. Show folder one level above the season folder.
+    //   2. The show folder: above the season folder, or holding the file.
     //   3. Filename's show prefix.
     let (show, show_year) = if let Some(combined_show) = season_info.show.clone() {
         // Combined folder may carry "Show (Year)" or "Show Name 1080p"; run it
@@ -543,7 +735,7 @@ pub fn classify_episode(file: &Path, roots: &[PathBuf]) -> Option<EpisodeClassif
             p.title
         };
         (title, p.year)
-    } else if let Some(show_dir) = season_folder_path.parent().filter(|p| p != &root.as_path()) {
+    } else if let Some(show_dir) = show_dir.filter(|p| p != root) {
         let name = show_dir.file_name().and_then(|s| s.to_str()).unwrap_or("");
         let p = parse_filename_movie(name);
         if p.title.is_empty() {
@@ -894,6 +1086,70 @@ mod tests {
     }
 
     #[test]
+    fn fuzzy_edition_labels() {
+        for (input, title, year, edition) in [
+            (
+                "Sintel (2021) - DC - 1080p AV1 BluRay HDR10",
+                "Sintel",
+                Some(2021),
+                Some("Director's Cut"),
+            ),
+            (
+                "Sintel.2021.Directors.Cut.1080p.BluRay.x264-GRP",
+                "Sintel",
+                Some(2021),
+                Some("Director's Cut"),
+            ),
+            (
+                "Sintel 2021 Extended 2160p UHD BluRay",
+                "Sintel",
+                Some(2021),
+                Some("Extended Edition"),
+            ),
+            (
+                "Sintel (2021) [Unrated] [1080p]",
+                "Sintel",
+                Some(2021),
+                Some("Unrated"),
+            ),
+            (
+                "Léon The Professional Extended",
+                "Léon The Professional",
+                None,
+                Some("Extended Edition"),
+            ),
+            (
+                "Sintel (2021) {edition-Final Cut} Extended",
+                "Sintel",
+                Some(2021),
+                Some("Final Cut"),
+            ),
+            // Labels that are part of a title, and a remaster, aren't editions.
+            ("The Extended Family", "The Extended Family", None, None),
+            ("Uncut Gems (2019)", "Uncut Gems", Some(2019), None),
+            (
+                "DC League of Super-Pets (2022) 1080p",
+                "DC League of Super-Pets",
+                Some(2022),
+                None,
+            ),
+            (
+                "Rain Man 1988 REMASTERED 1080p BluRay",
+                "Rain Man",
+                Some(1988),
+                None,
+            ),
+        ] {
+            let p = parse_filename_movie(input);
+            assert_eq!(
+                (p.title.as_str(), p.year, p.edition.as_deref()),
+                (title, year, edition),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
     fn fuzzy_year_only_in_parens() {
         let p = parse_filename_movie("Movie Name (1999)");
         assert_eq!(p.title, "Movie Name");
@@ -981,6 +1237,43 @@ mod tests {
     fn season_folder_rejects_unknown() {
         assert_eq!(parse_season_folder("Random Folder"), None);
         assert_eq!(parse_season_folder("Movies"), None);
+        assert_eq!(parse_season_folder("Season (8)"), None);
+        assert_eq!(parse_season_folder("Season 1 Episode 2"), None);
+        assert_eq!(parse_season_folder("S01E02"), None);
+    }
+
+    #[test]
+    fn season_folder_other_forms() {
+        for (name, number, show) in [
+            ("Season1", 1, None),
+            ("Staffel 2", 2, None),
+            ("Temporada 03", 3, None),
+            ("Saison 4 (2016)", 4, None),
+            ("3. Staffel", 3, None),
+            ("Season 2009", 2009, None),
+            (
+                "The Wonder Years Season 01 1080p",
+                1,
+                Some("The Wonder Years"),
+            ),
+            (
+                "The.Wonder.Years.S04.1080p.PDTV.x264-JCH",
+                4,
+                Some("The Wonder Years"),
+            ),
+            (
+                "The Wonder Years [S04][1080p PDTV x264-JCH]",
+                4,
+                Some("The Wonder Years"),
+            ),
+        ] {
+            let info = parse_season_folder(name).expect(name);
+            assert_eq!(
+                (info.number, info.show.as_deref()),
+                (number, show),
+                "{name}"
+            );
+        }
     }
 
     // ---- classify_movie -----------------------------------------------------
@@ -1078,6 +1371,80 @@ mod tests {
         }
         let range = parse_episode_filename("Show - S01E01-E02 - 1080p.mkv").expect("range");
         assert_eq!((range.episode, range.episode_end), (1, Some(2)));
+    }
+
+    #[test]
+    fn episode_marker_forms() {
+        for (name, season, episode, end) in [
+            ("Show s01x01.mkv", 1, 1, None),
+            ("Show 1x02 - Title.mkv", 1, 2, None),
+            ("Show S01xE02 Title.mkv", 1, 2, None),
+            ("Show.S01.E02.mkv", 1, 2, None),
+            ("Show S1 E9 - Title.mkv", 1, 9, None),
+            ("Show Season 3 Episode 9 - Title.mkv", 3, 9, None),
+            ("Show - S04E011.mkv", 4, 11, None),
+            ("Show S2017E368.mkv", 2017, 368, None),
+            ("Show S21E1001.mkv", 21, 1001, None),
+            ("Show - S01E23-E24-E26 - Title.mkv", 1, 23, Some(26)),
+            ("Show - S01E01E02.mkv", 1, 1, Some(2)),
+            ("Show - S01E01-02.mkv", 1, 1, Some(2)),
+            ("Show - 02x03x04 - Title.mkv", 2, 3, Some(4)),
+            ("Show.S01E01-1080p.mkv", 1, 1, None),
+        ] {
+            let parsed = parse_episode_filename(name).expect(name);
+            assert_eq!(
+                (parsed.season, parsed.episode, parsed.episode_end),
+                (season, episode, end),
+                "{name}"
+            );
+            assert_eq!(parsed.show_prefix.as_deref(), Some("Show"), "{name}");
+        }
+        for name in ["Movie 1920x1080.mkv", "Movie.x264.mkv", "Seasons.mkv"] {
+            assert!(parse_episode_filename(name).is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn bare_episode_in_season_folder() {
+        for (name, episode, title) in [
+            ("Episode 16.avi", 16, None),
+            ("Episode 16 - Some Title.avi", 16, Some("Some Title")),
+            ("02 - Title.avi", 2, Some("Title")),
+            ("2. Infestation.avi", 2, Some("Infestation")),
+            ("7 - 12 Angry Men.avi", 7, Some("12 Angry Men")),
+            ("02.avi", 2, None),
+        ] {
+            let p = PathBuf::from(format!("/lib/Show/Season 2/{name}"));
+            let c = classify_episode(&p, &roots()).expect(name);
+            assert_eq!(c.parsed.show, "Show", "{name}");
+            assert_eq!((c.parsed.season, c.parsed.episode), (2, episode), "{name}");
+            assert_eq!(c.parsed.title.as_deref(), title, "{name}");
+        }
+        // Outside a season folder, and without a separator, a number is a title.
+        assert!(classify_episode(&PathBuf::from("/lib/Show/02 - Title.avi"), &roots()).is_none());
+        assert!(
+            classify_episode(
+                &PathBuf::from("/lib/Show/Season 2/12 Angry Men.avi"),
+                &roots()
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn show_folder_without_season_folder() {
+        let p = PathBuf::from("/lib/Watchmen (2019)/Watchmen 1x03 [WEBDL-720p] - Title.mkv");
+        let c = classify_episode(&p, &roots()).expect("classifies");
+        assert_eq!(
+            (c.parsed.show.as_str(), c.parsed.show_year),
+            ("Watchmen", Some(2019))
+        );
+        // One episode's release folder doesn't name the show.
+        let p = PathBuf::from(
+            "/lib/The.Series.Name.S01E04.WEBRip.x264-GRP/the.series.name.s01e04.webrip.x264-GRP.mkv",
+        );
+        let c = classify_episode(&p, &roots()).expect("classifies");
+        assert_eq!(c.parsed.show, "the series name");
     }
 
     #[test]

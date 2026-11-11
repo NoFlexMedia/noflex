@@ -38,7 +38,7 @@ services.noflex = {
 
 <svelte:head>
   <title>Get NoFlex</title>
-  <meta name="description" content="Install the NoFlex server on Linux or NixOS, and find the NoFlex apps for your devices." />
+  <meta name="description" content="Install the NoFlex server on Linux, Windows or NixOS, as a container or a package, and find the NoFlex apps for your devices." />
 </svelte:head>
 
 <div class="download wrap">
@@ -60,9 +60,14 @@ services.noflex = {
       </div>
       <div class="stack">
         <div class="panel">
-          <div class="head"><LinuxLogo size={20} weight="fill" /><h3>Linux bundle</h3><span class="chip">First release</span></div>
-          <p>One archive with the server, its plugins, our own ffmpeg build and the search model. Unpack it and run it. Bundles come with the first release, on GitHub.</p>
+          <div class="head"><Package size={20} /><h3>Containers and Linux</h3><span class="chip">First release</span></div>
+          <p>An image for Docker, Podman and NAS app stores, a .deb and an .rpm, and a bundle that unpacks and runs on any Linux, for x86 and ARM. Each brings the plugins, our own ffmpeg build and the search model.</p>
           <a class="more" href={links.releases}>Releases<ArrowUpRight size={14} /></a>
+        </div>
+        <div class="panel">
+          <div class="head"><WindowsLogo size={20} weight="fill" /><h3>Windows</h3><span class="chip">First release</span></div>
+          <p>An installer that runs NoFlex as a service, starting with Windows, with hardware transcoding on Nvidia, Intel and AMD graphics.</p>
+          <a class="more" href={links.deployment}>Deployment guide<ArrowUpRight size={14} /></a>
         </div>
         <div class="panel">
           <div class="head"><Browser size={20} /><h3>From source</h3></div>

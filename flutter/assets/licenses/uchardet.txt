@@ -1,0 +1,3 @@
+Copyright © the uchardet authors, and the Mozilla Foundation for the code it derives from.
+
+Available under the Mozilla Public License 1.1, the GNU General Public License 2.0 or later, or the GNU Lesser General Public License 2.1 or later. NoFlex uses it under the GNU Lesser General Public License, version 2.1 or later.

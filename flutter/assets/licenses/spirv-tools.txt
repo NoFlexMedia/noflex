@@ -1,0 +1,3 @@
+Copyright © The Khronos Group Inc. and the SPIRV-Tools contributors.
+
+Available under the Apache License 2.0.

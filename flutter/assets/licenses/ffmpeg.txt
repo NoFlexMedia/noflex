@@ -1,0 +1,3 @@
+Copyright © the FFmpeg developers.
+
+libavcodec, libavfilter, libavformat, libavutil, libswresample and libswscale, as mpv uses them. This build is configured with --enable-version3 and without --enable-gpl, which makes it available under the GNU Lesser General Public License, version 3 or later. That license supplements the GNU General Public License, version 3, so both texts follow.

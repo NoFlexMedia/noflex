@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:phosphor_icons/phosphor_icons.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 
 import 'di.dart';
 import 'features/auth/connect_screen.dart';
 import 'features/auth/profiles_screen.dart';
 import 'features/downloads/downloads_screen.dart';
+import 'features/downloads/leave_account.dart';
 import 'features/shell/app_shell.dart';
 import 'services/nav_service.dart';
 import 'services/session.dart';
@@ -45,10 +49,24 @@ class _AppFrame extends SignalWidget {
           AppPhase.boot => const _Boot(),
           AppPhase.connect => const ConnectScreen(),
           AppPhase.error => Scaffold(
-            body: NfState.error(
+            body: NfState(
+              icon: PhosphorIconsRegular.warningCircle,
+              isError: true,
               title: 'NoFlex couldn’t start',
               message: session.error.value,
-              retry: session.start,
+              actionLabel: 'Try again',
+              onAction: session.start,
+              // The server may be gone for good, or the address was never right.
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: TextButton(
+                  onPressed: () => unawaited(changeServer()),
+                  child: Text(
+                    'Change server',
+                    style: nfText(13, weight: 600, color: NfColors.text2),
+                  ),
+                ),
+              ),
             ),
           ),
           AppPhase.setup => const SetupScreen(),

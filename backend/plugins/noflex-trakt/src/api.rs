@@ -239,9 +239,10 @@ pub enum IdKind {
 }
 
 /// Progress percent in [0, 100]. Position-derived when both position
-/// and runtime are known; otherwise `stopped` counts as fully watched (the
-/// host sends a stop without a position only for a title marked played)
-/// and everything else starts at zero.
+/// and runtime are known, as for a pause, a resume (a `started` with a
+/// position) and progress-at-stop; otherwise `stopped` counts as fully
+/// watched (the host sends a stop without a position only for a title
+/// marked played) and everything else starts at zero.
 pub fn progress_percent(action: Action, position_ms: Option<u64>, runtime_ms: Option<u64>) -> f32 {
     if let (Some(position), Some(runtime)) = (position_ms, runtime_ms)
         && runtime > 0
@@ -483,6 +484,23 @@ mod tests {
     fn progress_from_position_and_runtime() {
         let p = progress_percent(Action::Stopped, Some(45 * 60_000), Some(90 * 60_000));
         assert!((p - 50.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn pause_and_resume_carry_the_position() {
+        let runtime = Some(120 * 60_000);
+        let paused = progress_percent(Action::Paused, Some(30 * 60_000), runtime);
+        assert!((paused - 25.0).abs() < f32::EPSILON);
+        // A resume is another start, picking up where the pause left off.
+        let resumed = progress_percent(Action::Started, Some(30 * 60_000), runtime);
+        assert!((resumed - 25.0).abs() < f32::EPSILON);
+
+        let v = body(&Scrobble {
+            progress: paused,
+            ..scrobble(MediaKind::Movie, &[(IdKind::Tmdb, "348")], &[])
+        });
+        assert_eq!(v["progress"], 25.0);
+        assert_eq!(Action::Paused.endpoint(), "pause");
     }
 
     #[test]

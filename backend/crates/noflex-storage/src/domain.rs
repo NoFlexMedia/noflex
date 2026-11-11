@@ -138,9 +138,19 @@ pub trait MediaUrlSigner: Send + Sync {
         session: Option<SessionId>,
         avatar_of: UserId,
     ) -> Result<String, String>;
+    /// Token for the preview of an artwork candidate offered under
+    /// `candidate`, deterministic like [`MediaUrlSigner::sign_image_token`].
+    fn sign_artwork_candidate_token(
+        &self,
+        user: UserId,
+        session: Option<SessionId>,
+        candidate: &str,
+    ) -> Result<String, String>;
 }
 
-fn percent_encode(value: &str) -> String {
+/// `value` percent-encoded for a URL's query: everything but RFC 3986's
+/// unreserved characters is escaped.
+pub fn percent_encode(value: &str) -> String {
     value
         .bytes()
         .map(|byte| {
@@ -1646,13 +1656,14 @@ impl Image {
 #[async_graphql::ComplexObject]
 impl Image {
     /// Serving route for this image, pinned to its source with
-    /// `?source=` (so the URL changes when the effective source does)
-    /// and carrying a `&token=` that authenticates the caller without a
-    /// header (so `<img src>` works) and stays identical for about an
-    /// hour so browsers can cache it. Clients append `&w=`/`&h=` (and
-    /// optionally `&fill=true`) to resize server-side. Without a
-    /// configured signer the token is omitted and the route needs a
-    /// header credential.
+    /// `?source=` (so the URL changes when the effective source does),
+    /// versioned by its stored path with `&v=` (so it changes when the file
+    /// is replaced under a new name, as provider art is), and carrying a
+    /// `&token=` that authenticates the caller without a header (so
+    /// `<img src>` works) and stays identical for about an hour so
+    /// browsers can cache it. Clients append `&w=`/`&h=` (and optionally
+    /// `&fill=true`) to resize server-side. Without a configured signer
+    /// the token is omitted and the route needs a header credential.
     async fn url(&self, ctx: &async_graphql::Context<'_>) -> async_graphql::Result<String> {
         let storage = complex_storage(ctx)?;
         let user = crate::access::request_user(ctx)?;
@@ -1669,12 +1680,21 @@ impl Image {
         if !visible {
             return Err(async_graphql::Error::new("not found"));
         }
+        // FNV-1a: stable across builds, unlike `DefaultHasher`, so cached
+        // URLs survive a server upgrade.
+        let version = self
+            .path
+            .bytes()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+            });
         let path = format!(
-            "/images/{}/{}/{}?source={}",
+            "/images/{}/{}/{}?source={}&v={:08x}",
             self.target.kind_str(),
             self.target.id(),
             self.kind.as_str(),
-            self.source.as_str()
+            self.source.as_str(),
+            version as u32,
         );
         let Some(signer) = ctx.data_opt::<std::sync::Arc<dyn MediaUrlSigner>>() else {
             return Ok(path);

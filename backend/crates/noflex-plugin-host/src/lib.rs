@@ -54,7 +54,9 @@ pub use manifest::{
     EmbeddingClaim, HookKind, ManifestParseError, PluginManifest, PriorityKey, TaskRegistration,
     WorkKindFilter,
 };
-pub use metadata_service::{AutoIdentify, MetadataError, MetadataService};
+pub use metadata_service::{
+    ArtworkCandidate, AutoIdentify, MetadataError, MetadataService, ServableImage,
+};
 pub use metadata_worker::{MetadataWorker, SweepReport, spawn_metadata_worker};
 pub use plugin::{LoadedPlugin, PluginHealth, PluginId, TaskHealth, TaskOutcome};
 pub use priority::{Overrides, PluginOverride, PluginOverrideEntry, PriorityTable};

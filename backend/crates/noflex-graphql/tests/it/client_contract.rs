@@ -282,9 +282,10 @@ async fn images_query_exposes_serving_urls() {
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["kind"], "PRIMARY");
     assert_eq!(items[0]["width"], 1920);
-    assert_eq!(
-        items[0]["url"],
-        format!("/images/work/{}/primary?source=local", work.id)
+    let url = items[0]["url"].as_str().unwrap();
+    assert!(
+        url.starts_with(&format!("/images/work/{}/primary?source=local&v=", work.id)),
+        "{url}"
     );
 }
 

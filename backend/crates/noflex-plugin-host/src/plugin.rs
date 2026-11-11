@@ -118,8 +118,8 @@ type AttributionOutcome = Result<Option<WitProviderAttribution>, HostError>;
 type FetchImageOutcome =
     Result<Result<(image_types::ImageMeta, Vec<u8>), image_types::PluginError>, HostError>;
 
-/// `call_list_images`'s wire result: dispatch error outside, plugin error inside.
-type ListImagesOutcome =
+/// `call_list_candidates`'s wire result: dispatch error outside, plugin error inside.
+type ListCandidatesOutcome =
     Result<Result<Vec<image_exports::ImageCandidate>, image_types::PluginError>, HostError>;
 
 /// `call_fetch`'s wire result: dispatch error outside, plugin error inside.
@@ -355,10 +355,10 @@ enum HookCall {
         language: Option<String>,
         respond: oneshot::Sender<FetchImageOutcome>,
     },
-    ListImages {
+    ListCandidates {
         id: image_types::ExternalId,
         kind: image_types::ImageKind,
-        respond: oneshot::Sender<ListImagesOutcome>,
+        respond: oneshot::Sender<ListCandidatesOutcome>,
     },
     FetchCandidate {
         handle: String,
@@ -434,7 +434,7 @@ impl HookCall {
             Self::Supports { respond, .. } => respond.is_closed(),
             Self::Attribution { respond } => respond.is_closed(),
             Self::FetchImage { respond, .. } => respond.is_closed(),
-            Self::ListImages { respond, .. } => respond.is_closed(),
+            Self::ListCandidates { respond, .. } => respond.is_closed(),
             Self::FetchCandidate { respond, .. } => respond.is_closed(),
             Self::FetchMetadata { respond, .. } => respond.is_closed(),
             Self::RunTask { respond, .. } => respond.is_closed(),
@@ -468,7 +468,7 @@ impl HookCall {
             HookCall::FetchImage { respond, .. } => {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
-            HookCall::ListImages { respond, .. } => {
+            HookCall::ListCandidates { respond, .. } => {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
             HookCall::FetchCandidate { respond, .. } => {
@@ -714,15 +714,15 @@ impl LoadedPlugin {
 
     /// Run the plugin's `image.list-candidates()` export: every `kind` image the
     /// provider has for `external_id`, best first.
-    pub async fn call_list_images(
+    pub async fn call_list_candidates(
         &self,
         external_id: image_types::ExternalId,
         kind: image_types::ImageKind,
-    ) -> ListImagesOutcome {
+    ) -> ListCandidatesOutcome {
         let (respond, answer) = oneshot::channel();
         self.instance.enqueue(
             &self.id,
-            HookCall::ListImages {
+            HookCall::ListCandidates {
                 id: external_id,
                 kind,
                 respond,
@@ -1843,7 +1843,7 @@ fn dispatch_call<'a>(
             }),
             None => missing_export(respond, "image"),
         },
-        HookCall::ListImages { id, kind, respond } => match &hooks.image {
+        HookCall::ListCandidates { id, kind, respond } => match &hooks.image {
             Some(image) => env.track(
                 inflight,
                 HookKind::Image,

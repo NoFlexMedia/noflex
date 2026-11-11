@@ -13,15 +13,16 @@
 // payload image URLs only tell it which kinds a provider has.
 
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use async_graphql::Json;
 use noflex_core::{
-    ExternalId, ExternalIdKind, ImageKind, MetadataStatus, TagId, TagTarget, WorkId, WorkKind,
-    providers::MetadataPayload, slugify,
+    ExternalId, ExternalIdKind, ImageKind, MetadataStatus, TagId, TagTarget, WorkField, WorkId,
+    WorkKind, providers::MetadataPayload, slugify,
 };
 use noflex_metadata::{TagDraft, apply_payload, merge_external_id};
 use noflex_storage::{
@@ -48,6 +49,10 @@ pub const AUTO_MATCH_THRESHOLD: f32 = 0.85;
 pub const AUTO_MATCH_MARGIN: f32 = 0.05;
 /// Languages tried per image kind before settling for what came back.
 const MAX_IMAGE_LANGUAGES: usize = 3;
+/// How long an offered artwork candidate can be previewed and picked.
+const OFFER_TTL: Duration = Duration::from_secs(30 * 60);
+/// Most candidates remembered at once; the oldest go first.
+const MAX_OFFERS: usize = 4096;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MetadataError {
@@ -69,6 +74,80 @@ pub enum MetadataError {
     Dispatch(#[from] HostError),
     #[error("storage: {0}")]
     Storage(#[from] StorageError),
+    #[error("{0} artwork can't be picked")]
+    UnpickableKind(&'static str),
+    #[error("that artwork is no longer on offer; list the candidates again")]
+    UnknownCandidate,
+    #[error("the provider's image isn't in a format NoFlex can show")]
+    UnservableImage,
+    #[error("this server keeps no provider artwork")]
+    NoImageDir,
+    #[error("artwork not stored: {0}")]
+    Store(String),
+}
+
+/// One image a provider offers for a work, registered under `id` so a
+/// client can preview and pick it without ever naming the provider's
+/// handle: only what was offered can be fetched.
+#[derive(Debug, Clone, PartialEq, async_graphql::SimpleObject)]
+#[graphql(complex)]
+pub struct ArtworkCandidate {
+    /// What `setWorkArtwork` takes. It expires half an hour after it was
+    /// offered.
+    pub id: async_graphql::ID,
+    /// The plugin offering it, as `providerAttributions` names it.
+    pub provider: String,
+    pub kind: ImageKind,
+    /// ISO 639-1 code of the text on it; null when text-free.
+    pub language: Option<String>,
+    /// The full-size image's, when the provider says.
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    /// The provider's own rating, higher is better; comparable only between
+    /// one provider's candidates.
+    pub score: Option<f32>,
+}
+
+#[async_graphql::ComplexObject]
+impl ArtworkCandidate {
+    /// A small rendition for a picker, fetched through its provider,
+    /// relative to this server. Carries a `token` so `<img src>` works.
+    async fn preview_url(&self, ctx: &async_graphql::Context<'_>) -> async_graphql::Result<String> {
+        let user = noflex_storage::access::request_user(ctx)?;
+        let path = format!("/artwork-candidates/{}/preview", self.id.as_str());
+        let Some(signer) = ctx.data_opt::<Arc<dyn noflex_storage::MediaUrlSigner>>() else {
+            return Ok(path);
+        };
+        let token = signer
+            .sign_artwork_candidate_token(
+                user.user_id,
+                noflex_storage::access::caller_session(ctx),
+                self.id.as_str(),
+            )
+            .map_err(async_graphql::Error::new)?;
+        Ok(format!(
+            "{path}?token={}",
+            noflex_storage::domain::percent_encode(&token)
+        ))
+    }
+}
+
+/// Image bytes in a format the image routes serve.
+#[derive(Debug, Clone)]
+pub struct ServableImage {
+    pub bytes: Vec<u8>,
+    /// `image/jpeg`, `image/png`, `image/webp` or `image/gif`.
+    pub mime: &'static str,
+}
+
+/// A candidate between being offered and being picked.
+#[derive(Debug, Clone)]
+struct Offer {
+    work: WorkId,
+    kind: ImageKind,
+    provider: PluginId,
+    handle: String,
+    expires: Instant,
 }
 
 /// What [`MetadataService::auto_identify`] did with one work.
@@ -93,6 +172,8 @@ pub struct MetadataService {
     priority: Option<Arc<RwLock<PriorityTable>>>,
     image_dir: Option<PathBuf>,
     indexing: Arc<IndexingProgress>,
+    /// Artwork candidates offered by [`Self::artwork_candidates`], by id.
+    offers: Mutex<HashMap<String, Offer>>,
 }
 
 impl MetadataService {
@@ -105,6 +186,7 @@ impl MetadataService {
             priority: None,
             image_dir: None,
             indexing: Arc::default(),
+            offers: Mutex::default(),
         }
     }
 
@@ -305,9 +387,10 @@ impl MetadataService {
     /// `winner` first (when it exports `image`), then the other image
     /// candidates; within a plugin, each of the work's non-`Custom`
     /// external ids. The language asked for is the library's preferred
-    /// languages in order, else the payload's, else none. Returns how many
-    /// images were written; every failure is logged and skipped. A no-op
-    /// without an image dir or provider ids.
+    /// languages in order, else the payload's, else none. A kind an
+    /// administrator picked by hand is left alone. Returns how many images
+    /// were written; every failure is logged and skipped. A no-op without
+    /// an image dir or provider ids.
     pub async fn fetch_artwork(
         &self,
         work: &Work,
@@ -341,7 +424,7 @@ impl MetadataService {
             .unwrap_or_default();
 
         let mut written = 0;
-        for (kind, payload_language) in kinds {
+        for (kind, payload_language) in kinds.iter().filter(|(kind, _)| !picked(work, *kind)) {
             let languages: Vec<Option<String>> = if !library_languages.is_empty() {
                 library_languages
                     .iter()
@@ -355,7 +438,15 @@ impl MetadataService {
             let Some(fetched) = self.fetch_one_kind(&plugins, &ids, *kind, &languages).await else {
                 continue;
             };
-            match store_art(self.storage.as_ref(), root, work.id, *kind, fetched).await {
+            match store_art(
+                self.storage.as_ref(),
+                root,
+                ImageTarget::Work(work.id),
+                *kind,
+                fetched,
+            )
+            .await
+            {
                 Ok(()) => written += 1,
                 Err(error) => {
                     tracing::warn!(work = %work.id, kind = kind.as_str(), %error, "provider art not stored");
@@ -414,7 +505,7 @@ impl MetadataService {
             }
         };
         for row in rows {
-            if keep.iter().any(|(k, _)| *k == row.kind) {
+            if keep.iter().any(|(k, _)| *k == row.kind) || picked(work, row.kind) {
                 continue;
             }
             if let Err(error) = self
@@ -447,6 +538,229 @@ impl MetadataService {
         Ok(self
             .fetch_artwork(work, None, &kinds, library.as_ref())
             .await)
+    }
+
+    /// Every `kind` image the loaded image providers offer for `id`, for an
+    /// administrator to pick from. Each provider is asked through the first
+    /// of the work's provider ids it answers for, all at once; one that
+    /// fails is left out. Providers are ordered by the library's preferred
+    /// providers, then by image priority, and each one's images keep its
+    /// own order. Every candidate is remembered under its `id` for
+    /// [`OFFER_TTL`], which is all [`Self::candidate_preview`] and
+    /// [`Self::pick_artwork`] accept.
+    ///
+    /// # Errors
+    /// [`MetadataError::WorkNotFound`]; [`MetadataError::UnpickableKind`]
+    /// for a kind [`WorkField::image`] has no lock for.
+    pub async fn artwork_candidates(
+        &self,
+        id: WorkId,
+        kind: ImageKind,
+    ) -> Result<Vec<ArtworkCandidate>, MetadataError> {
+        if WorkField::image(kind).is_none() {
+            return Err(MetadataError::UnpickableKind(kind.as_str()));
+        }
+        let (work, library) = self.load(id).await?;
+        let ids: Vec<&ExternalId> = provider_ids(&work).collect();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let plugins = self.image_providers(work.kind, library.as_ref()).await;
+        let wit_kind = wit_image_kind(kind);
+        let lists = plugins.iter().map(|plugin| {
+            let ids = &ids;
+            async move {
+                for external_id in ids {
+                    let wit_id = image_types::ExternalId {
+                        kind: image_kind_id(external_id.kind),
+                        value: external_id.value.clone(),
+                    };
+                    match plugin.call_list_candidates(wit_id, wit_kind).await {
+                        Ok(Ok(list)) => return list,
+                        Ok(Err(error)) => {
+                            tracing::debug!(plugin = %plugin.id.0, ?error, "artwork candidates refused");
+                        }
+                        Err(error) => {
+                            tracing::debug!(plugin = %plugin.id.0, %error, "artwork candidates failed");
+                            return Vec::new();
+                        }
+                    }
+                }
+                Vec::new()
+            }
+        });
+        let lists = futures::future::join_all(lists).await;
+
+        let expires = Instant::now() + OFFER_TTL;
+        let mut out = Vec::new();
+        let mut offers = Vec::new();
+        for (plugin, list) in plugins.iter().zip(lists) {
+            let mut seen = HashSet::new();
+            for candidate in list {
+                // A provider may answer for several of the work's ids with one record.
+                if candidate.kind != wit_kind || !seen.insert(candidate.handle.clone()) {
+                    continue;
+                }
+                let id = uuid::Uuid::now_v7().simple().to_string();
+                offers.push((
+                    id.clone(),
+                    Offer {
+                        work: work.id,
+                        kind,
+                        provider: plugin.id.clone(),
+                        handle: candidate.handle,
+                        expires,
+                    },
+                ));
+                out.push(ArtworkCandidate {
+                    id: id.into(),
+                    provider: plugin.id.0.clone(),
+                    kind,
+                    language: candidate.language.filter(|l| !l.is_empty()),
+                    width: candidate.width,
+                    height: candidate.height,
+                    score: candidate.score.filter(|s| s.is_finite()),
+                });
+            }
+        }
+        self.remember(offers);
+        Ok(out)
+    }
+
+    /// The small rendition of the offered candidate `id`, from its provider.
+    ///
+    /// # Errors
+    /// [`MetadataError::UnknownCandidate`] for an id not on offer;
+    /// [`MetadataError::ProviderNotLoaded`], [`MetadataError::Rejected`],
+    /// [`MetadataError::Dispatch`] or [`MetadataError::UnservableImage`]
+    /// when the provider can't deliver it.
+    pub async fn candidate_preview(&self, id: &str) -> Result<ServableImage, MetadataError> {
+        let offer = self.offer(id).ok_or(MetadataError::UnknownCandidate)?;
+        let art = self.fetch_offer(&offer, true).await?;
+        Ok(ServableImage {
+            mime: mime_of(art.ext),
+            bytes: art.bytes,
+        })
+    }
+
+    /// Make the offered candidate `candidate` `work`'s provider image of its
+    /// kind: the full-size image is fetched through its provider, stored and
+    /// credited to it, and the kind's [`WorkField::image`] lock keeps
+    /// refreshes from replacing it until it is unlocked.
+    ///
+    /// # Errors
+    /// [`MetadataError::UnknownCandidate`] for an id not on offer for this
+    /// work; [`MetadataError::NoImageDir`] without an image dir; the
+    /// provider's failures as for [`Self::candidate_preview`].
+    pub async fn pick_artwork(&self, work: WorkId, candidate: &str) -> Result<Work, MetadataError> {
+        let offer = self
+            .offer(candidate)
+            .filter(|offer| offer.work == work)
+            .ok_or(MetadataError::UnknownCandidate)?;
+        let root = self.image_dir.as_ref().ok_or(MetadataError::NoImageDir)?;
+        let art = self.fetch_offer(&offer, false).await?;
+        store_art(
+            self.storage.as_ref(),
+            root,
+            ImageTarget::Work(work),
+            offer.kind,
+            art,
+        )
+        .await
+        .map_err(|error| MetadataError::Store(error.to_string()))?;
+        let (mut work, _) = self.load(work).await?;
+        if let Some(field) = WorkField::image(offer.kind)
+            && !work.locked_fields.contains(&field)
+        {
+            work.locked_fields.push(field);
+            work.locked_fields.sort();
+            work.updated_at = OffsetDateTime::now_utc();
+            self.storage.upsert_work(&work).await?;
+        }
+        Ok(work)
+    }
+
+    /// Every loaded image provider, the library's preferred ones first,
+    /// then by image priority, then by id.
+    async fn image_providers(
+        &self,
+        kind: WorkKind,
+        library: Option<&Library>,
+    ) -> Vec<Arc<LoadedPlugin>> {
+        let preferred = library
+            .map(|l| l.config.preferred_providers.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .map(|id| PluginId(id.clone()));
+        let ranked = self.default_candidates(HookKind::Image, kind).await;
+        let mut rest = self.registry.exporters_of(HookKind::Image);
+        rest.sort();
+        let mut out: Vec<Arc<LoadedPlugin>> = Vec::new();
+        for id in preferred.chain(ranked).chain(rest) {
+            if out.iter().any(|p| p.id == id) {
+                continue;
+            }
+            if let Some(plugin) = self.registry.get_plugin(&id)
+                && plugin.exports(HookKind::Image)
+            {
+                out.push(plugin);
+            }
+        }
+        out
+    }
+
+    fn remember(&self, offered: Vec<(String, Offer)>) {
+        let now = Instant::now();
+        let mut offers = self.offers.lock().expect("artwork offers poisoned");
+        offers.retain(|_, offer| offer.expires > now);
+        offers.extend(offered);
+        if offers.len() > MAX_OFFERS {
+            let mut by_age: Vec<(Instant, String)> = offers
+                .iter()
+                .map(|(id, offer)| (offer.expires, id.clone()))
+                .collect();
+            by_age.sort();
+            for (_, id) in by_age.into_iter().take(offers.len() - MAX_OFFERS) {
+                offers.remove(&id);
+            }
+        }
+    }
+
+    fn offer(&self, id: &str) -> Option<Offer> {
+        let offers = self.offers.lock().expect("artwork offers poisoned");
+        offers
+            .get(id)
+            .filter(|offer| offer.expires > Instant::now())
+            .cloned()
+    }
+
+    async fn fetch_offer(&self, offer: &Offer, preview: bool) -> Result<FetchedArt, MetadataError> {
+        let plugin = self
+            .registry
+            .get_plugin(&offer.provider)
+            .ok_or_else(|| MetadataError::ProviderNotLoaded(offer.provider.0.clone()))?;
+        let (meta, bytes) = match plugin
+            .call_fetch_candidate(offer.handle.clone(), preview)
+            .await
+        {
+            Ok(Ok(fetched)) => fetched,
+            Ok(Err(error)) => {
+                return Err(MetadataError::Rejected {
+                    provider: offer.provider.0.clone(),
+                    error: format!("{error:?}"),
+                });
+            }
+            Err(error) => return Err(MetadataError::Dispatch(error)),
+        };
+        let ext = sniff_image(&bytes).ok_or(MetadataError::UnservableImage)?;
+        Ok(FetchedArt {
+            provider: offer.provider.0.clone(),
+            bytes,
+            ext,
+            language: meta.language.filter(|l| !l.is_empty()),
+            width: meta.width,
+            height: meta.height,
+        })
     }
 
     /// Match an unidentified work automatically: search the candidates in
@@ -721,6 +1035,22 @@ async fn fetch_image(
     }
 }
 
+/// Whether an administrator picked `work`'s `kind` image, which refreshes
+/// leave alone.
+fn picked(work: &Work, kind: ImageKind) -> bool {
+    WorkField::image(kind).is_some_and(|field| work.locked_fields.contains(&field))
+}
+
+/// The content type of an extension [`sniff_image`] answers.
+fn mime_of(ext: &str) -> &'static str {
+    match ext {
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        _ => "image/jpeg",
+    }
+}
+
 /// File extension for bytes the image route can decode, by magic number
 /// rather than the plugin's claimed MIME type.
 pub(crate) fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
@@ -745,26 +1075,23 @@ enum StoreError {
     Storage(#[from] StorageError),
 }
 
-/// Write `art` to `<root>/provider-art/<work>/<kind>.<ext>` via a unique
-/// temp sibling + rename (so a reader never sees a partial file) and
-/// point the work's `Provider` row at it. A previous file with another
-/// extension is removed once the row moved.
+/// Write `art` to `<root>/provider-art/<target id>/<kind>-<unique>.<ext>`
+/// via a temp sibling + rename (so a reader never sees a partial file) and
+/// point the target's `Provider` row at it. Every write gets a new name, so
+/// the image's URL changes with it; the previous file is removed once the
+/// row moved.
 async fn store_art(
     storage: &dyn Storage,
     root: &Path,
-    work: WorkId,
+    target: ImageTarget,
     kind: ImageKind,
     art: FetchedArt,
 ) -> Result<(), StoreError> {
-    let dir = root.join(PROVIDER_ART_DIR).join(work.to_string());
+    let dir = root.join(PROVIDER_ART_DIR).join(target.id().to_string());
     tokio::fs::create_dir_all(&dir).await?;
-    let dest = dir.join(format!("{}.{}", kind.as_str(), art.ext));
-    let tmp = dir.join(format!(
-        ".{}.{}.{}",
-        kind.as_str(),
-        uuid::Uuid::now_v7(),
-        art.ext
-    ));
+    let unique = uuid::Uuid::now_v7().simple();
+    let dest = dir.join(format!("{}-{unique}.{}", kind.as_str(), art.ext));
+    let tmp = dir.join(format!(".{}-{unique}.{}", kind.as_str(), art.ext));
     if let Err(error) = tokio::fs::write(&tmp, &art.bytes).await {
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(error.into());
@@ -773,7 +1100,6 @@ async fn store_art(
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(error.into());
     }
-    let target = ImageTarget::Work(work);
     let previous = storage
         .image(target, kind, &[ImageSource::Provider])
         .await?;

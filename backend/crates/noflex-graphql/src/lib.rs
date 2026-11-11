@@ -105,6 +105,7 @@ pub struct Query(
     credentials::CredentialsQuery,
     external_auth::ExternalAuthQuery,
     plugin_links::PluginLinksQuery,
+    metadata::MetadataQuery,
     sessions::SessionsQuery,
     search::SearchQuery,
     embedding::EmbeddingQuery,

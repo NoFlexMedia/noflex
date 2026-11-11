@@ -139,6 +139,43 @@ type ApiKey {
 }
 
 """
+One image a provider offers for a work, registered under `id` so a
+client can preview and pick it without ever naming the provider's
+handle: only what was offered can be fetched.
+"""
+type ArtworkCandidate {
+	"""
+	What `setWorkArtwork` takes. It expires half an hour after it was
+	offered.
+	"""
+	id: ID!
+	"""
+	The plugin offering it, as `providerAttributions` names it.
+	"""
+	provider: String!
+	kind: ImageKind!
+	"""
+	ISO 639-1 code of the text on it; null when text-free.
+	"""
+	language: String
+	"""
+	The full-size image's, when the provider says.
+	"""
+	width: Int
+	height: Int
+	"""
+	The provider's own rating, higher is better; comparable only between
+	one provider's candidates.
+	"""
+	score: Float
+	"""
+	A small rendition for a picker, fetched through its provider,
+	relative to this server. Carries a `token` so `<img src>` works.
+	"""
+	previewUrl: String!
+}
+
+"""
 Library-level choice between metadata-provider artwork and artwork
 found next to the media. Either way the other source fills kinds the
 preferred one lacks, and generated art comes last.
@@ -999,13 +1036,14 @@ type Image {
 	language: String
 	"""
 	Serving route for this image, pinned to its source with
-	`?source=` (so the URL changes when the effective source does)
-	and carrying a `&token=` that authenticates the caller without a
-	header (so `<img src>` works) and stays identical for about an
-	hour so browsers can cache it. Clients append `&w=`/`&h=` (and
-	optionally `&fill=true`) to resize server-side. Without a
-	configured signer the token is omitted and the route needs a
-	header credential.
+	`?source=` (so the URL changes when the effective source does),
+	versioned by its stored path with `&v=` (so it changes when the file
+	is replaced under a new name, as provider art is), and carrying a
+	`&token=` that authenticates the caller without a header (so
+	`<img src>` works) and stays identical for about an hour so
+	browsers can cache it. Clients append `&w=`/`&h=` (and optionally
+	`&fill=true`) to resize server-side. Without a configured signer
+	the token is omitted and the route needs a header credential.
 	"""
 	url: String!
 }
@@ -1955,6 +1993,13 @@ type Mutation {
 	on disk and is not media removal.
 	"""
 	deleteMediaFile(id: ID!, deleteFile: Boolean!): Boolean!
+	"""
+	Make one of `artworkCandidates`' images the work's artwork of its
+	kind: the full-size image is fetched through its provider, credited
+	to it, and locked against refreshes by the kind's `*_IMAGE` field
+	until that is unlocked. Admin only.
+	"""
+	setWorkArtwork(workId: ID!, candidateId: ID!): Work!
 	"""
 	Re-fetch metadata from the first candidate provider that can serve
 	one of the work's external ids — the library's preferred providers
@@ -3171,6 +3216,14 @@ type Query {
 	no longer loaded.
 	"""
 	myPluginLinks: [PluginLink!]!
+	"""
+	Every `kind` image the loaded image providers offer for a work, to
+	pick one by hand: the library's preferred providers first, each
+	provider's own best first. A provider that fails is left out. Each
+	candidate can be previewed and picked for half an hour. Only the
+	kinds a `*_IMAGE` work field locks can be picked. Admin only.
+	"""
+	artworkCandidates(workId: ID!, kind: ImageKind!): [ArtworkCandidate!]!
 	"""
 	The caller's own active sessions/devices.
 	"""
@@ -4769,7 +4822,8 @@ type WorkFacetValues {
 The per-work metadata fields a user can lock against provider
 refreshes: once locked, a refresh must not overwrite that field.
 [`ExternalId`] is deliberately absent — external IDs are always
-merged, never overwritten.
+merged, never overwritten. The `*Image` fields lock the work's provider
+image of that kind, which picking one by hand does.
 """
 enum WorkField {
 	TITLE
@@ -4784,6 +4838,11 @@ enum WorkField {
 	STUDIOS
 	PEOPLE
 	PARENTAL_RATING
+	PRIMARY_IMAGE
+	BACKDROP_IMAGE
+	BANNER_IMAGE
+	THUMB_IMAGE
+	LOGO_IMAGE
 }
 
 """

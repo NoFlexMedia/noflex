@@ -511,7 +511,7 @@ async fn run(
         connect_hub: Some(Arc::new(noflex_graphql::ConnectHub::default())),
         cast_sdk: Some(noflex_graphql::CastSdk(cfg.cast_sdk)),
         admin_status: Some(admin_status),
-        metadata_service: Some(metadata_service),
+        metadata_service: Some(metadata_service.clone()),
         tonemap_curve: Some(cfg.transcoder.tonemap_curve),
         smart_transcoding: Some(noflex_graphql::SmartTranscodingDefaults {
             enabled: cfg.transcoder.optimize.enabled,
@@ -564,6 +564,13 @@ async fn run(
             transcode_cache_dir: transcode_dir,
             image_cache_dir,
             recordings_dir,
+        },
+    );
+    let artwork_candidate_routes = noflex_server::artwork_candidates::routes(
+        noflex_server::artwork_candidates::ArtworkCandidateState {
+            service: metadata_service,
+            storage: storage.clone(),
+            jwt: jwt.clone(),
         },
     );
     let state = AppState {
@@ -628,7 +635,8 @@ async fn run(
         // Published for the auth middleware's API-key lookups.
         .layer(axum::Extension(storage.clone()))
         .layer(axum::Extension(noflex_graphql::CastSdk(cfg.cast_sdk)))
-        .merge(restricted_routes);
+        .merge(restricted_routes)
+        .merge(artwork_candidate_routes);
     let app = if cfg.cross_origin {
         app.layer(noflex_server::web::cross_origin_layer(storage.clone()))
     } else {

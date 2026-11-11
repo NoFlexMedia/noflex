@@ -13,6 +13,7 @@
 // server's handlers, is laid out past rustc's default query depth.
 #![recursion_limit = "256"]
 
+pub mod artwork_candidates;
 pub mod attributions;
 pub mod channel_logos;
 pub mod config;

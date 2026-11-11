@@ -255,6 +255,27 @@ impl noflex_storage::MediaUrlSigner for JwtMediaUrlSigner {
         )
         .map_err(|error| error.to_string())
     }
+
+    fn sign_artwork_candidate_token(
+        &self,
+        user: UserId,
+        session: Option<SessionId>,
+        candidate: &str,
+    ) -> Result<String, String> {
+        noflex_auth::issue_bucketed_media_token(
+            &self.jwt,
+            user,
+            session,
+            &artwork_candidate_token_target(candidate),
+            time::OffsetDateTime::now_utc(),
+        )
+        .map_err(|error| error.to_string())
+    }
+}
+
+/// Token target for an offered artwork candidate's preview.
+pub fn artwork_candidate_token_target(candidate: &str) -> String {
+    format!("img:candidate:{candidate}")
 }
 
 /// Token target for a user's picture.

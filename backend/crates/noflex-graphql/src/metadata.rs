@@ -14,8 +14,10 @@ use std::sync::Arc;
 use async_graphql::{Context, InputObject, Object};
 use noflex_core::{ExternalId, MetadataStatus, WorkField, WorkId};
 pub use noflex_core::{model::WorkKind, providers::MetadataMatch};
+use noflex_plugin_host::{
+    ArtworkCandidate, MetadataError, MetadataService, PluginRegistry, PriorityTable,
+};
 pub use noflex_plugin_host::{HookKind, WorkKindFilter};
-use noflex_plugin_host::{MetadataError, MetadataService, PluginRegistry, PriorityTable};
 pub use noflex_storage::domain::ActivityKind;
 use noflex_storage::{Storage, domain::Work};
 use time::OffsetDateTime;
@@ -107,10 +109,51 @@ pub struct WorkFieldsInput {
 }
 
 #[derive(Default)]
+pub struct MetadataQuery;
+
+#[Object]
+impl MetadataQuery {
+    /// Every `kind` image the loaded image providers offer for a work, to
+    /// pick one by hand: the library's preferred providers first, each
+    /// provider's own best first. A provider that fails is left out. Each
+    /// candidate can be previewed and picked for half an hour. Only the
+    /// kinds a `*_IMAGE` work field locks can be picked. Admin only.
+    async fn artwork_candidates(
+        &self,
+        ctx: &Context<'_>,
+        work_id: WorkId,
+        kind: noflex_core::ImageKind,
+    ) -> async_graphql::Result<Vec<ArtworkCandidate>> {
+        crate::access::require_admin(ctx)?;
+        service(ctx)?
+            .artwork_candidates(work_id, kind)
+            .await
+            .map_err(metadata_err)
+    }
+}
+
+#[derive(Default)]
 pub struct MetadataMutation;
 
 #[Object]
 impl MetadataMutation {
+    /// Make one of `artworkCandidates`' images the work's artwork of its
+    /// kind: the full-size image is fetched through its provider, credited
+    /// to it, and locked against refreshes by the kind's `*_IMAGE` field
+    /// until that is unlocked. Admin only.
+    async fn set_work_artwork(
+        &self,
+        ctx: &Context<'_>,
+        work_id: WorkId,
+        candidate_id: async_graphql::ID,
+    ) -> async_graphql::Result<Work> {
+        crate::access::require_admin(ctx)?;
+        service(ctx)?
+            .pick_artwork(work_id, &candidate_id)
+            .await
+            .map_err(metadata_err)
+    }
+
     /// Re-fetch metadata from the first candidate provider that can serve
     /// one of the work's external ids — the library's preferred providers
     /// when set, else the priority ranking — and refresh its provider

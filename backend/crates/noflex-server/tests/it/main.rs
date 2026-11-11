@@ -7,6 +7,7 @@
 // rustc's default query depth.
 #![recursion_limit = "256"]
 
+mod artwork_candidates;
 mod attributions;
 mod channel_logos;
 mod download;

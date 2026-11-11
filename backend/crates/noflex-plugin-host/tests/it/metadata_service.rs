@@ -287,6 +287,82 @@ async fn refresh_applies_the_payload_and_stores_provider_art() {
 }
 
 #[tokio::test]
+async fn picked_artwork_is_kept_through_refreshes() {
+    let h = harness!(CONCURRENCY, ART);
+    let library = h.library(&[ART], &[]).await;
+    let mut work = h.work(&library, WorkKind::Movie, "Heat").await;
+    work.external_ids.push(tmdb("movie/heat"));
+    h.save(&work).await;
+    let service = h.service();
+
+    let candidates = service
+        .artwork_candidates(work.id, ImageKind::Primary)
+        .await
+        .expect("candidates");
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|c| (c.provider.as_str(), c.score))
+            .collect::<Vec<_>>(),
+        vec![(ART, Some(1.0)), (ART, Some(0.5))],
+        "every provider asked, preferred first, each in its own order"
+    );
+    let preview = service
+        .candidate_preview(&candidates[1].id[..])
+        .await
+        .expect("preview");
+    assert_eq!(preview.mime, "image/png");
+
+    let other = h.work(&library, WorkKind::Movie, "Ronin").await;
+    assert!(matches!(
+        service.pick_artwork(other.id, &candidates[1].id[..]).await,
+        Err(noflex_plugin_host::MetadataError::UnknownCandidate)
+    ));
+    assert!(matches!(
+        service.candidate_preview("not-offered").await,
+        Err(noflex_plugin_host::MetadataError::UnknownCandidate)
+    ));
+    assert!(matches!(
+        service.artwork_candidates(work.id, ImageKind::Disc).await,
+        Err(noflex_plugin_host::MetadataError::UnpickableKind(_))
+    ));
+
+    let picked = service
+        .pick_artwork(work.id, &candidates[1].id[..])
+        .await
+        .expect("pick");
+    assert!(picked.locked_fields.contains(&WorkField::PrimaryImage));
+    let target = ImageTarget::Work(work.id);
+    let poster = || async {
+        h.storage
+            .image(target, ImageKind::Primary, &[ImageSource::Provider])
+            .await
+            .expect("image")
+            .expect("picked poster stored")
+    };
+    let stored = poster().await;
+    assert_eq!(
+        stored.width,
+        Some(2),
+        "the full-size image, not the preview"
+    );
+    assert_eq!(
+        stored.provider.as_deref(),
+        Some(ART),
+        "credited to its provider"
+    );
+
+    service.refresh(work.id, false).await.expect("refresh");
+    assert_eq!(poster().await.path, stored.path, "a refresh keeps the pick");
+    assert!(
+        h.provider_art(work.id)
+            .await
+            .contains(&(ImageKind::Backdrop, None)),
+        "other kinds still refresh"
+    );
+}
+
+#[tokio::test]
 async fn a_loaded_plugin_says_how_to_credit_it() {
     let h = harness!(ART, CONCURRENCY);
     let credit = tokio::time::timeout(std::time::Duration::from_secs(10), async {

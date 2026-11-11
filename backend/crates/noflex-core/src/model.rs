@@ -50,7 +50,8 @@ pub enum MetadataStatus {
 /// The per-work metadata fields a user can lock against provider
 /// refreshes: once locked, a refresh must not overwrite that field.
 /// [`ExternalId`] is deliberately absent — external IDs are always
-/// merged, never overwritten.
+/// merged, never overwritten. The `*Image` fields lock the work's provider
+/// image of that kind, which picking one by hand does.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Enum,
 )]
@@ -68,6 +69,26 @@ pub enum WorkField {
     Studios,
     People,
     ParentalRating,
+    PrimaryImage,
+    BackdropImage,
+    BannerImage,
+    ThumbImage,
+    LogoImage,
+}
+
+impl WorkField {
+    /// The field locking a work's `kind` image; `None` for a kind no
+    /// provider offers works, which can't be picked.
+    pub fn image(kind: ImageKind) -> Option<Self> {
+        Some(match kind {
+            ImageKind::Primary => Self::PrimaryImage,
+            ImageKind::Backdrop => Self::BackdropImage,
+            ImageKind::Banner => Self::BannerImage,
+            ImageKind::Thumb => Self::ThumbImage,
+            ImageKind::Logo => Self::LogoImage,
+            _ => return None,
+        })
+    }
 }
 
 /// Cross-references to external metadata sources.

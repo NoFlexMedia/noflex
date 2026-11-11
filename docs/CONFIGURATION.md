@@ -44,8 +44,9 @@ interfaces (do this in containers / behind a reverse proxy).
 
 The externally reachable base URL used to construct external-auth callback
 URIs, for example `https://media.example.com`. External login and identity
-linking are unavailable until this is set. NoFlex does not infer it from
-`Host` or forwarded headers.
+linking are unavailable until this is set to a valid URL: sign-in screens offer
+no provider, and an invalid value is logged at startup. NoFlex does not infer
+it from `Host` or forwarded headers.
 
 The URL must not contain userinfo, a path, a query, or a fragment: NoFlex
 (including its web app) must be served at the root of its origin, so

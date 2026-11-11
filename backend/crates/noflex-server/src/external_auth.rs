@@ -79,10 +79,14 @@ impl ServerExternalAuth {
         public_url: Option<String>,
         auto_provision: bool,
     ) -> Self {
+        let validated = validate_public_url(public_url.as_deref());
+        if let (Some(_), Err(error)) = (&public_url, &validated) {
+            tracing::warn!(%error, "external sign-in is off until public_url is fixed");
+        }
         Self {
             registry,
             storage,
-            public_url: validate_public_url(public_url.as_deref()),
+            public_url: validated,
             auto_provision,
             pending: Mutex::new(HashMap::new()),
             exchanges: Mutex::new(HashMap::new()),
@@ -347,6 +351,10 @@ impl ServerExternalAuth {
 
 #[async_trait::async_trait]
 impl ExternalAuthService for ServerExternalAuth {
+    fn available(&self) -> bool {
+        self.public_url.is_ok()
+    }
+
     async fn start_login(
         &self,
         provider: &str,

@@ -45,6 +45,10 @@ impl FakeExternalAuth {
 
 #[async_trait::async_trait]
 impl ExternalAuthService for FakeExternalAuth {
+    fn available(&self) -> bool {
+        true
+    }
+
     async fn start_login(
         &self,
         provider: &str,

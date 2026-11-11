@@ -3113,6 +3113,10 @@ type Query {
 	newest first. Filter on `revokedAt`.
 	"""
 	apiKeys: [ApiKey!]!
+	"""
+	The providers a sign-in screen can offer. Empty while the server can't
+	start a flow with any of them, so no client shows a button that fails.
+	"""
 	externalAuthProviders: [ExternalAuthProvider!]!
 	myExternalIdentities: [ExternalIdentity!]!
 	"""

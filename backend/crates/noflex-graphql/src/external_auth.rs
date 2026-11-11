@@ -60,6 +60,11 @@ pub enum ExternalAuthError {
 /// browser.
 #[async_trait::async_trait]
 pub trait ExternalAuthService: Send + Sync {
+    /// Whether any flow can start: the server has a valid public URL for
+    /// providers to call back to. Until it does, every `start_*` fails with
+    /// [`ExternalAuthError::Unavailable`].
+    fn available(&self) -> bool;
+
     /// Begin a login with `provider`.
     async fn start_login(
         &self,
@@ -117,8 +122,13 @@ pub struct ExternalAuthQuery;
 
 #[Object]
 impl ExternalAuthQuery {
+    /// The providers a sign-in screen can offer. Empty while the server can't
+    /// start a flow with any of them, so no client shows a button that fails.
     async fn external_auth_providers(&self, ctx: &Context<'_>) -> Vec<ExternalAuthProvider> {
-        let Ok(registry) = ctx.data::<Arc<PluginRegistry>>() else {
+        let available = ctx
+            .data::<Arc<dyn ExternalAuthService>>()
+            .is_ok_and(|service| service.available());
+        let (true, Ok(registry)) = (available, ctx.data::<Arc<PluginRegistry>>()) else {
             return Vec::new();
         };
         registry

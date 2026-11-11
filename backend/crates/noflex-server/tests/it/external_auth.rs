@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use noflex_core::{UserId, UserRole};
-use noflex_graphql::{ExternalAuthError, ExternalAuthService};
+use noflex_graphql::{ExternalAuthError, ExternalAuthService, SchemaContext, build_schema};
 use noflex_plugin_host::{EngineConfig, PluginRegistry, build_engine};
 use noflex_server::external_auth::ServerExternalAuth;
 use noflex_storage::{Storage, domain::User};
@@ -264,6 +264,52 @@ async fn callback_rejects_plugin_mismatch_and_consumes_state() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn providers_are_listed_only_when_sign_in_can_start() {
+    let Some(wasm) = crate::fixtures::wasm("external-auth") else {
+        eprintln!("skipping: could not build external-auth fixture");
+        return;
+    };
+    let store: Arc<dyn Storage> = Arc::new(TursoStore::open_temp().await.expect("temp store"));
+    let engine = build_engine(&EngineConfig::default()).expect("engine");
+    let registry = Arc::new(PluginRegistry::new(engine).expect("registry"));
+    registry.load_from(&wasm).expect("load fixture");
+
+    for (public_url, listed) in [
+        (Some("https://media.example/"), true),
+        (None, false),
+        (Some("http://media.example"), false),
+    ] {
+        let auth = Arc::new(ServerExternalAuth::new(
+            registry.clone(),
+            store.clone(),
+            public_url.map(Into::into),
+            false,
+        ));
+        let schema = build_schema(SchemaContext {
+            plugins: Some(registry.clone()),
+            external_auth: Some(auth),
+            ..Default::default()
+        });
+        let response = schema.execute("{ externalAuthProviders { id } }").await;
+        assert!(
+            response.errors.is_empty(),
+            "providers: {:?}",
+            response.errors
+        );
+        let expected = if listed {
+            serde_json::json!([{ "id": PLUGIN_ID }])
+        } else {
+            serde_json::json!([])
+        };
+        assert_eq!(
+            response.data.into_json().expect("providers JSON")["externalAuthProviders"],
+            expected,
+            "public_url {public_url:?}"
+        );
+    }
 }
 
 #[tokio::test]

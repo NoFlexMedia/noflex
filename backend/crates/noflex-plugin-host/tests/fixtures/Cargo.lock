@@ -215,6 +215,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "noflex-fixture-subtitle"
+version = "0.0.1"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
+name = "noflex-fixture-subtitle-quota"
+version = "0.0.1"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "noflex-fixture-tasks"
 version = "0.0.1"
 dependencies = [

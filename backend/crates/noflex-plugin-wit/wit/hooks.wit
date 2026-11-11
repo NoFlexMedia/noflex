@@ -81,19 +81,70 @@ interface image {
         -> result<tuple<image-meta, stream<u8>>, plugin-error>;
 }
 
-/// Subtitle provider — searches external subtitle sources (OpenSubtitles,
-/// Wizdom, ...) and returns subtitle bytes on demand.
+/// Online subtitle search (OpenSubtitles, ...). When a viewer asks, the host
+/// searches every subtitle plugin at once, and keeps what they download in
+/// its own cache: plugins never see the file, nor where a subtitle is kept.
 interface subtitle {
-    use types.{subtitle-match, plugin-error};
+    use types.{external-id, work-kind, plugin-error};
 
-    search: async func(
-        media-hash: string,
+    /// Everything the host knows about the file being searched for. A hash
+    /// match is the surest, but plenty of files have none, so a provider
+    /// should also search by ids and then by title.
+    record subtitle-query {
+        /// OpenSubtitles' moviehash: 16 lowercase hex digits of the file's
+        /// size plus the wrapping sum of its first and last 64 KiB read as
+        /// little-endian u64s. None for a file under 64 KiB, or one the host
+        /// couldn't read.
+        moviehash: option<string>,
+        /// In bytes.
+        file-size: u64,
+        /// The file's name, without its folders.
+        file-name: string,
+        title: string,
+        year: option<s32>,
+        kind: work-kind,
+        /// The work's own ids; an episode's are the episode's.
+        external-ids: list<external-id>,
+        /// For an episode, its series' ids, and its season and episode
+        /// numbers. Empty and none otherwise.
+        series-external-ids: list<external-id>,
+        season: option<u32>,
+        episode: option<u32>,
+        /// Wanted languages as ISO 639-2/T codes (`eng`, `deu`, `zho`); any
+        /// language when empty.
         languages: list<string>,
-    ) -> result<list<subtitle-match>, plugin-error>;
+    }
 
-    /// Streams the subtitle bytes for a previously-returned match handle.
-    /// The host reads the stream to completion into a contiguous buffer.
-    download: async func(handle: string) -> result<stream<u8>, plugin-error>;
+    record subtitle-match {
+        /// Opaque to the host, which hands it back to `download`.
+        handle: string,
+        /// ISO 639-2/T, as in the query.
+        language: string,
+        /// BCP 47 where the provider tells regions apart (`pt-BR`).
+        locale: option<string>,
+        /// `srt`, `vtt`, `ass` or `ssa`: what `download` returns.
+        format: string,
+        /// The release it was timed for, as the uploader named it.
+        release: option<string>,
+        hearing-impaired: bool,
+        /// Only the parts in another language than the audio.
+        forced: bool,
+        /// Found by the query's moviehash, so timed for this exact file.
+        hash-match: bool,
+        download-count: option<u64>,
+        /// The provider's own rating; higher is better.
+        score: option<f32>,
+    }
+
+    /// Matches in any order; the host ranks them. `rate-limited` carries the
+    /// seconds until the provider will answer again.
+    search: async func(query: subtitle-query) -> result<list<subtitle-match>, plugin-error>;
+
+    /// The subtitle behind a handle `search` returned, with its format
+    /// (`srt`, `vtt`, `ass` or `ssa`). The host reads the stream to
+    /// completion, up to 8 MiB. A used-up download quota is `rate-limited`,
+    /// with the seconds until it resets.
+    download: async func(handle: string) -> result<tuple<string, stream<u8>>, plugin-error>;
 }
 
 /// Runs after a library scan completes. Use for: rebuilding caches, computing

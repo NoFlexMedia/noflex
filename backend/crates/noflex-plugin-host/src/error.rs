@@ -44,8 +44,12 @@ pub enum HostError {
         seconds: u64,
     },
 
-    #[error("plugin {id} image exceeded the {limit_bytes}-byte limit")]
-    ImageTooLarge { id: String, limit_bytes: usize },
+    #[error("plugin {id} {what} exceeded the {limit_bytes}-byte limit")]
+    PayloadTooLarge {
+        id: String,
+        what: &'static str,
+        limit_bytes: usize,
+    },
 
     #[error("plugin {id} not found in registry")]
     Unknown { id: String },

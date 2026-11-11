@@ -143,18 +143,6 @@ interface types {
         height: option<u32>,
     }
 
-    record subtitle-match {
-        provider: string,
-        language: string,
-        /// Best-effort BCP-47 (e.g. "en-US"); falls back to ISO-639.
-        locale-hint: option<string>,
-        /// "srt", "vtt", "ass", ...
-        format: string,
-        score: f32,
-        /// Provider-internal handle used to retrieve the actual subtitle bytes.
-        handle: string,
-    }
-
     record work-added-event {
         work: work-id,
         title: string,

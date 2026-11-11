@@ -160,3 +160,17 @@ world scrobbler-plugin {
     export user-link;
     export background;
 }
+
+/// Convenience world for online subtitle providers (OpenSubtitles, ...):
+/// `host-net` for the upstream API and `host-secrets` for its keys.
+world subtitle-plugin {
+    import host-log;
+    import host-secrets;
+    import host-config;
+    import host-library;
+    import host-metrics;
+    import host-tasks;
+    import host-net;
+    export subtitle;
+    export background;
+}

@@ -444,20 +444,17 @@ impl PluginManifest {
         }
         validate_plugin_id(&self.plugin_id).map_err(|reason| reject(reason.to_string()))?;
         for hook in &self.hooks {
-            let Some(kind) = HookKind::parse(hook) else {
-                return Err(reject(format!("unsupported hook `{hook}`")));
-            };
-            if kind == HookKind::Subtitle {
+            if HookKind::parse(hook).is_none() {
                 return Err(reject(format!("unsupported hook `{hook}`")));
             }
         }
         for (hook, seconds) in &self.deadlines_secs {
-            let Some(kind) = HookKind::parse(hook) else {
+            if HookKind::parse(hook).is_none() {
                 return Err(reject(format!(
                     "deadline configured for unsupported hook `{hook}`"
                 )));
-            };
-            if kind == HookKind::Subtitle || *seconds == 0 {
+            }
+            if *seconds == 0 {
                 return Err(reject(format!("invalid deadline for hook `{hook}`")));
             }
         }
@@ -757,11 +754,9 @@ mod tests {
                 .check_contract(Path::new("p.wasm"))
                 .is_err()
         );
-        assert!(
-            parse(1, "\"subtitle\"")
-                .check_contract(Path::new("p.wasm"))
-                .is_err()
-        );
+        parse(1, "\"subtitle\"")
+            .check_contract(Path::new("p.wasm"))
+            .expect("subtitle is a supported hook");
         // The pre-0.8 `auth` spelling is gone; only `external-auth` names
         // the hook.
         assert!(

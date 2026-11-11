@@ -9,7 +9,8 @@
 // `post-scan-plugin` the scan-following surface.
 // `embedder-plugin` serves local embedding providers; it is also the
 // only convenience world importing `host-assets`. `scrobbler-plugin`
-// pairs the scrobble event stream with `user-link` (the Trakt pattern).
+// pairs the scrobble event stream with `user-link` (the Trakt pattern),
+// and `subtitle-plugin` serves online subtitle providers.
 // The host attempts every world at instantiation and keeps whichever
 // bindings succeed, so a component exporting any hook subset is served.
 //
@@ -76,6 +77,14 @@ pub mod scrobbler {
     wasmtime::component::bindgen!({
         path: "../noflex-plugin-wit/wit",
         world: "scrobbler-plugin",
+        imports: { default: trappable },
+    });
+}
+
+pub mod subtitle {
+    wasmtime::component::bindgen!({
+        path: "../noflex-plugin-wit/wit",
+        world: "subtitle-plugin",
         imports: { default: trappable },
     });
 }

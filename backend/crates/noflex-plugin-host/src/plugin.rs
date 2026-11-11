@@ -50,6 +50,10 @@ use crate::{
         notifier::{NotifierPlugin, noflex::plugin::types as notifier_types},
         post_scan::{PostScanPlugin, noflex::plugin::types as post_scan_types},
         scrobbler::{ScrobblerPlugin, noflex::plugin::types as scrobbler_types},
+        subtitle::{
+            SubtitlePlugin, exports::noflex::plugin::subtitle as subtitle_exports,
+            noflex::plugin::types as subtitle_types,
+        },
         user_link::{
             UserLinkPlugin, exports::noflex::plugin::user_link as user_link_exports,
             noflex::plugin::types as user_link_types,
@@ -72,6 +76,9 @@ const CALL_QUEUE_CAPACITY: usize = 64;
 const MAX_INFLIGHT_CALLS: usize = 64;
 const IMAGE_STREAM_CHUNKS: usize = 8;
 const MAX_IMAGE_BYTES: usize = 32 * 1024 * 1024;
+/// A feature's subtitles are well under a megabyte; anything near this is
+/// not a subtitle.
+const MAX_SUBTITLE_BYTES: usize = 8 * 1024 * 1024;
 
 /// Consecutive traps that open the circuit breaker. While it is open the
 /// instance task answers every call with the circuit error and waits for
@@ -147,6 +154,15 @@ type EmbedOutcome = Result<Result<Vec<Vec<f32>>, embedder_types::PluginError>, H
 
 /// `call_scrobble`'s wire result: dispatch error outside, plugin error inside.
 type ScrobbleOutcome = Result<Result<(), scrobbler_types::PluginError>, HostError>;
+
+/// `call_subtitle_search`'s wire result: dispatch error outside, plugin error
+/// inside.
+type SubtitleSearchOutcome =
+    Result<Result<Vec<subtitle_exports::SubtitleMatch>, subtitle_types::PluginError>, HostError>;
+
+/// `call_subtitle_download`'s wire result: the format and the bytes.
+type SubtitleDownloadOutcome =
+    Result<Result<(String, Vec<u8>), subtitle_types::PluginError>, HostError>;
 
 /// Host-side mirror of the WIT `task-outcome` variant: `done` retires the
 /// invocation, `more` carries the guest-owned cursor and asks for a prompt
@@ -231,6 +247,15 @@ impl From<external_auth_types::TaskOutcome> for TaskOutcome {
     }
 }
 
+impl From<subtitle_types::TaskOutcome> for TaskOutcome {
+    fn from(o: subtitle_types::TaskOutcome) -> Self {
+        match o {
+            subtitle_types::TaskOutcome::Done => TaskOutcome::Done,
+            subtitle_types::TaskOutcome::More(cursor) => TaskOutcome::More(cursor),
+        }
+    }
+}
+
 /// `run_task_on` normalizes every world's `plugin-error` onto the
 /// `metadata-plugin` binding's, so [`RunTaskOutcome`] stays one type
 /// regardless of which world supplied the `background` export. Like
@@ -261,6 +286,7 @@ impl_plugin_error_from!(user_link_types::PluginError);
 impl_plugin_error_from!(embedder_types::PluginError);
 impl_plugin_error_from!(scrobbler_types::PluginError);
 impl_plugin_error_from!(external_auth_types::PluginError);
+impl_plugin_error_from!(subtitle_types::PluginError);
 
 /// `call_run_task`'s wire result: dispatch error outside, plugin error inside.
 type RunTaskOutcome = Result<Result<TaskOutcome, WitPluginError>, HostError>;
@@ -401,6 +427,14 @@ enum HookCall {
         event: scrobbler_types::ScrobbleEvent,
         respond: oneshot::Sender<ScrobbleOutcome>,
     },
+    SubtitleSearch {
+        query: subtitle_exports::SubtitleQuery,
+        respond: oneshot::Sender<SubtitleSearchOutcome>,
+    },
+    SubtitleDownload {
+        handle: String,
+        respond: oneshot::Sender<SubtitleDownloadOutcome>,
+    },
 }
 
 impl HookCall {
@@ -423,6 +457,8 @@ impl HookCall {
             Self::ExternalAuthComplete { respond, .. } => respond.is_closed(),
             Self::Embed { respond, .. } => respond.is_closed(),
             Self::Scrobble { respond, .. } => respond.is_closed(),
+            Self::SubtitleSearch { respond, .. } => respond.is_closed(),
+            Self::SubtitleDownload { respond, .. } => respond.is_closed(),
         }
     }
 
@@ -482,6 +518,12 @@ impl HookCall {
             HookCall::Scrobble { respond, .. } => {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
+            HookCall::SubtitleSearch { respond, .. } => {
+                let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
+            }
+            HookCall::SubtitleDownload { respond, .. } => {
+                let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
+            }
         }
     }
 }
@@ -500,6 +542,7 @@ struct BoundHooks {
     external_auth: Option<ExternalAuthPlugin>,
     embedder: Option<EmbedderPluginBinding>,
     scrobbler: Option<ScrobblerPlugin>,
+    subtitle: Option<SubtitlePlugin>,
 }
 
 impl BoundHooks {
@@ -512,6 +555,7 @@ impl BoundHooks {
             || self.external_auth.is_some()
             || self.embedder.is_some()
             || self.scrobbler.is_some()
+            || self.subtitle.is_some()
     }
 }
 
@@ -951,6 +995,31 @@ impl LoadedPlugin {
             .expect("task cancels poisoned")
             .remove(task)
             .unwrap_or_default()
+    }
+
+    /// Run the plugin's `subtitle.search()` export for one file.
+    pub async fn call_subtitle_search(
+        &self,
+        query: subtitle_exports::SubtitleQuery,
+    ) -> SubtitleSearchOutcome {
+        let (respond, answer) = oneshot::channel();
+        self.instance
+            .enqueue(&self.id, HookCall::SubtitleSearch { query, respond })?;
+        answer
+            .await
+            .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
+    }
+
+    /// Run the plugin's `subtitle.download()` export and read the subtitle
+    /// to the end. A subtitle over the host's cap is
+    /// [`HostError::PayloadTooLarge`].
+    pub async fn call_subtitle_download(&self, handle: String) -> SubtitleDownloadOutcome {
+        let (respond, answer) = oneshot::channel();
+        self.instance
+            .enqueue(&self.id, HookCall::SubtitleDownload { handle, respond })?;
+        answer
+            .await
+            .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
     }
 
     /// True once the instance channel has closed for good (plugin unloaded
@@ -1466,6 +1535,7 @@ async fn serve_instance(
             external_auth: ExternalAuthPlugin::new(&mut store, &instance).ok(),
             embedder: EmbedderPluginBinding::new(&mut store, &instance).ok(),
             scrobbler: ScrobblerPlugin::new(&mut store, &instance).ok(),
+            subtitle: SubtitlePlugin::new(&mut store, &instance).ok(),
         };
         Ok::<_, wasmtime::Error>(hooks)
     }
@@ -2061,6 +2131,62 @@ fn dispatch_call<'a>(
             ),
             None => missing_export(respond, "scrobbler"),
         },
+        HookCall::SubtitleSearch { query, respond } => match &hooks.subtitle {
+            Some(subtitle) => env.track(
+                inflight,
+                HookKind::Subtitle,
+                respond,
+                move |deadline| async move {
+                    let func = subtitle.noflex_plugin_subtitle().func_search();
+                    invoke(
+                        accessor,
+                        calls,
+                        deadline,
+                        func,
+                        (query,),
+                        None,
+                        "subtitle.search",
+                    )
+                    .await
+                    .map(|(r,)| r)
+                },
+            ),
+            None => missing_export(respond, "subtitle"),
+        },
+        HookCall::SubtitleDownload { handle, respond } => match &hooks.subtitle {
+            Some(subtitle) => env.track(
+                inflight,
+                HookKind::Subtitle,
+                respond,
+                move |deadline| async move {
+                    let func = subtitle.noflex_plugin_subtitle().func_download();
+                    let (result,) = invoke(
+                        accessor,
+                        calls,
+                        deadline,
+                        func,
+                        (handle,),
+                        None,
+                        "subtitle.download",
+                    )
+                    .await?;
+                    let (format, stream) = match result {
+                        Ok(ok) => ok,
+                        Err(e) => return Ok(Err(e)),
+                    };
+                    let bytes = read_stream_to_end(
+                        accessor,
+                        &env.plugin_id,
+                        stream,
+                        "subtitle",
+                        MAX_SUBTITLE_BYTES,
+                    )
+                    .await?;
+                    Ok(Ok((format, bytes)))
+                },
+            ),
+            None => missing_export(respond, "subtitle"),
+        },
     }
 }
 
@@ -2103,6 +2229,7 @@ async fn run_task_on(
         external_auth,
         embedder,
         scrobbler,
+        subtitle,
     );
     // Unreachable: serve_instance rejects components with no bound hook.
     Err(HostError::Wasm(
@@ -2132,7 +2259,7 @@ async fn fetch_image_buffered(
         Ok(ok) => ok,
         Err(e) => return Ok(Err(e)),
     };
-    let bytes = read_stream_to_end(accessor, plugin_id, stream).await?;
+    let bytes = read_stream_to_end(accessor, plugin_id, stream, "image", MAX_IMAGE_BYTES).await?;
     Ok(Ok((meta, bytes)))
 }
 
@@ -2163,28 +2290,31 @@ async fn fetch_candidate_buffered(
         Ok(ok) => ok,
         Err(e) => return Ok(Err(e)),
     };
-    let bytes = read_stream_to_end(accessor, plugin_id, stream).await?;
+    let bytes = read_stream_to_end(accessor, plugin_id, stream, "image", MAX_IMAGE_BYTES).await?;
     Ok(Ok((meta, bytes)))
 }
 
-/// Drain a guest-produced byte stream into one buffer. Completion is
-/// signaled by the guest dropping its write end, which drops the
-/// collector and closes the channel.
+/// Drain a guest-produced byte stream into one buffer of at most `limit`
+/// bytes. Completion is signaled by the guest dropping its write end, which
+/// drops the collector and closes the channel.
 async fn read_stream_to_end(
     accessor: &Accessor<PluginCtx>,
     plugin_id: &PluginId,
     stream: StreamReader<u8>,
+    what: &'static str,
+    limit: usize,
 ) -> Result<Vec<u8>, HostError> {
     let (tx, mut rx) = futures::channel::mpsc::channel::<Vec<u8>>(IMAGE_STREAM_CHUNKS);
     accessor
         .with(|access| stream.pipe(access, ByteCollector { tx }))
-        .map_err(|e| HostError::Wasm(format!("pipe image stream: {e}")))?;
+        .map_err(|e| HostError::Wasm(format!("pipe {what} stream: {e}")))?;
     let mut buf = Vec::new();
     while let Some(chunk) = rx.next().await {
-        if buf.len().saturating_add(chunk.len()) > MAX_IMAGE_BYTES {
-            return Err(HostError::ImageTooLarge {
+        if buf.len().saturating_add(chunk.len()) > limit {
+            return Err(HostError::PayloadTooLarge {
                 id: plugin_id.0.clone(),
-                limit_bytes: MAX_IMAGE_BYTES,
+                what,
+                limit_bytes: limit,
             });
         }
         buf.extend_from_slice(&chunk);

@@ -34,5 +34,5 @@ pub use post_scan::PostScanTask;
 pub use resolver::{ItemResolver, ResolvedItem};
 pub use scrobbler::{ScrobbleAction, ScrobbleEvent, Scrobbler};
 pub use search::{SearchHit, SearchProvider};
-pub use subtitle::{SubtitleMatch, SubtitleProvider};
+pub use subtitle::{SubtitleFile, SubtitleMatch, SubtitleProvider, SubtitleQuery};
 pub use user_link::{LinkChallenge, UserLinkProvider, UserSecret};

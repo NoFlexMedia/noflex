@@ -26,6 +26,7 @@ Some have their own README with setup steps (`noflex-embeddings`, `noflex-webhoo
 | --------------- | ---------------------------------------------------------------- | -------------------------------------------- |
 | `metadata`      | Identifying and refreshing works                                 | `MetadataMatch`es, a full `MetadataPayload`  |
 | `image`         | A work's artwork, a credited person's photo, a hand-picked image | `(ImageMeta, stream<u8>)`; `ImageCandidate`s |
+| `subtitle`      | A viewer searches online for a file's subtitles                  | `SubtitleMatch`es; `(format, stream<u8>)`    |
 | `post-scan`     | After a library scan completes                                   | unit                                         |
 | `notifier`      | Library events and plugin lifecycle                              | unit                                         |
 | `user-link`     | A user links or unlinks an upstream account (OAuth, device flow) | `LinkChallenge`; per-user secrets            |
@@ -34,7 +35,7 @@ Some have their own README with setup steps (`noflex-embeddings`, `noflex-webhoo
 | `embedder`      | Work texts at scan time, queries at search time                  | one vector per text                          |
 | `background`    | A manifest `[[tasks]]` schedule or `host-tasks.enqueue`          | `done` / `more(cursor)`                      |
 
-A plugin implements any subset. Every world exports `background`; stub it if you register no tasks. The host checks the manifest's `hooks` against the component's actual exports at load and rejects a plugin claiming a hook it doesn't export. `subtitle` exists in the WIT but isn't served; a manifest declaring it is rejected.
+A plugin implements any subset. Every world exports `background`; stub it if you register no tasks. The host checks the manifest's `hooks` against the component's actual exports at load and rejects a plugin claiming a hook it doesn't export.
 
 Hooks are `async func`s on the WASI 0.3 native-async ABI: one instance serves many concurrent calls, and binary payloads cross the boundary as `stream<u8>`.
 

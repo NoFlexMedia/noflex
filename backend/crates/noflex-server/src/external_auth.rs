@@ -624,16 +624,16 @@ mod tests {
             Ok("https://media.example")
         );
         assert_eq!(
-            validate_public_url(Some("http://localhost:8096/")).as_deref(),
-            Ok("http://localhost:8096")
+            validate_public_url(Some("http://localhost:28793/")).as_deref(),
+            Ok("http://localhost:28793")
         );
         assert_eq!(
-            validate_public_url(Some("http://127.0.0.1:8096")).as_deref(),
-            Ok("http://127.0.0.1:8096")
+            validate_public_url(Some("http://127.0.0.1:28793")).as_deref(),
+            Ok("http://127.0.0.1:28793")
         );
         assert_eq!(
-            validate_public_url(Some("http://[::1]:8096/")).as_deref(),
-            Ok("http://[::1]:8096")
+            validate_public_url(Some("http://[::1]:28793/")).as_deref(),
+            Ok("http://[::1]:28793")
         );
     }
 
@@ -643,7 +643,7 @@ mod tests {
             "media.example",
             "ftp://media.example",
             "http://media.example",
-            "http://127.0.0.2:8096",
+            "http://127.0.0.2:28793",
             "https://user@media.example",
             "https://@media.example",
             "https://media.example/?tenant=one",

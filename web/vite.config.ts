@@ -20,7 +20,7 @@ export default defineConfig({
         "/plugins",
         // Logo proxy only; `/live-tv` itself is an app route.
         "/live-tv/channels",
-      ].map((path) => [path, { target: "http://127.0.0.1:8096", ws: path === "/graphql" }]),
+      ].map((path) => [path, { target: "http://127.0.0.1:28793", ws: path === "/graphql" }]),
     ),
   },
 });

@@ -4255,7 +4255,7 @@ async fn linked_servers_belong_to_their_user<S: Storage + ?Sized>(store: &S) {
         .await
         .expect("another user's link");
     store
-        .upsert_linked_server(&link(other.id, "http://192.168.1.5:8096", "key-4"))
+        .upsert_linked_server(&link(other.id, "http://192.168.1.5:28793", "key-4"))
         .await
         .expect("another origin");
     assert_eq!(
@@ -4265,7 +4265,7 @@ async fn linked_servers_belong_to_their_user<S: Storage + ?Sized>(store: &S) {
     );
     let origins = store.linked_server_origins().await.expect("origins");
     assert!(origins.contains(&"https://friend.example".to_string()));
-    assert!(origins.contains(&"http://192.168.1.5:8096".to_string()));
+    assert!(origins.contains(&"http://192.168.1.5:28793".to_string()));
     assert_eq!(
         origins
             .iter()
@@ -4295,7 +4295,7 @@ async fn linked_servers_belong_to_their_user<S: Storage + ?Sized>(store: &S) {
             .linked_server_origins()
             .await
             .expect("origins")
-            .contains(&"http://192.168.1.5:8096".to_string()),
+            .contains(&"http://192.168.1.5:28793".to_string()),
         "links go with their user, and the policy with them"
     );
 }

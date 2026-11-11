@@ -9,7 +9,7 @@ From `web/`, inside `nix develop`:
 
 ```sh
 npm install
-npm run dev     # http://localhost:5173, proxying the API to http://127.0.0.1:8096
+npm run dev     # http://localhost:5173, proxying the API to http://127.0.0.1:28793
 npm run check
 npm run build
 ```

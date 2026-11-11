@@ -4,7 +4,7 @@
 default:
     @just --list server
 
-# Run the server on your real data directory (http://127.0.0.1:8096); use `just demo up` for throwaway data.
+# Run the server on your real data directory (http://127.0.0.1:28793); use `just demo up` for throwaway data.
 [working-directory('../backend')]
 run *args:
     cargo run -p noflex-server -- {{ args }}

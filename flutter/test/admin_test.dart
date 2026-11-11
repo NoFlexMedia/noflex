@@ -50,7 +50,7 @@ GSystemStatusFieldsData _status({
     'version': '0.1.0',
     'startedAt': '2026-11-05T11:00:00Z',
     'uptimeSeconds': 3600,
-    'bind': '0.0.0.0:8096',
+    'bind': '0.0.0.0:28793',
     'publicUrl': null,
     'dataDir': '/data',
     'cacheDir': '/cache',

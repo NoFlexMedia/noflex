@@ -258,7 +258,7 @@
       </ul>
     </header>
     <div class="source" use:reveal>
-      <Terminal title="Try it from source" lines={["git clone https://github.com/NoFlexMedia/noflex", "cd noflex && nix develop", "just demo up"]} note="Starts a throwaway server with Blender's open movies, at http://127.0.0.1:8096." />
+      <Terminal title="Try it from source" lines={["git clone https://github.com/NoFlexMedia/noflex", "cd noflex && nix develop", "just demo up"]} note="Starts a throwaway server with Blender's open movies, at http://127.0.0.1:28793." />
       <div class="cards">
         <a class="card" href={links.repo} use:tilt={4}><GithubLogo size={20} weight="fill" /><strong>Source code</strong><small>NoFlexMedia/noflex</small></a>
         <a class="card" href={links.gettingStarted} use:tilt={4}><BookOpen size={20} /><strong>Documentation</strong><small>Build, configure, deploy</small></a>

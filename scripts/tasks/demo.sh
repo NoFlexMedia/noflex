@@ -24,7 +24,7 @@ username='admin'
 password='noflex-demo-pass'
 
 # What `up` was last asked for, from $config.
-servers=0 port=8096 bind=127.0.0.1 advertise=127.0.0.1 release=''
+servers=0 port=28793 bind=127.0.0.1 advertise=127.0.0.1 release=''
 
 # kind | title folder | path inside it | source. Zips hold the one film.
 catalog='movies|Sintel (2010)|Sintel (2010).mkv|https://download.blender.org/demo/movies/Sintel.2010.720p.mkv.zip
@@ -285,7 +285,7 @@ status() {
 }
 
 up() {
-  local want_servers=1 want_port=8096 want_bind=127.0.0.1 want_advertise=''
+  local want_servers=1 want_port=28793 want_bind=127.0.0.1 want_advertise=''
   while [ $# -gt 0 ]; do
     case $1 in
     --servers | --port | --bind | --advertise)

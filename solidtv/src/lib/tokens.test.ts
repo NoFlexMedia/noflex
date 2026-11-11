@@ -14,7 +14,7 @@ beforeEach(() => {
   stored = {};
   configureHost({ storage: { get: (key) => stored[key] ?? null, set: (key, value) => { stored[key] = value; }, remove: (key) => { delete stored[key]; } } });
   restore();
-  useServer("http://tv.test:8096");
+  useServer("http://tv.test:28793");
 });
 
 afterEach(() => { vi.unstubAllGlobals(); });

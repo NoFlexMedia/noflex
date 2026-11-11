@@ -14,5 +14,5 @@ if [ -d /run/systemd/system ]; then
   systemctl try-restart noflex.service
 fi
 if ! systemctl is-enabled --quiet noflex.service 2>/dev/null; then
-  echo "Start NoFlex with: systemctl enable --now noflex, then open http://this-machine:8096"
+  echo "Start NoFlex with: systemctl enable --now noflex, then open http://this-machine:28793"
 fi

@@ -89,7 +89,7 @@ Read [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md). The short version:
 
 ```bash
 nix develop
-just demo up   # a throwaway server with Blender's open movies, at http://127.0.0.1:8096
+just demo up   # a throwaway server with Blender's open movies, at http://127.0.0.1:28793
 just           # every other command
 ```
 

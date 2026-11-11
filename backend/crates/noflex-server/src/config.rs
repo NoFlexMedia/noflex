@@ -268,7 +268,7 @@ impl Default for Config {
     fn default() -> Self {
         let (data_dir, cache_dir) = default_paths();
         Self {
-            bind: "127.0.0.1:8096".to_string(),
+            bind: "127.0.0.1:28793".to_string(),
             public_url: None,
             data_dir,
             cache_dir,
@@ -566,7 +566,7 @@ mod tests {
     #[test]
     fn defaults_are_sensible() {
         let c = Config::default();
-        assert!(c.bind.contains("8096"));
+        assert!(c.bind.contains("28793"));
         assert_eq!(c.scanner.debounce_ms, 500);
         assert!(!c.plugin.search_path.is_empty());
     }

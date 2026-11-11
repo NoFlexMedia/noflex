@@ -28,7 +28,7 @@ export default function Connect() {
     <view width={SCREEN.width} height={SCREEN.height} forwardFocus={4}>
       <BrandMark x={LEFT} y={200} size={96} />
       <text x={LEFT} y={330} fontSize={type.heading} fontWeight={weight.bold}>Find your server</text>
-      <text x={LEFT} y={416} width={FIELD} contain="width" lineHeight={42} fontSize={type.body} color={color.text2}>The address you use to reach NoFlex from a browser. The port is 8096 unless you say otherwise.</text>
+      <text x={LEFT} y={416} width={FIELD} contain="width" lineHeight={42} fontSize={type.body} color={color.text2}>The address you use to reach NoFlex from a browser. The port is 28793 unless you say otherwise.</text>
       <TextField x={LEFT} y={540} width={FIELD} height={88} fontSize={type.lead} value={address()} placeholder={busy() ? "Looking…" : "192.168.1.20 or noflex.example.com"} active skipFocus />
       <Keyboard autofocus x={SCREEN.width - KEYBOARD_WIDTH - 120} y={(SCREEN.height - KEYBOARD_HEIGHT) / 2} value={address()} onChange={setAddress} submitLabel="Connect" onSubmit={submit} />
     </view>

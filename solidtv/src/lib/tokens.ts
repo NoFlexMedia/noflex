@@ -82,12 +82,12 @@ export function restore(): void {
   active = accounts.find((account) => account.id === id) ?? null;
 }
 
-/** "tv.lan" → "http://tv.lan:8096": people type what they'd say out loud. */
+/** "tv.lan" → "http://tv.lan:28793": people type what they'd say out loud. */
 export function normalizeOrigin(input: string): string {
   const text = input.trim().replace(/\/+$/, "");
   const withScheme = /^https?:\/\//i.test(text) ? text : `http://${text}`;
   const hasPort = /^https?:\/\/(\[[^\]]+\]|[^/:]+):\d+/i.test(withScheme);
-  return hasPort || /^https:/i.test(withScheme) ? withScheme : `${withScheme}:8096`;
+  return hasPort || /^https:/i.test(withScheme) ? withScheme : `${withScheme}:28793`;
 }
 
 export function serverOrigin(): string | null { return origin; }

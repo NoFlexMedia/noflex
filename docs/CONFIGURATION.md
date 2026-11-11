@@ -31,7 +31,7 @@ NOFLEX_EXTERNAL_AUTH_AUTO_PROVISION=true   # -> external_auth.auto_provision
 
 ### `bind`
 - **Type:** `string` (host:port)
-- **Default:** `127.0.0.1:8096`
+- **Default:** `127.0.0.1:28793`
 - **Env:** `NOFLEX_BIND`
 
 The address the HTTP server binds to. Use `0.0.0.0` to listen on all

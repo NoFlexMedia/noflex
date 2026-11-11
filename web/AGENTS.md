@@ -8,7 +8,7 @@ Run inside `nix develop` from `web/`:
 
 ```bash
 npm install
-npm run dev     # Vite dev server; proxies the API to http://127.0.0.1:8096
+npm run dev     # Vite dev server; proxies the API to http://127.0.0.1:28793
 npm run check   # svelte-kit sync + svelte-check — CI gate
 npm run build   # writes build/, which the next noflex-server build embeds
 ```

@@ -260,7 +260,7 @@ const LINUX_SERVICE: [&str; 3] = ["noflex.service", "noflex.sysusers", "config.t
 const NOTICE: &str = "\
 NoFlex, AGPL-3.0-only: https://github.com/NoFlexMedia/noflex
 
-Run ./noflex-server, then open http://127.0.0.1:8096. docs/PACKAGING.md in the
+Run ./noflex-server, then open http://127.0.0.1:28793. docs/PACKAGING.md in the
 source explains what each hardware accelerator needs from this machine, and
 docs/DEPLOYMENT.md how to run this as a service, with what's in linux/ on Linux.
 

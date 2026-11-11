@@ -78,7 +78,7 @@ services.noflex = {
     <h2><span class="step">2</span>Watch anywhere</h2>
     <div class="panel web">
       <Browser size={22} />
-      <p><strong>The web client is already there.</strong> Open your server's address, such as <code>http://your-server:8096</code>, in any modern browser, phones included.</p>
+      <p><strong>The web client is already there.</strong> Open your server's address, such as <code>http://your-server:28793</code>, in any modern browser, phones included.</p>
     </div>
     <ul class="stores">
       {#each stores as store, i}

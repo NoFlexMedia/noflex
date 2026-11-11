@@ -2,7 +2,7 @@
 #
 # NoFlex with Docker Compose: copy this beside where its folders should live,
 # point the media volume at your library, then `docker compose up -d` and open
-# http://this-machine:8096. Settings go in config/noflex/config.toml; see
+# http://this-machine:28793. Settings go in config/noflex/config.toml; see
 # https://github.com/NoFlexMedia/noflex/blob/main/docs/CONFIGURATION.md
 
 services:
@@ -11,7 +11,7 @@ services:
     # Whose files these are on the host: `id -u` and `id -g`.
     user: "1000:1000"
     ports:
-      - "8096:8096"
+      - "28793:28793"
     volumes:
       - ./config:/config
       - ./data:/data

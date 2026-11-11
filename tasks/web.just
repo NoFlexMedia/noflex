@@ -9,7 +9,7 @@ default:
 install:
     npm install
 
-# Serve the client with hot reload on http://localhost:5173, proxying the API to :8096.
+# Serve the client with hot reload on http://localhost:5173, proxying the API to :28793.
 [working-directory('../web')]
 dev:
     npm run dev

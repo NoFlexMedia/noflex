@@ -496,12 +496,12 @@ mod tests {
             "https://media.example.com"
         );
         assert_eq!(
-            normalize_origin("http://192.168.1.5:8096").unwrap(),
-            "http://192.168.1.5:8096"
+            normalize_origin("http://192.168.1.5:28793").unwrap(),
+            "http://192.168.1.5:28793"
         );
         assert_eq!(
-            normalize_origin("http://[::1]:8096").unwrap(),
-            "http://[::1]:8096"
+            normalize_origin("http://[::1]:28793").unwrap(),
+            "http://[::1]:28793"
         );
     }
 

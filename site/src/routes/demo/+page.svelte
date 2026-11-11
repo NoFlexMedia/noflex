@@ -38,7 +38,7 @@
       <a class="btn glass lg" href="/download">Get NoFlex<ArrowRight class="arrow" size={18} weight="bold" /></a>
     </div>
     <div class="terminal">
-      <Terminal title="Run the demo yourself" lines={["git clone https://github.com/NoFlexMedia/noflex", "cd noflex && nix develop", "just demo up"]} note="Then open http://127.0.0.1:8096 and sign in as admin, with the password it prints." />
+      <Terminal title="Run the demo yourself" lines={["git clone https://github.com/NoFlexMedia/noflex", "cd noflex && nix develop", "just demo up"]} note="Then open http://127.0.0.1:28793 and sign in as admin, with the password it prints." />
     </div>
   </div>
 </section>

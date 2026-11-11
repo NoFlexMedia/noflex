@@ -13,7 +13,7 @@ read the module source. Server settings are documented in
     enable = true;
     dataDir = "/var/lib/noflex";
     cacheDir = "/var/cache/noflex";
-    bind = "0.0.0.0:8096";
+    bind = "0.0.0.0:28793";
     openFirewall = true;
     mediaPaths = [ "/media/movies" "/media/shows" ];
     configFile = "/etc/noflex/config.toml";
@@ -107,13 +107,13 @@ server {
   proxy_read_timeout 1h;
 
   location / {
-    proxy_pass http://127.0.0.1:8096;
+    proxy_pass http://127.0.0.1:28793;
   }
 
   # GraphQL subscriptions (watch rooms, live admin gauges) need the
   # WebSocket upgrade forwarded.
   location /graphql/ws {
-    proxy_pass http://127.0.0.1:8096;
+    proxy_pass http://127.0.0.1:28793;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";

@@ -23,7 +23,7 @@ import '../../widgets/nf_button.dart';
 import '../../widgets/nf_field.dart';
 import '../downloads/leave_account.dart';
 
-/// What someone typed, as an origin: `192.168.1.5:8096` → `http://192.168.1.5:8096`.
+/// What someone typed, as an origin: `192.168.1.5:28793` → `http://192.168.1.5:28793`.
 /// Null when it can't be one. A bare host is tried as http: home servers
 /// rarely have a certificate, and one that does redirects.
 String? normalizeOrigin(String input) {
@@ -164,7 +164,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       NfField(
         controller: _controller,
         label: 'Server address',
-        hint: '192.168.1.20:8096 or media.example.com',
+        hint: '192.168.1.20:28793 or media.example.com',
         keyboardType: TextInputType.url,
         textInputAction: TextInputAction.go,
         autocorrect: false,

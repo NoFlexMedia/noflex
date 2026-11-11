@@ -39,7 +39,7 @@ WizardStyle=modern
 Source: "{#Bundle}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [INI]
-Filename: "{autoprograms}\NoFlex.url"; Section: "InternetShortcut"; Key: "URL"; String: "http://localhost:8096"
+Filename: "{autoprograms}\NoFlex.url"; Section: "InternetShortcut"; Key: "URL"; String: "http://localhost:28793"
 
 [UninstallDelete]
 Type: files; Name: "{autoprograms}\NoFlex.url"
@@ -51,9 +51,9 @@ Type: files; Name: "{autoprograms}\NoFlex.url"
 Filename: "{sys}\icacls.exe"; Parameters: """{commonappdata}\NoFlex"" /inheritance:r /grant:r *S-1-5-18:(OI)(CI)F *S-1-5-32-544:(OI)(CI)F"; Flags: runhidden
 Filename: "{app}\noflex-server.exe"; Parameters: "service install"; Flags: runhidden
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=NoFlex"; Flags: runhidden
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=NoFlex dir=in action=allow protocol=TCP localport=8096 program=""{app}\noflex-server.exe"""; Flags: runhidden
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=NoFlex dir=in action=allow protocol=TCP localport=28793 program=""{app}\noflex-server.exe"""; Flags: runhidden
 Filename: "{sys}\sc.exe"; Parameters: "start NoFlex"; Flags: runhidden
-Filename: "http://localhost:8096"; Description: "Open NoFlex"; Flags: postinstall shellexec nowait skipifsilent
+Filename: "http://localhost:28793"; Description: "Open NoFlex"; Flags: postinstall shellexec nowait skipifsilent
 
 [UninstallRun]
 Filename: "{app}\noflex-server.exe"; Parameters: "service uninstall"; Flags: runhidden; RunOnceId: "Service"
@@ -85,7 +85,7 @@ begin
   SaveStringToFile(Config,
     '# NoFlex as a Windows service. Every setting is in docs/CONFIGURATION.md:' + NL +
     '# https://github.com/NoFlexMedia/noflex/blob/main/docs/CONFIGURATION.md' + NL + NL +
-    'bind = "0.0.0.0:8096"' + NL +
+    'bind = "0.0.0.0:28793"' + NL +
     'data_dir = ''' + Dir + '\data''' + NL +
     'cache_dir = ''' + Dir + '\cache''' + NL + NL +
     '[log]' + NL +

@@ -28,7 +28,7 @@ in
 
     bind = lib.mkOption {
       type = lib.types.str;
-      default = "0.0.0.0:8096";
+      default = "0.0.0.0:28793";
       description = "Address and port the server binds to.";
     };
 

@@ -25,12 +25,12 @@ Common tasks are [`just`](https://just.systems) recipes. `just` lists them all, 
 
 ## Try the sample library
 
-`just demo up` gives you a working server without touching your own data. It downloads Blender's open movies (about 2 GB, once, and resumable), builds everything, and starts a server at `http://127.0.0.1:8096`. Sign in as `admin` with the password `noflex-demo-pass`. Titles get real metadata from TMDb and TheTVDB.
+`just demo up` gives you a working server without touching your own data. It downloads Blender's open movies (about 2 GB, once, and resumable), builds everything, and starts a server at `http://127.0.0.1:28793`. Sign in as `admin` with the password `noflex-demo-pass`. Titles get real metadata from TMDb and TheTVDB.
 
 To test multi-server features, ask for more servers:
 
 ```sh
-just demo up --servers 3   # on :8096, :8097 and :8098
+just demo up --servers 3   # on :28793, :28794 and :28795
 ```
 
 Each server has a share of the films, and Sintel is on all of them. Every server's admin is already linked to the others, so clients see them all after signing in to one.
@@ -54,7 +54,7 @@ To run against your own data:
 just server run
 ```
 
-The server listens on `http://127.0.0.1:8096`. Open it in a browser: the first visit walks you through creating the admin account, then adding a library.
+The server listens on `http://127.0.0.1:28793`. Open it in a browser: the first visit walks you through creating the admin account, then adding a library.
 
 Configuration is optional for local development; see [`CONFIGURATION.md`](CONFIGURATION.md) for every key.
 
@@ -64,7 +64,7 @@ The server embeds a built client. To iterate on the client with hot reload, run 
 
 ```sh
 just web install
-just web dev     # http://localhost:5173, proxying the API to :8096
+just web dev     # http://localhost:5173, proxying the API to :28793
 ```
 
 See [`web/README.md`](../web/README.md) for how builds are embedded.
@@ -81,7 +81,7 @@ just app setup       # fetches dependencies and generates the GraphQL types
 just app run         # the Linux desktop, or `just app run <device>`
 ```
 
-From an Android emulator the server on your machine is at `10.0.2.2:8096`, and emulators need one extra build flag, which `just app run-emulator` passes; see "Test devices" in [`flutter/AGENTS.md`](../flutter/AGENTS.md).
+From an Android emulator the server on your machine is at `10.0.2.2:28793`, and emulators need one extra build flag, which `just app run-emulator` passes; see "Test devices" in [`flutter/AGENTS.md`](../flutter/AGENTS.md).
 
 ## Run the TV app
 
@@ -89,7 +89,7 @@ The TV app lives in `solidtv/`, and runs in a browser while you work on it. Arro
 
 ```sh
 just tv install
-just tv dev          # http://localhost:5174, pointed at http://127.0.0.1:8096
+just tv dev          # http://localhost:5174, pointed at http://127.0.0.1:28793
 ```
 
 Packaging for Samsung, LG, Android TV, RDK and Apple TV, and what each needs, is in [`PACKAGING.md`](PACKAGING.md#tv-app).

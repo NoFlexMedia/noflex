@@ -14,7 +14,7 @@ install what='':
 
 # Serve the app in a browser on http://localhost:5174, pointed at SERVER (default: the demo server's address).
 [working-directory('../solidtv')]
-dev server='http://127.0.0.1:8096':
+dev server='http://127.0.0.1:28793':
     VITE_NOFLEX_SERVER={{ server }} npm run dev
 
 # Type-check, validate GraphQL documents against the schema, and run the tests.

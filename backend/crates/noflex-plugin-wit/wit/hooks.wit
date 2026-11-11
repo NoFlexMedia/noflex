@@ -147,9 +147,9 @@ interface subtitle {
     download: async func(handle: string) -> result<tuple<string, stream<u8>>, plugin-error>;
 }
 
-/// Runs after a library scan completes. Use for: rebuilding caches, computing
-/// embeddings, sending notifications, running an intro detector on new
-/// episodes, etc.
+/// Runs after a library scan completes, with the works it added, updated and
+/// removed. Use for: rebuilding caches, tagging new titles, syncing
+/// collections, or a notifier's digest of what arrived.
 interface post-scan {
     use types.{library-id, work-id, plugin-error};
 

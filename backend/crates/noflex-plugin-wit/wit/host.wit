@@ -107,7 +107,7 @@ interface host-library {
         name: string,
         runtime-ms: option<s64>,
         chapters: list<chapter>,
-        /// Already-persisted markers, so detectors can skip or refine.
+        /// The edition's intro and credits markers, when it has them.
         intro-start-ms: option<s64>,
         intro-end-ms: option<s64>,
         credits-start-ms: option<s64>,
@@ -252,9 +252,9 @@ interface host-user-state {
 }
 
 /// Dynamic follow-up work. Any hook call may enqueue a `background`
-/// invocation for its own plugin (post-scan → intro sweep over the added
-/// works); the host persists the payload and drains the queue on the
-/// plugin's instance, FIFO per task. Payloads are opaque strings (JSON by
+/// invocation for its own plugin (post-scan → tag each added work); the
+/// host persists the payload and drains the queue on the plugin's
+/// instance, FIFO per task. Payloads are opaque strings (JSON by
 /// convention) and survive instance recycling and host restarts. The host
 /// also records which user, if any, the enqueuing call acted for, and runs
 /// the task bound to that user (see `host-secrets.read-for-user`).

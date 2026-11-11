@@ -11,6 +11,7 @@ Each project subdirectory owns an `AGENTS.md` describing its stack, commands, an
 - [`flutter/AGENTS.md`](flutter/AGENTS.md) — Flutter app: signals, playback, downloads, test devices.
 - [`solidtv/AGENTS.md`](solidtv/AGENTS.md) — TV app: rendering, focus, hosts, and what each target has been verified on.
 - [`lib/AGENTS.md`](lib/AGENTS.md) — source shared between clients.
+- [`site/AGENTS.md`](site/AGENTS.md) — noflex.dev: marketing, legal and support pages, and the Cast receiver's host.
 - [`packaging/AGENTS.md`](packaging/AGENTS.md) — release packaging, and the third-party code the apps ship.
 
 ### Writing an `AGENTS.md`
@@ -30,6 +31,7 @@ Each project subdirectory owns an `AGENTS.md` describing its stack, commands, an
 - `flutter/` — Flutter app for Android, iOS, macOS, Windows and Linux.
 - `solidtv/` — SolidTV app for Samsung, LG, Android TV, RDK and Apple TV, and any browser.
 - `lib/` — source shared between clients, split by language: `lib/ts/` for `web/` and `solidtv/`.
+- `site/` — the website at noflex.dev, a prerendered SvelteKit site.
 - `packaging/` — release bundles, the ffmpeg pipeline, client builds, and the record of third-party code the apps ship.
 - `nix/` — NixOS module. `flake.nix` at the root provides the dev shell, packages, and checks.
 - `justfile`, `tasks/`, `scripts/tasks/` — the command interface: one `mod` per group, with anything longer than a few lines in a script.

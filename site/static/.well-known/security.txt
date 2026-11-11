@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+Contact: https://github.com/NoFlexMedia/noflex/security/advisories/new
+Expires: 2027-11-11T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://noflex.dev/.well-known/security.txt
+Policy: https://noflex.dev/support#security

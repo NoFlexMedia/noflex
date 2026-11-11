@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // Trakt guest: implements `user-link` (device authorization flow),
-// `scrobbler` (Trakt /scrobble/*), and the `poll-link` background task
-// that drives device-flow polling. All HTTP goes through the
+// `scrobbler` (Trakt /scrobble/*), the `poll-link` background task that
+// drives device-flow polling, and the `sync` task (`crate::sync_task`). All HTTP goes through the
 // capability-gated `host-net` import; per-user tokens live host-side
 // and move only through `host-secrets.read-for-user` /
 // `write-for-user`. Compiled only for wasm32 — the host-testable
@@ -31,15 +31,16 @@ use noflex::plugin::{
 
 use crate::api::{self, Action, IdKind, MediaKind, PollAnswer, PollCursor, Scrobble};
 
-// The canonical `scrobbler-plugin` world plus WASI 0.3's monotonic clock,
-// whose async `wait-for` paces device-token polls without blocking the
-// instance's other calls.
+// The canonical `scrobbler-plugin` world plus `host-user-state` for history
+// sync and WASI 0.3's monotonic clock, whose async `wait-for` paces
+// device-token polls and POSTs without blocking the instance's other calls.
 wit_bindgen::generate!({
     inline: r#"
         package noflex:trakt;
 
         world trakt {
             include noflex:plugin/scrobbler-plugin@0.2.0;
+            import noflex:plugin/host-user-state@0.2.0;
             import wasi:clocks/monotonic-clock@0.3.0;
         }
     "#,
@@ -74,7 +75,7 @@ thread_local! {
 
 struct Trakt;
 
-fn log(level: host_log::Level, message: &str) {
+pub(crate) fn log(level: host_log::Level, message: &str) {
     host_log::log(level, "trakt", message, &[]);
 }
 
@@ -267,10 +268,22 @@ async fn poll_once(mut cursor: PollCursor) -> background::TaskOutcome {
             }
             match api::parse_token_pair(&response.body) {
                 Ok(pair) => match store_token_pair(&cursor.user, &pair).await {
-                    Ok(()) => log(
-                        host_log::Level::Info,
-                        &format!("trakt: user {} linked", cursor.user),
-                    ),
+                    Ok(()) => {
+                        log(
+                            host_log::Level::Info,
+                            &format!("trakt: user {} linked", cursor.user),
+                        );
+                        // The first sync starts now rather than at the next
+                        // tick; this run is bound to the user, so it is too.
+                        if let Err(e) =
+                            host_tasks::enqueue("sync".into(), Some(cursor.user.clone())).await
+                        {
+                            log(
+                                host_log::Level::Warn,
+                                &format!("trakt: could not start the first sync: {e:?}"),
+                            );
+                        }
+                    }
                     Err(e) => log(
                         host_log::Level::Error,
                         &format!(
@@ -333,6 +346,9 @@ impl background::Guest for Trakt {
         cursor: Option<String>,
         payload: Option<String>,
     ) -> Result<background::TaskOutcome, background::PluginError> {
+        if task == "sync" {
+            return crate::sync_task::run(cursor, payload).await;
+        }
         if task != "poll-link" {
             return Err(background::PluginError::BadInput(format!(
                 "trakt: unknown background task `{task}`"
@@ -473,7 +489,7 @@ async fn send_scrobble(event: &ScrobbleEvent, client_id: &str, token: &str) {
 /// persisting the rotated pair host-side. Returns the new access token;
 /// any failure is logged and yields `None` (the caller drops the
 /// scrobble).
-async fn refresh_access_token(user: &str, client_id: &str) -> Option<String> {
+pub(crate) async fn refresh_access_token(user: &str, client_id: &str) -> Option<String> {
     let client_secret = match host_secrets::read("client_secret".into()).await {
         Ok(secret) => secret,
         Err(e) => {

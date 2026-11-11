@@ -1,17 +1,19 @@
 manifest_version = 1
 plugin_id = "trakt"
-display_name = "Trakt Scrobbler"
+display_name = "Trakt"
 version = "0.0.1"
 noflex_api_version = "0.2"
 hooks = ["scrobbler", "user-link", "background"]
-capabilities = ["http.egress", "secrets.read", "user-secrets.read", "user-secrets.write", "background"]
+capabilities = ["http.egress", "secrets.read", "user-secrets.read", "user-secrets.write", "background", "user-state.read", "user-state.write"]
 # Trakt is a single fixed API host — no operator-configured destination,
 # so the egress allowlist can be exact.
 http_egress_hosts = ["api.trakt.tv"]
 # OAuth app credentials the operator provisions (Trakt API app).
 secrets_read = ["client_id", "client_secret"]
-user_secrets_read = ["access_token", "refresh_token"]
-user_secrets_write = ["access_token", "refresh_token"]
+# `sync_state` is what a user's last history sync saw, so it goes with
+# their link.
+user_secrets_read = ["access_token", "refresh_token", "sync_state"]
+user_secrets_write = ["access_token", "refresh_token", "sync_state"]
 license = "AGPL-3.0-only"
 
 # Device-flow polling rides this task: `user-link.link-start` enqueues a
@@ -21,6 +23,18 @@ license = "AGPL-3.0-only"
 [[tasks]]
 name = "poll-link"
 interval_ms = 5000
+
+# History and ratings sync, once per linked user every 15 minutes (and on
+# linking), a Trakt page per run. An idle account costs one request.
+[[tasks]]
+name = "sync"
+interval_ms = 900000
+per_user = true
+
+# A sync run reads a page, looks every title up and imports it, or sends
+# two paced POSTs; poll-link waits up to 15 s before its request.
+[deadlines_secs]
+background = 120
 
 [[settings]]
 key = "client_id"

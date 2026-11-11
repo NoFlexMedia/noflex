@@ -80,6 +80,42 @@ async fn loads_real_tvdb_plugin() {
     assert!(info.hooks.contains(&HookKind::Metadata));
 }
 
+/// Trakt imports `host-user-state` beside its world, so this is the check
+/// that the linker serves the write imports to a real guest.
+#[tokio::test]
+async fn loads_real_trakt_plugin() {
+    let Some(wasm) = plugin_wasm_path("noflex-trakt", "trakt") else {
+        eprintln!("skipping: build the plugin first with `cargo xtask plugin-build`");
+        return;
+    };
+    let engine = build_engine(&EngineConfig::default()).expect("engine builds");
+    let registry = PluginRegistry::new(engine).expect("registry");
+    let info = registry
+        .load_from(&wasm)
+        .unwrap_or_else(|e| panic!("load trakt plugin: {e}"));
+    assert_eq!(info.id, "trakt");
+    assert!(info.hooks.contains(&HookKind::Scrobbler));
+    let plugin = registry
+        .get_plugin(&PluginId("trakt".into()))
+        .expect("registered");
+    assert!(
+        plugin
+            .manifest
+            .tasks
+            .iter()
+            .any(|task| task.name == "sync" && task.per_user)
+    );
+    // An unbound run acts for nobody, so it does nothing rather than fail.
+    let outcome = plugin
+        .call_run_task("sync".into(), None, Some(uuid::Uuid::now_v7().to_string()))
+        .await
+        .expect("dispatch");
+    assert!(
+        matches!(outcome, Ok(noflex_plugin_host::TaskOutcome::Done)),
+        "{outcome:?}"
+    );
+}
+
 #[tokio::test]
 async fn opensubtitles_without_a_key_says_how_to_set_one() {
     let Some(wasm) = plugin_wasm_path("noflex-subtitles-opensubtitles", "opensubtitles") else {

@@ -19,11 +19,14 @@
 //     a 401. Delivery is lossy like the webhook notifier: failures are
 //     logged, never propagated, so a dead upstream or expired grant
 //     can't error the host's dispatch loop.
+//   * the `sync` task keeps watch history and ratings in step both ways,
+//     per linked user: a full read on linking and weekly, otherwise only
+//     what `/sync/last_activities` says moved, then an export of what
+//     Trakt lacks. Real-time watches still go through scrobbling.
 //
 // Matching is external ids only (tmdb/tvdb/imdb), with an episode named
 // by its series' ids and its numbers; no title matching, and a work
-// without usable ids is skipped. Nothing is read back from Trakt: this is
-// scrobbling, not history sync.
+// without usable ids is skipped.
 //
 // The Trakt request/response mapping and the poll-cursor codec live in
 // `api` — pure Rust with no WIT bindings, so `cargo test` exercises
@@ -33,6 +36,9 @@
 // `pub` so the host build doesn't see the module as dead code — on
 // wasm it is consumed by `guest`, on the host only by its unit tests.
 pub mod api;
+pub mod sync;
 
 #[cfg(target_arch = "wasm32")]
 mod guest;
+#[cfg(target_arch = "wasm32")]
+mod sync_task;

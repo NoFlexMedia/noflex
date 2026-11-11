@@ -271,7 +271,7 @@ fn record_number(value: &str, prefixes: &[&str]) -> Option<u64> {
 /// Trakt `ids` object for a record of `kind`. TMDb and TVDB values parse
 /// from the path forms that kind's records use; IMDb stays a string.
 /// Matching is ids-only by design — no title fallback.
-fn trakt_ids(ids: &[(IdKind, &str)], kind: MediaKind) -> Map<String, Value> {
+pub(crate) fn trakt_ids(ids: &[(IdKind, &str)], kind: MediaKind) -> Map<String, Value> {
     let (tmdb, tvdb): (&[&str], &[&str]) = match kind {
         MediaKind::Movie => (&["movie"], &["movie"]),
         MediaKind::Show => (&["tv"], &["series"]),

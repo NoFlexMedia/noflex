@@ -18,7 +18,7 @@ class PipService {
     }
   }
 
-  static const _channel = MethodChannel('live.noflex/pip');
+  static const _channel = MethodChannel('dev.noflex.app/pip');
 
   bool get supported => Platform.isAndroid;
 

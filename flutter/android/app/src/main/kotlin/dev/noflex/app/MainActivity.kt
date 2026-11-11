@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-package live.noflex.noflex
+package dev.noflex.app
 
 import android.app.PictureInPictureParams
 import android.content.res.Configuration
@@ -17,7 +17,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "live.noflex/pip").also {
+        channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dev.noflex.app/pip").also {
             it.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "setPlaying" -> {

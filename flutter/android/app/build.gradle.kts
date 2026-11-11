@@ -15,7 +15,7 @@ val releaseKey = Properties().apply {
 }
 
 android {
-    namespace = "live.noflex.noflex"
+    namespace = "dev.noflex.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -25,7 +25,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "live.noflex.noflex"
+        applicationId = "dev.noflex.app"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION

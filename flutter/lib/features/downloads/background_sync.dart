@@ -22,7 +22,7 @@ import 'download_models.dart';
 import 'downloads_service.dart';
 import 'smart_planner.dart';
 
-const smartSyncTask = 'live.noflex.smartDownloads';
+const smartSyncTask = 'dev.noflex.app.smartDownloads';
 const _targetKey = 'noflex.downloadDirectory';
 
 bool get _supported => Platform.isAndroid || Platform.isIOS;

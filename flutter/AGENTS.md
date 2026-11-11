@@ -213,7 +213,7 @@ adb exec-out screencap -d <display id> -p > shot.png           # foldables have 
 - Live channels play without a picture on the emulator, though they show one on Linux.
 - A ready version started from the top jumps about 10 s in on its own, on an internal seek just after it starts. Whether a real device's `gpu` output does the same isn't known.
 - The server is at `10.0.2.2` from inside the emulator.
-- A stale debug-only file (`Unhandled Exception: FormatException` from `NativeReferenceHolder`) after killing the emulator mid-write goes away with `adb shell pm clear live.noflex.noflex`.
+- A stale debug-only file (`Unhandled Exception: FormatException` from `NativeReferenceHolder`) after killing the emulator mid-write goes away with `adb shell pm clear dev.noflex.app`.
 
 ## Motion and loading
 

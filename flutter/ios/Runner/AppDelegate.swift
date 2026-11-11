@@ -12,7 +12,7 @@ import workmanager_apple
     // Must match the Info.plist identifier and scheduleSmartSync. iOS treats the
     // hour as a floor and runs it when it sees fit.
     WorkmanagerPlugin.registerPeriodicTask(
-      withIdentifier: "live.noflex.smartDownloads",
+      withIdentifier: "dev.noflex.app.smartDownloads",
       earliestBeginInSeconds: NSNumber(value: 60 * 60)
     )
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)

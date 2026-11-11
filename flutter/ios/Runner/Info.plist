@@ -4,7 +4,7 @@
 	<dict>
 		<key>BGTaskSchedulerPermittedIdentifiers</key>
 		<array>
-			<string>live.noflex.smartDownloads</string>
+			<string>dev.noflex.app.smartDownloads</string>
 		</array>
 		<key>CADisableMinimumFrameDurationOnPhone</key>
 		<true/>

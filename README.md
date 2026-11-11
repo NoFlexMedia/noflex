@@ -4,7 +4,7 @@ _Your media, your server_ 🎬📺🎵
 
 NoFlex is a self-hosted media server for movies, shows, music, live TV and photos, written from scratch in Rust.
 
-**[noflex.dev](https://noflex.dev)** · [Demo](https://noflex.dev/demo) · [Get NoFlex](https://noflex.dev/download) · [Support](https://noflex.dev/support)
+**[noflex.dev](https://noflex.dev)** · [Get NoFlex](https://noflex.dev/download) · [Support](https://noflex.dev/support)
 
 > **Status: pre-alpha.** NoFlex is under active development and not yet ready to hold your library.
 
@@ -20,7 +20,7 @@ NoFlex is a self-hosted media server for movies, shows, music, live TV and photo
 
 - **Smart transcoding.** The server works out what each person will watch next (the next episodes, what they left unfinished, what they marked, what they'll likely pick) and prepares a version for each of their devices while it's quiet. It keeps under a CPU cap, pauses the moment anyone presses play, and stays within a storage budget.
 - **Smart Downloads.** The app keeps the titles the server ranks highest within the space you give it, on Wi-Fi only if you like, and on Android and iOS finishes in the background.
-- **AV1 first.** Encodes try AV1 for any device that decodes it, then HEVC, then H.264, with hardware encoding through VAAPI, NVENC, Quick Sync, AMF, VideoToolbox and Media Foundation. Our own ffmpeg build brings AV1 NVENC to Nvidia drivers from 520.56.
+- **AV1 first.** Encodes try AV1 for any device that decodes it, then HEVC, then H.264, with hardware encoding through VAAPI, NVENC, Quick Sync and AMF, and VideoToolbox and Media Foundation once the macOS and Windows servers have run on their hardware. Our own ffmpeg build brings AV1 NVENC to Nvidia drivers from 520.56.
 - **No more "why is it transcoding?"** Every app shows how a title is playing, and when it transcodes, exactly why. The Flutter app measures which codecs its device decodes in hardware instead of trusting a profile.
 
 ### Better with friends
@@ -41,15 +41,15 @@ NoFlex is a self-hosted media server for movies, shows, music, live TV and photo
 
 ### And the rest
 
-- **Bring your library as it is:** Plex-style folders, release names, `{edition-…}` tags, and one show split across 1080p and 4K season folders. Local artwork, sidecar subtitles and multi-part films are read as they are.
-- **Every screen:** a web client built into the server, one Flutter app for phones, tablets, foldables and desktops, and one TV app for Samsung, LG, Android TV, Fire TV, RDK and Apple TV.
-- **NoFlex Connect:** send a title to the TV and steer it from your phone, with Google Cast and AirPlay from the browser.
+- **Bring your library as it is:** Plex-style folders, release names, editions from `{edition-…}` tags or names like "Director's Cut", season folders in any of a dozen languages, and one show split across 1080p and 4K season folders. Local artwork, sidecar subtitles and multi-part films are read as they are.
+- **Every screen:** a web client built into the server, one Flutter app for phones, tablets, foldables and desktops, and one TV app for any TV browser, with Samsung, LG, Android TV, Fire TV, RDK and Apple TV builds awaiting real hardware. [noflex.dev](https://noflex.dev/#apps) says where each stands.
+- **NoFlex Connect:** send a title to the TV and steer it from your phone, with Google Cast and AirPlay from the browser in testing.
 - **Shared devices:** "Who's watching?" profiles, PINs enforced by the server, and QR-code sign-in on TVs.
 - **Live TV and DVR** from M3U and XMLTV sources.
 - **HDR10, HDR10+, HLG and Dolby Vision,** tone-mapped on the GPU where a screen can't show them.
 - **Subtitles and audio tracks** that only transcode when they must, trickplay thumbnails, chapters, and intro skipping from chapter markers.
 - **Parental controls:** allowed ratings, per-library access, and bitrate limits for each person.
-- **Collections, playlists, invites,** OpenID Connect sign-in and API keys.
+- **Collections, playlists, invites,** OpenID Connect sign-in on the web (the apps and TVs sign in with a code you approve there), and API keys.
 - **A status page:** live CPU, memory and network, who's streaming and why it transcodes, and what's been played.
 - **Music and photos,** browsed beside your films.
 

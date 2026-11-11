@@ -44,7 +44,7 @@
     { icon: FilmStrip, title: "Trickplay and chapters", text: "Scrub with thumbnails, jump by chapter, and skip intros the file's chapters mark." },
     { icon: DownloadSimple, title: "Offline copies", text: "Keep the original as one file, or let Smart Downloads pick for you within the space you give it." },
     { icon: ShieldCheck, title: "Parental controls", text: "Allowed ratings, library access, and bitrate limits for each person." },
-    { icon: Key, title: "Your own sign-in", text: "OpenID Connect with Authentik, Keycloak and the rest, plus API keys for your scripts." },
+    { icon: Key, title: "Your own sign-in", text: "OpenID Connect with Authentik, Keycloak and the rest on the web, a code approved there for the apps and TVs, and API keys for your scripts." },
     { icon: ChartLine, title: "A status page worth opening", text: "Live CPU, memory and network, who's streaming and why it transcodes, and what's been played." },
     { icon: MusicNotes, title: "Music and photos", text: "Artists, albums and tracks beside your films, and your photos too. More for both is on the way." },
   ];
@@ -64,7 +64,7 @@
       { name: "Apple TV", detail: "Bundles; not yet run on Apple hardware", status: "dev" },
     ] },
     { group: "Server", items: [
-      { name: "Linux (x86-64)", detail: "One bundle with our ffmpeg and the search model", status: "ready" },
+      { name: "Linux (x86-64)", detail: "One bundle with our ffmpeg and the search model; published with the first release", status: "preview" },
       { name: "NixOS", detail: "A hardened module with backups", status: "ready" },
       { name: "macOS (Apple silicon)", detail: "Has a CI recipe; not yet run on a Mac", status: "dev" },
     ] },

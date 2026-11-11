@@ -34,8 +34,9 @@ pub enum Tier {
 
 impl SearchPath {
     /// Build the standard search path: a release bundle's `plugins/` when there
-    /// is one, then `/etc/noflex/plugins`, `/var/lib/noflex/plugins`,
-    /// `$XDG_CONFIG_HOME/noflex/plugins`.
+    /// is one, then `/etc/noflex/plugins`, `/var/lib/noflex/plugins` (both
+    /// `%ProgramData%\NoFlex\plugins` on Windows, see
+    /// [`noflex_core::system_dirs`]), `$XDG_CONFIG_HOME/noflex/plugins`.
     ///
     /// Missing directories are still recorded — the watcher in
     /// [`crate::watcher`] will pick them up if they appear later, and the
@@ -46,16 +47,14 @@ impl SearchPath {
             path,
         });
         let mut tiers = Vec::from_iter(bundled);
-        tiers.extend([
-            PluginDir {
-                tier: Tier::System,
-                path: PathBuf::from("/etc/noflex/plugins"),
-            },
-            PluginDir {
-                tier: Tier::State,
-                path: PathBuf::from("/var/lib/noflex/plugins"),
-            },
-        ]);
+        tiers.push(PluginDir {
+            tier: Tier::System,
+            path: noflex_core::system_dirs::config().join("plugins"),
+        });
+        tiers.extend(noflex_core::system_dirs::state().map(|dir| PluginDir {
+            tier: Tier::State,
+            path: dir.join("plugins"),
+        }));
         if let Some(base) = BaseDirs::new() {
             tiers.push(PluginDir {
                 tier: Tier::User,

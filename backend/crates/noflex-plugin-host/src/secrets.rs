@@ -4,6 +4,7 @@
 // earlier) matches the plugin search-path policy:
 //   1. /etc/noflex/secrets/<plugin_id>.toml  (system)
 //   2. /var/lib/noflex/secrets/<plugin_id>.toml (state)
+//      (both %ProgramData%\NoFlex\secrets on Windows)
 //   3. $XDG_CONFIG_HOME/noflex/secrets/<plugin_id>.toml (user)
 //
 // Each file is a flat TOML key→value map. Reads audit-logged via
@@ -22,9 +23,8 @@ pub struct SecretStore {
 
 impl SecretStore {
     pub fn with_default_tiers() -> Self {
-        let mut tiers: Vec<PathBuf> = Vec::new();
-        tiers.push(PathBuf::from("/etc/noflex/secrets"));
-        tiers.push(PathBuf::from("/var/lib/noflex/secrets"));
+        let mut tiers = vec![noflex_core::system_dirs::config().join("secrets")];
+        tiers.extend(noflex_core::system_dirs::state().map(|dir| dir.join("secrets")));
         if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
             tiers.push(PathBuf::from(xdg).join("noflex").join("secrets"));
         } else if let Some(home) =

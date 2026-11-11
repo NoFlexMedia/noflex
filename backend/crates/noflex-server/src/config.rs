@@ -326,8 +326,8 @@ fn default_search_path() -> Vec<PathBuf> {
     let mut out = Vec::new();
     // First, so a plugin installed on the host shadows the bundle's copy.
     out.extend(noflex_core::bundle::dir("plugins"));
-    out.push(PathBuf::from("/etc/noflex/plugins"));
-    out.push(PathBuf::from("/var/lib/noflex/plugins"));
+    out.push(noflex_core::system_dirs::config().join("plugins"));
+    out.extend(noflex_core::system_dirs::state().map(|dir| dir.join("plugins")));
     out.extend(user_config_dir().map(|dir| dir.join("plugins")));
     out
 }
@@ -350,8 +350,9 @@ impl Config {
 
     pub fn load_from(user_path: &std::path::Path) -> Result<Self, ConfigError> {
         let mut fig: Figment = Figment::from(Serialized::defaults(Config::default()));
-        if std::path::Path::new("/etc/noflex/config.toml").exists() {
-            fig = fig.merge(Toml::file("/etc/noflex/config.toml"));
+        let system = noflex_core::system_dirs::config().join("config.toml");
+        if system.exists() {
+            fig = fig.merge(Toml::file(system));
         }
         if user_path.exists() {
             fig = fig.merge(Toml::file(user_path));

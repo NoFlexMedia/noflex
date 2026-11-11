@@ -11,6 +11,7 @@ pub mod events;
 pub mod ids;
 pub mod model;
 pub mod providers;
+pub mod system_dirs;
 pub mod text;
 
 pub use error::{PluginError, PluginResult};

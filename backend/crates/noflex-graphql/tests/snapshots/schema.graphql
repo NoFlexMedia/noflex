@@ -2093,7 +2093,8 @@ type Mutation {
 	updateWorkFields(workId: ID!, fields: WorkFieldsInput!): Work!
 	"""
 	Lock or unlock one field against provider refreshes. Values and
-	metadata status are untouched. Admin only.
+	metadata status are untouched, but for `COMMUNITY_RATING`: unlocked,
+	it's taken from the work's ratings again. Admin only.
 	"""
 	setWorkFieldLock(workId: ID!, field: WorkField!, locked: Boolean!): Work!
 	"""
@@ -3496,6 +3497,51 @@ type Query {
 	searchSubtitles(mediaFileId: ID!, languages: [String!]): SubtitleSearchResult!
 }
 
+"""
+One source's rating of a work, as a plugin reported it. A work keeps one
+per source, and its `communityRating` is the one from the first of the
+server's rating sources it has.
+"""
+type Rating {
+	"""
+	Whose rating it is, as a slug: `imdb`, `tmdb`, `rotten-tomatoes`, ...
+	"""
+	source: String!
+	"""
+	On the source's own scale, as it shows there.
+	"""
+	value: Float!
+	"""
+	The best `value` can be: 10 for "7.8/10", 100 for "87%".
+	"""
+	scale: Float!
+	"""
+	`value` out of 10, comparable across sources.
+	"""
+	normalized: Float!
+	"""
+	How many ratings `value` summarises, when the source says.
+	"""
+	votes: Int
+	"""
+	The plugin that reported it, as `providerAttributions` names it.
+	"""
+	provider: String!
+	"""
+	The source's name, to show beside its rating.
+	"""
+	name: String!
+	"""
+	`value` as the source writes it: "7.8", "74", or "87%" for a share.
+	"""
+	display: String!
+	"""
+	What `display` is out of, as written after it ("/10", "/100"); null
+	when `display` already says, as a percentage does.
+	"""
+	outOf: String
+}
+
 type Recording {
 	id: ID!
 	scheduleId: ID
@@ -4843,9 +4889,9 @@ type Work {
 	tagline: String
 	originalTitle: String
 	"""
-	Out of 10: the rating of the first of the server's rating sources
-	the work has (see [`WorkRating`]), or an administrator's own while
-	[`WorkField::CommunityRating`] is locked.
+	Out of 10: the work's rating from the first of the server's rating
+	sources it has one from, or an administrator's own while
+	`COMMUNITY_RATING` is locked. Each source's is in `ratings`.
 	"""
 	communityRating: Float
 	externalIds: [ExternalId!]!
@@ -4874,10 +4920,16 @@ type Work {
 	updatedAt: DateTime!
 	"""
 	Who to credit for what this work shows: the provider of its metadata,
-	then the providers of any artwork in use from elsewhere. A provider
-	that asked for no credit is left out.
+	then the providers of any artwork in use from elsewhere, then those of
+	its ratings. A provider that asked for no credit is left out.
 	"""
 	attributions: [ProviderAttribution!]!
+	"""
+	Every source's rating of this work, on its own scale: the server's
+	rating sources first, in their order, then the rest by source. Empty
+	when no plugin rated it.
+	"""
+	ratings: [Rating!]!
 	"""
 	People credited on this work, in billing order, one entry per part.
 	Empty when no provider named any.
@@ -5136,6 +5188,10 @@ input WorkFieldsInput {
 	releaseDate: String
 	overview: String
 	tagline: String
+	"""
+	Out of 10. Locked, it stands in for the rating taken from the work's
+	rating sources until `COMMUNITY_RATING` is unlocked.
+	"""
 	communityRating: Float
 }
 

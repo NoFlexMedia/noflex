@@ -409,6 +409,115 @@ async fn attributions_credit_metadata_then_art_in_use() {
 }
 
 #[tokio::test]
+async fn ratings_show_each_source_and_a_lock_stands_in_for_them() {
+    use noflex_core::providers::Rating;
+    use noflex_storage::domain::ProviderAttribution;
+
+    let (schema, jwt, store) = authed_schema().await;
+    let admin = setup_admin(&schema, &jwt).await;
+    let lib = seed_library(&store, "Films").await;
+    for provider in ["meta", "omdb"] {
+        store
+            .upsert_provider_attribution(
+                &ProviderAttribution {
+                    provider: provider.into(),
+                    name: provider.to_uppercase(),
+                    text: format!("Ratings from {provider}."),
+                    url: None,
+                    logo_mime: None,
+                    logo_digest: None,
+                },
+                None,
+            )
+            .await
+            .expect("attribution");
+    }
+    let mut work = seed_work(lib.id, "Alien");
+    work.metadata_provider = Some("meta".into());
+    store.upsert_work(&work).await.expect("work");
+    let rating = |source: &str, value: f32, scale: f32, votes: Option<u64>| Rating {
+        source: source.into(),
+        value,
+        scale,
+        votes,
+    };
+    store
+        .replace_work_ratings(work.id, "meta", &[rating("tmdb", 7.5, 10.0, None)])
+        .await
+        .expect("meta");
+    store
+        .replace_work_ratings(
+            work.id,
+            "omdb",
+            &[
+                rating("rotten-tomatoes", 75.0, 100.0, None),
+                rating("imdb", 8.5, 10.0, Some(1_000)),
+            ],
+        )
+        .await
+        .expect("omdb");
+
+    let run = |query: String| {
+        let schema = schema.clone();
+        async move {
+            let resp = schema
+                .execute(Request::new(query).data(admin).data(as_request_user(admin)))
+                .await;
+            assert!(resp.errors.is_empty(), "{:?}", resp.errors);
+            resp.data.into_json().expect("json")
+        }
+    };
+    let data = run(format!(
+        r#"{{ work(id: "{}") {{ communityRating ratings {{ source name display outOf value scale normalized votes provider }} attributions {{ provider }} }} }}"#,
+        work.id
+    ))
+    .await;
+    assert_eq!(
+        data["work"],
+        serde_json::json!({
+            "communityRating": 8.5,
+            "ratings": [
+                { "source": "imdb", "name": "IMDb", "display": "8.5", "outOf": "/10", "value": 8.5, "scale": 10.0, "normalized": 8.5, "votes": 1000, "provider": "omdb" },
+                { "source": "tmdb", "name": "TMDb", "display": "7.5", "outOf": "/10", "value": 7.5, "scale": 10.0, "normalized": 7.5, "votes": null, "provider": "meta" },
+                { "source": "rotten-tomatoes", "name": "Rotten Tomatoes", "display": "75%", "outOf": null, "value": 75.0, "scale": 100.0, "normalized": 7.5, "votes": null, "provider": "omdb" },
+            ],
+            "attributions": [{ "provider": "meta" }, { "provider": "omdb" }],
+        }),
+        "the rating sources' order, each on its own scale, and whoever rated it credited"
+    );
+
+    let edit = |fields: &str| {
+        format!(
+            r#"mutation {{ updateWorkFields(workId: "{}", fields: {{ {fields} }}) {{ communityRating }} }}"#,
+            work.id
+        )
+    };
+    let data = run(edit("communityRating: 3")).await;
+    assert_eq!(data["updateWorkFields"]["communityRating"], 3.0);
+    let resp = schema
+        .execute(
+            Request::new(edit("communityRating: 11"))
+                .data(admin)
+                .data(as_request_user(admin)),
+        )
+        .await;
+    assert_eq!(
+        resp.errors[0].message, "rating must be between 0 and 10",
+        "{:?}",
+        resp.errors
+    );
+    let data = run(format!(
+        r#"mutation {{ setWorkFieldLock(workId: "{}", field: COMMUNITY_RATING, locked: false) {{ communityRating }} }}"#,
+        work.id
+    ))
+    .await;
+    assert_eq!(
+        data["setWorkFieldLock"]["communityRating"], 8.5,
+        "unlocked, it's taken from the ratings again"
+    );
+}
+
+#[tokio::test]
 async fn identify_work_rejects_unknown_provider() {
     let (schema, jwt, store) = authed_schema().await;
     let admin = setup_admin(&schema, &jwt).await;

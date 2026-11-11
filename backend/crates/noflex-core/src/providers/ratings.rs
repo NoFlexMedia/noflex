@@ -47,6 +47,23 @@ impl Rating {
     }
 }
 
+/// `value` written as `source` writes it, and the scale written after it:
+/// `("7.8", Some("/10"))`, `("74", Some("/100"))`, or `("87%", None)` for a
+/// share like Rotten Tomatoes'. A scale of 10 or less gets one decimal.
+pub fn rating_display(source: &str, value: f32, scale: f32) -> (String, Option<String>) {
+    let decimals = if scale <= 10.0 { 1 } else { 0 };
+    let number = |n: f32, decimals: usize| format!("{n:.decimals$}");
+    if source == "rotten-tomatoes" && scale == 100.0 {
+        return (format!("{}%", number(value, 0)), None);
+    }
+    let scale_text = if scale.fract() == 0.0 {
+        number(scale, 0)
+    } else {
+        number(scale, 1)
+    };
+    (number(value, decimals), Some(format!("/{scale_text}")))
+}
+
 /// Whether `source` is a slug a [`Rating`] may name.
 pub fn is_source_slug(source: &str) -> bool {
     !source.is_empty()
@@ -142,6 +159,25 @@ mod tests {
         assert_eq!(rating("rotten-tomatoes", 87.0, 100.0).normalized(), 8.7);
         assert_eq!(rating("musicbrainz", 4.0, 5.0).normalized(), 8.0);
         assert_eq!(rating("imdb", 7.5, 10.0).normalized(), 7.5);
+    }
+
+    #[test]
+    fn each_source_is_written_as_it_writes_itself() {
+        let shown = |source, value, scale| {
+            let (value, out_of) = rating_display(source, value, scale);
+            (value, out_of.unwrap_or_default())
+        };
+        assert_eq!(shown("imdb", 7.8, 10.0), ("7.8".into(), "/10".into()));
+        assert_eq!(shown("imdb", 8.0, 10.0), ("8.0".into(), "/10".into()));
+        assert_eq!(
+            shown("rotten-tomatoes", 87.0, 100.0),
+            ("87%".into(), "".into())
+        );
+        assert_eq!(
+            shown("metacritic", 74.0, 100.0),
+            ("74".into(), "/100".into())
+        );
+        assert_eq!(shown("musicbrainz", 4.4, 5.0), ("4.4".into(), "/5".into()));
     }
 
     #[test]

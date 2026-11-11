@@ -105,6 +105,8 @@ pub struct WorkFieldsInput {
     pub release_date: Option<String>,
     pub overview: Option<String>,
     pub tagline: Option<String>,
+    /// Out of 10. Locked, it stands in for the rating taken from the work's
+    /// rating sources until `COMMUNITY_RATING` is unlocked.
     pub community_rating: Option<f32>,
 }
 
@@ -222,6 +224,11 @@ impl MetadataMutation {
         {
             return Err(async_graphql::Error::new("release date cannot be empty"));
         }
+        if let Some(rating) = fields.community_rating
+            && !(0.0..=10.0).contains(&rating)
+        {
+            return Err(async_graphql::Error::new("rating must be between 0 and 10"));
+        }
         let storage = storage(ctx)?;
         let mut work = load_work(storage, work_id).await?;
         let mut edited = Vec::new();
@@ -272,7 +279,8 @@ impl MetadataMutation {
     }
 
     /// Lock or unlock one field against provider refreshes. Values and
-    /// metadata status are untouched. Admin only.
+    /// metadata status are untouched, but for `COMMUNITY_RATING`: unlocked,
+    /// it's taken from the work's ratings again. Admin only.
     async fn set_work_field_lock(
         &self,
         ctx: &Context<'_>,
@@ -292,6 +300,7 @@ impl MetadataMutation {
         work.locked_fields.dedup();
         work.updated_at = OffsetDateTime::now_utc();
         storage.upsert_work(&work).await.map_err(gql_err)?;
-        Ok(work)
+        // Unlocking the rating has the store take it from the ratings again.
+        load_work(storage, work_id).await
     }
 }

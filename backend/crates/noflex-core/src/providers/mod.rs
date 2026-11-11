@@ -33,7 +33,8 @@ pub use metadata::{MetadataMatch, MetadataPayload, MetadataProvider, SearchQuery
 pub use notifier::{Notifier, NotifyEvent};
 pub use post_scan::PostScanTask;
 pub use ratings::{
-    DEFAULT_RATING_SOURCES, Rating, RatingsProvider, is_source_slug, rating_source_name,
+    DEFAULT_RATING_SOURCES, Rating, RatingsProvider, is_source_slug, rating_display,
+    rating_source_name,
 };
 pub use resolver::{ItemResolver, ResolvedItem};
 pub use scrobbler::{ScrobbleAction, ScrobbleEvent, Scrobbler};

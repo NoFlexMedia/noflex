@@ -34,9 +34,9 @@ pub struct Work {
     pub tagline: Option<String>,
     #[serde(default)]
     pub original_title: Option<String>,
-    /// Out of 10: the rating of the first of the server's rating sources
-    /// the work has (see [`WorkRating`]), or an administrator's own while
-    /// [`WorkField::CommunityRating`] is locked.
+    /// Out of 10: the work's rating from the first of the server's rating
+    /// sources it has one from, or an administrator's own while
+    /// `COMMUNITY_RATING` is locked. Each source's is in `ratings`.
     #[serde(default)]
     pub community_rating: Option<f32>,
     pub external_ids: Vec<ExternalId>,
@@ -1758,8 +1758,8 @@ pub struct AttributionLogo {
 }
 
 /// One source's rating of a work, as a plugin reported it. A work keeps one
-/// per source; the source most preferred (`Storage::set_rating_sources`) is
-/// its `community_rating`.
+/// per source, and its `communityRating` is the one from the first of the
+/// server's rating sources it has.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, SimpleObject)]
 #[graphql(name = "Rating", complex)]
 pub struct WorkRating {
@@ -1782,6 +1782,17 @@ impl WorkRating {
     /// The source's name, to show beside its rating.
     async fn name(&self) -> String {
         noflex_core::providers::rating_source_name(&self.source)
+    }
+
+    /// `value` as the source writes it: "7.8", "74", or "87%" for a share.
+    async fn display(&self) -> String {
+        noflex_core::providers::rating_display(&self.source, self.value, self.scale).0
+    }
+
+    /// What `display` is out of, as written after it ("/10", "/100"); null
+    /// when `display` already says, as a percentage does.
+    async fn out_of(&self) -> Option<String> {
+        noflex_core::providers::rating_display(&self.source, self.value, self.scale).1
     }
 }
 
@@ -2291,8 +2302,8 @@ async fn load_visible_work(
 #[async_graphql::ComplexObject]
 impl Work {
     /// Who to credit for what this work shows: the provider of its metadata,
-    /// then the providers of any artwork in use from elsewhere. A provider
-    /// that asked for no credit is left out.
+    /// then the providers of any artwork in use from elsewhere, then those of
+    /// its ratings. A provider that asked for no credit is left out.
     #[graphql(complexity = 5)]
     async fn attributions(
         &self,
@@ -2312,7 +2323,16 @@ impl Work {
             .list_images(ImageTarget::Work(self.id), order.source_order())
             .await
             .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        for provider in images.into_iter().filter_map(|image| image.provider) {
+        let ratings = storage
+            .work_ratings(self.id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let rated_by = ratings.into_iter().map(|rating| rating.provider);
+        for provider in images
+            .into_iter()
+            .filter_map(|image| image.provider)
+            .chain(rated_by)
+        {
             if !providers.contains(&provider) {
                 providers.push(provider);
             }
@@ -2328,6 +2348,21 @@ impl Work {
             .iter()
             .filter_map(|id| known.iter().find(|a| a.provider == *id).cloned())
             .collect())
+    }
+
+    /// Every source's rating of this work, on its own scale: the server's
+    /// rating sources first, in their order, then the rest by source. Empty
+    /// when no plugin rated it.
+    #[graphql(complexity = 5)]
+    async fn ratings(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Vec<WorkRating>> {
+        crate::access::request_user(ctx)?;
+        complex_storage(ctx)?
+            .work_ratings(self.id)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))
     }
 
     /// People credited on this work, in billing order, one entry per part.

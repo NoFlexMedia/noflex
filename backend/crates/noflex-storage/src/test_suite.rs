@@ -170,6 +170,7 @@ where
     playlist_items_mixed_targets(store).await;
     playlist_user_delete_cascade(store).await;
     user_restrictions_and_access(store).await;
+    episodes_are_rated_as_their_series(store).await;
     batch_work_reads_preserve_order_and_access(store).await;
     watch_room_lifecycle(store).await;
     lookup_and_cleanup_operations(store).await;
@@ -9525,6 +9526,153 @@ async fn user_restrictions_and_access<S: Storage + ?Sized>(store: &S) {
             .is_none()
     );
     store.delete_user(admin.id).await.ok();
+    store.delete_library(library.id).await.ok();
+}
+
+/// Providers rate series, never their seasons or episodes, so those take the
+/// rating of their nearest rated ancestor everywhere access is checked.
+async fn episodes_are_rated_as_their_series<S: Storage + ?Sized>(store: &S) {
+    let now = OffsetDateTime::now_utc();
+    let user = make_user("inherited-rating-user", false);
+    store.upsert_user(&user).await.expect("user");
+    let library = Library {
+        id: LibraryId::new(),
+        name: "Inherited Ratings".into(),
+        kind: LibraryKind::Shows,
+        paths: vec!["/inherited-ratings".into()],
+        ..Default::default()
+    };
+    store.upsert_library(&library).await.expect("library");
+    store
+        .grant_library_access(user.id, library.id)
+        .await
+        .expect("grant");
+    let rating = |slug: &str| crate::domain::Tag {
+        id: TagId::new(),
+        namespace: "parental".into(),
+        parent_id: None,
+        slug: slug.into(),
+        display: slug.to_uppercase(),
+        metadata: async_graphql::Json(serde_json::json!({})),
+    };
+    let (family, mature) = (rating("tv-y7"), rating("tv-ma"));
+    store.upsert_tag(&family).await.expect("family tag");
+    store.upsert_tag(&mature).await.expect("mature tag");
+
+    // A series, one season, and two episodes, the second rated on its own.
+    let show = |series_title: &str, own_rating: &crate::domain::Tag| {
+        let series = make_work_of_kind(library.id, WorkKind::Series, series_title, now);
+        let season = Work {
+            parent_id: Some(series.id),
+            ..make_work_of_kind(library.id, WorkKind::Season, "Season 1", now)
+        };
+        let episode = |title: &str| Work {
+            parent_id: Some(season.id),
+            ..make_work_of_kind(library.id, WorkKind::Episode, title, now)
+        };
+        let unrated = episode(&format!("{series_title} Pilot"));
+        let rated = episode(&format!("{series_title} Special"));
+        (series, season, unrated, rated, own_rating.id)
+    };
+    let shows = [
+        show("Wobblewick Farm", &mature),
+        show("Grimshade Precinct", &family),
+    ];
+    for (series, season, unrated, rated, own) in &shows {
+        for work in [series, season, unrated, rated] {
+            store.upsert_work(work).await.expect("work");
+        }
+        store
+            .assign_tag(*own, TagTarget::Work(rated.id), 1.0, "test")
+            .await
+            .expect("episode rating");
+    }
+    let [
+        (family_series, family_season, family_episode, _, _),
+        (mature_series, mature_season, _, mature_special, _),
+    ] = &shows;
+    store
+        .assign_tag(family.id, TagTarget::Work(family_series.id), 1.0, "test")
+        .await
+        .expect("family series rating");
+    store
+        .assign_tag(mature.id, TagTarget::Work(mature_series.id), 1.0, "test")
+        .await
+        .expect("mature series rating");
+
+    let everything = shows
+        .iter()
+        .flat_map(|(a, b, c, d, _)| [a.id, b.id, c.id, d.id])
+        .collect::<Vec<_>>();
+    // In `everything`'s order, which `accessible_work_ids` keeps. The last is
+    // rated family on its own, under a mature series.
+    let family_visible = vec![
+        family_series.id,
+        family_season.id,
+        family_episode.id,
+        mature_special.id,
+    ];
+    for allow_unrated in [true, false] {
+        store
+            .set_user_restrictions(&UserRestrictions {
+                allowed_parental_rating_ids: vec![family.id],
+                allow_unrated,
+                ..UserRestrictions::unrestricted(user.id)
+            })
+            .await
+            .expect("policy");
+        assert_eq!(
+            store
+                .accessible_work_ids(user.id, &everything)
+                .await
+                .expect("accessible"),
+            family_visible,
+            "allow_unrated = {allow_unrated}"
+        );
+
+        let episodes = |parent: WorkId| crate::query::ListWorksQuery {
+            access_user_id: Some(user.id),
+            parent: Some(parent),
+            limit: 10,
+            ..Default::default()
+        };
+        let listed = store
+            .list_works(&episodes(family_season.id))
+            .await
+            .expect("family episodes")
+            .items
+            .into_iter()
+            .map(|work| work.id)
+            .collect::<Vec<_>>();
+        assert_eq!(listed, vec![family_episode.id], "{allow_unrated}");
+        let listed = store
+            .list_works(&episodes(mature_season.id))
+            .await
+            .expect("mature episodes")
+            .items
+            .into_iter()
+            .map(|work| work.id)
+            .collect::<Vec<_>>();
+        assert_eq!(listed, vec![mature_special.id], "{allow_unrated}");
+
+        for (query, expected) in [
+            ("Wobblewick Pilot", vec![family_episode.id]),
+            ("Wobblewick Special", vec![]),
+            ("Grimshade Pilot", vec![]),
+            ("Grimshade Special", vec![mature_special.id]),
+        ] {
+            let hits = store
+                .search_lexical(query, &[WorkKind::Episode], Some(user.id), 10)
+                .await
+                .expect("search")
+                .into_iter()
+                .map(|hit| hit.work)
+                .collect::<Vec<_>>();
+            assert_eq!(hits, expected, "{query}, {allow_unrated}");
+        }
+    }
+
+    store.delete_user(user.id).await.ok();
     store.delete_library(library.id).await.ok();
 }
 

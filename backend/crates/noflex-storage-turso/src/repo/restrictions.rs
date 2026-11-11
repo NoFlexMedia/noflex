@@ -136,17 +136,41 @@ pub(crate) async fn work_for_media(
 /// administrators see everything; everyone else needs a library grant
 /// and, when a restriction row exists, must pass the parental policy
 /// documented on `UserRestrictions`. Callers bind the user id blob at
-/// `user_param`.
+/// `user_param`. `work_alias` must name a `works` row.
+///
+/// A season or episode is rated as its nearest rated ancestor, since
+/// providers rate only the series: its own parental tags if it has any,
+/// else its parent's, else its root's (parents nest two levels at most, so
+/// the root is the grandparent). Every check is a correlated subquery, so an
+/// FTS query this is appended to still reads a single table.
 pub(crate) fn accessible_work_predicate(work_alias: &str, user_param: usize) -> String {
+    let u = user_param;
+    let rated = |target: &str| {
+        format!(
+            "EXISTS (SELECT 1 FROM tag_assignments ta JOIN tags t ON t.id = ta.tag_id \
+             WHERE ta.target_kind = 'work' AND ta.target_id = {target} AND t.namespace = 'parental')"
+        )
+    };
+    let allowed = |target: &str| {
+        format!(
+            "(NOT EXISTS (SELECT 1 FROM user_restriction_ratings urr WHERE urr.user_id = ?{u}) OR \
+             NOT EXISTS (SELECT 1 FROM tag_assignments ta JOIN tags t ON t.id = ta.tag_id \
+             WHERE ta.target_kind = 'work' AND ta.target_id = {target} AND t.namespace = 'parental' \
+             AND NOT EXISTS (SELECT 1 FROM user_restriction_ratings urr WHERE urr.user_id = ?{u} AND urr.tag_id = ta.tag_id)))"
+        )
+    };
+    let nearest_rated = ["id", "parent_id", "root_id"]
+        .map(|column| {
+            let target = format!("{work_alias}.{column}");
+            format!("WHEN {} THEN {} ", rated(&target), allowed(&target))
+        })
+        .concat();
     format!(
-        "(EXISTS (SELECT 1 FROM users u WHERE u.id = ?{user_param} AND u.is_admin = 1) OR (\
-         EXISTS (SELECT 1 FROM user_library_access ula WHERE ula.user_id = ?{user_param} AND ula.library_id = {work_alias}.library_id) AND (\
-         NOT EXISTS (SELECT 1 FROM user_restrictions ur WHERE ur.user_id = ?{user_param}) OR \
-         (NOT EXISTS (SELECT 1 FROM tag_assignments ta JOIN tags t ON t.id = ta.tag_id WHERE ta.target_kind = 'work' AND ta.target_id = {work_alias}.id AND t.namespace = 'parental') \
-          AND EXISTS (SELECT 1 FROM user_restrictions ur WHERE ur.user_id = ?{user_param} AND ur.allow_unrated = 1)) OR \
-         (EXISTS (SELECT 1 FROM tag_assignments ta JOIN tags t ON t.id = ta.tag_id WHERE ta.target_kind = 'work' AND ta.target_id = {work_alias}.id AND t.namespace = 'parental') \
-          AND (NOT EXISTS (SELECT 1 FROM user_restriction_ratings urr WHERE urr.user_id = ?{user_param}) OR \
-               NOT EXISTS (SELECT 1 FROM tag_assignments ta JOIN tags t ON t.id = ta.tag_id WHERE ta.target_kind = 'work' AND ta.target_id = {work_alias}.id AND t.namespace = 'parental' AND NOT EXISTS (SELECT 1 FROM user_restriction_ratings urr WHERE urr.user_id = ?{user_param} AND urr.tag_id = ta.tag_id)))))))"
+        "(EXISTS (SELECT 1 FROM users u WHERE u.id = ?{u} AND u.is_admin = 1) OR (\
+         EXISTS (SELECT 1 FROM user_library_access ula WHERE ula.user_id = ?{u} AND ula.library_id = {work_alias}.library_id) AND (\
+         NOT EXISTS (SELECT 1 FROM user_restrictions ur WHERE ur.user_id = ?{u}) OR \
+         CASE {nearest_rated}\
+         ELSE EXISTS (SELECT 1 FROM user_restrictions ur WHERE ur.user_id = ?{u} AND ur.allow_unrated = 1) END)))"
     )
 }
 

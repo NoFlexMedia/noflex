@@ -441,9 +441,12 @@ pub struct UserRestrictions {
     /// Ids of `parental`-namespace tags the user may watch. A rated work is
     /// visible only if every parental tag on it is listed. Empty means
     /// every rating is allowed; unrated works are governed by
-    /// `allow_unrated` alone.
+    /// `allow_unrated` alone. A work with no parental tag of its own is
+    /// rated as its nearest rated ancestor, so an episode takes its season's
+    /// or its series'.
     pub allowed_parental_rating_ids: Vec<TagId>,
-    /// Whether works without any parental tag are visible.
+    /// Whether works that neither carry nor inherit a parental tag are
+    /// visible.
     pub allow_unrated: bool,
     pub max_stream_bitrate_bps: Option<u64>,
     pub max_concurrent_transcodes: Option<u32>,

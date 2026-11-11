@@ -12,6 +12,7 @@ mod enqueue_task;
 mod external_auth;
 mod fixtures;
 mod host_library;
+mod library_writes;
 mod metadata_service;
 mod net;
 mod plugin_settings;

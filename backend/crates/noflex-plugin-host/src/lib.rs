@@ -15,6 +15,7 @@ mod engine;
 pub mod error;
 pub mod events;
 pub mod inference;
+mod library_writes;
 mod manifest;
 pub mod metadata_service;
 pub mod metadata_worker;
@@ -59,7 +60,7 @@ pub use metadata_service::{
     ArtworkCandidate, AutoIdentify, MetadataError, MetadataService, RatingsFetch, ServableImage,
 };
 pub use metadata_worker::{MetadataWorker, SweepReport, spawn_metadata_worker};
-pub use plugin::{LoadedPlugin, PluginHealth, PluginId, TaskHealth, TaskOutcome};
+pub use plugin::{HostServices, LoadedPlugin, PluginHealth, PluginId, TaskHealth, TaskOutcome};
 pub use priority::{Overrides, PluginOverride, PluginOverrideEntry, PriorityTable};
 pub use registry::{
     EmbedOutcome, Plugin, PluginRegistry, PluginTaskHealth, embed_inputs, metadata_fanout,

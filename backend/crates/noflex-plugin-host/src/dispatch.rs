@@ -146,7 +146,7 @@ impl CallTable {
 /// Must run before the host import's first `.await`: only the import's
 /// first poll is guaranteed to see the calling guest task as the store's
 /// current thread.
-fn current_principal(
+pub(crate) fn current_principal(
     access: &mut Access<'_, PluginCtx, HasSelf<PluginCtx>>,
 ) -> Option<noflex_core::UserId> {
     let calls = access.get().calls.clone();
@@ -155,7 +155,7 @@ fn current_principal(
     calls.with_entry(stack, |entry| entry.user).flatten()
 }
 
-fn has_capability(capabilities: &[String], capability: &str) -> bool {
+pub(crate) fn has_capability(capabilities: &[String], capability: &str) -> bool {
     capabilities.iter().any(|declared| declared == capability)
 }
 
@@ -210,6 +210,11 @@ pub struct PluginCtx {
     pub limits: PluginLimitState,
     /// In-flight export calls: who each acts for and when it is due.
     pub(crate) calls: CallTable,
+    /// The manifest's `tag_namespaces`, the only ones `host-tags` writes.
+    pub tag_namespaces: Vec<String>,
+    /// Where library writes are announced, so search, recommendations and
+    /// the planner hear of them.
+    pub events: Option<noflex_core::DomainEventBus>,
 
     wasi: WasiCtx,
     table: ResourceTable,
@@ -233,6 +238,8 @@ pub struct PluginCtxParts {
     pub assets_dir: Option<PathBuf>,
     pub inference: Arc<crate::Inference>,
     pub limits: PluginLimits,
+    pub tag_namespaces: Vec<String>,
+    pub events: Option<noflex_core::DomainEventBus>,
 }
 
 impl PluginCtxParts {
@@ -251,6 +258,8 @@ impl PluginCtxParts {
         .with_inference(self.inference.clone())
         .with_egress_hosts(self.http_egress_hosts.clone())
         .with_limits(self.limits.clone())
+        .with_tag_namespaces(self.tag_namespaces.clone())
+        .with_events(self.events.clone())
     }
 }
 
@@ -308,6 +317,8 @@ impl PluginCtx {
             inference: Arc::default(),
             limits,
             calls: CallTable::default(),
+            tag_namespaces: Vec::new(),
+            events: None,
             wasi,
             table: ResourceTable::new(),
         }
@@ -335,6 +346,16 @@ impl PluginCtx {
 
     pub fn with_limits(mut self, limits: PluginLimits) -> Self {
         self.limits = PluginLimitState::new(self.plugin_id.0.clone(), limits);
+        self
+    }
+
+    pub fn with_tag_namespaces(mut self, namespaces: Vec<String>) -> Self {
+        self.tag_namespaces = namespaces;
+        self
+    }
+
+    pub fn with_events(mut self, events: Option<noflex_core::DomainEventBus>) -> Self {
+        self.events = events;
         self
     }
 }
@@ -696,12 +717,7 @@ impl host_library::HostWithStore<PluginCtx> for HasSelf<PluginCtx> {
             _ => None,
         };
         crate::audit::library_lookup(&plugin_id.0, "lookup_work_by_id", &id, hit.is_some());
-        Ok(hit.map(|w| host_library::WorkSummary {
-            id: w.id.to_string(),
-            kind: work_kind_to_wit(w.kind),
-            title: w.title,
-            year: w.year,
-        }))
+        Ok(hit.map(work_summary))
     }
 
     async fn lookup_edition_by_id(
@@ -741,6 +757,97 @@ impl host_library::HostWithStore<PluginCtx> for HasSelf<PluginCtx> {
             intro_end_ms: e.intro_end_ms,
             credits_start_ms: e.credits_start_ms,
         }))
+    }
+
+    async fn find_works(
+        accessor: &Accessor<PluginCtx, Self>,
+        id: types::ExternalId,
+    ) -> wasmtime::Result<Vec<host_library::WorkSummary>> {
+        let (storage, plugin_id) = accessor.with(|mut access| {
+            let ctx = access.get();
+            (ctx.storage.clone(), ctx.plugin_id.clone())
+        });
+        let kind = crate::registry::from_wit_kind_id(id.kind);
+        let works = match storage {
+            Some(storage) => works_by_id(storage.as_ref(), kind, &id.value).await,
+            None => Vec::new(),
+        };
+        crate::audit::library_lookup(
+            &plugin_id.0,
+            "find_works",
+            &format!("{kind:?}:{}", id.value),
+            !works.is_empty(),
+        );
+        Ok(works.into_iter().map(work_summary).collect())
+    }
+
+    async fn find_episode(
+        accessor: &Accessor<PluginCtx, Self>,
+        series_ids: Vec<types::ExternalId>,
+        season: u32,
+        episode: u32,
+    ) -> wasmtime::Result<Option<host_library::WorkSummary>> {
+        let (storage, plugin_id) = accessor.with(|mut access| {
+            let ctx = access.get();
+            (ctx.storage.clone(), ctx.plugin_id.clone())
+        });
+        let mut hit = None;
+        if let Some(storage) = storage {
+            'ids: for id in series_ids.iter().take(MAX_SERIES_IDS) {
+                let kind = crate::registry::from_wit_kind_id(id.kind);
+                for series in works_by_id(storage.as_ref(), kind, &id.value).await {
+                    if series.kind != noflex_core::model::WorkKind::Series {
+                        continue;
+                    }
+                    match storage.episodes_numbered(series.id, season, episode).await {
+                        Ok(episodes) => {
+                            if let Some(found) = episodes.into_iter().next() {
+                                hit = Some(found);
+                                break 'ids;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(plugin = %plugin_id, error = %e, "find-episode: lookup failed");
+                        }
+                    }
+                }
+            }
+        }
+        crate::audit::library_lookup(
+            &plugin_id.0,
+            "find_episode",
+            &format!("s{season}e{episode}"),
+            hit.is_some(),
+        );
+        Ok(hit.map(work_summary))
+    }
+}
+
+/// Most series ids one `find-episode` tries; a show has a handful.
+const MAX_SERIES_IDS: usize = 16;
+
+/// The works carrying `(kind, value)`; a storage failure is logged and
+/// answers none, like the other lookups.
+async fn works_by_id(
+    storage: &dyn Storage,
+    kind: noflex_core::model::ExternalIdKind,
+    value: &str,
+) -> Vec<noflex_storage::domain::Work> {
+    match storage.works_by_external_id(kind, value).await {
+        Ok(works) => works,
+        Err(e) => {
+            tracing::warn!(error = %e, "host-library: external id lookup failed");
+            Vec::new()
+        }
+    }
+}
+
+fn work_summary(w: noflex_storage::domain::Work) -> host_library::WorkSummary {
+    host_library::WorkSummary {
+        id: w.id.to_string(),
+        kind: work_kind_to_wit(w.kind),
+        title: w.title,
+        year: w.year,
     }
 }
 
@@ -1068,6 +1175,7 @@ pub fn build_linker(
         &mut linker,
         |ctx| ctx,
     )?;
+    crate::library_writes::add_to_linker(&mut linker)?;
     Ok(linker)
 }
 

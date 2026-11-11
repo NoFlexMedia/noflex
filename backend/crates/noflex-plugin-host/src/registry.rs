@@ -152,6 +152,9 @@ pub struct PluginRegistry {
     /// Root directory `host-assets.read-file` serves. None disables the
     /// import: guests get an `unavailable` plugin error.
     assets_dir: Option<PathBuf>,
+    /// The domain bus, once [`Self::with_event_bus`] gave one: plugins'
+    /// library writes are announced on it.
+    events: Option<noflex_core::events::DomainEventBus>,
     /// An embeddings API an administrator chose. While set, it takes the place of
     /// every embedder plugin.
     remote_embedder: RwLock<Option<Arc<RemoteEmbedder>>>,
@@ -194,6 +197,7 @@ impl PluginRegistry {
             plugins: Arc::new(RwLock::new(HashMap::new())),
             storage: None,
             assets_dir: None,
+            events: None,
             remote_embedder: RwLock::new(None),
             embedder_changed: Arc::new(Notify::new()),
             task_handles: Mutex::new(HashMap::new()),
@@ -242,8 +246,9 @@ impl PluginRegistry {
     /// dispatcher task that fans every event out to loaded plugins
     /// exporting the `notifier` hook. Must be called within a tokio
     /// runtime.
-    pub fn with_event_bus(self, bus: noflex_core::events::DomainEventBus) -> Self {
+    pub fn with_event_bus(mut self, bus: noflex_core::events::DomainEventBus) -> Self {
         let handle = crate::dispatcher::spawn_on(&bus, Arc::clone(&self.plugins));
+        self.events = Some(bus);
         *self
             .dispatcher_handle
             .lock()
@@ -290,13 +295,17 @@ impl PluginRegistry {
                 id: manifest.plugin_id,
             });
         }
+        self.check_namespace_claims(&manifest, path)?;
         let plugin = LoadedPlugin::load_with_context(
             &self.engine,
             &self.linker,
             path,
             config_toml,
-            self.storage.clone(),
-            self.assets_dir.clone(),
+            &crate::plugin::HostServices {
+                storage: self.storage.clone(),
+                assets_dir: self.assets_dir.clone(),
+                events: self.events.clone(),
+            },
             &self.runtime_config,
         )?;
         let info = Plugin::from(&plugin);
@@ -326,6 +335,23 @@ impl PluginRegistry {
             }
         }
         Ok(info)
+    }
+
+    /// Refuse `manifest` when another loaded plugin claims one of its tag
+    /// namespaces. Its own earlier version doesn't count: a reload replaces it.
+    fn check_namespace_claims(
+        &self,
+        manifest: &PluginManifest,
+        path: &Path,
+    ) -> Result<(), HostError> {
+        let guard = self.plugins.read().expect("registry mutex poisoned");
+        match manifest.contested_namespace(guard.values().map(|other| &other.manifest)) {
+            Some((namespace, owner)) => Err(HostError::Manifest {
+                path: path.to_path_buf(),
+                reason: format!("tag namespace `{namespace}` is claimed by `{owner}`"),
+            }),
+            None => Ok(()),
+        }
     }
 
     /// The config `host-config.read` hands `manifest`'s plugin: its

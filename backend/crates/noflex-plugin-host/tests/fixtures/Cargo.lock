@@ -173,6 +173,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "noflex-fixture-library-writes"
+version = "0.0.1"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "noflex-fixture-net"
 version = "0.0.1"
 dependencies = [

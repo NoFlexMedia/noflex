@@ -151,8 +151,9 @@ pub(crate) async fn post_scan_fanout(
 }
 
 /// Map a domain event onto the notifier hook's wire shape, or `None` for
-/// one notifiers don't hear: pauses and resumes are for scrobblers, and a
-/// scan's changes go to `post-scan`. IDs cross as hyphenated UUID strings.
+/// one notifiers don't hear: pauses and resumes are for scrobblers, a
+/// scan's changes go to `post-scan`, and plugins' own library writes and
+/// imported watch state, which happened elsewhere, must not read as news. IDs cross as hyphenated UUID strings.
 /// `WorkAdded`'s `library` has no counterpart in the WIT record and is
 /// dropped by design.
 fn to_notify_event(event: &DomainEvent) -> Option<wit::NotifyEvent> {
@@ -207,7 +208,10 @@ fn to_notify_event(event: &DomainEvent) -> Option<wit::NotifyEvent> {
         DomainEvent::PlaybackPaused { .. }
         | DomainEvent::PlaybackResumed { .. }
         | DomainEvent::ScanStarted { .. }
-        | DomainEvent::ScanCompleted { .. } => return None,
+        | DomainEvent::ScanCompleted { .. }
+        | DomainEvent::PluginTagsSet { .. }
+        | DomainEvent::PluginCollectionSynced { .. }
+        | DomainEvent::UserStateImported { .. } => return None,
     })
 }
 

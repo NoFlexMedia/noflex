@@ -24,6 +24,9 @@ world plugin {
     import host-net;
     import host-assets;
     import host-inference;
+    import host-tags;
+    import host-collections;
+    import host-user-state;
 
     // ----- All hook exports (only useful for "everything-plugins") -----
     export metadata;

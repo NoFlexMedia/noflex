@@ -10,7 +10,7 @@
 
 use tokio::sync::broadcast;
 
-use crate::ids::{LibraryId, MediaFileId, UserId, WorkId};
+use crate::ids::{CollectionId, LibraryId, MediaFileId, UserId, WorkId};
 
 /// One domain occurrence. Carries resolved display strings (`title`,
 /// `library_name`) so consumers never need a storage round-trip to render
@@ -96,6 +96,27 @@ pub enum DomainEvent {
         updated_works: Vec<WorkId>,
         removed_works: Vec<WorkId>,
     },
+    /// A plugin replaced its tags in `namespace` on a work.
+    PluginTagsSet {
+        work: WorkId,
+        namespace: String,
+        plugin: String,
+    },
+    /// A plugin synced the collections it keeps under `key`, which are now
+    /// `collections`.
+    PluginCollectionSynced {
+        plugin: String,
+        key: String,
+        collections: Vec<CollectionId>,
+    },
+    /// A plugin imported watch state for `user` that changed `works`. It
+    /// happened elsewhere and earlier, so it is never a play: scrobblers and
+    /// notifiers aren't told, and nothing sends it back to `plugin`.
+    UserStateImported {
+        user: UserId,
+        plugin: String,
+        works: Vec<WorkId>,
+    },
 }
 
 impl DomainEvent {
@@ -112,6 +133,9 @@ impl DomainEvent {
             DomainEvent::PlaybackResumed { .. } => "playback-resumed",
             DomainEvent::ScanStarted { .. } => "scan-started",
             DomainEvent::ScanCompleted { .. } => "scan-completed",
+            DomainEvent::PluginTagsSet { .. } => "plugin-tags-set",
+            DomainEvent::PluginCollectionSynced { .. } => "plugin-collection-synced",
+            DomainEvent::UserStateImported { .. } => "user-state-imported",
         }
     }
 }

@@ -90,6 +90,26 @@ pub mod scrobbler {
     });
 }
 
+/// The imports through which plugins write library data they own. No
+/// convenience world carries them, so this world exists only to generate
+/// their host traits; guests import them beside a world of their own.
+pub mod library_writes {
+    wasmtime::component::bindgen!({
+        inline: "
+            package noflex:host-writes;
+
+            world library-writes {
+                import noflex:plugin/host-tags@0.2.0;
+                import noflex:plugin/host-collections@0.2.0;
+                import noflex:plugin/host-user-state@0.2.0;
+            }
+        ",
+        path: "../noflex-plugin-wit/wit",
+        world: "noflex:host-writes/library-writes",
+        imports: { default: trappable },
+    });
+}
+
 pub mod subtitle {
     wasmtime::component::bindgen!({
         path: "../noflex-plugin-wit/wit",

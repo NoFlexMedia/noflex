@@ -87,7 +87,7 @@ interface host-config {
 /// import that the host implements over `Storage`. More are added as
 /// concrete use cases arise.
 interface host-library {
-    use types.{work-id, work-kind, edition-id};
+    use types.{work-id, work-kind, edition-id, external-id};
 
     record work-summary {
         id: work-id,
@@ -116,6 +116,138 @@ interface host-library {
     lookup-work-by-id: async func(id: work-id) -> option<work-summary>;
 
     lookup-edition-by-id: async func(id: edition-id) -> option<edition-summary>;
+
+    /// Every work carrying `id` among its external ids. `value` is matched
+    /// exactly as metadata providers store it, which for TMDb and TheTVDB
+    /// is a path (`movie/603`, `tv/1399`, `series/81189`); IMDb ids are
+    /// bare (`tt0133093`).
+    find-works: async func(id: external-id) -> list<work-summary>;
+
+    /// The episode numbered `episode` in season `season` (`0` for specials)
+    /// of the first series carrying any of `series-ids`, matched as
+    /// `find-works` matches. A multi-episode file counts for every number
+    /// it spans.
+    find-episode: async func(series-ids: list<external-id>, season: u32, episode: u32)
+        -> option<work-summary>;
+}
+
+/// Tags a plugin owns. Requires the `library.tags.write` capability, and a
+/// namespace the manifest claims in `tag_namespaces`; the host refuses to
+/// load a plugin claiming a core namespace (`genre`, `person`, ...) or one
+/// another loaded plugin claims. Every write is audit-logged. Tags show to
+/// everyone who can see the title, like any other tag in the namespace.
+interface host-tags {
+    use types.{work-id, plugin-error};
+
+    record tag-draft {
+        /// Lowercase ASCII letters, digits and `-`, at most 128 bytes;
+        /// unique within the namespace.
+        slug: string,
+        /// What clients show; at most 256 bytes.
+        display: string,
+        /// How strongly the tag applies, in [0.0, 1.0].
+        weight: f32,
+    }
+
+    /// Replace this plugin's tags in `namespace` on `work` with `tags`, at
+    /// most 500. Repeating a call changes nothing, so a retried task can
+    /// send it again. `not-found` when `work` doesn't exist.
+    set-tags: async func(work: work-id, namespace: string, tags: list<tag-draft>)
+        -> result<_, plugin-error>;
+}
+
+/// Collections a plugin owns. Requires the `library.collections.write`
+/// capability; every write is audit-logged.
+interface host-collections {
+    use types.{work-id, plugin-error};
+
+    /// Create or replace the collections this plugin keeps under `key`
+    /// (unique per plugin, at most 128 bytes). Collections are
+    /// library-scoped, so a list spanning libraries becomes one collection
+    /// per library under the same key, each with its works in list order;
+    /// works that don't exist are skipped, and at most 500 may be sent. A
+    /// library the list no longer reaches loses its collection, so an empty
+    /// list deletes them all. An administrator can detach a collection,
+    /// making it theirs: the plugin then never writes that key in that
+    /// library again. Returns how many collections the key has now.
+    sync-collection: async func(
+        key: string,
+        title: string,
+        overview: option<string>,
+        works: list<work-id>,
+    ) -> result<u32, plugin-error>;
+}
+
+/// A user's watch state: what they played and when, their ratings and
+/// favorites. Per-user like `host-secrets.read-for-user`: `user` must be
+/// the user the calling hook acts for (`capability-denied` otherwise,
+/// `unavailable` in a call acting for no one). Reading requires
+/// `user-state.read`, importing `user-state.write`; every call is
+/// audit-logged with the user id.
+interface host-user-state {
+    use types.{user-id, work-id, work-kind, external-id, plugin-error};
+
+    /// Milliseconds since the Unix epoch, UTC.
+    type timestamp = s64;
+
+    record user-rating {
+        /// On a 0–10 scale.
+        value: f32,
+        rated-at: timestamp,
+    }
+
+    record history-entry {
+        work: work-id,
+        kind: work-kind,
+        /// The work's provider ids, as `host-library.find-works` takes them.
+        external-ids: list<external-id>,
+        /// For an episode, its series' ids, season and number.
+        series-external-ids: list<external-id>,
+        season-number: option<u32>,
+        episode-number: option<u32>,
+        /// When last played to the end; none when unplayed.
+        played-at: option<timestamp>,
+        play-count: u32,
+        rating: option<user-rating>,
+        favorite: bool,
+    }
+
+    record history-page {
+        entries: list<history-entry>,
+        /// Pass back as `cursor` for the next page; none on the last.
+        next-cursor: option<string>,
+    }
+
+    /// A page of up to 500 of `user`'s titles that are played, rated or
+    /// favorited, or with `since`, only those played or rated at or after
+    /// it. A play, rating or favorite this plugin imported is left out (a
+    /// title left with nothing is skipped), so a sync never reads its own
+    /// imports back as new: what remains happened here or came from
+    /// elsewhere.
+    user-history: async func(user: user-id, since: option<timestamp>, cursor: option<string>)
+        -> result<history-page, plugin-error>;
+
+    record state-import {
+        work: work-id,
+        /// When it was last played to the end, if it was.
+        played-at: option<timestamp>,
+        /// How many times, when known; at least one with `played-at`.
+        play-count: option<u32>,
+        rating: option<user-rating>,
+        /// Only `true` changes anything.
+        favorite: bool,
+    }
+
+    /// Apply up to 500 `items` to `user`'s state. Imports only add: a play
+    /// counts when it is newer than the recorded one, a rating when its
+    /// time is, and a favorite when set; nothing is ever un-played,
+    /// un-rated or un-favorited, and the play count becomes the larger of
+    /// the two, so importing the same history twice changes nothing. Works
+    /// the user can't see are skipped. Imported state is never sent to
+    /// scrobblers or notifiers as if it had just been played. Returns how
+    /// many titles changed.
+    import-user-state: async func(user: user-id, items: list<state-import>)
+        -> result<u32, plugin-error>;
 }
 
 /// Dynamic follow-up work. Any hook call may enqueue a `background`

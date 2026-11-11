@@ -277,6 +277,7 @@ mod tests {
             secrets_read: vec![],
             user_secrets_read: vec![],
             user_secrets_write: vec![],
+            tag_namespaces: vec![],
             author: None,
             license: None,
             homepage: None,

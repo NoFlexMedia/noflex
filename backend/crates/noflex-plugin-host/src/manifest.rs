@@ -18,10 +18,17 @@ const CAPABILITIES: &[&str] = &[
     "background",
     "http.egress",
     "http.private-network",
+    "library.collections.write",
+    "library.tags.write",
     "secrets.read",
     "user-secrets.read",
     "user-secrets.write",
+    "user-state.read",
+    "user-state.write",
 ];
+
+/// Longest tag namespace a plugin may claim.
+const MAX_NAMESPACE_BYTES: usize = 64;
 
 /// The `noflex:manifest` custom section payload, expected as UTF-8 TOML.
 ///
@@ -63,6 +70,12 @@ pub struct PluginManifest {
     /// imply license to overwrite it.
     #[serde(default)]
     pub user_secrets_write: Vec<String>,
+    /// Tag namespaces this plugin writes through `host-tags.set-tags`,
+    /// which no other loaded plugin may claim. Requires
+    /// `library.tags.write`; a core namespace
+    /// ([`noflex_storage::domain::CORE_TAG_NAMESPACES`]) fails the load.
+    #[serde(default)]
+    pub tag_namespaces: Vec<String>,
     #[serde(default)]
     pub author: Option<String>,
     #[serde(default)]
@@ -270,6 +283,12 @@ pub struct TaskRegistration {
     /// `host-tasks.enqueue`.
     #[serde(default)]
     pub payload: Option<String>,
+    /// Each tick runs the task once for every user who has linked an
+    /// account through the plugin and has no chain running, bound to them
+    /// and with their id as the payload, in place of the unbound run.
+    /// Requires the `user-link` hook, and no static `payload`.
+    #[serde(default)]
+    pub per_user: bool,
 }
 
 /// True when `capabilities` declares `background` — the shared gate for
@@ -528,7 +547,53 @@ impl PluginManifest {
                 }
             }
         }
+        match (has("library.tags.write"), self.tag_namespaces.is_empty()) {
+            (false, false) => {
+                return Err(reject(
+                    "tag_namespaces declared without the `library.tags.write` capability".into(),
+                ));
+            }
+            (true, true) => {
+                return Err(reject(
+                    "`library.tags.write` declared without any tag_namespaces".into(),
+                ));
+            }
+            _ => {}
+        }
+        for (index, namespace) in self.tag_namespaces.iter().enumerate() {
+            if !valid_namespace(namespace) {
+                return Err(reject(format!(
+                    "tag namespace `{namespace}` must be lowercase letters, digits and `-`"
+                )));
+            }
+            if noflex_storage::domain::CORE_TAG_NAMESPACES.contains(&namespace.as_str()) {
+                return Err(reject(format!(
+                    "tag namespace `{namespace}` belongs to the server"
+                )));
+            }
+            if self.tag_namespaces[..index].contains(namespace) {
+                return Err(reject(format!("duplicate tag namespace `{namespace}`")));
+            }
+        }
         Ok(())
+    }
+
+    /// The first of this plugin's tag namespaces one of `others` claims,
+    /// with that plugin's id. A manifest with this plugin's own id doesn't
+    /// count, as loading it replaces that version.
+    pub(crate) fn contested_namespace<'a>(
+        &self,
+        others: impl IntoIterator<Item = &'a PluginManifest>,
+    ) -> Option<(String, String)> {
+        others
+            .into_iter()
+            .filter(|other| other.plugin_id != self.plugin_id)
+            .find_map(|other| {
+                self.tag_namespaces
+                    .iter()
+                    .find(|namespace| other.tag_namespaces.contains(namespace))
+                    .map(|namespace| (namespace.clone(), other.plugin_id.clone()))
+            })
     }
 
     /// Validate the `[[tasks]]` registrations: non-empty unique names,
@@ -564,6 +629,22 @@ impl PluginManifest {
             }
             if self.tasks[..i].iter().any(|t| t.name == task.name) {
                 return Err(reject(format!("duplicate task name `{}`", task.name)));
+            }
+            let links = self
+                .hooks
+                .iter()
+                .any(|h| HookKind::parse(h) == Some(HookKind::UserLink));
+            if task.per_user && !links {
+                return Err(reject(format!(
+                    "per-user task `{}` declared without the user-link hook",
+                    task.name
+                )));
+            }
+            if task.per_user && task.payload.is_some() {
+                return Err(reject(format!(
+                    "per-user task `{}` has a payload; its runs carry the user's id",
+                    task.name
+                )));
             }
         }
         Ok(())
@@ -664,6 +745,14 @@ impl PluginManifest {
         }
         Ok(())
     }
+}
+
+fn valid_namespace(namespace: &str) -> bool {
+    !namespace.is_empty()
+        && namespace.len() <= MAX_NAMESPACE_BYTES
+        && namespace
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 pub(crate) fn validate_plugin_id(id: &str) -> Result<(), &'static str> {
@@ -1092,6 +1181,102 @@ mod tests {
         let choice = spec(SettingKind::Choice, Some(vec!["a".into(), "b".into()]));
         assert!(choice.parse_value("b").is_ok());
         assert!(choice.parse_value("c").is_err());
+    }
+
+    fn tagging(id: &str, namespaces: &str) -> PluginManifest {
+        PluginManifest::from_bytes(
+            format!(
+                r#"
+                manifest_version = 1
+                plugin_id = "{id}"
+                display_name = "Tagger"
+                version = "0.1.0"
+                noflex_api_version = "0.2"
+                capabilities = ["library.tags.write"]
+                tag_namespaces = [{namespaces}]
+                "#
+            )
+            .as_bytes(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn tag_namespaces_are_the_plugins_own() {
+        let path = Path::new("tagger.wasm");
+        assert!(
+            tagging("tagger", r#""trakt-list""#)
+                .check_contract(path)
+                .is_ok()
+        );
+        for (namespaces, reason) in [
+            (r#""genre""#, "belongs to the server"),
+            (r#""category""#, "belongs to the server"),
+            (r#""Lists""#, "lowercase"),
+            (r#""a", "a""#, "duplicate"),
+            ("", "without any tag_namespaces"),
+        ] {
+            let error = tagging("tagger", namespaces)
+                .check_contract(path)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(reason), "{namespaces}: {error}");
+        }
+        let mut untagged = tagging("tagger", r#""lists""#);
+        untagged.capabilities.clear();
+        assert!(
+            untagged
+                .check_contract(path)
+                .unwrap_err()
+                .to_string()
+                .contains("without the `library.tags.write` capability")
+        );
+
+        let mine = tagging("tagger", r#""lists", "moods-of-mine""#);
+        let rival = tagging("rival", r#""moods-of-mine""#);
+        assert_eq!(
+            mine.contested_namespace([&rival]),
+            Some(("moods-of-mine".into(), "rival".into()))
+        );
+        assert_eq!(
+            mine.contested_namespace([&tagging("tagger", r#""lists""#)]),
+            None,
+            "a reload of the same plugin"
+        );
+    }
+
+    #[test]
+    fn per_user_tasks_need_account_links_and_no_payload() {
+        let manifest = |hooks: &str, payload: &str| {
+            PluginManifest::from_bytes(
+                format!(
+                    r#"
+                    manifest_version = 1
+                    plugin_id = "syncer"
+                    display_name = "Syncer"
+                    version = "0.1.0"
+                    noflex_api_version = "0.2"
+                    hooks = [{hooks}]
+                    capabilities = ["background"]
+                    [[tasks]]
+                    name = "sync"
+                    interval_ms = 1000
+                    per_user = true
+                    {payload}
+                    "#
+                )
+                .as_bytes(),
+            )
+            .unwrap()
+        };
+        let path = Path::new("syncer.wasm");
+        assert!(manifest(r#""user-link""#, "").check_tasks(path).is_ok());
+        assert!(manifest("", "").check_tasks(path).is_err());
+        assert!(
+            manifest(r#""user-link""#, r#"payload = "x""#)
+                .check_tasks(path)
+                .is_err()
+        );
     }
 
     #[test]

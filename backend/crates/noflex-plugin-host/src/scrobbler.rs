@@ -213,8 +213,8 @@ async fn dispatch(
 
 /// An episode's series and its season and episode numbers, as far as
 /// storage knows them; `None` for anything but an episode.
-async fn episode_place(
-    storage: &Arc<dyn Storage>,
+pub(crate) async fn episode_place(
+    storage: &dyn Storage,
     work: &Work,
 ) -> Option<(Option<Work>, Option<u32>, Option<u32>)> {
     if work.kind != noflex_core::model::WorkKind::Episode {
@@ -261,8 +261,9 @@ async fn enrich(storage: &Arc<dyn Storage>, work: &Work, occ: &Occurrence) -> wi
             None
         }
     };
-    let (series, season_number, episode_number) =
-        episode_place(storage, work).await.unwrap_or_default();
+    let (series, season_number, episode_number) = episode_place(storage.as_ref(), work)
+        .await
+        .unwrap_or_default();
     wit::ScrobbleEvent {
         user: occ.user.to_string(),
         work: occ.work.to_string(),
@@ -393,6 +394,15 @@ mod tests {
                 library_name: "Movies".into(),
             })
             .is_none()
+        );
+        assert!(
+            Occurrence::from_event(&DomainEvent::UserStateImported {
+                user,
+                plugin: "trakt".into(),
+                works: vec![work],
+            })
+            .is_none(),
+            "imported state is never scrobbled, to its source or anyone"
         );
         assert!(
             Occurrence::from_event(&DomainEvent::WorkAdded {

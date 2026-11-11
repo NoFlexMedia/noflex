@@ -1,0 +1,23 @@
+manifest_version = 1
+plugin_id = "fixture-library-writes"
+display_name = "Library Writes Test Fixture"
+version = "0.0.1"
+noflex_api_version = "0.2"
+hooks = ["user-link"]
+capabilities = [
+    "background",
+    "user-secrets.write",
+    "library.tags.write",
+    "library.collections.write",
+    "user-state.read",
+    "user-state.write",
+]
+user_secrets_write = ["ticked"]
+tag_namespaces = ["fixture-list"]
+license = "AGPL-3.0-only"
+
+# Runs once per linked user on every tick, bound to them.
+[[tasks]]
+name = "per-user"
+interval_ms = 200
+per_user = true

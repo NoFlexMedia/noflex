@@ -1089,24 +1089,20 @@ impl LoadedPlugin {
             linker,
             path,
             String::new(),
-            None,
-            None,
+            &HostServices::default(),
             &EngineConfig::default(),
         )
     }
 
     /// Like [`Self::load`], with an explicit per-plugin TOML config blob
-    /// (rendered back to the guest through `host-config::read`), the
-    /// storage handle `host-library` lookups are served from, and the
-    /// assets directory `host-assets.read-file` resolves names under
-    /// (None disables that import).
+    /// (rendered back to the guest through `host-config::read`) and the
+    /// [`HostServices`] its host imports are served from.
     pub fn load_with_context(
         engine: &Engine,
         linker: &Linker<PluginCtx>,
         path: &Path,
         config_toml: String,
-        storage: Option<Arc<dyn noflex_storage::Storage>>,
-        assets_dir: Option<PathBuf>,
+        services: &HostServices,
         runtime_config: &EngineConfig,
     ) -> Result<Self, HostError> {
         let bytes = std::fs::read(path)?;
@@ -1157,14 +1153,16 @@ impl LoadedPlugin {
                 .map(|task| task.name.clone())
                 .collect(),
             http_egress_hosts: manifest.http_egress_hosts.clone(),
-            storage,
-            assets_dir,
+            storage: services.storage.clone(),
+            assets_dir: services.assets_dir.clone(),
             inference: runtime_config.inference.clone(),
             limits: PluginLimits::from_mb(
                 manifest
                     .memory_limit_mb
                     .unwrap_or(runtime_config.default_memory_limit_mb),
             ),
+            tag_namespaces: manifest.tag_namespaces.clone(),
+            events: services.events.clone(),
         };
         let deadlines = Deadlines::build(&manifest, runtime_config);
         let health = Arc::new(RwLock::new(PluginHealth::from_manifest(&manifest)));
@@ -1195,6 +1193,19 @@ impl LoadedPlugin {
     pub fn exports(&self, hook: HookKind) -> bool {
         self.exported_hooks.contains(&hook)
     }
+}
+
+/// What a loaded plugin's host imports are served from. Every part is
+/// optional for minimal embeds and tests: without storage, `host-library`
+/// misses and the write imports are unavailable.
+#[derive(Clone, Default)]
+pub struct HostServices {
+    /// Backs `host-library`, the write imports and background-task state.
+    pub storage: Option<Arc<dyn noflex_storage::Storage>>,
+    /// Root `host-assets.read-file` resolves names under; `None` disables it.
+    pub assets_dir: Option<PathBuf>,
+    /// Where the plugin's library writes are announced.
+    pub events: Option<noflex_core::DomainEventBus>,
 }
 
 /// Per-call wall-clock deadlines, one per hook. Measured from when the

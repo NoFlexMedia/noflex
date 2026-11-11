@@ -146,6 +146,35 @@ pub fn library_lookup(plugin_id: &str, op: &str, key: &str, hit: bool) {
     );
 }
 
+/// Helper: log one write a plugin made to the library (`set-tags`,
+/// `sync-collection`), `target` naming what it wrote, and how many items it
+/// carried. `ok` is false for a refused or failed write.
+pub fn library_write(plugin_id: &str, op: &str, target: &str, items: usize, ok: bool) {
+    tracing::info!(
+        target: TARGET,
+        plugin = plugin_id,
+        event = "library_write",
+        op,
+        target_name = target,
+        items,
+        ok,
+    );
+}
+
+/// Helper: log one `host-user-state` call for `user`: `items` read or
+/// sent, and whether it was granted and succeeded.
+pub fn user_state(plugin_id: &str, op: &str, user: &str, items: usize, ok: bool) {
+    tracing::info!(
+        target: TARGET,
+        plugin = plugin_id,
+        event = "user_state",
+        op,
+        user,
+        items,
+        ok,
+    );
+}
+
 /// Helper: log a `host-tasks.enqueue` call. The payload is never logged;
 /// only the task name and whether the enqueue was accepted.
 pub fn task_enqueue(plugin_id: &str, task: &str, accepted: bool) {

@@ -11,6 +11,8 @@
 // A task has one `more(cursor)` chain run unbound, for its schedule and
 // for unbound enqueues, and one per user whose call enqueued a payload,
 // run bound to them. Each iteration runs every chain that is due at once.
+// A `per_user` task's schedule starts such a chain for every linked user
+// who has none running, instead of the unbound run.
 //
 // Cursors (with the user each chain is bound to), failure counts, and
 // dynamically enqueued payloads persist in storage (`plugin_task_state` /
@@ -223,6 +225,10 @@ async fn run_task_loop(
     // restored chain resumes at once, as whatever it waits on is theirs.
     let mut prompt_unbound = false;
     let mut prompt_users: HashSet<noflex_core::UserId> = chains.users.keys().copied().collect();
+    // Users whose chains were cancelled while they unlink, whose secrets may
+    // not be gone yet: a per-user tick mustn't start them a new chain. They
+    // leave once they're seen unlinked, or an enqueue of theirs starts one.
+    let mut unlinking: HashSet<noflex_core::UserId> = HashSet::new();
 
     let end_reason = loop {
         let mut tick = false;
@@ -240,8 +246,9 @@ async fn run_task_loop(
             break "instance stopped";
         }
 
-        let changed =
-            !cancelled_users(&plugin, &reg.name, &mut chains, &mut prompt_users).is_empty();
+        let cancelled = cancelled_users(&plugin, &reg.name, &mut chains, &mut prompt_users);
+        let changed = !cancelled.is_empty();
+        unlinking.extend(cancelled);
 
         // Dynamic payloads (host-tasks.enqueue) take priority over the
         // scheduled payload on their chain.
@@ -259,6 +266,9 @@ async fn run_task_loop(
 
         let mut runs: Vec<Run> = Vec::new();
         if let Some((user, payload)) = dequeued {
+            if let Some(user) = user {
+                unlinking.remove(&user);
+            }
             runs.push(Run {
                 user,
                 cursor: chains.cursor(user),
@@ -266,7 +276,26 @@ async fn run_task_loop(
             });
         }
         let covered = |runs: &[Run], user| runs.iter().any(|r| r.user == user);
-        if (tick || prompt_unbound) && !covered(&runs, None) {
+        // A per-user task's schedule starts a chain for each linked user
+        // instead of running unbound; users mid-chain carry on below.
+        let unbound_tick = tick && !reg.per_user;
+        if tick && reg.per_user {
+            let linked = linked_users(&storage, &plugin_id).await;
+            unlinking.retain(|user| linked.contains(user));
+            for user in linked {
+                if !unlinking.contains(&user)
+                    && !chains.users.contains_key(&user)
+                    && !covered(&runs, Some(user))
+                {
+                    runs.push(Run {
+                        user: Some(user),
+                        cursor: None,
+                        payload: Some(user.to_string()),
+                    });
+                }
+            }
+        }
+        if (unbound_tick || prompt_unbound) && !covered(&runs, None) {
             runs.push(Run {
                 user: None,
                 cursor: chains.unbound.clone(),
@@ -318,6 +347,7 @@ async fn run_task_loop(
         let now = OffsetDateTime::now_utc();
         // Cancelled mid-run: their run's outcome no longer has a chain to land in.
         let cancelled = cancelled_users(&plugin, &reg.name, &mut chains, &mut prompt_users);
+        unlinking.extend(cancelled.iter().copied());
 
         let mut failed = false;
         for (run, outcome) in runs.iter().zip(outcomes) {
@@ -375,6 +405,24 @@ async fn run_task_loop(
     };
 
     audit::task_run(&plugin_id, &reg.name, "end", end_reason);
+}
+
+/// Everyone who has linked an account through `plugin_id`; none without
+/// storage, or when reading it fails (the next tick asks again).
+async fn linked_users(
+    storage: &Option<Arc<dyn Storage>>,
+    plugin_id: &str,
+) -> Vec<noflex_core::UserId> {
+    let Some(storage) = storage else {
+        return Vec::new();
+    };
+    match storage.plugin_linked_users(plugin_id).await {
+        Ok(users) => users,
+        Err(e) => {
+            tracing::warn!(plugin = %plugin_id, error = %e, "per-user task: linked users unreadable");
+            Vec::new()
+        }
+    }
 }
 
 /// Apply the cancellations waiting for `task`: drop each user's chain and

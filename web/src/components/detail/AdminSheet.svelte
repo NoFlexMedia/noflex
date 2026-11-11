@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script>
   import ArrowsClockwise from "phosphor-svelte/lib/ArrowsClockwise";
+  import ImageIcon from "phosphor-svelte/lib/ImageIcon";
   import Lock from "phosphor-svelte/lib/Lock";
   import LockOpen from "phosphor-svelte/lib/LockOpen";
   import MagnifyingGlass from "phosphor-svelte/lib/MagnifyingGlass";
@@ -13,6 +14,7 @@
   import { ask, attempt } from "$lib/ui.svelte.js";
   import ProviderLogo from "$components/ProviderLogo.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
+  import ArtworkPicker, { PICKABLE } from "./ArtworkPicker.svelte";
 
   /** Edits land in the cache by themselves; `onremoved` follows an edition or file removal. */
   let { open = $bindable(false), work, edition = null, media = null, onremoved } = $props();
@@ -61,6 +63,8 @@
 
   const FIELDS = [["title", "Title"], ["sortTitle", "Sort title"], ["originalTitle", "Original title"], ["year", "Year"], ["releaseDate", "Release date"], ["communityRating", "Rating"], ["tagline", "Tagline"]];
   const LOCKS = ["TITLE", "SORT_TITLE", "ORIGINAL_TITLE", "YEAR", "RELEASE_DATE", "OVERVIEW", "TAGLINE", "COMMUNITY_RATING", "GENRES", "STUDIOS", "PEOPLE", "PARENTAL_RATING"];
+  // Picking artwork locks its kind; these unlock it for refreshes again.
+  let locks = $derived([...LOCKS, ...(PICKABLE[work.kind] ?? ["PRIMARY"]).map((kind) => `${kind}_IMAGE`)]);
 
   let query = $state("");
   let year = $state("");
@@ -153,6 +157,12 @@
   </section>
 
   <section>
+    <h3><ImageIcon size={16} />Artwork</h3>
+    <p class="hint">Choose from every image provider on this server. A pick stays through refreshes until you unlock it below.</p>
+    {#key work.id}<ArtworkPicker {work} />{/key}
+  </section>
+
+  <section>
     <h3><PencilSimple size={16} />Edit details</h3>
     {#key work}
       <form class="fields" onsubmit={save}>
@@ -169,7 +179,7 @@
     <h3><Lock size={16} />Field locks</h3>
     <p class="hint">Locked fields are never overwritten by provider refreshes.</p>
     <div class="locks">
-      {#each LOCKS as field}
+      {#each locks as field}
         <button class:on={work.lockedFields.includes(field)} aria-pressed={work.lockedFields.includes(field)} onclick={() => toggleLock(field)}>
           {#if work.lockedFields.includes(field)}<Lock size={13} />{:else}<LockOpen size={13} />{/if}{titleCase(field)}
         </button>

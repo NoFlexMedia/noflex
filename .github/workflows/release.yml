@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Builds the Flutter app for every client target, and gathers the source of the
-# third-party libraries it ships. Pushing a `v*` tag attaches them to a draft
-# release for a person to look over and publish; running it by hand just leaves
-# them as this run's artifacts. Any target can fail without stopping the others.
-# See docs/PACKAGING.md, which also says what each needs.
+# Builds the server for Linux and Windows, as bundles, packages, an installer and
+# a container image, and the Flutter app for every client target, with the source
+# of the third-party code they ship. Pushing a `v*` tag attaches them to a draft
+# release for a person to look over and publish, and pushes the image; running it
+# by hand just leaves them as this run's artifacts. Any target can fail without
+# stopping the others. See docs/PACKAGING.md, which also says what each needs.
 
 name: release
 
@@ -24,8 +25,19 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      - name: Name the version
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=${GITHUB_REF_NAME#v}
+          else
+            version=$(sed -n 's/^version = "\(.*\)"/\1/p' backend/Cargo.toml | head -1)
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
       - uses: cachix/install-nix-action@v24
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
@@ -38,6 +50,223 @@ jobs:
       - name: Check the record of third-party code against the app
         run: nix develop .#no-flutter --command sh -c 'cd backend && cargo xtask third-party check'
       - run: nix develop .#flutter-check --command sh -c 'cd flutter && flutter pub get && dart run build_runner build && flutter analyze --no-pub && flutter test --no-pub'
+
+  # One web client for every bundle, built in the Nix shell.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v24
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - run: nix develop .#no-flutter --command sh -c 'cd web && npm ci --no-audit --no-fund && npm run build'
+      - run: mkdir -p dist && mv web/build dist/web && tar -cf dist/web.tar -C dist web
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web
+          path: dist/web.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  # The ffmpeg each bundle ships. A cold build compiles every dependency, which
+  # takes hours, so the result is kept on a hash of everything that makes it.
+  ffmpeg:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, x86_64-pc-windows-msvc]
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore ffmpeg
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: dist/ffmpeg-${{ matrix.target }}
+          key: ffmpeg-${{ matrix.target }}-${{ hashFiles('packaging/ffmpeg/ffmpeg.toml', 'packaging/ffmpeg/build.sh', 'packaging/ffmpeg/build-images.sh', 'packaging/ffmpeg/pipeline/**', 'backend/rust-toolchain.toml') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/free-disk
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: cachix/install-nix-action@v24
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: nix develop .#no-flutter --command sh -c 'cd backend && cargo xtask ffmpeg-build ${{ matrix.target }} ../dist/ffmpeg-${{ matrix.target }}'
+      # An artifact keeps no file modes, so the binaries travel in a tar.
+      - run: tar -cf dist/ffmpeg-${{ matrix.target }}.tar -C dist ffmpeg-${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-${{ matrix.target }}
+          path: dist/ffmpeg-${{ matrix.target }}.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  # The GPL's corresponding source for the ffmpeg in every bundle, in parts that
+  # fit GitHub's 2 GiB a file: `cat noflex-*-ffmpeg-source.tar.* | tar -x`.
+  ffmpeg-source:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore the source
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: dist/ffmpeg-source
+          key: ffmpeg-source-${{ hashFiles('packaging/ffmpeg/**', 'backend/rust-toolchain.toml') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/free-disk
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: cachix/install-nix-action@v24
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: nix develop .#no-flutter --command sh -c 'cd backend && cargo xtask ffmpeg-source ../dist/ffmpeg-source'
+      - env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          mkdir -p dist/release
+          tar -cf - -C dist ffmpeg-source | split -b 1900M -d -a 2 - "dist/release/noflex-$VERSION-ffmpeg-source.tar."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-source
+          path: dist/release/noflex-*
+          retention-days: 14
+          if-no-files-found: error
+
+  # A bundle per target, smoke-tested on its own platform, then packaged: a .deb
+  # and an .rpm for Linux, an installer for Windows. Linux bundles link in the Nix
+  # shell against an old glibc; Windows can't use Nix, so takes Rust from rustup.
+  server:
+    needs: [check, web, ffmpeg]
+    if: ${{ !cancelled() && needs.check.result == 'success' && needs.web.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-24.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.check.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: "{web,ffmpeg-${{ matrix.target }}}"
+          merge-multiple: true
+      - run: tar -xf dist/web.tar -C dist && tar -xf "dist/ffmpeg-$TARGET.tar" -C dist
+      - if: runner.os == 'Linux'
+        uses: ./.github/actions/free-disk
+      - if: runner.os == 'Linux'
+        uses: cachix/install-nix-action@v24
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build the bundle
+        if: runner.os == 'Linux'
+        run: nix develop .#no-flutter --command sh -c "cd backend && cargo xtask bundle $TARGET --ffmpeg ../dist/ffmpeg-$TARGET --web ../dist/web"
+      - name: Build the bundle
+        if: runner.os == 'Windows'
+        working-directory: backend
+        run: |
+          rustup toolchain install
+          cargo xtask bundle "$TARGET" --ffmpeg "../dist/ffmpeg-$TARGET" --web ../dist/web
+      # Outside the Nix shell, as someone downloading it would run it.
+      - run: packaging/smoke/ffmpeg.sh "dist/noflex-$TARGET/ffmpeg/bin/ffmpeg"
+      - run: packaging/smoke/server.sh "dist/noflex-$TARGET"
+      - name: Package for apt and dnf
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/release
+          mv "dist/noflex-$TARGET.tar.zst" "dist/release/noflex-$VERSION-server-$TARGET.tar.zst"
+          nix develop .#no-flutter --command packaging/linux/package.sh "dist/noflex-$TARGET" "$VERSION" dist/release
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        run: |
+          installer=$(cygpath -u "$RUNNER_TEMP")/innosetup-6.7.4.exe
+          curl -fsSL -o "$installer" https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe
+          echo "a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c  $installer" | sha256sum -c
+          MSYS2_ARG_CONV_EXCL='*' "$installer" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER
+      - name: Make the installer
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p dist/release
+          mv "dist/noflex-$TARGET.zip" "dist/release/noflex-$VERSION-server-$TARGET.zip"
+          packaging/windows/installer.sh "dist/noflex-$TARGET" "$VERSION" dist/release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.target }}
+          path: dist/release/*
+          retention-days: 14
+          if-no-files-found: error
+
+  # One image for amd64 and arm64, around the Linux bundles. Only a tag pushes it.
+  image:
+    needs: [check, server]
+    if: ${{ !cancelled() && needs.check.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/release
+          pattern: server-*-linux-gnu
+          merge-multiple: true
+      - name: Unpack a bundle per architecture
+        run: |
+          for pair in amd64:x86_64 arm64:aarch64; do
+            arch=${pair%%:*}
+            mkdir -p "dist/image/$arch"
+            tar --use-compress-program=zstd -xf "dist/release/noflex-$VERSION-server-${pair#*:}-unknown-linux-gnu.tar.zst" \
+              -C "dist/image/$arch" --strip-components=1
+          done
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - if: github.ref_type == 'tag'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/noflex
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: dist/image
+          file: packaging/container/Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.ref_type == 'tag' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+      - if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/noflex
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
   android:
     needs: check
@@ -138,16 +367,24 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [check, android, native, third-party]
+    needs: [check, android, native, third-party, server, ffmpeg-source, image]
     if: ${{ !cancelled() && needs.check.result == 'success' && github.ref_type == 'tag' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      # What the server jobs built from, not what a release offers.
+      - run: rm -f dist/web.tar dist/ffmpeg-*.tar
+      - run: cd dist && sha256sum noflex-* >SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/noflex-*
       - name: Attach to a draft release
         env:
           GH_TOKEN: ${{ github.token }}

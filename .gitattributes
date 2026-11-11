@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Scripts run in bash on every platform, Git Bash on Windows included, whose
+# checkout would otherwise turn their line endings into CRLF.
+*.sh text eol=lf

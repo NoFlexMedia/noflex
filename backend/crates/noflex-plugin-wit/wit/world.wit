@@ -34,7 +34,6 @@ world plugin {
     export user-link;
     export external-auth;
     export scrobbler;
-    export intro-detector;
     export embedder;
     export background;
 }
@@ -130,7 +129,7 @@ world user-link-plugin {
 }
 
 /// Convenience world for scan-following consumers (cache rebuilders,
-/// intro detectors, embedding refreshers, webhook senders). Pairs with
+/// embedding refreshers, webhook senders). Pairs with
 /// `background` so the plugin can enqueue durable follow-up work from
 /// `on-scan-complete`.
 world post-scan-plugin {
@@ -159,19 +158,5 @@ world scrobbler-plugin {
     import host-net;
     export scrobbler;
     export user-link;
-    export background;
-}
-
-/// Convenience world for intro/credits detectors. `host-library`
-/// carries the detection inputs (chapters, runtime, existing markers).
-world intro-detector-plugin {
-    import host-log;
-    import host-secrets;
-    import host-config;
-    import host-library;
-    import host-metrics;
-    import host-tasks;
-    import host-net;
-    export intro-detector;
     export background;
 }

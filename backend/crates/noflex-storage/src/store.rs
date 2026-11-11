@@ -18,14 +18,13 @@ use crate::{
         AccountPurge, ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount,
         Device, DeviceCode, Edition, EmbeddingEndpoint, EmbeddingModel, EpgProgram, ExportFormat,
         ExportJob, ExportJobStatus, ExternalIdentity, HistoryPage, Image, ImageSource, ImageTarget,
-        IntroMarkers, Invite, Library, LinkedServer, LiveTvChannel, LiveTvSource, MediaFile,
-        OptimizedVersion, OptimizedVersionStats, OptimizedVersionStatus, PlaySession, Playlist,
-        PluginOverrideRow, PluginSettingWrite, PluginTaskPayload, PluginTaskState, Recording,
-        RecordingSchedule, RecordingStatus, RefreshTokenLookup, ScanEvent, ServerReset, Session,
-        SmartTranscodeMark, SmartTranscodeOutcome, SmartTranscodingSettings, Tag, TagAssignment,
-        TagSummary, TrickplayAsset, User, UserData, UserPluginSecret, UserPreference,
-        UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork, Work,
-        WorkFeatures,
+        Invite, Library, LinkedServer, LiveTvChannel, LiveTvSource, MediaFile, OptimizedVersion,
+        OptimizedVersionStats, OptimizedVersionStatus, PlaySession, Playlist, PluginOverrideRow,
+        PluginSettingWrite, PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule,
+        RecordingStatus, RefreshTokenLookup, ScanEvent, ServerReset, Session, SmartTranscodeMark,
+        SmartTranscodeOutcome, SmartTranscodingSettings, Tag, TagAssignment, TagSummary,
+        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
+        WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork, Work, WorkFeatures,
     },
     error::StorageResult,
     query::{
@@ -114,50 +113,6 @@ pub trait Storage: Send + Sync + 'static {
     /// [`StorageError::Constraint`].
     async fn upsert_edition(&self, edition: &Edition) -> StorageResult<EditionId>;
     async fn delete_edition(&self, id: EditionId) -> StorageResult<()>;
-
-    /// Overwrites the intro/credits marker columns of an existing
-    /// edition. Only those three columns are touched — chapters,
-    /// runtime, and probe metadata are left alone. Returns
-    /// [`StorageError::NotFound`] if no edition with `edition` exists.
-    async fn set_intro_markers(
-        &self,
-        edition: EditionId,
-        markers: IntroMarkers,
-    ) -> StorageResult<()>;
-
-    /// Records that detector `plugin_id` has scanned `edition`,
-    /// stamping the row with the current time and, when the plugin
-    /// returned markers, the confidence it gave them (`None`: it found
-    /// nothing). Upserts on (edition, plugin): re-recording refreshes
-    /// the row instead of erroring.
-    async fn record_intro_scan(
-        &self,
-        edition: EditionId,
-        plugin_id: &str,
-        found: Option<f32>,
-    ) -> StorageResult<()>;
-
-    /// The highest confidence any detector other than `plugin_id` found
-    /// markers for `edition` with, or `None` when no other detector has.
-    async fn rival_intro_confidence(
-        &self,
-        edition: EditionId,
-        plugin_id: &str,
-    ) -> StorageResult<Option<f32>>;
-
-    /// Editions with no scan row for `plugin_id`, keyset-paginated by
-    /// edition id. The intro-detection sweep pages through this to
-    /// find work for a detector plugin; an edition drops out of the
-    /// results after its first [`record_intro_scan`][Storage::record_intro_scan]
-    /// for that plugin. Scan rows are per-plugin, so other detectors
-    /// still see the edition. Malformed cursors are a
-    /// [`StorageError::InvalidInput`].
-    async fn editions_missing_intro_scan(
-        &self,
-        plugin_id: &str,
-        limit: u32,
-        cursor: Option<PageCursor>,
-    ) -> StorageResult<Page<Edition>>;
 
     async fn media_files_for_edition(&self, edition: EditionId) -> StorageResult<Vec<MediaFile>>;
     async fn upsert_media_file(&self, media: &MediaFile) -> StorageResult<()>;

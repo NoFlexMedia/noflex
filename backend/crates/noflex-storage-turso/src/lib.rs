@@ -16,12 +16,12 @@ use noflex_core::{
 use noflex_storage::{
     domain::{
         AccountPurge, ActivityKind, ApiKey, Collection, DeviceCode, Edition, EpgProgram, ExportJob,
-        ExportJobStatus, ExternalIdentity, Image, ImageSource, ImageTarget, IntroMarkers, Library,
-        LiveTvChannel, LiveTvSource, MediaFile, MediaRemoval, Playlist, PluginOverrideRow,
-        PluginSettingWrite, PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule,
-        RecordingStatus, RefreshTokenLookup, ScanEvent, ServerReset, Session, Tag, TagAssignment,
-        TagSummary, TrickplayAsset, User, UserData, UserPluginSecret, UserPreference,
-        UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, Work,
+        ExportJobStatus, ExternalIdentity, Image, ImageSource, ImageTarget, Library, LiveTvChannel,
+        LiveTvSource, MediaFile, MediaRemoval, Playlist, PluginOverrideRow, PluginSettingWrite,
+        PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule, RecordingStatus,
+        RefreshTokenLookup, ScanEvent, ServerReset, Session, Tag, TagAssignment, TagSummary,
+        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
+        WatchRoom, WatchRoomMember, WatchRoomState, Work,
     },
     error::{StorageError, StorageResult},
     query::{
@@ -277,42 +277,6 @@ impl Storage for TursoStore {
     }
     async fn delete_edition(&self, id: EditionId) -> StorageResult<()> {
         transact!(self, Lane::Serial, |conn| repo::editions::delete(conn, id))
-    }
-    async fn set_intro_markers(
-        &self,
-        edition: EditionId,
-        markers: IntroMarkers,
-    ) -> StorageResult<()> {
-        transact!(self, Lane::Concurrent, |conn| {
-            repo::editions::set_intro_markers(conn, edition, &markers)
-        })
-    }
-    async fn record_intro_scan(
-        &self,
-        edition: EditionId,
-        plugin_id: &str,
-        found: Option<f32>,
-    ) -> StorageResult<()> {
-        transact!(self, Lane::Concurrent, |conn| {
-            repo::editions::record_intro_scan(conn, edition, plugin_id, found)
-        })
-    }
-    async fn rival_intro_confidence(
-        &self,
-        edition: EditionId,
-        plugin_id: &str,
-    ) -> StorageResult<Option<f32>> {
-        let (_schema, conn) = self.reader().await?;
-        repo::editions::rival_intro_confidence(&conn, edition, plugin_id).await
-    }
-    async fn editions_missing_intro_scan(
-        &self,
-        plugin_id: &str,
-        limit: u32,
-        cursor: Option<PageCursor>,
-    ) -> StorageResult<Page<Edition>> {
-        let (_schema, conn) = self.reader().await?;
-        repo::editions::missing_intro_scan(&conn, plugin_id, limit, cursor.as_ref()).await
     }
     async fn media_files_for_edition(&self, edition: EditionId) -> StorageResult<Vec<MediaFile>> {
         let (_schema, conn) = self.reader().await?;

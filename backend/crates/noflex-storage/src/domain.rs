@@ -263,17 +263,6 @@ impl TrickplayAsset {
     }
 }
 
-/// Write-side payload for plugin-driven intro/credits detection: the
-/// marker columns a detector result overwrites on an [`Edition`].
-/// `None` clears the column — a detector that finds no intro writes
-/// all-`None` rather than leaving a stale window behind.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SimpleObject)]
-pub struct IntroMarkers {
-    pub intro_start_ms: Option<i64>,
-    pub intro_end_ms: Option<i64>,
-    pub credits_start_ms: Option<i64>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SimpleObject)]
 pub struct SubtitleTrack {
     pub language: Option<String>,

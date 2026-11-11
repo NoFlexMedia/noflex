@@ -173,13 +173,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "noflex-fixture-intro-detector"
-version = "0.0.1"
-dependencies = [
- "wit-bindgen",
-]
-
-[[package]]
 name = "noflex-fixture-net"
 version = "0.0.1"
 dependencies = [

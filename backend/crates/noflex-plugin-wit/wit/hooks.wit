@@ -204,29 +204,6 @@ interface scrobbler {
     scrobble: async func(event: scrobble-event) -> result<_, plugin-error>;
 }
 
-/// Intro / credits marker detection. Host-driven like the embedder:
-/// a host worker sweeps editions that have never been through
-/// detection, calls `detect`, and persists the outcome itself —
-/// plugins never see storage. Detection inputs arrive through narrow
-/// host imports (`host-library.lookup-edition-by-id`).
-interface intro-detector {
-    use types.{edition-id, plugin-error};
-
-    record intro-detection {
-        intro-start-ms: option<s64>,
-        intro-end-ms: option<s64>,
-        credits-start-ms: option<s64>,
-        /// Detector-specific confidence in [0.0, 1.0]. With several
-        /// detectors loaded, an edition keeps the markers found with the
-        /// most confidence; ties keep the first found.
-        confidence: f32,
-    }
-
-    /// Returns none when the detector finds nothing worth marking.
-    detect: async func(edition: edition-id)
-        -> result<option<intro-detection>, plugin-error>;
-}
-
 /// Host-scheduled background work. Guests cannot run unprompted — a
 /// component only executes while the host is driving a call — so periodic
 /// work is registered declaratively in the manifest (`[[tasks]]`: name,

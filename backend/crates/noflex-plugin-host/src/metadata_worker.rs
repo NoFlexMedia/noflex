@@ -2,11 +2,10 @@
 //
 // Background metadata worker: after every scan (and at startup and
 // hourly) it matches unidentified works against the metadata providers
-// and backfills provider artwork for identified works that have none.
-// Mirrors the intro-detector worker's shape — a startup sweep, a
-// `ScanCompleted` trigger, an hourly backstop — so scans never wait on
-// provider round trips. Works that found no match or no art are parked
-// in memory for a day rather than re-asked every sweep.
+// and backfills provider artwork for identified works that have none,
+// so scans never wait on provider round trips. Works that found no
+// match or no art are parked in memory for a day rather than re-asked
+// every sweep.
 
 use std::{collections::HashMap, sync::Arc};
 

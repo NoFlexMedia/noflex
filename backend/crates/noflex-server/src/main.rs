@@ -287,15 +287,9 @@ async fn run(
     }
 
     // Scrobble fan-out (playback events -> scrobbler plugins, per-user
-    // linked accounts only) and the intro-detection sweep (startup,
-    // scan-completed, hourly). Both re-check for their plugins on every
-    // trigger, so hot-reload installs pick up work without a restart.
+    // linked accounts only). It re-checks for scrobblers on every event,
+    // so hot-reload installs pick up work without a restart.
     let _scrobble_dispatcher = noflex_plugin_host::spawn_scrobble_dispatcher(
-        plugin_registry.clone(),
-        storage.clone(),
-        &event_bus,
-    );
-    let _intro_detector_worker = noflex_plugin_host::spawn_intro_detector_worker(
         plugin_registry.clone(),
         storage.clone(),
         &event_bus,

@@ -310,7 +310,6 @@ pub enum HookKind {
     UserLink,
     Auth,
     Scrobbler,
-    IntroDetector,
     Embedder,
     Background,
 }
@@ -325,7 +324,6 @@ impl HookKind {
         HookKind::UserLink,
         HookKind::Auth,
         HookKind::Scrobbler,
-        HookKind::IntroDetector,
         HookKind::Embedder,
         HookKind::Background,
     ];
@@ -340,7 +338,6 @@ impl HookKind {
             HookKind::UserLink => "user-link",
             HookKind::Auth => "external-auth",
             HookKind::Scrobbler => "scrobbler",
-            HookKind::IntroDetector => "intro-detector",
             HookKind::Embedder => "embedder",
             HookKind::Background => "background",
         }
@@ -356,7 +353,6 @@ impl HookKind {
             "user-link" | "user_link" => Some(HookKind::UserLink),
             "external-auth" | "external_auth" => Some(HookKind::Auth),
             "scrobbler" => Some(HookKind::Scrobbler),
-            "intro-detector" | "intro_detector" => Some(HookKind::IntroDetector),
             "embedder" => Some(HookKind::Embedder),
             "background" => Some(HookKind::Background),
             _ => None,
@@ -811,8 +807,8 @@ mod tests {
     fn parses_tasks() {
         let toml = r#"
             manifest_version = 1
-            plugin_id = "intro"
-            display_name = "Intro Detector"
+            plugin_id = "sweeper"
+            display_name = "Sweeper"
             version = "0.1.0"
             noflex_api_version = "0.2"
             hooks = ["background"]
@@ -833,7 +829,7 @@ mod tests {
         assert_eq!(m.tasks[0].interval_ms, 50);
         assert_eq!(m.tasks[0].payload, None);
         assert_eq!(m.tasks[1].payload.as_deref(), Some("{\"mode\":\"full\"}"));
-        m.check_tasks(Path::new("intro.wasm")).expect("valid");
+        m.check_tasks(Path::new("sweeper.wasm")).expect("valid");
     }
 
     #[test]
@@ -870,8 +866,8 @@ mod tests {
     fn tasks_require_background_capability() {
         let toml = r#"
             manifest_version = 1
-            plugin_id = "intro"
-            display_name = "Intro Detector"
+            plugin_id = "sweeper"
+            display_name = "Sweeper"
             version = "0.1.0"
             noflex_api_version = "0.2"
 
@@ -880,7 +876,7 @@ mod tests {
             interval_ms = 1000
         "#;
         let m = PluginManifest::from_bytes(toml.as_bytes()).expect("parses");
-        assert!(m.check_tasks(Path::new("intro.wasm")).is_err());
+        assert!(m.check_tasks(Path::new("sweeper.wasm")).is_err());
     }
 
     #[test]

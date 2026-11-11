@@ -13,7 +13,7 @@ use time::OffsetDateTime;
 use crate::{
     RequestUser,
     domain::{
-        ActivityKind, Collection, DeviceCode, Edition, ExternalIdentity, ImageSource, IntroMarkers,
+        ActivityKind, Chapter, Collection, DeviceCode, Edition, ExternalIdentity, ImageSource,
         Library, LibraryKind, MediaFile, Playlist, RefreshTokenLookup, Session, SubtitleTrack,
         TrickplayAsset, TrickplayChapterCue, TrickplaySheet, User, UserPreference,
         UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, Work,
@@ -156,10 +156,6 @@ where
     recently_played_filters_by_user(store).await;
     play_history_paginates_and_filters_unplayed(store).await;
     get_edition_round_trip(store).await;
-    set_intro_markers_round_trip(store).await;
-    intro_scan_record_and_sweep(store).await;
-    intro_scan_rival_confidence(store).await;
-    intro_scan_rows_cascade_with_edition(store).await;
     trickplay_round_trip_sweep_and_staleness(store).await;
     play_sessions_round_trip_filter_and_page(store).await;
     trickplay_cascades_with_edition(store).await;
@@ -8470,7 +8466,23 @@ async fn get_edition_round_trip<S: Storage + ?Sized>(store: &S) {
     let now = OffsetDateTime::now_utc();
     let work = make_work(lib.id, "Get Edition Movie", now);
     store.upsert_work(&work).await.expect("work");
-    let edition = make_edition(work.id, "Theatrical");
+    let edition = Edition {
+        runtime_ms: Some(7_200_000),
+        intro_start_ms: Some(1_000),
+        intro_end_ms: Some(91_000),
+        credits_start_ms: Some(7_000_000),
+        chapters: vec![
+            Chapter {
+                position_ms: 1_000,
+                title: Some("Opening".to_string()),
+            },
+            Chapter {
+                position_ms: 91_000,
+                title: None,
+            },
+        ],
+        ..make_edition(work.id, "Theatrical")
+    };
     store.upsert_edition(&edition).await.expect("edition");
 
     let fetched = store
@@ -8481,6 +8493,21 @@ async fn get_edition_round_trip<S: Storage + ?Sized>(store: &S) {
     assert_eq!(fetched.id, edition.id);
     assert_eq!(fetched.work_id, work.id);
     assert_eq!(fetched.name, "Theatrical");
+    assert_eq!(fetched.runtime_ms, Some(7_200_000));
+    assert_eq!(
+        (
+            fetched.intro_start_ms,
+            fetched.intro_end_ms,
+            fetched.credits_start_ms
+        ),
+        (Some(1_000), Some(91_000), Some(7_000_000))
+    );
+    let chapters: Vec<_> = fetched
+        .chapters
+        .iter()
+        .map(|c| (c.position_ms, c.title.as_deref()))
+        .collect();
+    assert_eq!(chapters, [(1_000, Some("Opening")), (91_000, None)]);
 
     let missing = store
         .get_edition(EditionId::new())
@@ -8489,235 +8516,6 @@ async fn get_edition_round_trip<S: Storage + ?Sized>(store: &S) {
     assert!(missing.is_none());
 
     store.delete_work(work.id).await.ok();
-    store.delete_library(lib.id).await.ok();
-}
-
-/// Marker writes land on exactly the three marker columns: runtime and
-/// name survive, all-`None` clears a previously set window, and writing
-/// markers for an unknown edition is a `NotFound`.
-async fn set_intro_markers_round_trip<S: Storage + ?Sized>(store: &S) {
-    let lib = test_library("Intro Markers Lib");
-    store.upsert_library(&lib).await.expect("library");
-    let now = OffsetDateTime::now_utc();
-    let work = make_work(lib.id, "Intro Markers Movie", now);
-    store.upsert_work(&work).await.expect("work");
-    let mut edition = make_edition(work.id, "Default");
-    edition.runtime_ms = Some(7_200_000);
-    store.upsert_edition(&edition).await.expect("edition");
-
-    let markers = IntroMarkers {
-        intro_start_ms: Some(1_000),
-        intro_end_ms: Some(91_000),
-        credits_start_ms: Some(7_000_000),
-    };
-    store
-        .set_intro_markers(edition.id, markers.clone())
-        .await
-        .expect("set markers");
-    let fetched = store
-        .get_edition(edition.id)
-        .await
-        .expect("get")
-        .expect("present");
-    assert_eq!(fetched.intro_start_ms, markers.intro_start_ms);
-    assert_eq!(fetched.intro_end_ms, markers.intro_end_ms);
-    assert_eq!(fetched.credits_start_ms, markers.credits_start_ms);
-    assert_eq!(
-        fetched.runtime_ms,
-        Some(7_200_000),
-        "markers must not touch runtime"
-    );
-    assert_eq!(fetched.name, "Default");
-
-    // A detector that finds nothing clears any stale window.
-    store
-        .set_intro_markers(
-            edition.id,
-            IntroMarkers {
-                intro_start_ms: None,
-                intro_end_ms: None,
-                credits_start_ms: None,
-            },
-        )
-        .await
-        .expect("clear markers");
-    let fetched = store
-        .get_edition(edition.id)
-        .await
-        .expect("get after clear")
-        .expect("present");
-    assert_eq!(fetched.intro_start_ms, None);
-    assert_eq!(fetched.intro_end_ms, None);
-    assert_eq!(fetched.credits_start_ms, None);
-
-    let err = store
-        .set_intro_markers(EditionId::new(), markers)
-        .await
-        .expect_err("unknown edition");
-    assert!(
-        matches!(err, StorageError::NotFound),
-        "expected NotFound, got {err:?}"
-    );
-
-    store.delete_work(work.id).await.ok();
-    store.delete_library(lib.id).await.ok();
-}
-
-/// A detector's rivals are the other detectors that found markers: its own
-/// scan and not-found scans don't count, and the strongest one does.
-async fn intro_scan_rival_confidence<S: Storage + ?Sized>(store: &S) {
-    let lib = test_library("Intro Rival Lib");
-    store.upsert_library(&lib).await.expect("library");
-    let work = make_work(lib.id, "Intro Rival Movie", OffsetDateTime::now_utc());
-    store.upsert_work(&work).await.expect("work");
-    let edition = make_edition(work.id, "Theatrical");
-    store.upsert_edition(&edition).await.expect("edition");
-
-    let rival = |plugin: &'static str| store.rival_intro_confidence(edition.id, plugin);
-    assert_eq!(rival("det-a").await.expect("none yet"), None);
-    store
-        .record_intro_scan(edition.id, "det-a", Some(0.5))
-        .await
-        .expect("a");
-    store
-        .record_intro_scan(edition.id, "det-b", Some(0.75))
-        .await
-        .expect("b");
-    store
-        .record_intro_scan(edition.id, "det-c", None)
-        .await
-        .expect("c");
-    assert_eq!(rival("det-a").await.expect("a"), Some(0.75));
-    assert_eq!(rival("det-b").await.expect("b"), Some(0.5));
-    assert_eq!(rival("det-c").await.expect("c"), Some(0.75));
-}
-
-/// Detection sweep: every edition is missing for an unseen plugin, then
-/// `record_intro_scan` drops it out of that plugin's sweep only — other
-/// plugins still see it. Re-recording upserts instead of duplicating,
-/// pagination round-trips without losing or duplicating rows, and a
-/// malformed cursor is a strict `InvalidInput`.
-async fn intro_scan_record_and_sweep<S: Storage + ?Sized>(store: &S) {
-    use crate::query::PageCursor;
-
-    let lib = test_library("Intro Sweep Lib");
-    store.upsert_library(&lib).await.expect("library");
-    let now = OffsetDateTime::now_utc();
-    let work = make_work(lib.id, "Intro Sweep Movie", now);
-    store.upsert_work(&work).await.expect("work");
-    let a = make_edition(work.id, "Theatrical");
-    let b = make_edition(work.id, "Extended");
-    store.upsert_edition(&a).await.expect("a");
-    store.upsert_edition(&b).await.expect("b");
-
-    // No scans yet: both editions are missing for det-a.
-    let page = store
-        .editions_missing_intro_scan("det-a", 10, None)
-        .await
-        .expect("sweep");
-    let mut ids: Vec<_> = page.items.iter().map(|e| e.id).collect();
-    ids.sort_by_key(|id| id.into_uuid());
-    let mut expected = vec![a.id, b.id];
-    expected.sort_by_key(|id| id.into_uuid());
-    assert_eq!(ids, expected, "both editions missing for det-a");
-    assert!(page.next_cursor.is_none(), "fits under the limit");
-
-    // Recording a's scan drops it from det-a's sweep; det-b is untouched.
-    store
-        .record_intro_scan(a.id, "det-a", Some(0.9))
-        .await
-        .expect("record a");
-    let det_a = store
-        .editions_missing_intro_scan("det-a", 10, None)
-        .await
-        .expect("det-a");
-    assert_eq!(det_a.items.len(), 1, "a is scanned for det-a, dropped");
-    assert_eq!(det_a.items[0].id, b.id);
-    let det_b = store
-        .editions_missing_intro_scan("det-b", 10, None)
-        .await
-        .expect("det-b");
-    let mut det_b_ids: Vec<_> = det_b.items.iter().map(|e| e.id).collect();
-    det_b_ids.sort_by_key(|id| id.into_uuid());
-    assert_eq!(det_b_ids, expected, "det-b is untouched");
-
-    // Re-recording the same (edition, plugin) upserts: no error, no
-    // duplicate row, and a stays out of det-a's sweep.
-    store
-        .record_intro_scan(a.id, "det-a", None)
-        .await
-        .expect("re-record a");
-    let det_a = store
-        .editions_missing_intro_scan("det-a", 10, None)
-        .await
-        .expect("det-a after re-record");
-    assert_eq!(det_a.items.len(), 1);
-
-    // limit-1 pages + cursor reassemble det-b's sweep exactly.
-    let mut collected: Vec<EditionId> = Vec::new();
-    let mut cursor: Option<PageCursor> = None;
-    loop {
-        let page = store
-            .editions_missing_intro_scan("det-b", 1, cursor)
-            .await
-            .expect("page");
-        collected.extend(page.items.iter().map(|e| e.id));
-        match page.next_cursor {
-            Some(c) => cursor = Some(c),
-            None => break,
-        }
-    }
-    let mut collected_sorted = collected.clone();
-    collected_sorted.sort_by_key(|id| id.into_uuid());
-    assert_eq!(
-        collected_sorted, expected,
-        "cursor walk visits every missing edition"
-    );
-    collected.sort_by_key(|id| id.into_uuid());
-    let mut deduped = collected.clone();
-    deduped.dedup();
-    assert_eq!(collected, deduped, "no duplicates across pages");
-
-    // Malformed cursor must error, not silently re-serve page one.
-    let err = store
-        .editions_missing_intro_scan("det-b", 1, Some(PageCursor("not-a-cursor".to_string())))
-        .await
-        .expect_err("bad cursor");
-    assert!(
-        matches!(err, StorageError::InvalidInput(_)),
-        "expected InvalidInput, got {err:?}"
-    );
-
-    store.delete_work(work.id).await.ok();
-    store.delete_library(lib.id).await.ok();
-}
-
-/// Deleting a work cascades through its editions to their scan rows:
-/// with FK enforcement on, the delete only succeeds if the scan rows
-/// went with the edition.
-async fn intro_scan_rows_cascade_with_edition<S: Storage + ?Sized>(store: &S) {
-    let lib = test_library("Intro Cascade Lib");
-    store.upsert_library(&lib).await.expect("library");
-    let now = OffsetDateTime::now_utc();
-    let work = make_work(lib.id, "Intro Cascade Movie", now);
-    store.upsert_work(&work).await.expect("work");
-    let edition = make_edition(work.id, "Default");
-    store.upsert_edition(&edition).await.expect("edition");
-    store
-        .record_intro_scan(edition.id, "det-a", Some(0.9))
-        .await
-        .expect("record");
-
-    store
-        .delete_work(work.id)
-        .await
-        .expect("delete must cascade through scan rows, not violate FK");
-    let sweep = store
-        .editions_missing_intro_scan("det-a", 10, None)
-        .await
-        .expect("sweep after delete");
-    assert!(sweep.items.is_empty(), "edition and scan row are gone");
-
     store.delete_library(lib.id).await.ok();
 }
 

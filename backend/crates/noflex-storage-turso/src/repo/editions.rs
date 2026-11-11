@@ -4,20 +4,14 @@ use std::collections::HashMap;
 
 use noflex_core::{EditionId, WorkId};
 use noflex_storage::{
-    domain::{Chapter, Edition, IntroMarkers},
-    error::{StorageError, StorageResult},
-    query::{Page, PageCursor},
+    domain::{Chapter, Edition},
+    error::StorageResult,
 };
-use time::OffsetDateTime;
 use turso::{Connection, Value};
 
 use crate::{
-    convert::{
-        blob_to_uuid, col_blob, col_int_opt, col_real_opt, col_text, dt_to_text, parse_json,
-        to_json, uuid_to_blob,
-    },
+    convert::{blob_to_uuid, col_blob, col_int_opt, col_text, parse_json, to_json, uuid_to_blob},
     error::{backend_msg, map_turso},
-    repo::search::parse_missing_cursor,
 };
 
 const UPSERT: &str = "INSERT INTO editions (\
@@ -52,31 +46,6 @@ const GET: &str = "SELECT id, work_id, name, runtime_ms, intro_start_ms, intro_e
     FROM editions WHERE id = ?1";
 
 const DELETE: &str = "DELETE FROM editions WHERE id = ?1";
-
-// Marker columns only: the sweep worker must not clobber chapters or
-// runtime written by other tasks.
-const SET_INTRO_MARKERS: &str = "UPDATE editions SET \
-    intro_start_ms = ?1, intro_end_ms = ?2, credits_start_ms = ?3 \
-    WHERE id = ?4";
-
-const RECORD_INTRO_SCAN: &str = "INSERT INTO edition_intro_scans (edition_id, plugin_id, scanned_at, found, confidence) \
-    VALUES (?1, ?2, ?3, ?4, ?5) \
-    ON CONFLICT(edition_id, plugin_id) DO UPDATE SET \
-        scanned_at = excluded.scanned_at, \
-        found = excluded.found, \
-        confidence = excluded.confidence";
-
-const RIVAL_INTRO_CONFIDENCE: &str = "SELECT MAX(confidence) FROM edition_intro_scans \
-    WHERE edition_id = ?1 AND plugin_id != ?2 AND found = 1";
-
-// Anti-join on `edition_intro_scans` for the detection sweep. Column
-// list matches GET (e.-prefixed) so `row_to_edition` decoding is
-// shared; ordering by `e.id` keeps the keyset cursor stable.
-const MISSING_INTRO_SCAN: &str = "SELECT e.id, e.work_id, e.name, e.runtime_ms, e.intro_start_ms, \
-    e.intro_end_ms, e.credits_start_ms, e.chapters_json \
-    FROM editions e \
-    WHERE NOT EXISTS (SELECT 1 FROM edition_intro_scans s \
-        WHERE s.edition_id = e.id AND s.plugin_id = ?1)";
 
 pub(crate) async fn upsert(conn: &Connection, ed: &Edition) -> StorageResult<EditionId> {
     let params: Vec<Value> = vec![
@@ -180,119 +149,4 @@ pub(crate) async fn delete(conn: &Connection, id: EditionId) -> StorageResult<()
         .await
         .map_err(map_turso)?;
     Ok(())
-}
-
-pub(crate) async fn set_intro_markers(
-    conn: &Connection,
-    id: EditionId,
-    markers: &IntroMarkers,
-) -> StorageResult<()> {
-    let changed = conn
-        .execute(
-            SET_INTRO_MARKERS,
-            vec![
-                markers
-                    .intro_start_ms
-                    .map(Value::Integer)
-                    .unwrap_or(Value::Null),
-                markers
-                    .intro_end_ms
-                    .map(Value::Integer)
-                    .unwrap_or(Value::Null),
-                markers
-                    .credits_start_ms
-                    .map(Value::Integer)
-                    .unwrap_or(Value::Null),
-                Value::Blob(uuid_to_blob(id.into_uuid())),
-            ],
-        )
-        .await
-        .map_err(map_turso)?;
-    if changed == 0 {
-        return Err(StorageError::NotFound);
-    }
-    Ok(())
-}
-
-pub(crate) async fn record_intro_scan(
-    conn: &Connection,
-    id: EditionId,
-    plugin_id: &str,
-    found: Option<f32>,
-) -> StorageResult<()> {
-    let scanned_at = dt_to_text(OffsetDateTime::now_utc())?;
-    conn.execute(
-        RECORD_INTRO_SCAN,
-        vec![
-            Value::Blob(uuid_to_blob(id.into_uuid())),
-            Value::Text(plugin_id.to_string()),
-            Value::Text(scanned_at),
-            Value::Integer(i64::from(found.is_some())),
-            found.map_or(Value::Null, |c| Value::Real(f64::from(c))),
-        ],
-    )
-    .await
-    .map_err(map_turso)?;
-    Ok(())
-}
-
-pub(crate) async fn rival_intro_confidence(
-    conn: &Connection,
-    id: EditionId,
-    plugin_id: &str,
-) -> StorageResult<Option<f32>> {
-    let mut rows = conn
-        .query(
-            RIVAL_INTRO_CONFIDENCE,
-            vec![
-                Value::Blob(uuid_to_blob(id.into_uuid())),
-                Value::Text(plugin_id.to_string()),
-            ],
-        )
-        .await
-        .map_err(map_turso)?;
-    let Some(row) = rows.next().await.map_err(map_turso)? else {
-        return Ok(None);
-    };
-    col_real_opt(&row.get_value(0).map_err(map_turso)?)
-}
-
-pub(crate) async fn missing_intro_scan(
-    conn: &Connection,
-    plugin_id: &str,
-    limit: u32,
-    cursor: Option<&PageCursor>,
-) -> StorageResult<Page<Edition>> {
-    let mut sql = String::from(MISSING_INTRO_SCAN);
-    let mut params: Vec<Value> = vec![Value::Text(plugin_id.to_string())];
-    if let Some(c) = cursor {
-        let id = parse_missing_cursor(c, "intro-scan")?;
-        sql.push_str(&format!(" AND e.id > ?{}", params.len() + 1));
-        params.push(Value::Blob(id));
-    }
-    sql.push_str(" ORDER BY e.id ASC");
-    let limit = limit.max(1) as i64;
-    sql.push_str(&format!(" LIMIT {}", limit + 1));
-
-    let mut rows = conn.query(&sql, params).await.map_err(map_turso)?;
-    let mut items: Vec<Edition> = Vec::new();
-    let mut ids: Vec<Vec<u8>> = Vec::new();
-    while let Some(row) = rows.next().await.map_err(map_turso)? {
-        let id = row.get_value(0).map_err(map_turso)?;
-        ids.push(col_blob(&id)?.to_vec());
-        items.push(row_to_edition(&row)?);
-    }
-    let next_cursor = if items.len() as i64 > limit {
-        // Drop the look-ahead row; the cursor keys off the last row
-        // the caller actually receives, not the extra one.
-        items.pop();
-        ids.pop();
-        ids.last().map(|id| {
-            let hex: String = id.iter().map(|b| format!("{:02x}", b)).collect();
-            PageCursor(hex)
-        })
-    } else {
-        None
-    };
-    Ok(Page { items, next_cursor })
 }

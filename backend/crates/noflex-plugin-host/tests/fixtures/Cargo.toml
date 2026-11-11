@@ -9,7 +9,6 @@ members = [
     "artwork",
     "embedder",
     "external-auth",
-    "intro-detector",
     "net",
     "net-denied",
     "notifier",

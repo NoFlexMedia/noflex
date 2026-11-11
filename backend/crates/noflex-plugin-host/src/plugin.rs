@@ -36,11 +36,6 @@ use crate::{
             ExternalAuthPlugin, exports::noflex::plugin::external_auth as external_auth_exports,
             noflex::plugin::types as external_auth_types,
         },
-        intro_detector::{
-            IntroDetectorPlugin,
-            exports::noflex::plugin::intro_detector::IntroDetection as WitIntroDetection,
-            noflex::plugin::types as intro_detector_types,
-        },
         metadata_and_image::{
             MetadataImagePlugin as ImagePlugin, exports::noflex::plugin::image as image_exports,
         },
@@ -153,11 +148,6 @@ type EmbedOutcome = Result<Result<Vec<Vec<f32>>, embedder_types::PluginError>, H
 /// `call_scrobble`'s wire result: dispatch error outside, plugin error inside.
 type ScrobbleOutcome = Result<Result<(), scrobbler_types::PluginError>, HostError>;
 
-/// `call_detect_intro`'s wire result: dispatch error outside, plugin error
-/// inside; `None` means the detector found nothing worth marking.
-type IntroDetectOutcome =
-    Result<Result<Option<WitIntroDetection>, intro_detector_types::PluginError>, HostError>;
-
 /// Host-side mirror of the WIT `task-outcome` variant: `done` retires the
 /// invocation, `more` carries the guest-owned cursor and asks for a prompt
 /// re-invocation.
@@ -241,15 +231,6 @@ impl From<external_auth_types::TaskOutcome> for TaskOutcome {
     }
 }
 
-impl From<intro_detector_types::TaskOutcome> for TaskOutcome {
-    fn from(o: intro_detector_types::TaskOutcome) -> Self {
-        match o {
-            intro_detector_types::TaskOutcome::Done => TaskOutcome::Done,
-            intro_detector_types::TaskOutcome::More(cursor) => TaskOutcome::More(cursor),
-        }
-    }
-}
-
 /// `run_task_on` normalizes every world's `plugin-error` onto the
 /// `metadata-plugin` binding's, so [`RunTaskOutcome`] stays one type
 /// regardless of which world supplied the `background` export. Like
@@ -279,7 +260,6 @@ impl_plugin_error_from!(post_scan_types::PluginError);
 impl_plugin_error_from!(user_link_types::PluginError);
 impl_plugin_error_from!(embedder_types::PluginError);
 impl_plugin_error_from!(scrobbler_types::PluginError);
-impl_plugin_error_from!(intro_detector_types::PluginError);
 impl_plugin_error_from!(external_auth_types::PluginError);
 
 /// `call_run_task`'s wire result: dispatch error outside, plugin error inside.
@@ -421,10 +401,6 @@ enum HookCall {
         event: scrobbler_types::ScrobbleEvent,
         respond: oneshot::Sender<ScrobbleOutcome>,
     },
-    IntroDetect {
-        edition: String,
-        respond: oneshot::Sender<IntroDetectOutcome>,
-    },
 }
 
 impl HookCall {
@@ -447,7 +423,6 @@ impl HookCall {
             Self::ExternalAuthComplete { respond, .. } => respond.is_closed(),
             Self::Embed { respond, .. } => respond.is_closed(),
             Self::Scrobble { respond, .. } => respond.is_closed(),
-            Self::IntroDetect { respond, .. } => respond.is_closed(),
         }
     }
 
@@ -507,9 +482,6 @@ impl HookCall {
             HookCall::Scrobble { respond, .. } => {
                 let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
             }
-            HookCall::IntroDetect { respond, .. } => {
-                let _ = respond.send(Err(HostError::Wasm(msg.to_string())));
-            }
         }
     }
 }
@@ -528,7 +500,6 @@ struct BoundHooks {
     external_auth: Option<ExternalAuthPlugin>,
     embedder: Option<EmbedderPluginBinding>,
     scrobbler: Option<ScrobblerPlugin>,
-    intro_detector: Option<IntroDetectorPlugin>,
 }
 
 impl BoundHooks {
@@ -541,7 +512,6 @@ impl BoundHooks {
             || self.external_auth.is_some()
             || self.embedder.is_some()
             || self.scrobbler.is_some()
-            || self.intro_detector.is_some()
     }
 }
 
@@ -947,19 +917,6 @@ impl LoadedPlugin {
         let (respond, answer) = oneshot::channel();
         self.instance
             .enqueue(&self.id, HookCall::Scrobble { event, respond })?;
-        answer
-            .await
-            .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
-    }
-
-    /// Run the plugin's `intro-detector.detect()` export for one edition.
-    /// `Ok(None)` from the plugin means "nothing worth marking" — the
-    /// intro worker still records the scan so the edition isn't retried
-    /// until its inputs change.
-    pub async fn call_detect_intro(&self, edition: String) -> IntroDetectOutcome {
-        let (respond, answer) = oneshot::channel();
-        self.instance
-            .enqueue(&self.id, HookCall::IntroDetect { edition, respond })?;
         answer
             .await
             .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
@@ -1509,7 +1466,6 @@ async fn serve_instance(
             external_auth: ExternalAuthPlugin::new(&mut store, &instance).ok(),
             embedder: EmbedderPluginBinding::new(&mut store, &instance).ok(),
             scrobbler: ScrobblerPlugin::new(&mut store, &instance).ok(),
-            intro_detector: IntroDetectorPlugin::new(&mut store, &instance).ok(),
         };
         Ok::<_, wasmtime::Error>(hooks)
     }
@@ -2105,20 +2061,6 @@ fn dispatch_call<'a>(
             ),
             None => missing_export(respond, "scrobbler"),
         },
-        HookCall::IntroDetect { edition, respond } => match &hooks.intro_detector {
-            Some(detector) => env.track(
-                inflight,
-                HookKind::IntroDetector,
-                respond,
-                move |deadline| async move {
-                    let func = detector.noflex_plugin_intro_detector().func_detect();
-                    invoke(accessor, calls, deadline, func, (edition,), None, "detect")
-                        .await
-                        .map(|(r,)| r)
-                },
-            ),
-            None => missing_export(respond, "intro-detector"),
-        },
     }
 }
 
@@ -2161,7 +2103,6 @@ async fn run_task_on(
         external_auth,
         embedder,
         scrobbler,
-        intro_detector,
     );
     // Unreachable: serve_instance rejects components with no bound hook.
     Err(HostError::Wasm(
@@ -2299,10 +2240,7 @@ mod tests {
         let id = PluginId("test".into());
         let call = || {
             let (respond, _answer) = oneshot::channel();
-            HookCall::IntroDetect {
-                edition: "edition".into(),
-                respond,
-            }
+            HookCall::Attribution { respond }
         };
         instance.enqueue(&id, call()).unwrap();
         assert!(matches!(

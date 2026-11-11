@@ -15,7 +15,6 @@ mod engine;
 pub mod error;
 pub mod events;
 pub mod inference;
-pub mod intro;
 mod manifest;
 pub mod metadata_service;
 pub mod metadata_worker;
@@ -50,7 +49,6 @@ pub use engine::{EngineConfig, build_engine, spawn_epoch_ticker};
 pub use error::HostError;
 pub use events::{DiscoveredEvent, LifecycleBus, PluginLifecycleEvent, UnloadReason};
 pub use inference::{Inference, InferenceConfig, InferenceDevice};
-pub use intro::spawn_intro_detector_worker;
 pub use manifest::{
     EmbeddingClaim, HookKind, ManifestParseError, PluginManifest, PriorityKey, SettingKind,
     SettingSpec, TaskRegistration, WorkKindFilter,

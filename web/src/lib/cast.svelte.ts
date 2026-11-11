@@ -10,7 +10,7 @@
 import { MarkPlayedStore, ReportProgressStore } from "$houdini";
 import type { ClientCapabilities } from "$codecs";
 import { AutoQuality, frameLabel, sameChoice, sessionQuality, type QualityChoice, type StreamQuality } from "$quality";
-import { castCapabilities, probeCast, type CastDevice } from "$lib/castProfile.js";
+import { castCapabilities } from "$lib/castProfile.js";
 import { connect, type Control, type RemoteDevice } from "$lib/connect.svelte.js";
 import { request, writeUserData } from "$lib/graphql.js";
 import { pickImage } from "$lib/images.js";
@@ -205,7 +205,7 @@ class Cast {
     });
   }
 
-  /** What the session's device decodes: asked of NoFlex's receiver, or looked up by model for Google's. */
+  /** What the session's device decodes: NoFlex's receiver probes itself; Google's is looked up by model. */
   #profile(session: any): Promise<ClientCapabilities> {
     const device = session.getCastDevice();
     const id = this.#id(device);
@@ -213,8 +213,11 @@ class Cast {
     if (APP_ID === DEFAULT_RECEIVER) return Promise.resolve(fallback());
     let profile = this.#profiles.get(id);
     if (!profile) {
-      profile = this.#ask(session, { type: "device" }, 3000)
-        .then((info: CastDevice) => probeCast(info, (questions) => this.#ask(session, { type: "probe", questions }, 5000).then((reply) => reply.answers ?? [])))
+      profile = this.#ask(session, { type: "capabilities" }, 10_000)
+        .then((reply) => {
+          if (!reply.capabilities) throw new Error(reply.error ?? "no capabilities");
+          return reply.capabilities as ClientCapabilities;
+        })
         .catch((cause) => {
           console.warn("Cast device probe failed; going by its model", cause);
           this.#profiles.delete(id);

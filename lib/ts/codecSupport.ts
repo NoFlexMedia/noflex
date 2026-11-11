@@ -498,9 +498,9 @@ export function clientCapabilities(): Promise<ClientCapabilities> {
 // ---- a device answering for itself ----------------------------------------
 
 /**
- * One question for a device that probes itself: whether it decodes `codecs`
+ * One question for a device that isn't a browser: whether it decodes `codecs`
  * in `mime`, at that size, rate and channel count where given, and presents
- * it in `hdr` where set. A Cast receiver's `canDisplayType` answers this.
+ * it in `hdr` where set. The Cast receiver puts it to `canDisplayType`.
  */
 export interface MediaQuestion {
   mime: string;
@@ -519,16 +519,14 @@ function question(contentType: string, rest: Omit<MediaQuestion, "mime" | "codec
   return { mime: mime!.trim(), codecs, width: rest.width, height: rest.height, framerate: rest.framerate, channels: rest.channels, hdr: rest.hdr };
 }
 
-/** Questions per message: a Cast message tops out at 64 KiB. */
-const BATCH = 200;
-
 /**
- * `probeCapabilities` for a device that answers `MediaQuestion`s in batches,
- * such as a Cast receiver. Each step of the walk depends on earlier answers,
- * so it reruns against what's known, taking anything unknown as a yes to see
- * what it would ask next, until a run asks nothing new: a few round trips
- * rather than one per question. `hdr` is whether the device's display path
- * presents HDR at all.
+ * `probeCapabilities` for a device that answers `MediaQuestion`s rather than
+ * the browser's own APIs: the Cast receiver runs it on itself (bundled by
+ * site/scripts/cast-receiver.js). Each step of the walk depends on earlier
+ * answers, so it reruns against what's known, taking anything unknown as a
+ * yes to see what it would ask next, until a run asks nothing new: a few
+ * batches rather than one call per question. `hdr` is whether the device's
+ * display path presents HDR at all.
  */
 export async function probeElsewhere(ask: (questions: MediaQuestion[]) => Promise<boolean[]>, hdr: boolean): Promise<ClientCapabilities> {
   const known = new Map<string, boolean>();
@@ -563,10 +561,7 @@ export async function probeElsewhere(ask: (questions: MediaQuestion[]) => Promis
     });
     if (!asked.size || last) return caps;
     const questions = [...asked.values()];
-    for (let start = 0; start < questions.length; start += BATCH) {
-      const batch = questions.slice(start, start + BATCH);
-      const results = await ask(batch);
-      batch.forEach((q, i) => known.set(JSON.stringify(q), results[i] === true));
-    }
+    const results = await ask(questions);
+    questions.forEach((q, i) => known.set(JSON.stringify(q), results[i] === true));
   }
 }

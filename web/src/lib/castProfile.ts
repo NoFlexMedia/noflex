@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// What a Cast device decodes, as the server's `ClientCapabilities`. NoFlex's
-// receiver answers for itself: the sender runs the web client's own probe
-// (`probeElsewhere`) with each question put to the device's `canDisplayType`,
+// What a Cast device decodes, as the server's `ClientCapabilities`, when it
+// can't say. NoFlex's receiver answers for itself (`capabilities`, cast/AGENTS.md),
 // so a TV with Cast built in or a new Chromecast is measured, not guessed.
 // Google's Default Media Receiver can't be asked anything, so for it this
 // goes by the model name: a safe H.264 profile for anything unknown, and more
 // for the devices Google lists (developers.google.com/cast/docs/media).
+// flutter/lib/features/cast/cast_profile.dart ports this.
 
-import { probeElsewhere, type AudioCodec, type AudioCodecSupport, type ClientCapabilities, type DirectPlayProfile, type MediaQuestion, type VideoCodecSupport } from "$codecs";
+import type { AudioCodec, AudioCodecSupport, ClientCapabilities, DirectPlayProfile, VideoCodecSupport } from "$codecs";
 
 const AUDIO: AudioCodecSupport[] = [
   { codec: "AAC", maxChannels: 6 }, { codec: "AC3", maxChannels: 6 }, { codec: "EAC3", maxChannels: 6 },
@@ -67,12 +67,4 @@ export function castCapabilities(model: string): ClientCapabilities {
     maxHeight: Math.max(...video.map((item) => item.maxHeight ?? 0)),
     maxBitrateBps: null,
   };
-}
-
-/** A receiver's answer to a `device` message. */
-export interface CastDevice { hdr: boolean; dolbyVision: boolean; touch: boolean }
-
-/** What NoFlex's receiver says it decodes, asked through `ask`. */
-export function probeCast(device: CastDevice, ask: (questions: MediaQuestion[]) => Promise<boolean[]>): Promise<ClientCapabilities> {
-  return probeElsewhere(ask, device.hdr);
 }

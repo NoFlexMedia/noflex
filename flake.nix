@@ -99,6 +99,8 @@
                 ./site/.wrangler
               ])))
               ./cast/receiver
+              # Bundled into the receiver, which probes its own device.
+              ./lib/ts/codecSupport.ts
             ];
           };
           sourceRoot = "source/site";

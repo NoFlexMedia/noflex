@@ -36,8 +36,8 @@ function capabilities() {
 }
 
 /**
- * One of the sender's questions (`MediaQuestion` in lib/ts/codecSupport.ts):
- * the sender runs the web client's own probe and only the answers come from here.
+ * One question of the web client's own probe (`MediaQuestion` in
+ * lib/ts/codecSupport.ts), put to this device's `canDisplayType`.
  */
 function answer(question) {
   const caps = capabilities();
@@ -305,18 +305,12 @@ setInterval(() => {
 
 context.addCustomMessageListener(NAMESPACE, (event) => {
   const message = event.data || {};
-  if (message.type === "device") {
-    const caps = capabilities();
-    context.sendCustomMessage(NAMESPACE, event.senderId, {
-      type: "device",
-      id: message.id,
-      hdr: caps.is_hdr_supported === true,
-      dolbyVision: caps.is_dv_supported === true,
-      touch: caps.touch_input_supported === true,
-    });
-  } else if (message.type === "probe") {
-    const questions = Array.isArray(message.questions) ? message.questions : [];
-    context.sendCustomMessage(NAMESPACE, event.senderId, { type: "probe", id: message.id, answers: questions.map(answer) });
+  if (message.type === "capabilities") {
+    // The web client's own walk, run here: one message for any sender, rather than a round trip per step.
+    NoFlexCodecs.probeElsewhere(async (questions) => questions.map(answer), capabilities().is_hdr_supported === true).then(
+      (profile) => context.sendCustomMessage(NAMESPACE, event.senderId, { type: "capabilities", id: message.id, capabilities: profile }),
+      (cause) => context.sendCustomMessage(NAMESPACE, event.senderId, { type: "capabilities", id: message.id, error: String(cause) }),
+    );
   } else if (message.type === "stats") {
     toggleStats(message.show);
   } else if (message.type === "notice" && message.text) {

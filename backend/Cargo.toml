@@ -109,6 +109,8 @@ wasmtime-wasi = { version = "47", default-features = false, features = ["p2", "p
 sha2 = "0.10"
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-24", "cuda", "openvino", "qnn", "vitis", "coreml", "directml"] }
 directories = "5"
+# The server as a Windows service.
+windows-service = "0.8.1"
 
 # Crypto / auth
 argon2 = "0.5"

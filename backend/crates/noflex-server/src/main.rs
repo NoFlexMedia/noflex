@@ -84,7 +84,23 @@ enum Exit {
     Restart,
 }
 
+#[cfg(windows)]
+mod service;
+
 fn main() -> anyhow::Result<()> {
+    #[cfg(windows)]
+    {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if !args.is_empty() {
+            return service::command(&args);
+        }
+    }
+    serve()
+}
+
+/// Runs the server until it's asked to stop, starting it again in process
+/// after an erasure.
+fn serve() -> anyhow::Result<()> {
     let cfg = Config::load().context("load config")?;
     let log_buffer = init_tracing(&cfg.log);
     loop {
@@ -123,7 +139,12 @@ async fn shutdown_signal() {
             }
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        () = service::stopped() => {}
+    }
+    #[cfg(not(any(unix, windows)))]
     let _ = tokio::signal::ctrl_c().await;
 }
 

@@ -290,7 +290,7 @@ async fn unlinked_user_is_skipped() {
     // The unlinked user's event goes first; the broadcast channel keeps
     // order, so once the linked user's later event lands the earlier one
     // has already been through the fan-out.
-    h.bus.emit(DomainEvent::PlaybackStopped {
+    h.bus.emit(DomainEvent::PlaybackStarted {
         user: unlinked,
         work: alien.id,
         title: alien.title.clone(),
@@ -316,4 +316,72 @@ async fn unlinked_user_is_skipped() {
         !log.iter().any(|l| l.contains(&unlinked.to_string())),
         "a user with no linked secrets is never delivered: {log:?}"
     );
+}
+
+#[tokio::test]
+async fn an_episode_scrobbles_with_its_series_and_numbers() {
+    let Some(h) = setup().await else {
+        eprintln!("skipping: could not build the fixture-scrobbler plugin");
+        return;
+    };
+    let lib = library();
+    h.storage.upsert_library(&lib).await.expect("library");
+    let id = |kind, value: &str| ExternalId {
+        kind,
+        value: value.to_string(),
+    };
+    let mut series = work(
+        lib.id,
+        "Game of Thrones",
+        Some(2011),
+        vec![
+            id(ExternalIdKind::Tmdb, "tv/1399"),
+            id(ExternalIdKind::Tvdb, "series/121361"),
+            id(ExternalIdKind::Custom, "scan:got"),
+        ],
+    );
+    series.kind = noflex_core::WorkKind::Series;
+    let mut season = work(lib.id, "Season 1", None, vec![]);
+    season.kind = noflex_core::WorkKind::Season;
+    season.parent_id = Some(series.id);
+    season.index_number = Some(1);
+    let mut episode = work(
+        lib.id,
+        "The Kingsroad",
+        Some(2011),
+        vec![id(ExternalIdKind::Tmdb, "tv/1399/season/1/episode/2")],
+    );
+    episode.kind = noflex_core::WorkKind::Episode;
+    episode.parent_id = Some(season.id);
+    episode.index_number = Some(2);
+    for work in [&series, &season, &episode] {
+        h.storage.upsert_work(work).await.expect("work");
+    }
+    let user = seed_user(&h.storage, "watcher").await;
+    h.storage
+        .set_user_plugin_secret(user, PLUGIN_ID, "access_token", "seed-token")
+        .await
+        .expect("seed user secret");
+
+    let _dispatcher = spawn_scrobble_dispatcher(h.registry.clone(), h.storage.clone(), &h.bus);
+    h.bus.emit(DomainEvent::ProgressAtStop {
+        user,
+        work: episode.id,
+        title: episode.title.clone(),
+        position_ms: 1_000,
+    });
+
+    let line = poll_until("fixture received the episode's scrobble", || async {
+        received(&h.plugin)
+            .await
+            .into_iter()
+            .find(|l| l.contains(&episode.id.to_string()))
+    })
+    .await;
+    assert!(line.contains("kind=episode"), "{line}");
+    assert!(
+        line.contains("|series=tmdb=tv/1399,tvdb=series/121361|"),
+        "the series' provider ids, without scan keys: {line}"
+    );
+    assert!(line.contains("|season=1|episode=2|"), "{line}");
 }

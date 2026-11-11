@@ -8,13 +8,18 @@
 // delivery rules differ in two ways:
 //
 // - Every event is enriched from storage once (kind, year, external ids,
-//   runtime), so scrobbler plugins match on provider ids and never need
-//   library lookups of their own. An event whose work row is already
-//   gone (delete race) is skipped.
+//   runtime, and for an episode its series' ids and its numbers), so
+//   scrobbler plugins match on provider ids and never need library
+//   lookups of their own. An event whose work row is already gone
+//   (delete race) is skipped.
 // - Delivery is per-user: a plugin is skipped for an event when the
 //   acting user holds no secrets for it (never linked an account). All
-//   four event kinds reach every linked scrobbler unconditionally —
+//   three event kinds reach every linked scrobbler unconditionally —
 //   there is no manifest `events` filter on this path.
+//
+// A session stopping carries no position, and progress-at-stop follows it
+// with the real one, so the stop itself isn't scrobbled: a `stopped`
+// without a position would read as a title watched to the end.
 
 use std::{
     collections::HashMap,
@@ -70,11 +75,10 @@ struct Occurrence {
 }
 
 impl Occurrence {
-    /// Map a domain event onto a scrobble occurrence, or `None` when the
-    /// event is not playback-derived (scrobblers see exactly four kinds:
-    /// session start/stop, progress-at-stop, and manual mark-played —
-    /// the last as `stopped` with no position, which the plugin treats
-    /// as fully watched).
+    /// Map a domain event onto a scrobble occurrence, or `None` when it
+    /// isn't one: scrobblers see session start, progress-at-stop, and
+    /// manual mark-played, the last as `stopped` with no position, which
+    /// means watched to the end.
     fn from_event(event: &DomainEvent) -> Option<Self> {
         match event {
             DomainEvent::PlaybackStarted {
@@ -84,15 +88,6 @@ impl Occurrence {
                 work: *work,
                 title: title.clone(),
                 action: wit::ScrobbleAction::Started,
-                position_ms: None,
-            }),
-            DomainEvent::PlaybackStopped {
-                user, work, title, ..
-            } => Some(Self {
-                user: *user,
-                work: *work,
-                title: title.clone(),
-                action: wit::ScrobbleAction::Stopped,
                 position_ms: None,
             }),
             DomainEvent::ProgressAtStop {
@@ -188,9 +183,45 @@ async fn dispatch(
     }
 }
 
+/// An episode's series and its season and episode numbers, as far as
+/// storage knows them; `None` for anything but an episode.
+async fn episode_place(
+    storage: &Arc<dyn Storage>,
+    work: &Work,
+) -> Option<(Option<Work>, Option<u32>, Option<u32>)> {
+    if work.kind != noflex_core::model::WorkKind::Episode {
+        return None;
+    }
+    let season = match work.parent_id {
+        Some(id) => storage.get_work(id).await.ok().flatten(),
+        None => None,
+    };
+    let series = match season.as_ref().and_then(|season| season.parent_id) {
+        Some(id) => storage.get_work(id).await.ok().flatten(),
+        None => None,
+    };
+    let season_number = work
+        .parent_index
+        .or_else(|| season.as_ref().and_then(|season| season.index_number));
+    let number = |n: Option<i32>| n.and_then(|n| u32::try_from(n).ok());
+    Some((series, number(season_number), number(work.index_number)))
+}
+
+fn wit_ids(work: &Work) -> Vec<wit::ExternalId> {
+    work.external_ids
+        .iter()
+        .filter(|id| id.kind != noflex_core::model::ExternalIdKind::Custom)
+        .map(|id| wit::ExternalId {
+            kind: retag_kind_id(to_wit_kind_id(id.kind)),
+            value: id.value.clone(),
+        })
+        .collect()
+}
+
 /// Build the wire event: storage-sourced kind/year/external-ids plus the
 /// best-effort runtime (the first edition of the work with one set;
-/// negative values — never valid runtimes — are dropped).
+/// negative values — never valid runtimes — are dropped), and an
+/// episode's series ids and numbers.
 async fn enrich(storage: &Arc<dyn Storage>, work: &Work, occ: &Occurrence) -> wit::ScrobbleEvent {
     let runtime_ms = match storage.editions_for_work(work.id).await {
         Ok(editions) => editions
@@ -202,23 +233,18 @@ async fn enrich(storage: &Arc<dyn Storage>, work: &Work, occ: &Occurrence) -> wi
             None
         }
     };
+    let (series, season_number, episode_number) =
+        episode_place(storage, work).await.unwrap_or_default();
     wit::ScrobbleEvent {
         user: occ.user.to_string(),
         work: occ.work.to_string(),
         kind: work_kind_to_wit(work.kind),
         title: occ.title.clone(),
         year: work.year,
-        external_ids: work
-            .external_ids
-            .iter()
-            .map(|id| wit::ExternalId {
-                kind: retag_kind_id(to_wit_kind_id(id.kind)),
-                value: id.value.clone(),
-            })
-            .collect(),
-        series_external_ids: Vec::new(),
-        season_number: None,
-        episode_number: None,
+        external_ids: wit_ids(work),
+        series_external_ids: series.as_ref().map(wit_ids).unwrap_or_default(),
+        season_number,
+        episode_number,
         action: occ.action,
         position_ms: occ.position_ms,
         runtime_ms,
@@ -262,7 +288,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn event_mapping_covers_exactly_the_playback_kinds() {
+    fn event_mapping_covers_exactly_the_scrobbled_kinds() {
         let user = UserId::new();
         let work = WorkId::new();
         let file = noflex_core::MediaFileId::new();
@@ -278,15 +304,16 @@ mod tests {
         assert!(matches!(occ.action, wit::ScrobbleAction::Started));
         assert_eq!(occ.position_ms, None);
 
-        let occ = Occurrence::from_event(&DomainEvent::PlaybackStopped {
-            user,
-            work,
-            title: title.clone(),
-            media_file: file,
-        })
-        .expect("playback stop maps");
-        assert!(matches!(occ.action, wit::ScrobbleAction::Stopped));
-        assert_eq!(occ.position_ms, None);
+        assert!(
+            Occurrence::from_event(&DomainEvent::PlaybackStopped {
+                user,
+                work,
+                title: title.clone(),
+                media_file: file,
+            })
+            .is_none(),
+            "progress-at-stop carries the stop's position"
+        );
 
         let occ = Occurrence::from_event(&DomainEvent::ProgressAtStop {
             user,

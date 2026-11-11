@@ -114,15 +114,11 @@ async fn posts_domain_events_as_json() {
         work,
         title: "The Matrix".into(),
     });
-    bus.emit(DomainEvent::ScanCompleted {
-        library: LibraryId::new(),
-        library_name: "Movies".into(),
-        added: 3,
-        updated: 1,
-        removed: 0,
-        added_works: vec![],
-        updated_works: vec![],
-        removed_works: vec![],
+    bus.emit(DomainEvent::Favorite {
+        user,
+        work,
+        title: "The Matrix".into(),
+        favorite: true,
     });
 
     let first = recv(&mut rx, "work-played POST").await;
@@ -138,15 +134,15 @@ async fn posts_domain_events_as_json() {
         })
     );
 
-    let second = recv(&mut rx, "scan-completed POST").await;
-    assert_eq!(second.body["event"], "scan-completed");
+    let second = recv(&mut rx, "favorite POST").await;
+    assert_eq!(second.body["event"], "favorite");
     assert_eq!(
         second.body["data"],
         serde_json::json!({
-            "library_name": "Movies",
-            "added": 3,
-            "updated": 1,
-            "removed": 0,
+            "user": user.to_string(),
+            "work": work.to_string(),
+            "title": "The Matrix",
+            "favorite": true,
         })
     );
 }
@@ -184,14 +180,15 @@ async fn posts_with_the_url_and_token_an_administrator_set() {
         )
         .await
         .expect("save settings");
-    bus.emit(DomainEvent::ScanStarted {
+    bus.emit(DomainEvent::WorkAdded {
+        work: WorkId::new(),
         library: LibraryId::new(),
-        library_name: "Movies".into(),
+        title: "Big Buck Bunny".into(),
     });
 
-    let captured = recv(&mut rx, "scan-started POST").await;
-    assert_eq!(captured.body["event"], "scan-started");
-    assert_eq!(captured.body["data"]["library_name"], "Movies");
+    let captured = recv(&mut rx, "work-added POST").await;
+    assert_eq!(captured.body["event"], "work-added");
+    assert_eq!(captured.body["data"]["title"], "Big Buck Bunny");
     assert_eq!(
         captured.authorization.as_deref(),
         Some("Bearer test-token-123"),

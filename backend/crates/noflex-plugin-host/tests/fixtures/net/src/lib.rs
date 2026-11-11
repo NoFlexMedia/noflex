@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // Test-fixture plugin for noflex-plugin-host's `host-net` suite. A
-// `custom` notify-event whose payload is `METHOD URL [body-len]` drives
+// `work-added` notify-event for work `net` whose title is
+// `METHOD URL [body-len]` drives
 // a host-performed HTTP request from inside the guest (an optional
 // third field generates a body of that many bytes, for the size-cap
 // tests). The outcome — status + body, or the plugin-error variant —
@@ -63,13 +64,13 @@ async fn drive(payload: &str) -> String {
 
 impl notifier::Guest for Fixture {
     async fn notify(event: NotifyEvent) -> Result<(), PluginError> {
-        let NotifyEvent::Custom(custom) = event else {
+        let NotifyEvent::WorkAdded(added) = event else {
             return Ok(());
         };
-        if custom.event != "net" {
+        if added.work != "net" {
             return Ok(());
         }
-        let line = drive(&custom.payload_json).await;
+        let line = drive(&added.title).await;
         RECEIVED.lock().expect("received log poisoned").push(line);
         Ok(())
     }

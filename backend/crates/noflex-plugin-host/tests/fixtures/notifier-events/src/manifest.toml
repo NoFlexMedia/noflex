@@ -6,4 +6,4 @@ noflex_api_version = "0.2"
 hooks = ["notifier"]
 capabilities = []
 license = "AGPL-3.0-only"
-events = ["scan-started"]
+events = ["favorite"]

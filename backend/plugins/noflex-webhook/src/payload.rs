@@ -48,15 +48,6 @@ pub enum Event {
         work: String,
         title: String,
     },
-    ScanStarted {
-        library_name: String,
-    },
-    ScanCompleted {
-        library_name: String,
-        added: u64,
-        updated: u64,
-        removed: u64,
-    },
     Favorite {
         user: String,
         work: String,
@@ -81,10 +72,6 @@ pub enum Event {
         title: String,
         media_file: String,
     },
-    Custom {
-        event: String,
-        payload_json: String,
-    },
 }
 
 impl Event {
@@ -94,39 +81,21 @@ impl Event {
         match self {
             Event::WorkAdded { .. } => "work-added",
             Event::WorkPlayed { .. } => "work-played",
-            Event::ScanStarted { .. } => "scan-started",
-            Event::ScanCompleted { .. } => "scan-completed",
             Event::Favorite { .. } => "favorite",
             Event::ProgressAtStop { .. } => "progress-at-stop",
             Event::PlaybackStarted { .. } => "playback-started",
             Event::PlaybackStopped { .. } => "playback-stopped",
-            Event::Custom { .. } => "custom",
         }
     }
 
     /// The JSON body POSTed to the configured URL:
     /// `{"event": "<kind>", "data": { ...variant fields... }}`.
-    /// A custom event's `payload_json` stays a string containing JSON —
-    /// receivers decode it if they care; re-embedding it would make the
-    /// shape depend on the sender's payload.
     pub fn body(&self) -> String {
         let data = match self {
             Event::WorkAdded { work, title } => json!({ "work": work, "title": title }),
             Event::WorkPlayed { user, work, title } => {
                 json!({ "user": user, "work": work, "title": title })
             }
-            Event::ScanStarted { library_name } => json!({ "library_name": library_name }),
-            Event::ScanCompleted {
-                library_name,
-                added,
-                updated,
-                removed,
-            } => json!({
-                "library_name": library_name,
-                "added": added,
-                "updated": updated,
-                "removed": removed,
-            }),
             Event::Favorite {
                 user,
                 work,
@@ -166,10 +135,6 @@ impl Event {
                 "title": title,
                 "media_file": media_file,
             }),
-            Event::Custom {
-                event,
-                payload_json,
-            } => json!({ "event": event, "payload_json": payload_json }),
         };
         json!({ "event": self.kind_str(), "data": data }).to_string()
     }
@@ -243,30 +208,6 @@ mod tests {
     }
 
     #[test]
-    fn scan_started_body() {
-        let v = body_json(&Event::ScanStarted {
-            library_name: "Movies".into(),
-        });
-        assert_eq!(v["event"], "scan-started");
-        assert_eq!(v["data"], json!({"library_name": "Movies"}));
-    }
-
-    #[test]
-    fn scan_completed_body() {
-        let v = body_json(&Event::ScanCompleted {
-            library_name: "Movies".into(),
-            added: 3,
-            updated: 1,
-            removed: 0,
-        });
-        assert_eq!(v["event"], "scan-completed");
-        assert_eq!(
-            v["data"],
-            json!({"library_name": "Movies", "added": 3, "updated": 1, "removed": 0})
-        );
-    }
-
-    #[test]
     fn favorite_body() {
         let v = body_json(&Event::Favorite {
             user: "u-1".into(),
@@ -321,18 +262,6 @@ mod tests {
             assert_eq!(v["data"]["media_file"], "mf-1");
             assert_eq!(v["data"].as_object().unwrap().len(), 4);
         }
-    }
-
-    #[test]
-    fn custom_body_keeps_payload_as_a_string() {
-        let v = body_json(&Event::Custom {
-            event: "my-plugin.thing-happened".into(),
-            payload_json: "{\"count\":2}".into(),
-        });
-        assert_eq!(v["event"], "custom");
-        assert_eq!(v["data"]["event"], "my-plugin.thing-happened");
-        // Not double-decoded: receivers get the JSON as a string.
-        assert_eq!(v["data"]["payload_json"], "{\"count\":2}");
     }
 
     #[test]

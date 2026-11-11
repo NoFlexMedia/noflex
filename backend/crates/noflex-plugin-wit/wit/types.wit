@@ -166,17 +166,6 @@ interface types {
         title: string,
     }
 
-    record scan-started-event {
-        library-name: string,
-    }
-
-    record scan-completed-event {
-        library-name: string,
-        added: u64,
-        updated: u64,
-        removed: u64,
-    }
-
     record favorite-event {
         user: user-id,
         work: work-id,
@@ -202,17 +191,12 @@ interface types {
         media-file: media-file-id,
     }
 
-    record custom-event {
-        event: string,
-        /// JSON-encoded payload; structured types cross the boundary as text.
-        payload-json: string,
-    }
-
+    /// What a notifier hears. Scans starting and finishing aren't here:
+    /// they carry nothing a person acts on, and what a scan changed
+    /// reaches plugins through `post-scan`.
     variant notify-event {
         work-added(work-added-event),
         work-played(work-played-event),
-        scan-started(scan-started-event),
-        scan-completed(scan-completed-event),
         favorite(favorite-event),
         /// Emitted only when playback stops — Playing/Paused heartbeats
         /// are far too hot to broadcast to every notifier.
@@ -221,7 +205,6 @@ interface types {
         playback-started(playback-event),
         /// A playback session was explicitly stopped.
         playback-stopped(playback-event),
-        custom(custom-event),
     }
 
     /// Scrobble state machine (the Trakt `/scrobble/start|pause|stop`

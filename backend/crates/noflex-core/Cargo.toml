@@ -11,7 +11,6 @@ description = "Core domain types and extension trait surface for NoFlex"
 async-graphql = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 uuid = { workspace = true }

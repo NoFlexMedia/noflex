@@ -77,15 +77,6 @@ impl From<NotifyEvent> for payload::Event {
                 work: e.work,
                 title: e.title,
             },
-            NotifyEvent::ScanStarted(e) => E::ScanStarted {
-                library_name: e.library_name,
-            },
-            NotifyEvent::ScanCompleted(e) => E::ScanCompleted {
-                library_name: e.library_name,
-                added: e.added,
-                updated: e.updated,
-                removed: e.removed,
-            },
             NotifyEvent::Favorite(e) => E::Favorite {
                 user: e.user,
                 work: e.work,
@@ -109,10 +100,6 @@ impl From<NotifyEvent> for payload::Event {
                 work: e.work,
                 title: e.title,
                 media_file: e.media_file,
-            },
-            NotifyEvent::Custom(e) => E::Custom {
-                event: e.event,
-                payload_json: e.payload_json,
             },
         }
     }

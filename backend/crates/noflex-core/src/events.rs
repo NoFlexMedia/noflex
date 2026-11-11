@@ -65,8 +65,8 @@ pub enum DomainEvent {
         library_name: String,
     },
     /// A library scan finished, with per-outcome file counts and the
-    /// works behind them. The `u64` counts stay for the notifier wire
-    /// shape; the id lists feed the post-scan hook. `removed_works` is
+    /// works behind them. The `u64` counts feed the activity log; the id
+    /// lists feed the post-scan hook. `removed_works` is
     /// always empty today — scan pruning operates at media-file level
     /// and work-level removal isn't tracked.
     ScanCompleted {

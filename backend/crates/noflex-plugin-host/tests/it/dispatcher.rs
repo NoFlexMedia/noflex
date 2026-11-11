@@ -100,7 +100,23 @@ async fn dispatcher_fans_out_all_event_kinds() {
     let work = WorkId::new();
     let media_file = MediaFileId::new();
     let title = "Alien";
+    // Scans come first: notifiers never hear them, and one wrongly
+    // delivered would land in the log before everything after it.
     let events = vec![
+        DomainEvent::ScanStarted {
+            library: LibraryId::new(),
+            library_name: "Movies".into(),
+        },
+        DomainEvent::ScanCompleted {
+            library: LibraryId::new(),
+            library_name: "Movies".into(),
+            added: 3,
+            updated: 2,
+            removed: 1,
+            added_works: vec![],
+            updated_works: vec![],
+            removed_works: vec![],
+        },
         DomainEvent::WorkAdded {
             work,
             library: LibraryId::new(),
@@ -135,20 +151,6 @@ async fn dispatcher_fans_out_all_event_kinds() {
             title: title.into(),
             media_file,
         },
-        DomainEvent::ScanStarted {
-            library: LibraryId::new(),
-            library_name: "Movies".into(),
-        },
-        DomainEvent::ScanCompleted {
-            library: LibraryId::new(),
-            library_name: "Movies".into(),
-            added: 3,
-            updated: 2,
-            removed: 1,
-            added_works: vec![],
-            updated_works: vec![],
-            removed_works: vec![],
-        },
     ];
     // The expected fixture-side encodings, mirroring encode() in the
     // guest. WorkAdded's library id has no WIT counterpart and is dropped.
@@ -159,8 +161,6 @@ async fn dispatcher_fans_out_all_event_kinds() {
         format!("favorite:{user}:{work}:{title}:true"),
         format!("playback-started:{user}:{work}:{title}:{media_file}"),
         format!("playback-stopped:{user}:{work}:{title}:{media_file}"),
-        "scan-started:Movies".to_string(),
-        "scan-completed:Movies:3:2:1".to_string(),
     ];
     for event in events {
         bus.emit(event);
@@ -169,7 +169,7 @@ async fn dispatcher_fans_out_all_event_kinds() {
     let plugin = registry
         .get_plugin(&PluginId(NOTIFIER_ID.to_string()))
         .expect("notifier registered");
-    let log = poll_until("all eight events delivered", || async {
+    let log = poll_until("every notify event delivered", || async {
         let log = received(&plugin).await;
         expected
             .iter()
@@ -250,22 +250,26 @@ async fn dispatcher_honors_manifest_event_subscriptions() {
     let registry = Arc::new(registry);
     let dispatcher = dispatcher::spawn(&bus, Arc::clone(&registry));
 
-    // The fixture's manifest declares `events = ["scan-started"]`:
-    // scan-started is delivered, work-played is filtered host-side.
-    bus.emit(DomainEvent::ScanStarted {
-        library: LibraryId::new(),
-        library_name: "Movies".into(),
+    // The fixture's manifest declares `events = ["favorite"]`: the
+    // favorite is delivered, work-played is filtered host-side.
+    let user = UserId::new();
+    let work = WorkId::new();
+    bus.emit(DomainEvent::Favorite {
+        user,
+        work,
+        title: "Alien".into(),
+        favorite: true,
     });
     bus.emit(DomainEvent::WorkPlayed {
-        user: UserId::new(),
-        work: WorkId::new(),
+        user,
+        work,
         title: "Alien".into(),
     });
 
     let plugin = registry
         .get_plugin(&PluginId("fixture-notifier-events".to_string()))
         .expect("notifier-events registered");
-    let expected = "scan-started:Movies".to_string();
+    let expected = format!("favorite:{user}:{work}:Alien:true");
     poll_until("subscribed event delivered", || async {
         received(&plugin).await.contains(&expected).then_some(())
     })

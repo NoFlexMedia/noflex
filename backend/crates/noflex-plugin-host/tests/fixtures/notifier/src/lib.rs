@@ -39,11 +39,6 @@ fn encode(event: &NotifyEvent) -> String {
     match event {
         NotifyEvent::WorkAdded(e) => format!("work-added:{}:{}", e.work, e.title),
         NotifyEvent::WorkPlayed(e) => format!("work-played:{}:{}:{}", e.user, e.work, e.title),
-        NotifyEvent::ScanStarted(e) => format!("scan-started:{}", e.library_name),
-        NotifyEvent::ScanCompleted(e) => format!(
-            "scan-completed:{}:{}:{}:{}",
-            e.library_name, e.added, e.updated, e.removed
-        ),
         NotifyEvent::Favorite(e) => {
             format!("favorite:{}:{}:{}:{}", e.user, e.work, e.title, e.favorite)
         }
@@ -59,7 +54,6 @@ fn encode(event: &NotifyEvent) -> String {
             "playback-stopped:{}:{}:{}:{}",
             e.user, e.work, e.title, e.media_file
         ),
-        NotifyEvent::Custom(e) => format!("custom:{}:{}", e.event, e.payload_json),
     }
 }
 

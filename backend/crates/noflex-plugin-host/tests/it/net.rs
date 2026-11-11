@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use noflex_plugin_host::{
     EngineConfig, LoadedPlugin, PluginId, PluginRegistry, TaskOutcome, build_engine,
-    notifier::noflex::plugin::types::{CustomEvent, NotifyEvent},
+    notifier::noflex::plugin::types::{NotifyEvent, WorkAddedEvent},
 };
 
 const NET_ID: &str = "fixture-net";
@@ -77,9 +77,9 @@ fn load_denied() -> Option<(PluginRegistry, Arc<LoadedPlugin>)> {
 /// time the call returns.
 async fn drive(plugin: &Arc<LoadedPlugin>, payload: &str) -> String {
     plugin
-        .call_notify(NotifyEvent::Custom(CustomEvent {
-            event: "net".into(),
-            payload_json: payload.into(),
+        .call_notify(NotifyEvent::WorkAdded(WorkAddedEvent {
+            work: "net".into(),
+            title: payload.into(),
         }))
         .await
         .expect("notify dispatch succeeds")

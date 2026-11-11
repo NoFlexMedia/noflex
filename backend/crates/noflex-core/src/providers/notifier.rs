@@ -19,19 +19,6 @@ pub enum NotifyEvent {
         work: WorkId,
         title: String,
     },
-    ScanStarted {
-        library_name: String,
-    },
-    ScanCompleted {
-        library_name: String,
-        added: usize,
-        updated: usize,
-        removed: usize,
-    },
-    Custom {
-        event: String,
-        payload: serde_json::Value,
-    },
 }
 
 #[async_trait]

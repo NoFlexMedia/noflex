@@ -42,7 +42,7 @@ pub struct PluginManifest {
     #[serde(default)]
     pub capabilities: Vec<String>,
     /// Event subscriptions for the notifier fan-out, named by
-    /// `DomainEvent::kind_str` (work-added, scan-completed, ...). Empty
+    /// `DomainEvent::kind_str` (work-added, playback-started, ...). Empty
     /// means every event — the historical behavior. A non-empty list is
     /// only meaningful with the `notifier` hook; [`Self::check_events`]
     /// rejects anything else at load time.
@@ -278,20 +278,18 @@ pub struct TaskRegistration {
 pub(crate) fn declares_background(capabilities: &[String]) -> bool {
     capabilities.iter().any(|c| c == "background")
 }
-/// The event names a manifest's `events` list may subscribe to. Mirrors
-/// `DomainEvent::kind_str` one-for-one; kept as a literal table so a bad
-/// entry is a load-time rejection instead of a silent never-delivered
-/// subscription.
+
+/// The event names a manifest's `events` list may subscribe to: the
+/// `DomainEvent::kind_str` of every event notifiers hear. Kept as a literal
+/// table so a bad entry is a load-time rejection instead of a silent
+/// never-delivered subscription.
 const NOTIFY_EVENT_KINDS: &[&str] = &[
     "work-added",
     "work-played",
-    "scan-started",
-    "scan-completed",
     "favorite",
     "progress-at-stop",
     "playback-started",
     "playback-stopped",
-    "custom",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -942,7 +940,7 @@ mod tests {
         assert!(m.events.is_empty());
         m.check_events(Path::new("gotify.wasm")).expect("valid");
         assert!(m.subscribed_to("work-played"));
-        assert!(m.subscribed_to("scan-completed"));
+        assert!(m.subscribed_to("playback-started"));
     }
 
     #[test]
@@ -954,11 +952,11 @@ mod tests {
             version = "0.1.0"
             noflex_api_version = "0.2"
             hooks = ["notifier"]
-            events = ["scan-started", "scan-completed"]
+            events = ["playback-started", "playback-stopped"]
         "#;
         let m = PluginManifest::from_bytes(toml.as_bytes()).expect("parses");
         m.check_events(Path::new("gotify.wasm")).expect("valid");
-        assert!(m.subscribed_to("scan-started"));
+        assert!(m.subscribed_to("playback-started"));
         assert!(!m.subscribed_to("work-played"));
     }
 
@@ -979,7 +977,16 @@ mod tests {
             .expect_err("unknown event name");
         assert!(err.to_string().contains("work-deleted"));
 
-        let no_hook = PluginManifest::from_bytes(base("events = [\"scan-started\"]").as_bytes())
+        let scan = PluginManifest::from_bytes(
+            base("hooks = [\"notifier\"]\nevents = [\"scan-completed\"]").as_bytes(),
+        )
+        .expect("parses");
+        assert!(
+            scan.check_events(Path::new("p.wasm")).is_err(),
+            "scans reach plugins through post-scan, not notify"
+        );
+
+        let no_hook = PluginManifest::from_bytes(base("events = [\"work-added\"]").as_bytes())
             .expect("parses");
         assert!(no_hook.check_events(Path::new("p.wasm")).is_err());
     }

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 // Domain-event dispatcher: subscribes to the core `DomainEventBus` and
-// fans every event out to each loaded plugin exporting the `notifier`
-// hook. The bus is lossy by design (a lagging dispatcher misses events
+// fans each event a notifier hears out to every loaded plugin exporting
+// the `notifier` hook, and each finished scan to the `post-scan` hook.
+// The bus is lossy by design (a lagging dispatcher misses events
 // rather than slowing producers), and the fan-out is failure-isolated:
 // one notifier's plugin-error or trap is logged and never stops
 // delivery to the others.
@@ -52,24 +53,20 @@ pub(crate) fn spawn_on(
 
 async fn dispatch(plugins: &RwLock<HashMap<PluginId, Arc<LoadedPlugin>>>, event: DomainEvent) {
     let kind = event.kind_str();
-    // ScanCompleted additionally feeds the post-scan hook fan-out; pull
-    // its work-id lists out before the event becomes a notify-event.
-    let scan_completed = match &event {
-        DomainEvent::ScanCompleted {
-            library,
-            added_works,
-            updated_works,
-            removed_works,
-            ..
-        } => Some((
-            *library,
-            added_works.clone(),
-            updated_works.clone(),
-            removed_works.clone(),
-        )),
-        _ => None,
+    if let DomainEvent::ScanCompleted {
+        library,
+        added_works,
+        updated_works,
+        removed_works,
+        ..
+    } = event
+    {
+        post_scan_fanout(plugins, library, added_works, updated_works, removed_works).await;
+        return;
+    }
+    let Some(event) = to_notify_event(&event) else {
+        return;
     };
-    let event = to_notify_event(&event);
     let targets: Vec<(String, Arc<LoadedPlugin>)> = {
         let guard = plugins.read().expect("registry lock poisoned");
         guard
@@ -94,9 +91,6 @@ async fn dispatch(plugins: &RwLock<HashMap<PluginId, Arc<LoadedPlugin>>>, event:
                     "notifier dispatch failed");
             }
         }
-    }
-    if let Some((library, added, updated, removed)) = scan_completed {
-        post_scan_fanout(plugins, library, added, updated, removed).await;
     }
 }
 
@@ -156,11 +150,12 @@ pub(crate) async fn post_scan_fanout(
     }
 }
 
-/// Map a domain event onto the notifier hook's wire shape. IDs cross as
-/// hyphenated UUID strings. `WorkAdded`'s `library` has no counterpart
-/// in the WIT record and is dropped by design.
-fn to_notify_event(event: &DomainEvent) -> wit::NotifyEvent {
-    match event {
+/// Map a domain event onto the notifier hook's wire shape, or `None` for
+/// one notifiers don't hear. IDs cross as hyphenated UUID strings.
+/// `WorkAdded`'s `library` has no counterpart in the WIT record and is
+/// dropped by design.
+fn to_notify_event(event: &DomainEvent) -> Option<wit::NotifyEvent> {
+    Some(match event {
         DomainEvent::WorkAdded { work, title, .. } => {
             wit::NotifyEvent::WorkAdded(wit::WorkAddedEvent {
                 work: work.to_string(),
@@ -208,24 +203,8 @@ fn to_notify_event(event: &DomainEvent) -> wit::NotifyEvent {
             title,
             media_file,
         } => wit::NotifyEvent::PlaybackStopped(playback_event(user, work, title, media_file)),
-        DomainEvent::ScanStarted { library_name, .. } => {
-            wit::NotifyEvent::ScanStarted(wit::ScanStartedEvent {
-                library_name: library_name.clone(),
-            })
-        }
-        DomainEvent::ScanCompleted {
-            library_name,
-            added,
-            updated,
-            removed,
-            ..
-        } => wit::NotifyEvent::ScanCompleted(wit::ScanCompletedEvent {
-            library_name: library_name.clone(),
-            added: *added,
-            updated: *updated,
-            removed: *removed,
-        }),
-    }
+        DomainEvent::ScanStarted { .. } | DomainEvent::ScanCompleted { .. } => return None,
+    })
 }
 
 fn playback_event(

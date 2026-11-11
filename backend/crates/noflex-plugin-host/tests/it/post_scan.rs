@@ -2,8 +2,7 @@
 //
 // End-to-end test for the post-scan hook wiring: a `ScanCompleted`
 // domain event fans its work-id lists out to every loaded plugin
-// exporting `post-scan` (and only those), alongside the notifier
-// fan-out. The fixture guest records each call as a one-line encoding
+// exporting `post-scan` (and only those). The fixture guest records each call as a one-line encoding
 // in instance-global state; the host reads the log back through the
 // fixture's `report` background task.
 //
@@ -27,7 +26,6 @@ use noflex_plugin_host::{
 };
 
 const POST_SCAN_ID: &str = "fixture-post-scan";
-const NOTIFIER_ID: &str = "fixture-notifier";
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Re-run `f` until it yields, failing the test after [`TIMEOUT`].
@@ -126,18 +124,6 @@ async fn scan_completed_reaches_post_scan_exporters_with_work_ids() {
         .expect("post-scan fixture registered");
     poll_until("post-scan call delivered with ids intact", || async {
         received(&post_scan).await.contains(&expected).then_some(())
-    })
-    .await;
-
-    // The notifier fan-out still happens on the same event.
-    let notifier = registry
-        .get_plugin(&PluginId(NOTIFIER_ID.to_string()))
-        .expect("notifier fixture registered");
-    poll_until("notifier still receives scan-completed", || async {
-        received(&notifier)
-            .await
-            .contains(&"scan-completed:Movies:2:1:0".to_string())
-            .then_some(())
     })
     .await;
     dispatcher.abort();

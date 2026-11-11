@@ -1,9 +1,9 @@
 # noflex-webhook
 
 Generic outbound webhook notifier — first-party WASM plugin. Bridges
-NoFlex domain events ("scan finished", "now playing", favorites, ...)
-to any HTTP endpoint that accepts a JSON POST: Gotify, ntfy, Discord,
-Slack, or your own receiver. Each event becomes one POST, performed by
+NoFlex domain events ("added to the library", "now playing", favorites,
+...) to any HTTP endpoint that accepts a JSON POST: Gotify, ntfy,
+Discord, Slack, or your own receiver. Each event becomes one POST, performed by
 the host through the capability-gated `host-net` import.
 
 ## Configuration
@@ -54,17 +54,12 @@ verbatim:
 |---|---|
 | `work-added` | `{"work", "title"}` |
 | `work-played` | `{"user", "work", "title"}` |
-| `scan-started` | `{"library_name"}` |
-| `scan-completed` | `{"library_name", "added", "updated", "removed"}` |
 | `favorite` | `{"user", "work", "title", "favorite"}` |
 | `progress-at-stop` | `{"user", "work", "title", "position_ms"}` |
 | `playback-started` | `{"user", "work", "title", "media_file"}` |
 | `playback-stopped` | `{"user", "work", "title", "media_file"}` |
-| `custom` | `{"event", "payload_json"}` |
 
 IDs (`user`, `work`, `media_file`) are hyphenated UUID strings.
-`payload_json` stays a **string containing JSON** — the plugin never
-double-decodes it.
 
 ## Delivery contract
 

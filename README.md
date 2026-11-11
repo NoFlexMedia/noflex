@@ -2,7 +2,9 @@
 
 _Your media, your server_ 🎬📺🎵
 
-NoFlex is a self-hosted media server for movies, shows, music, audiobooks, and photos, written from scratch in Rust.
+NoFlex is a self-hosted media server for movies, shows, music, live TV and photos, written from scratch in Rust.
+
+**[noflex.dev](https://noflex.dev)** · [Demo](https://noflex.dev/demo) · [Get NoFlex](https://noflex.dev/download) · [Support](https://noflex.dev/support)
 
 > **Status: pre-alpha.** NoFlex is under active development and not yet ready to hold your library.
 
@@ -12,6 +14,45 @@ NoFlex is a self-hosted media server for movies, shows, music, audiobooks, and p
 </p>
 <p align="center"><sub>The web client, and the Flutter app at phone width. The library is <a href="https://studio.blender.org/films/">Blender Studio's open movies</a> (CC BY).</sub></p>
 
+## Features
+
+### Ready before you ask
+
+- **Smart transcoding.** The server works out what each person will watch next (the next episodes, what they left unfinished, what they marked, what they'll likely pick) and prepares a version for each of their devices while it's quiet. It keeps under a CPU cap, pauses the moment anyone presses play, and stays within a storage budget.
+- **Smart Downloads.** The app keeps the titles the server ranks highest within the space you give it, on Wi-Fi only if you like, and on Android and iOS finishes in the background.
+- **AV1 first.** Encodes try AV1 for any device that decodes it, then HEVC, then H.264, with hardware encoding through VAAPI, NVENC, Quick Sync, AMF, VideoToolbox and Media Foundation. Our own ffmpeg build brings AV1 NVENC to Nvidia drivers from 520.56.
+- **No more "why is it transcoding?"** Every app shows how a title is playing, and when it transcodes, exactly why. The Flutter app measures which codecs its device decodes in hardware instead of trusting a profile.
+
+### Better with friends
+
+- **Linked servers.** Add a friend's server and browse, search, stream and download from it beside your own. Your app talks to each server directly; the servers never talk to each other, and nothing passes through us.
+- **Watch state that follows you.** The web client carries what you've watched between servers, so what you finish on a friend's is marked watched on yours.
+- **Watch together.** Open a room, share the link, and play, pause and seek in sync.
+
+### Smart, and private
+
+- **Search for what it's about.** Every synopsis is embedded with EmbeddingGemma on your own server, on CPU, GPU or NPU, and search blends meaning with exact words: "the one where a girl raises a dragon" finds Sintel.
+- **Recommendations without a cloud,** from what you watched lately, with near-duplicates kept apart.
+
+### Sandboxed plugins
+
+- **Every integration is a WebAssembly plugin**, first-party ones included: TMDB, TheTVDB, MusicBrainz, OpenID Connect, Trakt, webhooks, local embeddings and intro markers.
+- **Capability-gated and audit-logged.** A plugin declares what it needs up front, reaches only the hosts it names, never touches the database, and has every call logged. Plugins may use any license.
+
+### And the rest
+
+- **Bring your library as it is:** Plex-style folders, release names, `{edition-…}` tags, and one show split across 1080p and 4K season folders. Local artwork, sidecar subtitles and multi-part films are read as they are.
+- **Every screen:** a web client built into the server, one Flutter app for phones, tablets, foldables and desktops, and one TV app for Samsung, LG, Android TV, Fire TV, RDK and Apple TV.
+- **NoFlex Connect:** send a title to the TV and steer it from your phone, with Google Cast and AirPlay from the browser.
+- **Shared devices:** "Who's watching?" profiles, PINs enforced by the server, and QR-code sign-in on TVs.
+- **Live TV and DVR** from M3U and XMLTV sources.
+- **HDR10, HDR10+, HLG and Dolby Vision,** tone-mapped on the GPU where a screen can't show them.
+- **Subtitles and audio tracks** that only transcode when they must, trickplay thumbnails, chapters, and intro skipping from chapter markers.
+- **Parental controls:** allowed ratings, per-library access, and bitrate limits for each person.
+- **Collections, playlists, invites,** OpenID Connect sign-in and API keys.
+- **A status page:** live CPU, memory and network, who's streaming and why it transcodes, and what's been played.
+- **Music and photos,** browsed beside your films.
+
 ## Layout & Tech Stack
 
 **🦀 Backend: Rust.** A single Cargo workspace in `backend/` holds the server, scanner, transcoder, storage, and plugin runtime.
@@ -20,7 +61,7 @@ NoFlex is a self-hosted media server for movies, shows, music, audiobooks, and p
 
 **🧩 Plugins: WebAssembly components.** Metadata and artwork providers, external login, scrobblers, notifications, and embeddings are all `.wasm` plugins running in Wasmtime, first-party ones included.
 
-**🌐 Web: SvelteKit.** `web/` is a Svelte 5 client using Houdini for GraphQL, embedded into the server binary and served from the same origin.
+**🌐 Web: SvelteKit.** `web/` is a Svelte 5 client using Houdini for GraphQL, embedded into the server binary and served from the same origin. `site/` is [noflex.dev](https://noflex.dev), prerendered.
 
 **📱 Apps: Flutter.** `flutter/` is one app for Android, iOS, macOS, Windows and Linux, adapting from phones to foldables to desktop windows. It plays through libmpv, preferring what each device decodes in hardware, and keeps titles offline with Smart Downloads.
 
@@ -58,6 +99,7 @@ just           # every other command
 
 ## Documentation
 
+- [noflex.dev](https://noflex.dev): what NoFlex does and where each app stands, with the [privacy policy](https://noflex.dev/privacy) and [terms](https://noflex.dev/terms).
 - [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md): build, run, and test from source.
 - [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md): every server setting, in TOML and environment variables.
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md): NixOS, remote access, backups, hardware transcoding.
@@ -65,6 +107,7 @@ just           # every other command
 - [`docs/PLUGINS.md`](docs/PLUGINS.md): the plugin model, and how to write your own.
 - [`docs/PLUGIN_LICENSING.md`](docs/PLUGIN_LICENSING.md): how AGPL applies (and doesn't) to plugins.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): how changes land.
+- [`SECURITY.md`](SECURITY.md): reporting a vulnerability.
 
 ## Git Worktrees
 

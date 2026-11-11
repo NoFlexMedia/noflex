@@ -72,7 +72,7 @@ pub use playback_session::{
     ActiveStream, ActiveStreamRecord, PlaybackRouteKind, PlaybackSession, PlaybackSessionService,
     PlaybackStart, SmartDownloadFile, StreamQuality, SubtitleDelivery, TranscodeProgress,
 };
-pub use plugin_links::{PluginLink, PluginLinkChallenge, PluginLinkService};
+pub use plugin_links::{LinkablePlugin, PluginLink, PluginLinkChallenge, PluginLinkService};
 pub use subscriptions::{ExportEvent, ExportEventBroadcaster};
 pub use watch::{WatchRoomAction, WatchRoomBus, WatchRoomEvent};
 

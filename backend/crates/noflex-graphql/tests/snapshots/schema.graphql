@@ -1253,6 +1253,17 @@ type LibraryWatcherStatus {
 }
 
 """
+A plugin anyone signed in can link their own account with.
+"""
+type LinkablePlugin {
+	"""
+	The plugin's id, as `startPluginLink` and `PluginLink.pluginId` take it.
+	"""
+	id: String!
+	displayName: String!
+}
+
+"""
 Another NoFlex server a user connects to. Clients talk to it directly; this
 server only remembers the link so it follows the user between devices.
 """
@@ -2001,10 +2012,12 @@ type Mutation {
 	"""
 	startPluginLink(pluginId: String!): PluginLinkChallenge!
 	"""
-	Unlink the calling user's account from a plugin by dropping
-	every stored credential. Silent: the plugin is not called — it
-	finds out on its next `read-for-user`, which starts missing.
-	Returns the link, or null when nothing was linked.
+	Unlink the calling user's account from a plugin, or stop a link
+	they started: their link in progress and background work for them
+	stop, the plugin revokes their grant upstream if it can, and every
+	credential stored for them goes. Revoking is best-effort; the
+	credentials go whatever the plugin answers. Returns the link, or
+	null when nothing was linked.
 	"""
 	unlinkPluginAccount(pluginId: String!): PluginLink
 	"""
@@ -2745,6 +2758,11 @@ doubles as the single-use credential on the callback route.
 type PluginLinkChallenge {
 	authUrl: String!
 	state: String!
+	"""
+	The code a device flow has the user enter at `auth_url`; null for a
+	redirect flow, which needs nothing typed.
+	"""
+	userCode: String
 }
 
 """
@@ -3140,6 +3158,12 @@ type Query {
 	"""
 	externalAuthProviders: [ExternalAuthProvider!]!
 	myExternalIdentities: [ExternalIdentity!]!
+	"""
+	Plugins the caller can link their own account with: loaded, exporting
+	the user-link hook, and with every operator secret their manifest
+	declares set, as a link can't start without them. Ordered by id.
+	"""
+	linkablePlugins: [LinkablePlugin!]!
 	"""
 	Every loaded plugin the calling user has stored credentials
 	for, with the credential key names. Plugins never linked — or

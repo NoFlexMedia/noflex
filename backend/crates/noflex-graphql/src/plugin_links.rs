@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use async_graphql::{Context, Object, SimpleObject};
 use noflex_core::UserId;
-use noflex_plugin_host::PluginRegistry;
+use noflex_plugin_host::{HookKind, PluginId, PluginRegistry, SecretStore};
 use noflex_storage::{Storage, domain::UserPluginSecret};
 use time::OffsetDateTime;
 
@@ -40,6 +40,17 @@ fn gql_err(e: impl std::fmt::Display) -> async_graphql::Error {
 pub struct PluginLinkChallenge {
     pub auth_url: String,
     pub state: String,
+    /// The code a device flow has the user enter at `auth_url`; null for a
+    /// redirect flow, which needs nothing typed.
+    pub user_code: Option<String>,
+}
+
+/// A plugin anyone signed in can link their own account with.
+#[derive(SimpleObject, Debug, Clone)]
+pub struct LinkablePlugin {
+    /// The plugin's id, as `startPluginLink` and `PluginLink.pluginId` take it.
+    pub id: String,
+    pub display_name: String,
 }
 
 /// The calling user's link to one plugin: which credential keys are
@@ -79,6 +90,11 @@ pub trait PluginLinkService: Send + Sync {
         user: UserId,
         plugin_id: &str,
     ) -> anyhow::Result<PluginLinkChallenge>;
+
+    /// `user` is unlinking from `plugin_id`: drop their link in progress,
+    /// stop their background chains, and let the plugin revoke their grant.
+    /// Their stored secrets are the caller's to delete afterwards.
+    async fn unlink(&self, user: UserId, plugin_id: &str) -> anyhow::Result<()>;
 }
 
 #[derive(Default)]
@@ -86,6 +102,33 @@ pub struct PluginLinksQuery;
 
 #[Object]
 impl PluginLinksQuery {
+    /// Plugins the caller can link their own account with: loaded, exporting
+    /// the user-link hook, and with every operator secret their manifest
+    /// declares set, as a link can't start without them. Ordered by id.
+    async fn linkable_plugins(
+        &self,
+        ctx: &Context<'_>,
+    ) -> async_graphql::Result<Vec<LinkablePlugin>> {
+        authed_principal(ctx)?;
+        let secrets = SecretStore::with_default_tiers();
+        Ok(registry(ctx)?
+            .snapshot()
+            .into_iter()
+            .filter(|plugin| plugin.hooks.contains(&HookKind::UserLink))
+            .filter(|plugin| {
+                let id = PluginId(plugin.id.clone());
+                let declared = &plugin.manifest.secrets_read;
+                declared
+                    .iter()
+                    .all(|key| secrets.read(&id, key, declared).is_some())
+            })
+            .map(|plugin| LinkablePlugin {
+                id: plugin.id,
+                display_name: plugin.display_name,
+            })
+            .collect())
+    }
+
     /// Every loaded plugin the calling user has stored credentials
     /// for, with the credential key names. Plugins never linked — or
     /// since unlinked — are absent, as are stored secrets for plugins
@@ -130,10 +173,12 @@ impl PluginLinksMutation {
             .map_err(gql_err)
     }
 
-    /// Unlink the calling user's account from a plugin by dropping
-    /// every stored credential. Silent: the plugin is not called — it
-    /// finds out on its next `read-for-user`, which starts missing.
-    /// Returns the link, or null when nothing was linked.
+    /// Unlink the calling user's account from a plugin, or stop a link
+    /// they started: their link in progress and background work for them
+    /// stop, the plugin revokes their grant upstream if it can, and every
+    /// credential stored for them goes. Revoking is best-effort; the
+    /// credentials go whatever the plugin answers. Returns the link, or
+    /// null when nothing was linked.
     async fn unlink_plugin_account(
         &self,
         ctx: &Context<'_>,
@@ -145,6 +190,12 @@ impl PluginLinksMutation {
             .list_user_plugin_secrets(principal.user_id, &plugin_id)
             .await
             .map_err(gql_err)?;
+        if let Ok(links) = ctx.data::<Arc<dyn PluginLinkService>>()
+            && let Err(error) = links.unlink(principal.user_id, &plugin_id).await
+        {
+            tracing::warn!(plugin = %plugin_id, user = %principal.user_id, %error,
+                "unlink: plugin could not revoke the grant");
+        }
         storage
             .delete_user_plugin_secrets(principal.user_id, &plugin_id)
             .await

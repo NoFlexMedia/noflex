@@ -117,6 +117,7 @@ impl PluginLinkHooks for FakeLinkHooks {
         Ok(PluginLinkChallenge {
             auth_url: format!("https://provider.example/auth?user={user_id}"),
             state: FAKE_STATE.to_string(),
+            user_code: None,
         })
     }
 
@@ -137,6 +138,10 @@ impl PluginLinkHooks for FakeLinkHooks {
     fn writable_secret_keys(&self, _plugin_id: &str) -> anyhow::Result<Vec<String>> {
         Ok(vec!["access-token".into(), "refresh-token".into()])
     }
+
+    async fn unlink(&self, _plugin_id: &str, _user: UserId) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -149,6 +154,7 @@ impl PluginLinkHooks for UndeclaredLinkHooks {
         Ok(PluginLinkChallenge {
             auth_url: "https://provider.example/auth".into(),
             state: FAKE_STATE.into(),
+            user_code: None,
         })
     }
 
@@ -164,6 +170,10 @@ impl PluginLinkHooks for UndeclaredLinkHooks {
 
     fn writable_secret_keys(&self, _plugin_id: &str) -> anyhow::Result<Vec<String>> {
         Ok(vec!["access-token".into()])
+    }
+
+    async fn unlink(&self, _plugin_id: &str, _user: UserId) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 
@@ -236,6 +246,32 @@ async fn link_flow_persists_secrets_and_consumes_state() {
     )
     .await;
     assert_eq!(status, 400, "unknown state must fail");
+}
+
+#[tokio::test]
+async fn unlinking_kills_a_pending_link() {
+    let store = temp_storage().await;
+    let user = seed_user(&store).await;
+    let links = Arc::new(ServerPluginLinks::new(
+        Arc::new(FakeLinkHooks),
+        store.clone(),
+    ));
+    links.start_link(user, PLUGIN_ID).await.expect("start");
+    links.unlink(user, PLUGIN_ID).await.expect("unlink");
+
+    let (status, _) = raw_get(
+        callback_router(links.clone()),
+        &format!("/plugins/{PLUGIN_ID}/link/callback?state={FAKE_STATE}&code=abc"),
+    )
+    .await;
+    assert_eq!(status, 400, "the provider's late redirect links nothing");
+    assert!(
+        store
+            .list_user_plugin_secrets(user, PLUGIN_ID)
+            .await
+            .expect("list secrets")
+            .is_empty()
+    );
 }
 
 #[tokio::test]

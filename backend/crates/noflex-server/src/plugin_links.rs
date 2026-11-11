@@ -24,6 +24,11 @@ use time::OffsetDateTime;
 /// States handed out by `link_start` die after this; a user who sits on
 /// the provider's consent page longer restarts the flow.
 const PENDING_TTL: time::Duration = time::Duration::minutes(10);
+/// Longest an unlink waits for a background run acting for the user to
+/// finish, so it can't write their tokens back once they're deleted. A
+/// device-flow poll waits out the provider's interval and then makes one
+/// request, inside the plugin's call deadline.
+const UNLINK_TASK_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
 const MAX_LINK_SECRETS: usize = 16;
 const MAX_SECRET_KEY_BYTES: usize = 128;
 const MAX_SECRET_VALUE_BYTES: usize = 64 * 1024;
@@ -53,6 +58,11 @@ pub trait PluginLinkHooks: Send + Sync {
 
     /// Manifest keys the host may persist from link completion.
     fn writable_secret_keys(&self, plugin_id: &str) -> anyhow::Result<Vec<String>>;
+
+    /// Stop `user`'s background chains on the plugin, waiting until none
+    /// of their runs is in flight, then call its unlink hook. A plugin
+    /// that isn't loaded has nothing to stop or call.
+    async fn unlink(&self, plugin_id: &str, user: UserId) -> anyhow::Result<()>;
 }
 
 fn link_plugin(registry: &PluginRegistry, plugin_id: &str) -> anyhow::Result<Arc<LoadedPlugin>> {
@@ -79,6 +89,7 @@ impl PluginLinkHooks for PluginRegistry {
             Ok(Ok(challenge)) => Ok(PluginLinkChallenge {
                 auth_url: challenge.auth_url,
                 state: challenge.state,
+                user_code: challenge.user_code.filter(|code| !code.trim().is_empty()),
             }),
             Ok(Err(e)) => Err(anyhow!("plugin {plugin_id} rejected link start: {e:?}")),
             Err(e) => Err(e).context("link start dispatch failed"),
@@ -100,6 +111,19 @@ impl PluginLinkHooks for PluginRegistry {
             Ok(Ok(secrets)) => Ok(secrets.into_iter().map(|s| (s.key, s.value)).collect()),
             Ok(Err(e)) => Err(anyhow!("plugin {plugin_id} rejected link complete: {e:?}")),
             Err(e) => Err(e).context("link complete dispatch failed"),
+        }
+    }
+
+    async fn unlink(&self, plugin_id: &str, user: UserId) -> anyhow::Result<()> {
+        let Ok(plugin) = link_plugin(self, plugin_id) else {
+            return Ok(());
+        };
+        self.cancel_user_tasks(plugin_id, user, UNLINK_TASK_WAIT)
+            .await;
+        match plugin.call_unlink(user.to_string()).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(anyhow!("plugin {plugin_id} rejected unlink: {e:?}")),
+            Err(e) => Err(e).context("unlink dispatch failed"),
         }
     }
 
@@ -225,6 +249,15 @@ impl PluginLinkService for ServerPluginLinks {
             },
         );
         Ok(challenge)
+    }
+
+    async fn unlink(&self, user: UserId, plugin_id: &str) -> anyhow::Result<()> {
+        // A state still pending would let the callback finish the link.
+        self.pending
+            .lock()
+            .expect("pending links poisoned")
+            .retain(|_, p| !(p.user == user && p.plugin_id == plugin_id));
+        self.hooks.unlink(plugin_id, user).await
     }
 }
 

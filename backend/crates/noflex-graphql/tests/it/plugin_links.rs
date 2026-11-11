@@ -100,7 +100,12 @@ impl PluginLinkService for StubLinkService {
         Ok(PluginLinkChallenge {
             auth_url: format!("https://provider.example/authorize?client={plugin_id}"),
             state: "stub-state-1".to_string(),
+            user_code: Some("ABCD-1234".to_string()),
         })
+    }
+
+    async fn unlink(&self, _user: UserId, _plugin_id: &str) -> anyhow::Result<()> {
+        anyhow::bail!("upstream unreachable")
     }
 }
 
@@ -113,6 +118,7 @@ async fn link_surfaces_reject_anonymous() {
         r#"{ myPluginLinks { pluginId } }"#,
         r#"mutation { startPluginLink(pluginId: "trakt") { authUrl } }"#,
         r#"mutation { unlinkPluginAccount(pluginId: "trakt") { pluginId } }"#,
+        r#"{ linkablePlugins { id } }"#,
         r#"mutation { enqueuePluginTask(pluginId: "trakt", task: "sync") }"#,
     ] {
         let resp = schema.execute(query).await;
@@ -176,9 +182,11 @@ async fn start_plugin_link_delegates_to_service() {
 
     let resp = schema
         .execute(
-            Request::new(r#"mutation { startPluginLink(pluginId: "trakt") { authUrl state } }"#)
-                .data(admin)
-                .data(as_request_user(admin)),
+            Request::new(
+                r#"mutation { startPluginLink(pluginId: "trakt") { authUrl state userCode } }"#,
+            )
+            .data(admin)
+            .data(as_request_user(admin)),
         )
         .await;
     assert!(resp.errors.is_empty(), "start: {:?}", resp.errors);
@@ -188,6 +196,7 @@ async fn start_plugin_link_delegates_to_service() {
         "https://provider.example/authorize?client=trakt"
     );
     assert_eq!(data["startPluginLink"]["state"], "stub-state-1");
+    assert_eq!(data["startPluginLink"]["userCode"], "ABCD-1234");
 }
 
 #[tokio::test]
@@ -218,6 +227,8 @@ async fn start_plugin_link_without_service_is_clean_error() {
     );
 }
 
+/// The stub's unlink fails, as a revoke against an unreachable provider
+/// would: the credentials go regardless.
 #[tokio::test]
 async fn unlink_drops_stored_secrets() {
     let (schema, jwt, store) = authed_schema().await;

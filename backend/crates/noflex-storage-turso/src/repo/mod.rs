@@ -5,6 +5,7 @@ pub(crate) mod api_keys;
 pub(crate) mod collections;
 pub(crate) mod device_codes;
 pub(crate) mod devices;
+pub(crate) mod downloaded_subtitles;
 pub(crate) mod editions;
 pub(crate) mod erasure;
 pub(crate) mod export_jobs;

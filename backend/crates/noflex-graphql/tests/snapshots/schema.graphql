@@ -677,6 +677,49 @@ input DirectPlayProfile {
 }
 
 """
+A subtitle a viewer fetched from a provider for one media file. The text
+lives in the server's own cache, never in the media folder, as UTF-8 in a
+format the subtitle pipeline reads. Everyone who can see the title shares
+it, and it goes with the media file, or once nobody has used it for a while.
+"""
+type DownloadedSubtitle {
+	id: ID!
+	mediaFileId: ID!
+	"""
+	The plugin it came from.
+	"""
+	provider: String!
+	"""
+	ISO 639-2/T.
+	"""
+	language: String!
+	"""
+	One of SubRip, WebVTT, ASS and SSA.
+	"""
+	format: SubtitleCodec!
+	"""
+	The release it was timed for, as the provider named it.
+	"""
+	release: String
+	hearingImpaired: Boolean!
+	forced: Boolean!
+	"""
+	Matched by the file's hash, so timed for this exact file.
+	"""
+	hashMatch: Boolean!
+	"""
+	Who fetched it, while they still have an account.
+	"""
+	downloadedBy: ID
+	createdAt: DateTime!
+	"""
+	When it was last served or burned in; the sweep removes those unused
+	for long enough.
+	"""
+	lastUsedAt: DateTime!
+}
+
+"""
 An edition is a specific cut of a work. Most works have one ("Default");
 collector-grade libraries have multiple ("Theatrical", "Director's Cut",
 "Extended"). Encodes of one cut, like 4K HDR and 1080p SDR, are that edition's
@@ -1510,9 +1553,9 @@ type MediaFile {
 	"""
 	probe: JSON!
 	"""
-	External subtitle sidecars the scanner discovered next to
-	this file. Muxed-in subtitle streams are not duplicated
-	here — they stay in `probe`.
+	Every subtitle track there is to pick: muxed in, sidecars beside the
+	file, then those downloaded from a provider, oldest first. A track's
+	position here is the index `burnSubtitle` and `subtitles` use.
 	"""
 	subtitleTracks: [SubtitleTrack!]!
 }
@@ -4059,6 +4102,12 @@ type SubtitleTrack {
 	`0:s:N`) for muxed-in tracks; `None` for sidecars.
 	"""
 	streamIndex: Int
+	"""
+	Set on a subtitle fetched from a provider, kept in the server's cache
+	rather than beside the file, so it has no `path`. Added as tracks are
+	read, and never stored with the media file.
+	"""
+	downloaded: DownloadedSubtitle
 }
 
 """

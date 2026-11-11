@@ -6,11 +6,11 @@
 
 use async_graphql::{Enum, SimpleObject, connection::Connection};
 use noflex_core::{
-    ApiKeyId, ChannelId, CollectionId, DeviceCodeId, DeviceId, EditionId, EpgProgramId,
-    ExportJobId, ExternalId, ExternalIdKind, ImageKind, InviteId, LibraryId, LinkedServerId,
-    LiveTvSourceId, MediaFileId, MetadataStatus, OptimizedVersionId, PlaySessionId, PlayTargetKind,
-    PlaylistId, RecordingId, RecordingScheduleId, SessionId, TagId, TagTarget, UserId, VideoCodec,
-    WatchRoomId, WorkField, WorkId, WorkKind,
+    ApiKeyId, ChannelId, CollectionId, DeviceCodeId, DeviceId, DownloadedSubtitleId, EditionId,
+    EpgProgramId, ExportJobId, ExternalId, ExternalIdKind, ImageKind, InviteId, LibraryId,
+    LinkedServerId, LiveTvSourceId, MediaFileId, MetadataStatus, OptimizedVersionId, PlaySessionId,
+    PlayTargetKind, PlaylistId, RecordingId, RecordingScheduleId, SessionId, SubtitleCodec, TagId,
+    TagTarget, UserId, VideoCodec, WatchRoomId, WorkField, WorkId, WorkKind,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -294,6 +294,81 @@ pub struct SubtitleTrack {
     /// `0:s:N`) for muxed-in tracks; `None` for sidecars.
     #[serde(default)]
     pub stream_index: Option<u32>,
+    /// Set on a subtitle fetched from a provider, kept in the server's cache
+    /// rather than beside the file, so it has no `path`. Added as tracks are
+    /// read, and never stored with the media file.
+    #[serde(skip)]
+    pub downloaded: Option<DownloadedSubtitle>,
+}
+
+impl From<&DownloadedSubtitle> for SubtitleTrack {
+    fn from(subtitle: &DownloadedSubtitle) -> Self {
+        Self {
+            language: Some(subtitle.language.clone()),
+            codec: subtitle.format.as_str().to_string(),
+            default: false,
+            forced: subtitle.forced,
+            external: true,
+            codec_profile: None,
+            srt_compatible: matches!(
+                subtitle.format,
+                SubtitleCodec::SubRip | SubtitleCodec::WebVtt
+            ),
+            image_count: None,
+            title: Some(subtitle.title()),
+            path: None,
+            stream_index: None,
+            downloaded: Some(subtitle.clone()),
+        }
+    }
+}
+
+/// A subtitle a viewer fetched from a provider for one media file. The text
+/// lives in the server's own cache, never in the media folder, as UTF-8 in a
+/// format the subtitle pipeline reads. Everyone who can see the title shares
+/// it, and it goes with the media file, or once nobody has used it for a while.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, SimpleObject)]
+pub struct DownloadedSubtitle {
+    pub id: DownloadedSubtitleId,
+    pub media_file_id: MediaFileId,
+    /// The plugin it came from.
+    pub provider: String,
+    /// What the provider called it; fetching the same one again finds this.
+    #[graphql(skip)]
+    pub handle: String,
+    /// ISO 639-2/T.
+    pub language: String,
+    /// One of SubRip, WebVTT, ASS and SSA.
+    pub format: SubtitleCodec,
+    /// The release it was timed for, as the provider named it.
+    pub release: Option<String>,
+    pub hearing_impaired: bool,
+    pub forced: bool,
+    /// Matched by the file's hash, so timed for this exact file.
+    pub hash_match: bool,
+    /// The file's name in the server's subtitle cache.
+    #[graphql(skip)]
+    pub file_name: String,
+    /// Who fetched it, while they still have an account.
+    pub downloaded_by: Option<UserId>,
+    pub created_at: OffsetDateTime,
+    /// When it was last served or burned in; the sweep removes those unused
+    /// for long enough.
+    pub last_used_at: OffsetDateTime,
+}
+
+impl DownloadedSubtitle {
+    /// The label a track list shows: the release, else the provider.
+    pub fn title(&self) -> String {
+        let mut title = self
+            .release
+            .clone()
+            .unwrap_or_else(|| self.provider.clone());
+        if self.hearing_impaired {
+            title.push_str(" (SDH)");
+        }
+        title
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
@@ -305,6 +380,7 @@ pub struct Chapter {
 /// A physical media file on disk. Multiple files per edition = multi-part
 /// (CD1/CD2). Multiple editions per work = the multi-version case.
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+#[graphql(complex)]
 pub struct MediaFile {
     pub id: MediaFileId,
     pub edition_id: EditionId,
@@ -317,11 +393,48 @@ pub struct MediaFile {
     /// `Json` is `#[serde(transparent)]`, so the stored column shape is
     /// unchanged.
     pub probe: async_graphql::Json<serde_json::Value>,
-    /// External subtitle sidecars the scanner discovered next to
-    /// this file. Muxed-in subtitle streams are not duplicated
-    /// here — they stay in `probe`.
+    /// The subtitle tracks the scanner found: muxed in, then sidecars beside
+    /// the file. Downloaded ones aren't here; see
+    /// [`Self::subtitle_tracks_with`].
     #[serde(default)]
+    #[graphql(skip)]
     pub subtitle_tracks: Vec<SubtitleTrack>,
+}
+
+impl MediaFile {
+    /// Every subtitle track a viewer picks from, in the order indexes count
+    /// them: the scanner's, then `downloaded`, as given.
+    pub fn subtitle_tracks_with(&self, downloaded: &[DownloadedSubtitle]) -> Vec<SubtitleTrack> {
+        self.subtitle_tracks
+            .iter()
+            .cloned()
+            .chain(downloaded.iter().map(SubtitleTrack::from))
+            .collect()
+    }
+}
+
+#[async_graphql::ComplexObject]
+impl MediaFile {
+    /// Every subtitle track there is to pick: muxed in, sidecars beside the
+    /// file, then those downloaded from a provider, oldest first. A track's
+    /// position here is the index `burnSubtitle` and `subtitles` use.
+    #[graphql(name = "subtitleTracks")]
+    async fn all_subtitle_tracks(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Vec<SubtitleTrack>> {
+        let storage = ctx
+            .data::<std::sync::Arc<dyn crate::Storage>>()
+            .map_err(|_| async_graphql::Error::new("storage not configured"))?;
+        let downloaded = storage
+            .downloaded_subtitles_for_media(self.id)
+            .await
+            .map_err(|e| {
+                tracing::error!(media = %self.id, error = %e, "downloaded subtitles lookup failed");
+                async_graphql::Error::new("storage error")
+            })?;
+        Ok(self.subtitle_tracks_with(&downloaded))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]

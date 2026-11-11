@@ -261,6 +261,7 @@ fn subtitle_track_with_pgs_round_trips() {
         title: None,
         path: None,
         stream_index: None,
+        downloaded: None,
     };
     let json = serde_json::to_string(&t).expect("subtitle serialize");
     let back: SubtitleTrack = serde_json::from_str(&json).expect("subtitle deserialize");

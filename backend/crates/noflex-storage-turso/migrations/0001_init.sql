@@ -801,6 +801,29 @@ CREATE TABLE IF NOT EXISTS optimized_versions (
 
 CREATE INDEX IF NOT EXISTS optimized_versions_claim ON optimized_versions(status, priority, created_at);
 
+-- A subtitle a viewer fetched from a provider for a media file. The text is a
+-- file in the server's subtitle cache, never in the media folder; it goes with
+-- the media file, and the sweep removes it once unused for long enough.
+CREATE TABLE IF NOT EXISTS downloaded_subtitles (
+    id               BLOB PRIMARY KEY,
+    media_file_id    BLOB NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
+    provider         TEXT NOT NULL,
+    handle           TEXT NOT NULL,
+    language         TEXT NOT NULL,
+    format           TEXT NOT NULL,         -- SubtitleCodec::as_str
+    release          TEXT,
+    hearing_impaired INTEGER NOT NULL,
+    forced           INTEGER NOT NULL,
+    hash_match       INTEGER NOT NULL,
+    file_name        TEXT NOT NULL,
+    downloaded_by    BLOB REFERENCES users(id) ON DELETE SET NULL,
+    created_at       TEXT NOT NULL,
+    last_used_at     TEXT NOT NULL,
+    UNIQUE (media_file_id, provider, handle)
+);
+
+CREATE INDEX IF NOT EXISTS downloaded_subtitles_last_used ON downloaded_subtitles(last_used_at);
+
 -- A viewer marking a title they're going to watch: a hard signal to prepare it,
 -- ahead of anything the planner guesses at, until they unmark it or watch it.
 CREATE TABLE IF NOT EXISTS smart_transcode_marks (

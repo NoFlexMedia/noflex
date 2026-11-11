@@ -197,6 +197,7 @@ fn sidecar_track(path: &std::path::Path, codec: &str) -> noflex_storage::domain:
         title: None,
         path: Some(path.to_string_lossy().to_string()),
         stream_index: None,
+        downloaded: None,
     }
 }
 

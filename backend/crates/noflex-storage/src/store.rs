@@ -4,11 +4,11 @@ use std::future::Future;
 
 use async_trait::async_trait;
 use noflex_core::{
-    ApiKeyId, ChannelId, CollectionId, DeviceCodeId, DeviceId, EditionId, EmbeddingTarget,
-    EpgProgramId, ExportJobId, ExternalIdKind, ImageKind, InviteId, LibraryId, LinkedServerId,
-    LiveTvSourceId, MediaFileId, OptimizedVersionId, PlaySessionId, PlayTarget, PlaylistId,
-    RecordingId, RecordingScheduleId, SessionId, TagId, TagTarget, UserId, WatchRoomId, WorkId,
-    WorkKind,
+    ApiKeyId, ChannelId, CollectionId, DeviceCodeId, DeviceId, DownloadedSubtitleId, EditionId,
+    EmbeddingTarget, EpgProgramId, ExportJobId, ExternalIdKind, ImageKind, InviteId, LibraryId,
+    LinkedServerId, LiveTvSourceId, MediaFileId, OptimizedVersionId, PlaySessionId, PlayTarget,
+    PlaylistId, RecordingId, RecordingScheduleId, SessionId, TagId, TagTarget, UserId, WatchRoomId,
+    WorkId, WorkKind,
 };
 use time::OffsetDateTime;
 use tokio::io::AsyncWrite;
@@ -16,15 +16,16 @@ use tokio::io::AsyncWrite;
 use crate::{
     domain::{
         AccountPurge, ActivityEntry, ActivityKind, ApiKey, Collection, ContentCategoryCount,
-        Device, DeviceCode, Edition, EmbeddingEndpoint, EmbeddingModel, EpgProgram, ExportFormat,
-        ExportJob, ExportJobStatus, ExternalIdentity, HistoryPage, Image, ImageSource, ImageTarget,
-        Invite, Library, LinkedServer, LiveTvChannel, LiveTvSource, MediaFile, OptimizedVersion,
-        OptimizedVersionStats, OptimizedVersionStatus, PlaySession, Playlist, PluginOverrideRow,
-        PluginSettingWrite, PluginTaskPayload, PluginTaskState, Recording, RecordingSchedule,
-        RecordingStatus, RefreshTokenLookup, ScanEvent, ServerReset, Session, SmartTranscodeMark,
-        SmartTranscodeOutcome, SmartTranscodingSettings, Tag, TagAssignment, TagSummary,
-        TrickplayAsset, User, UserData, UserPluginSecret, UserPreference, UserRestrictions,
-        WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork, Work, WorkFeatures,
+        Device, DeviceCode, DownloadedSubtitle, Edition, EmbeddingEndpoint, EmbeddingModel,
+        EpgProgram, ExportFormat, ExportJob, ExportJobStatus, ExternalIdentity, HistoryPage, Image,
+        ImageSource, ImageTarget, Invite, Library, LinkedServer, LiveTvChannel, LiveTvSource,
+        MediaFile, OptimizedVersion, OptimizedVersionStats, OptimizedVersionStatus, PlaySession,
+        Playlist, PluginOverrideRow, PluginSettingWrite, PluginTaskPayload, PluginTaskState,
+        Recording, RecordingSchedule, RecordingStatus, RefreshTokenLookup, ScanEvent, ServerReset,
+        Session, SmartTranscodeMark, SmartTranscodeOutcome, SmartTranscodingSettings, Tag,
+        TagAssignment, TagSummary, TrickplayAsset, User, UserData, UserPluginSecret,
+        UserPreference, UserRestrictions, WatchRoom, WatchRoomMember, WatchRoomState, WatchedWork,
+        Work, WorkFeatures,
     },
     error::StorageResult,
     query::{
@@ -126,6 +127,44 @@ pub trait Storage: Send + Sync + 'static {
     ) -> StorageResult<crate::domain::MediaRemoval>;
     async fn media_file_by_path(&self, path: &str) -> StorageResult<Option<MediaFile>>;
     async fn media_file_by_id(&self, id: MediaFileId) -> StorageResult<Option<MediaFile>>;
+
+    // ---- Downloaded subtitles --------------------------------------------
+    /// Keep a downloaded subtitle. One its media file already has from the
+    /// same provider and handle stays, and is what's returned; otherwise
+    /// it's `subtitle`. A media file that's gone is
+    /// [`StorageError::NotFound`](crate::error::StorageError::NotFound).
+    async fn insert_downloaded_subtitle(
+        &self,
+        subtitle: &DownloadedSubtitle,
+    ) -> StorageResult<DownloadedSubtitle>;
+    async fn get_downloaded_subtitle(
+        &self,
+        id: DownloadedSubtitleId,
+    ) -> StorageResult<Option<DownloadedSubtitle>>;
+    /// A media file's downloaded subtitles, oldest first, which is the order
+    /// they follow its own tracks in.
+    async fn downloaded_subtitles_for_media(
+        &self,
+        media: MediaFileId,
+    ) -> StorageResult<Vec<DownloadedSubtitle>>;
+    /// Returns what was removed, if anything was.
+    async fn delete_downloaded_subtitle(
+        &self,
+        id: DownloadedSubtitleId,
+    ) -> StorageResult<Option<DownloadedSubtitle>>;
+    /// Record that it was served or burned in at `at`. A later use already
+    /// recorded stands; one that's gone is no error.
+    async fn touch_downloaded_subtitle(
+        &self,
+        id: DownloadedSubtitleId,
+        at: OffsetDateTime,
+    ) -> StorageResult<()>;
+    /// Remove every downloaded subtitle last used before `cutoff`, returning
+    /// them so their files can go too.
+    async fn delete_downloaded_subtitles_unused_since(
+        &self,
+        cutoff: OffsetDateTime,
+    ) -> StorageResult<Vec<DownloadedSubtitle>>;
 
     // ---- Trickplay ------------------------------------------------------
     async fn get_trickplay(&self, edition: EditionId) -> StorageResult<Option<TrickplayAsset>>;

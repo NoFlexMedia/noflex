@@ -77,6 +77,7 @@ where
     episodes_after_lists_regular_episodes_in_order(store).await;
     devices_belong_to_their_user(store).await;
     smart_transcode_marks_queue_by_scope(store).await;
+    downloaded_subtitles_follow_their_media_file(store).await;
     optimized_versions_queue_by_priority(store).await;
     smart_transcoding_settings_round_trip(store).await;
     downloads_allowed_round_trip(store).await;
@@ -873,6 +874,7 @@ async fn round_trip_work_edition_media<S: Storage + ?Sized>(store: &S) {
                 title: None,
                 path: Some("/srv/wem/blade_runner_cd1.en.forced.srt".to_string()),
                 stream_index: None,
+                downloaded: None,
             },
             SubtitleTrack {
                 language: Some("en".to_string()),
@@ -886,6 +888,7 @@ async fn round_trip_work_edition_media<S: Storage + ?Sized>(store: &S) {
                 title: Some("SDH".to_string()),
                 path: Some("/srv/wem/blade_runner_cd1.en.sdh.srt".to_string()),
                 stream_index: None,
+                downloaded: None,
             },
         ],
     };
@@ -3745,6 +3748,157 @@ fn make_device(user: UserId, name: &str) -> crate::domain::Device {
         created_at: now,
         last_seen_at: now,
     }
+}
+
+async fn downloaded_subtitles_follow_their_media_file<S: Storage + ?Sized>(store: &S) {
+    use crate::domain::DownloadedSubtitle;
+
+    let at = OffsetDateTime::now_utc()
+        .replace_nanosecond(0)
+        .expect("nanos");
+    let viewer = make_user("subtitle-viewer", false);
+    store.upsert_user(&viewer).await.expect("viewer");
+    let library = test_library("subtitle-library");
+    store.upsert_library(&library).await.expect("library");
+    let work = make_work(library.id, "Subtitled", at);
+    store.upsert_work(&work).await.expect("work");
+    let edition = make_edition(work.id, "Default");
+    store.upsert_edition(&edition).await.expect("edition");
+    let media = make_media(edition.id, "/subtitled/film.mkv", at);
+    store.upsert_media_file(&media).await.expect("media");
+
+    let subtitle = |handle: &str, created_at| {
+        let id = noflex_core::DownloadedSubtitleId::new();
+        DownloadedSubtitle {
+            id,
+            media_file_id: media.id,
+            provider: "opensubtitles".into(),
+            handle: handle.into(),
+            language: "eng".into(),
+            format: noflex_core::SubtitleCodec::SubRip,
+            release: Some("Subtitled.2024.1080p".into()),
+            hearing_impaired: true,
+            forced: false,
+            hash_match: true,
+            file_name: format!("{id}.srt"),
+            downloaded_by: Some(viewer.id),
+            created_at,
+            last_used_at: created_at,
+        }
+    };
+    let seconds = time::Duration::seconds;
+    let first = subtitle("file-1", at);
+    let stored = store
+        .insert_downloaded_subtitle(&first)
+        .await
+        .expect("insert");
+    assert_eq!(stored, first, "round trip");
+    let second = subtitle("file-2", at + seconds(1));
+    store
+        .insert_downloaded_subtitle(&second)
+        .await
+        .expect("insert second");
+    let again = store
+        .insert_downloaded_subtitle(&subtitle("file-1", at + seconds(2)))
+        .await
+        .expect("same provider and handle");
+    assert_eq!(again.id, first.id, "fetching it again finds the first");
+
+    let ids = |subs: Vec<DownloadedSubtitle>| subs.into_iter().map(|s| s.id).collect::<Vec<_>>();
+    assert_eq!(
+        ids(store
+            .downloaded_subtitles_for_media(media.id)
+            .await
+            .expect("list")),
+        [first.id, second.id],
+        "oldest first"
+    );
+
+    let gone = make_media(edition.id, "/subtitled/missing.mkv", at);
+    let orphan = DownloadedSubtitle {
+        media_file_id: gone.id,
+        ..subtitle("file-3", at)
+    };
+    assert!(
+        matches!(
+            store.insert_downloaded_subtitle(&orphan).await,
+            Err(crate::error::StorageError::NotFound)
+        ),
+        "a media file that isn't there takes no subtitle"
+    );
+
+    store
+        .touch_downloaded_subtitle(second.id, at + seconds(100))
+        .await
+        .expect("touch");
+    store
+        .touch_downloaded_subtitle(second.id, at + seconds(50))
+        .await
+        .expect("an earlier use");
+    assert_eq!(
+        store
+            .get_downloaded_subtitle(second.id)
+            .await
+            .expect("get")
+            .expect("there")
+            .last_used_at,
+        at + seconds(100),
+        "the latest use stands"
+    );
+    let swept = store
+        .delete_downloaded_subtitles_unused_since(at + seconds(10))
+        .await
+        .expect("sweep");
+    assert_eq!(
+        ids(swept),
+        [first.id],
+        "only the one unused since the cutoff"
+    );
+
+    store
+        .delete_account(viewer.id, at)
+        .await
+        .expect("delete viewer");
+    assert_eq!(
+        store
+            .get_downloaded_subtitle(second.id)
+            .await
+            .expect("get")
+            .expect("outlives who fetched it")
+            .downloaded_by,
+        None
+    );
+
+    let removed = store
+        .delete_downloaded_subtitle(second.id)
+        .await
+        .expect("delete");
+    assert_eq!(removed.map(|s| s.id), Some(second.id));
+    assert_eq!(
+        store
+            .delete_downloaded_subtitle(second.id)
+            .await
+            .expect("delete again"),
+        None
+    );
+
+    let third = DownloadedSubtitle {
+        downloaded_by: None,
+        ..subtitle("file-4", at)
+    };
+    store
+        .insert_downloaded_subtitle(&third)
+        .await
+        .expect("insert third");
+    store
+        .remove_media_file_and_prune(media.id)
+        .await
+        .expect("remove media");
+    assert_eq!(
+        store.get_downloaded_subtitle(third.id).await.expect("get"),
+        None,
+        "goes with its media file"
+    );
 }
 
 async fn smart_transcode_marks_queue_by_scope<S: Storage + ?Sized>(store: &S) {

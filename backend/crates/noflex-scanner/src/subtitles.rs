@@ -44,6 +44,7 @@ pub fn embedded_tracks(probe: &ProbeReport) -> Vec<SubtitleTrack> {
             title: s.title.clone(),
             path: None,
             stream_index: u32::try_from(position).ok(),
+            downloaded: None,
         })
         .collect()
 }
@@ -126,6 +127,7 @@ pub(crate) fn discover_sidecars(video_path: &Path) -> Vec<SubtitleTrack> {
             title: parsed.title,
             path: Some(abs_path),
             stream_index: None,
+            downloaded: None,
         });
     }
 

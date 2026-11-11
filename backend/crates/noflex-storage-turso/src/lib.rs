@@ -306,6 +306,55 @@ impl Storage for TursoStore {
         repo::media_files::by_id(&conn, id).await
     }
 
+    // ---- Downloaded subtitles --------------------------------------------
+    async fn insert_downloaded_subtitle(
+        &self,
+        subtitle: &noflex_storage::domain::DownloadedSubtitle,
+    ) -> StorageResult<noflex_storage::domain::DownloadedSubtitle> {
+        transact!(self, Lane::Concurrent, |conn| {
+            repo::downloaded_subtitles::insert(conn, subtitle)
+        })
+    }
+    async fn get_downloaded_subtitle(
+        &self,
+        id: noflex_core::DownloadedSubtitleId,
+    ) -> StorageResult<Option<noflex_storage::domain::DownloadedSubtitle>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::downloaded_subtitles::get(&conn, id).await
+    }
+    async fn downloaded_subtitles_for_media(
+        &self,
+        media: MediaFileId,
+    ) -> StorageResult<Vec<noflex_storage::domain::DownloadedSubtitle>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::downloaded_subtitles::for_media(&conn, media).await
+    }
+    async fn delete_downloaded_subtitle(
+        &self,
+        id: noflex_core::DownloadedSubtitleId,
+    ) -> StorageResult<Option<noflex_storage::domain::DownloadedSubtitle>> {
+        transact!(self, Lane::Concurrent, |conn| {
+            repo::downloaded_subtitles::delete(conn, id)
+        })
+    }
+    async fn touch_downloaded_subtitle(
+        &self,
+        id: noflex_core::DownloadedSubtitleId,
+        at: OffsetDateTime,
+    ) -> StorageResult<()> {
+        transact!(self, Lane::Concurrent, |conn| {
+            repo::downloaded_subtitles::touch(conn, id, at)
+        })
+    }
+    async fn delete_downloaded_subtitles_unused_since(
+        &self,
+        cutoff: OffsetDateTime,
+    ) -> StorageResult<Vec<noflex_storage::domain::DownloadedSubtitle>> {
+        transact!(self, Lane::Concurrent, |conn| {
+            repo::downloaded_subtitles::delete_unused_since(conn, cutoff)
+        })
+    }
+
     // ---- Trickplay ------------------------------------------------------
     async fn get_trickplay(&self, edition: EditionId) -> StorageResult<Option<TrickplayAsset>> {
         let (_schema, conn) = self.reader().await?;

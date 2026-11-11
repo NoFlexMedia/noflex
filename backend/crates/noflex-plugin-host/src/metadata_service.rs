@@ -24,7 +24,7 @@ use noflex_core::{
     ExternalId, ExternalIdKind, ImageKind, MetadataStatus, TagId, TagTarget, WorkField, WorkId,
     WorkKind, providers::MetadataPayload, slugify,
 };
-use noflex_metadata::{TagDraft, apply_payload, merge_external_id};
+use noflex_metadata::{TagDraft, apply_payload, merge_external_id, merge_tag_metadata, person_ids};
 use noflex_storage::{
     IndexingProgress, Storage, StorageError,
     domain::{Image, ImageSource, ImageTarget, Library, Tag, Work},
@@ -53,6 +53,8 @@ const MAX_IMAGE_LANGUAGES: usize = 3;
 const OFFER_TTL: Duration = Duration::from_secs(30 * 60);
 /// Most candidates remembered at once; the oldest go first.
 const MAX_OFFERS: usize = 4096;
+/// People whose photos one payload fetches at most, the first billed.
+const MAX_PHOTOS: usize = 20;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MetadataError {
@@ -174,6 +176,9 @@ pub struct MetadataService {
     indexing: Arc<IndexingProgress>,
     /// Artwork candidates offered by [`Self::artwork_candidates`], by id.
     offers: Mutex<HashMap<String, Offer>>,
+    /// One payload's people at a time fetch their photos, so identifying a
+    /// whole library doesn't queue thousands of image calls at once.
+    photos: Arc<tokio::sync::Semaphore>,
 }
 
 impl MetadataService {
@@ -187,6 +192,7 @@ impl MetadataService {
             image_dir: None,
             indexing: Arc::default(),
             offers: Mutex::default(),
+            photos: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
 
@@ -336,9 +342,39 @@ impl MetadataService {
             .await
     }
 
+    /// Fetch photos for the first [`MAX_PHOTOS`] of `people` from
+    /// `provider`, the plugin that credited them, in the background: the
+    /// caller doesn't wait, and nothing it does fails because of it. A
+    /// no-op without an image dir, or when `provider` exports no `image`.
+    fn fetch_photos_later(&self, provider: &PluginId, mut people: Vec<Credited>) {
+        let Some(root) = self.image_dir.clone() else {
+            return;
+        };
+        people.truncate(MAX_PHOTOS);
+        if people.is_empty() {
+            return;
+        }
+        let registry = Arc::clone(&self.registry);
+        let storage = Arc::clone(&self.storage);
+        let permits = Arc::clone(&self.photos);
+        let provider = provider.clone();
+        tokio::spawn(async move {
+            let Ok(_permit) = permits.acquire_owned().await else {
+                return;
+            };
+            let Some(plugin) = registry.get_plugin(&provider) else {
+                return;
+            };
+            if plugin.exports(HookKind::Image) {
+                fetch_photos(&plugin, storage.as_ref(), &root, &people).await;
+            }
+        });
+    }
+
     /// Persist `payload` onto `work` from `provider`: fields (locks win),
-    /// provider-sourced tags, external ids, then artwork. Artwork failures
-    /// are logged, never returned — the metadata is already saved.
+    /// provider-sourced tags, external ids, then artwork, with the credited
+    /// people's photos following in the background. Artwork failures are
+    /// logged, never returned — the metadata is already saved.
     async fn apply(
         &self,
         mut work: Work,
@@ -348,7 +384,9 @@ impl MetadataService {
     ) -> Result<Work, MetadataError> {
         let report = apply_payload(&mut work, payload);
         work.metadata_provider = Some(provider.0.clone());
-        persist_tags(self.storage.as_ref(), work.id, &provider.0, &report.tags).await?;
+        let people =
+            persist_tags(self.storage.as_ref(), work.id, &provider.0, &report.tags).await?;
+        self.fetch_photos_later(provider, people);
         work.updated_at = OffsetDateTime::now_utc();
         self.storage.upsert_work(&work).await?;
         // Vectors are computed from this metadata, and a work is usually
@@ -1128,17 +1166,20 @@ async fn store_art(
 /// Replace the provider-sourced assignments in each namespace the
 /// payload produced drafts for, leaving user-sourced ones untouched.
 /// Namespaces with no drafts are not read as "clear" — a provider that
-/// omits genres doesn't strip the ones already there.
+/// omits genres doesn't strip the ones already there. A tag that exists
+/// takes in the draft's metadata ([`merge_tag_metadata`]). Returns the
+/// people `provider` gave ids for, in billing order.
 async fn persist_tags(
     storage: &dyn Storage,
     work: WorkId,
     provider: &str,
     drafts: &[TagDraft],
-) -> Result<(), StorageError> {
+) -> Result<Vec<Credited>, StorageError> {
     let target = TagTarget::Work(work);
     let namespaces: BTreeSet<&str> = drafts.iter().map(|d| d.namespace).collect();
+    let mut people = Vec::new();
     if namespaces.is_empty() {
-        return Ok(());
+        return Ok(people);
     }
     let assignments = storage.tag_assignments_for_target(target).await?;
     for namespace in namespaces {
@@ -1150,7 +1191,13 @@ async fn persist_tags(
         for draft in drafts.iter().filter(|d| d.namespace == namespace) {
             let slug = slugify(&draft.display);
             let tag = match storage.tag_by_slug(namespace, &slug).await? {
-                Some(tag) => tag,
+                Some(mut tag) => {
+                    if let Some(merged) = merge_tag_metadata(&tag.metadata.0, &draft.metadata) {
+                        tag.metadata = Json(merged);
+                        storage.upsert_tag(&tag).await?;
+                    }
+                    tag
+                }
                 None => {
                     let tag = Tag {
                         id: TagId::new(),
@@ -1173,9 +1220,53 @@ async fn persist_tags(
                     &draft.assignment,
                 )
                 .await?;
+            let ids = person_ids(&draft.metadata);
+            if namespace == "person" && !ids.is_empty() {
+                people.push(Credited { tag: tag.id, ids });
+            }
         }
     }
-    Ok(())
+    Ok(people)
+}
+
+/// A person a payload credited, with the ids its provider knows them by.
+struct Credited {
+    tag: TagId,
+    ids: Vec<ExternalId>,
+}
+
+/// Store a photo for each of `people` without a provider one, through
+/// `plugin`'s image hook. A person it has no photo of is skipped; failures
+/// are logged and never returned.
+async fn fetch_photos(
+    plugin: &LoadedPlugin,
+    storage: &dyn Storage,
+    root: &Path,
+    people: &[Credited],
+) {
+    for person in people {
+        let target = ImageTarget::Tag(person.tag);
+        match storage
+            .image(target, ImageKind::Primary, &[ImageSource::Provider])
+            .await
+        {
+            Ok(None) => {}
+            Ok(Some(_)) => continue,
+            Err(error) => {
+                tracing::warn!(tag = %person.tag, %error, "person photo lookup failed");
+                continue;
+            }
+        }
+        for id in &person.ids {
+            let Some(art) = fetch_image(plugin, id, ImageKind::Primary, None).await else {
+                continue;
+            };
+            if let Err(error) = store_art(storage, root, target, ImageKind::Primary, art).await {
+                tracing::warn!(tag = %person.tag, %error, "person photo not stored");
+            }
+            break;
+        }
+    }
 }
 
 fn work_kind_filter(kind: WorkKind) -> WorkKindFilter {

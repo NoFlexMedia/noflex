@@ -465,6 +465,11 @@ type Credit {
 	"""
 	role: String
 	character: String
+	"""
+	The person's photo, from the provider that credited them; null until
+	one is fetched, or when it has none.
+	"""
+	photo: Image
 }
 
 type DatabaseStatus {

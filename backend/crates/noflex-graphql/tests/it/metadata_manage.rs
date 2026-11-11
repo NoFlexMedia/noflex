@@ -472,3 +472,69 @@ async fn metadata_mutations_require_authentication() {
         );
     }
 }
+
+#[tokio::test]
+async fn credits_carry_the_persons_photo() {
+    use noflex_core::{ImageKind, TagId, TagTarget};
+    use noflex_storage::domain::{Image, ImageSource, ImageTarget, Tag};
+
+    let (schema, jwt, store) = authed_schema().await;
+    let admin = setup_admin(&schema, &jwt).await;
+    let lib = seed_library(&store, "Films").await;
+    let work = seed_work(lib.id, "Alien");
+    store.upsert_work(&work).await.expect("work");
+    for (order, name) in ["Sigourney Weaver", "Tom Skerritt"].into_iter().enumerate() {
+        let person = Tag {
+            id: TagId::new(),
+            namespace: "person".into(),
+            parent_id: None,
+            slug: name.to_lowercase().replace(' ', "-"),
+            display: name.into(),
+            metadata: async_graphql::Json(serde_json::json!({})),
+        };
+        store.upsert_tag(&person).await.expect("tag");
+        let billing = serde_json::json!({ "order": order, "credits": [{ "role": "Actor" }] });
+        store
+            .assign_tag_with_metadata(
+                person.id,
+                TagTarget::Work(work.id),
+                1.0,
+                "provider:tmdb",
+                &billing,
+            )
+            .await
+            .expect("assign");
+        if order == 0 {
+            store
+                .upsert_image(&Image {
+                    target: ImageTarget::Tag(person.id),
+                    kind: ImageKind::Primary,
+                    source: ImageSource::Provider,
+                    path: "/photo.jpg".into(),
+                    width: None,
+                    height: None,
+                    language: None,
+                    provider: Some("tmdb".into()),
+                })
+                .await
+                .expect("photo");
+        }
+    }
+
+    let query = format!(
+        r#"{{ work(id: "{}") {{ credits {{ name personId photo {{ url }} }} }} }}"#,
+        work.id
+    );
+    let resp = schema
+        .execute(Request::new(query).data(admin).data(as_request_user(admin)))
+        .await;
+    assert!(resp.errors.is_empty(), "{:?}", resp.errors);
+    let credits = resp.data.into_json().expect("json")["work"]["credits"].clone();
+    let url = credits[0]["photo"]["url"].as_str().expect("a photo URL");
+    let person = credits[0]["personId"].as_str().expect("id");
+    assert!(
+        url.starts_with(&format!("/images/tag/{person}/primary?source=provider")),
+        "{url}"
+    );
+    assert!(credits[1]["photo"].is_null());
+}

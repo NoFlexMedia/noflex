@@ -363,6 +363,70 @@ async fn picked_artwork_is_kept_through_refreshes() {
 }
 
 #[tokio::test]
+async fn credited_people_get_photos_from_the_crediting_provider() {
+    let h = harness!(ART);
+    let library = h.library(&[ART], &[]).await;
+    let mut work = h.work(&library, WorkKind::Movie, "Heat").await;
+    // The scanner's own key would answer first, without anyone credited.
+    work.external_ids = vec![tmdb("movie/cast")];
+    h.save(&work).await;
+
+    h.service().refresh(work.id, false).await.expect("refresh");
+    let people: Vec<_> = h
+        .storage
+        .tag_assignments_for_target(noflex_core::TagTarget::Work(work.id))
+        .await
+        .expect("tags")
+        .into_iter()
+        .filter(|a| a.tag.namespace == "person")
+        .map(|a| a.tag)
+        .collect();
+    assert_eq!(people.len(), 2);
+    let photo = |person: &noflex_storage::domain::Tag| {
+        let storage = h.storage.clone();
+        let id = person.id;
+        async move {
+            storage
+                .image(
+                    ImageTarget::Tag(id),
+                    ImageKind::Primary,
+                    &[ImageSource::Provider],
+                )
+                .await
+                .expect("image")
+        }
+    };
+    let (with, without) = if people[0].display == "Person 1" {
+        (&people[0], &people[1])
+    } else {
+        (&people[1], &people[0])
+    };
+    assert_eq!(
+        noflex_metadata::person_ids(&with.metadata.0),
+        vec![tmdb("person/1")],
+        "the tag keeps the provider's ids for the person"
+    );
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let stored = loop {
+        if let Some(image) = photo(with).await {
+            break image;
+        }
+        assert!(std::time::Instant::now() < deadline, "no photo arrived");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
+    assert_eq!(stored.provider.as_deref(), Some(ART));
+    assert!(
+        std::path::Path::new(&stored.path).starts_with(h.image_dir.path()),
+        "the photo lives under the image cache"
+    );
+    assert!(
+        photo(without).await.is_none(),
+        "a person it has no photo of"
+    );
+}
+
+#[tokio::test]
 async fn a_loaded_plugin_says_how_to_credit_it() {
     let h = harness!(ART, CONCURRENCY);
     let credit = tokio::time::timeout(std::time::Duration::from_secs(10), async {

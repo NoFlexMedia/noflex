@@ -145,6 +145,12 @@ pub fn apply_payload(work: &mut Work, payload: &MetadataPayload) -> ApplyReport 
                 if let Some(credits) = draft.assignment["credits"].as_array_mut() {
                     credits.push(credit.into());
                 }
+                let ids = serde_json::json!({ PERSON_IDS_KEY: person.external_ids });
+                if !person.external_ids.is_empty()
+                    && let Some(merged) = merge_tag_metadata(&draft.metadata, &ids)
+                {
+                    draft.metadata = merged;
+                }
                 continue;
             }
             let order = tags
@@ -175,6 +181,47 @@ pub fn apply_payload(work: &mut Work, payload: &MetadataPayload) -> ApplyReport 
     }
 
     ApplyReport { changed, tags }
+}
+
+/// The provider ids a person tag's `metadata` keeps under
+/// [`PERSON_IDS_KEY`]; empty when it has none or they don't parse.
+pub fn person_ids(metadata: &serde_json::Value) -> Vec<ExternalId> {
+    metadata
+        .get(PERSON_IDS_KEY)
+        .and_then(|ids| serde_json::from_value(ids.clone()).ok())
+        .unwrap_or_default()
+}
+
+/// A tag's stored `metadata` with a new draft's laid over it, as a later
+/// payload describes the same tag: the draft's keys win, except that the
+/// person ids of both are kept, as each provider knows the person by its
+/// own. `None` when nothing would change.
+pub fn merge_tag_metadata(
+    existing: &serde_json::Value,
+    incoming: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let serde_json::Value::Object(incoming) = incoming else {
+        return None;
+    };
+    let mut merged = match existing {
+        serde_json::Value::Object(existing) => existing.clone(),
+        _ => serde_json::Map::new(),
+    };
+    for (key, value) in incoming {
+        if key == PERSON_IDS_KEY {
+            let mut ids = person_ids(existing);
+            for id in person_ids(&serde_json::json!({ PERSON_IDS_KEY: value })) {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+            merged.insert(key.clone(), serde_json::json!(ids));
+        } else {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+    let merged = serde_json::Value::Object(merged);
+    (&merged != existing).then_some(merged)
 }
 
 /// Add `id` to the work's external ids unless an id with the same
@@ -489,6 +536,33 @@ mod tests {
                 .tags
                 .iter()
                 .any(|t| t.namespace == "studio" && t.display == "A24")
+        );
+    }
+
+    #[test]
+    fn a_later_payload_adds_its_person_ids_to_the_tags() {
+        let tmdb = ExternalId {
+            kind: ExternalIdKind::Tmdb,
+            value: "person/1".into(),
+        };
+        let tvdb = ExternalId {
+            kind: ExternalIdKind::Tvdb,
+            value: "people/9".into(),
+        };
+        let stored = serde_json::json!({ PERSON_IDS_KEY: [tmdb] });
+        let merged = merge_tag_metadata(&stored, &serde_json::json!({ PERSON_IDS_KEY: [tvdb] }))
+            .expect("a new id changes the tag");
+        assert_eq!(person_ids(&merged), vec![tmdb.clone(), tvdb]);
+        assert_eq!(
+            merge_tag_metadata(&merged, &serde_json::json!({ PERSON_IDS_KEY: [tmdb] })),
+            None,
+            "an id it has already changes nothing"
+        );
+        assert_eq!(merge_tag_metadata(&merged, &serde_json::json!({})), None);
+        assert_eq!(
+            merge_tag_metadata(&serde_json::json!({}), &stored),
+            Some(stored),
+            "a tag made before it knew any id learns them"
         );
     }
 

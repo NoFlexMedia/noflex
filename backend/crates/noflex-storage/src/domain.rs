@@ -1439,6 +1439,7 @@ pub struct TagAssignment {
 /// One part a person played in a work. Someone who directed and starred has
 /// two.
 #[derive(Debug, Clone, PartialEq, SimpleObject)]
+#[graphql(complex)]
 pub struct Credit {
     /// The person's tag; its `works` is their filmography.
     pub person_id: TagId,
@@ -1494,6 +1495,29 @@ impl Credit {
             }
         }
         credits
+    }
+}
+
+#[async_graphql::ComplexObject]
+impl Credit {
+    /// The person's photo, from the provider that credited them; null until
+    /// one is fetched, or when it has none.
+    #[graphql(complexity = 2)]
+    async fn photo(
+        &self,
+        ctx: &async_graphql::Context<'_>,
+    ) -> async_graphql::Result<Option<Image>> {
+        crate::access::request_user(ctx)?;
+        let storage = complex_storage(ctx)?;
+        let target = ImageTarget::Tag(self.person_id);
+        let order = target
+            .source_order(storage.as_ref())
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        storage
+            .image(target, noflex_core::ImageKind::Primary, order)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))
     }
 }
 

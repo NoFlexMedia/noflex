@@ -33,6 +33,19 @@ export function deviceId(): string | null {
   } catch { return null; }
 }
 
+/**
+ * Forget the device id kept for `userId`, whose account is gone, or every one
+ * when the server they all belonged to was erased.
+ */
+export function forgetDeviceOf(userId: string | "everyone"): void {
+  try {
+    const keys = userId === "everyone"
+      ? Object.keys(localStorage).filter((key) => key.startsWith(`${DEVICE_KEY}.`))
+      : [`${DEVICE_KEY}.${userId}`];
+    for (const key of keys) localStorage.removeItem(key);
+  } catch { /* nothing was kept */ }
+}
+
 /** Tell the server what this browser can play. Best effort: nothing depends on it right away. */
 export async function registerThisDevice(): Promise<void> {
   const id = deviceId();

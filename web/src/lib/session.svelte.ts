@@ -11,7 +11,7 @@ import {
   ServerInfoStore,
 } from "$houdini";
 import { deviceName, takeExternalCallback } from "$lib/api.js";
-import { registerThisDevice, useDeviceOf } from "$lib/device.js";
+import { forgetDeviceOf, registerThisDevice, useDeviceOf } from "$lib/device.js";
 import { deactivateServer, setLinkedServers, type LinkedServer } from "$lib/servers.svelte.js";
 import { syncWatchState } from "$lib/sync.js";
 import { request } from "$lib/graphql.js";
@@ -28,7 +28,11 @@ export const SAVED_FILTERS_KEY = "browse.savedFilters";
 
 export interface SavedFilter { name: string; rules: string }
 
-export type Phase = "boot" | "error" | "setup" | "auth" | "app";
+/**
+ * `resetting`: the server is erasing itself back to first-run setup. `gone`:
+ * the viewer just deleted their own account.
+ */
+export type Phase = "boot" | "error" | "setup" | "auth" | "app" | "resetting" | "gone";
 
 export const app = $state({
   phase: "boot" as Phase,
@@ -73,12 +77,58 @@ onSessionExpired((error) => {
   signedOut(error.reason === "reused"
     ? `${error.message} Sign in again, and change your password if that wasn’t you.`
     : "Your session expired. Sign in again to continue.");
+  void followReset();
 });
 
 onLiveRefused(() => {
   clearSession();
   signedOut("Your session expired. Sign in again to continue.");
+  void followReset();
 });
+
+const RESET_POLL_MS = 2000;
+let awaitingReset = false;
+
+async function serverInfo() {
+  return (await request(new ServerInfoStore(), {}, { metadata: { noRefresh: true, ownServer: true } })).serverInfo;
+}
+
+/**
+ * Wait out the server erasing itself, then start over, which lands on setup.
+ * It restarts on the way, so not answering is part of it.
+ */
+async function awaitReset(): Promise<void> {
+  app.phase = "resetting";
+  if (awaitingReset) return;
+  awaitingReset = true;
+  try {
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, RESET_POLL_MS));
+      try { if (!(await serverInfo()).resetting) break; } catch { /* restarting */ }
+    }
+  } finally {
+    awaitingReset = false;
+  }
+  await start();
+}
+
+/** Everyone's session ends when the server is erased: say that's why. */
+async function followReset(): Promise<void> {
+  try { if ((await serverInfo()).resetting) await awaitReset(); } catch { /* the sign-in screen stands */ }
+}
+
+/**
+ * The viewer's account is gone: sign out and forget what this browser kept for
+ * them. When it was the last administrator's, the server is erasing every
+ * account it held, this browser's other ones included.
+ */
+export function accountDeleted(serverErased: boolean): void {
+  forgetDeviceOf(serverErased ? "everyone" : app.viewer.id);
+  clearSession();
+  signedOut("");
+  if (serverErased) void awaitReset();
+  else app.phase = "gone";
+}
 
 // A page opened directly on a linked server's title or library has already
 // activated it by now, so everything about the session says which server it means.
@@ -124,7 +174,8 @@ export async function start(): Promise<void> {
   app.phase = "boot";
   app.error = "";
   try {
-    app.server = (await request(new ServerInfoStore(), {}, { metadata: { noRefresh: true, ownServer: true } })).serverInfo;
+    app.server = await serverInfo();
+    if (app.server.resetting) { await awaitReset(); return; }
     if (!app.server.isConfigured) { app.phase = "setup"; return; }
     const callback = takeExternalCallback();
     if (callback?.kind === "login") {

@@ -19,6 +19,7 @@
   import { pictureForUpload } from "$lib/picture.js";
   import Avatar from "$components/Avatar.svelte";
   import Dialog from "$components/ui/Dialog.svelte";
+  import DeleteAccount from "./DeleteAccount.svelte";
   import Select from "$components/ui/Select.svelte";
 
   let { account } = $props();
@@ -350,6 +351,8 @@
         </div>
       </details>
     </section>
+
+    <DeleteAccount />
   </div>
 {/if}
 

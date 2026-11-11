@@ -4,6 +4,7 @@
   import { onNavigate } from "$app/navigation";
   import { Tooltip } from "bits-ui";
   import IconContext from "phosphor-svelte/lib/IconContext";
+  import UserMinus from "phosphor-svelte/lib/UserMinus";
   import { cast } from "$lib/cast.svelte.js";
   import { connect } from "$lib/connect.svelte.js";
   import { player } from "$lib/playback.svelte.js";
@@ -83,6 +84,10 @@
     </main>
   {:else if app.phase === "error"}
     <main class="boot" id="main"><State kind="error" title="NoFlex couldn’t start" message={app.error} action={start} /></main>
+  {:else if app.phase === "resetting"}
+    <main class="boot" id="main" aria-busy="true"><State kind="loading" title="This server is being erased" message="Its last administrator deleted their account, so every account, library and setting is going, and everyone is signed out. Media files stay where they are. This page moves on to setup once it’s done." /></main>
+  {:else if app.phase === "gone"}
+    <main class="boot" id="main"><State icon={UserMinus} title="Your account is deleted" message="Everything that was yours on this server is gone, and every device you were signed in on is signed out. The server and everyone else on it carry on as before." action={() => (app.phase = "auth")} actionLabel="Back to sign in" /></main>
   {:else if app.phase === "auth" && page.url.pathname === "/invite"}
     {@render children()}
   {:else if app.phase === "auth" || app.phase === "setup"}

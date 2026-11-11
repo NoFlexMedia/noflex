@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 
 query ServerInfo @cache(policy: NetworkOnly) {
-  serverInfo { name version backend isConfigured downloadsAllowed castSdk }
+  serverInfo { name version backend isConfigured resetting downloadsAllowed castSdk }
 }
 
 query Bootstrap @cache(policy: NetworkOnly) {
@@ -10,7 +10,7 @@ query Bootstrap @cache(policy: NetworkOnly) {
   contentCategories { category workCount }
   preferences { userId key value }
   linkedServers { id origin name apiKey syncEnabled syncedUntil }
-  serverInfo { name version backend isConfigured downloadsAllowed castSdk }
+  serverInfo { name version backend isConfigured resetting downloadsAllowed castSdk }
 }
 
 # Watched for the whole session (see session.svelte.ts), so the list stays

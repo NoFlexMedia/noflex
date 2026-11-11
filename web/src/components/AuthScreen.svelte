@@ -6,7 +6,8 @@
   import { CompleteSetupStore, ExternalProvidersStore, LoginStore, StartExternalLoginStore } from "$houdini";
   import { deviceName, newExternalNonce } from "$lib/api.js";
   import { request } from "$lib/graphql.js";
-  import { app, signIn } from "$lib/session.svelte.js";
+  import { app, signIn, start } from "$lib/session.svelte.js";
+  import { ApiError } from "$lib/tokens.js";
   import BrandMark from "$components/BrandMark.svelte";
 
   let setup = $derived(app.phase === "setup");
@@ -44,6 +45,7 @@
         : await request(new LoginStore(), { username, password, device: deviceName() }, options);
       await signIn(setup ? data.completeSetupWizard : data.login);
     } catch (cause) {
+      if (cause instanceof ApiError && cause.codes.includes("SERVER_RESETTING")) return void start();
       fail(cause.message);
     } finally {
       busy = false;

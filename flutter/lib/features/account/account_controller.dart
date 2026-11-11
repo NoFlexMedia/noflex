@@ -77,7 +77,8 @@ enum AccountSection {
   servers('Servers', PhosphorIconsRegular.hardDrives),
   history('History', PhosphorIconsRegular.clockCounterClockwise),
   exports('Offline copies', PhosphorIconsRegular.export),
-  smart('Smart transcoding', PhosphorIconsRegular.sparkle);
+  smart('Smart transcoding', PhosphorIconsRegular.sparkle),
+  about('About', PhosphorIconsRegular.info);
 
   const AccountSection(this.label, this.icon);
   final String label;
@@ -392,7 +393,9 @@ class AccountController {
         break;
       case AccountSection.devices || AccountSection.exports:
         query.refetch();
-      case AccountSection.profile || AccountSection.servers:
+      case AccountSection.profile ||
+          AccountSection.servers ||
+          AccountSection.about:
         break;
     }
   }

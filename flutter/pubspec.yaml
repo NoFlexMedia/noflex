@@ -84,6 +84,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/decoder-probes/
+    - assets/licenses/
   fonts:
     - family: Inter
       fonts:

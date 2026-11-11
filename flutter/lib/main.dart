@@ -13,6 +13,7 @@ import 'features/downloads/background_sync.dart';
 import 'features/downloads/downloads_service.dart';
 import 'features/player/decoder_probe.dart';
 import 'services/device_identity.dart';
+import 'services/licenses.dart';
 import 'services/nav_service.dart';
 import 'services/session.dart';
 import 'services/tokens.dart';
@@ -20,6 +21,7 @@ import 'services/tokens.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   MediaKit.ensureInitialized();
+  registerNativeLicenses();
   if (Platform.isLinux || Platform.isMacOS || Platform.isWindows) {
     await windowManager.ensureInitialized();
     await windowManager.setMinimumSize(const Size(360, 480));

@@ -20,6 +20,7 @@ import '../../widgets/user_avatar.dart';
 import '../../widgets/nf_state.dart';
 import '../admin/admin_screen.dart';
 import '../downloads/leave_account.dart';
+import 'about_section.dart';
 import 'account_controller.dart';
 import 'account_widgets.dart';
 import 'devices_section.dart';
@@ -314,6 +315,8 @@ class _SectionSliver extends StatelessWidget {
           return SliverToBoxAdapter(
             child: ServersSection(controller: controller),
           );
+        case AccountSection.about:
+          return const SliverToBoxAdapter(child: AboutSection());
         case AccountSection.profile ||
             AccountSection.devices ||
             AccountSection.exports ||

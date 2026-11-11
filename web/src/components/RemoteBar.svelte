@@ -43,7 +43,7 @@
     <div class="art"><Artwork work={playback.work} width={44} /></div>
     <div class="what">
       <strong>{playback.work?.title ?? "Playing"}</strong>
-      <span><DeviceIcon device={remote.device.name} client={remote.device.client} size={14} />{remote.device.name}{#if playback.work && subtitleFor(playback.work)} · {subtitleFor(playback.work)}{/if}</span>
+      <span><DeviceIcon device={remote.device.name} client={remote.device.client} size={14} />{remote.device.name}{#if playback.work && subtitleFor(playback.work)}{" · "}{subtitleFor(playback.work)}{/if}</span>
     </div>
     <div class="controls">
       <Tip text="Back 10 seconds">{#snippet children(tip)}<button {...tip} type="button" class="icon-btn sm skip" aria-label="Back 10 seconds" onclick={() => seek(position - SKIP_BACK_MS)}><ArrowCounterClockwise size={19} /></button>{/snippet}</Tip>

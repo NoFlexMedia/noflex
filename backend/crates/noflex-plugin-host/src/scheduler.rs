@@ -8,13 +8,19 @@
 // guest state stays single-threaded-coherent and there is no second
 // dispatch path.
 //
-// Cursors, failure counts, and dynamically enqueued payloads persist in
-// storage (`plugin_task_state` / `plugin_task_queue`), so they survive
-// instance recycling and host restarts. When no storage is configured
-// (tests, minimal embeds) the loop keeps state in memory and dynamic
-// enqueue is unavailable — scheduled firing still works.
+// A task has one `more(cursor)` chain run unbound, for its schedule and
+// for unbound enqueues, and one per user whose call enqueued a payload,
+// run bound to them. Each iteration runs every chain that is due at once.
+//
+// Cursors (with the user each chain is bound to), failure counts, and
+// dynamically enqueued payloads persist in storage (`plugin_task_state` /
+// `plugin_task_queue`), so they survive instance recycling and host
+// restarts. When no storage is configured (tests, minimal embeds) the loop
+// keeps state in memory and dynamic enqueue is unavailable — scheduled
+// firing still works.
 
 use std::{
+    collections::{HashMap, HashSet},
     sync::{Arc, Weak},
     time::Duration,
 };
@@ -71,6 +77,81 @@ pub(crate) fn decode_queued(row: Option<String>) -> (Option<noflex_core::UserId>
     }
 }
 
+/// Marks a task-state cursor that holds [`Chains`] rather than the
+/// unbound chain's cursor alone.
+const CHAINS_ENVELOPE_PREFIX: &str = "noflex-chains/1:";
+
+/// Every `more(cursor)` chain of one task: the unbound one (scheduled runs
+/// and unbound enqueues) and one per user whose call enqueued a payload.
+/// A user's chain runs bound to them, so it can reach their per-user
+/// secrets, and nobody else's run continues or replaces it.
+#[derive(Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct Chains {
+    unbound: Option<String>,
+    users: HashMap<noflex_core::UserId, String>,
+}
+
+impl Chains {
+    /// The persisted cursor column: the unbound cursor as is while no user
+    /// has a chain, else an envelope. A guest cursor that looks like an
+    /// envelope is enveloped too, so a guest can never claim a principal.
+    fn encode(&self) -> Option<String> {
+        let plain = self.users.is_empty()
+            && self
+                .unbound
+                .as_deref()
+                .is_none_or(|cursor| !cursor.starts_with(CHAINS_ENVELOPE_PREFIX));
+        if plain {
+            return self.unbound.clone();
+        }
+        // Serializing strings and UUIDs cannot fail.
+        let json = serde_json::to_string(self).ok()?;
+        Some(format!("{CHAINS_ENVELOPE_PREFIX}{json}"))
+    }
+
+    /// Reverses [`Self::encode`]; anything but a well-formed envelope is
+    /// the unbound chain's cursor.
+    fn decode(stored: Option<String>) -> Self {
+        let Some(stored) = stored else {
+            return Self::default();
+        };
+        stored
+            .strip_prefix(CHAINS_ENVELOPE_PREFIX)
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or(Self {
+                unbound: Some(stored),
+                users: HashMap::new(),
+            })
+    }
+
+    fn cursor(&self, user: Option<noflex_core::UserId>) -> Option<String> {
+        match user {
+            None => self.unbound.clone(),
+            Some(user) => self.users.get(&user).cloned(),
+        }
+    }
+
+    fn set(&mut self, user: Option<noflex_core::UserId>, cursor: Option<String>) {
+        match (user, cursor) {
+            (None, cursor) => self.unbound = cursor,
+            (Some(user), Some(cursor)) => {
+                self.users.insert(user, cursor);
+            }
+            (Some(user), None) => {
+                self.users.remove(&user);
+            }
+        }
+    }
+}
+
+/// One `run-task` call an iteration makes: the chain it continues (or
+/// starts) and what it hands the guest.
+struct Run {
+    user: Option<noflex_core::UserId>,
+    cursor: Option<String>,
+    payload: Option<String>,
+}
+
 /// Upper bound on how long a queued dynamic payload waits before the loop
 /// notices it. Interval-driven firing is unaffected; this only bounds the
 /// poll latency of the dynamic-enqueue queue, which has no wakeup channel.
@@ -113,12 +194,12 @@ async fn run_task_loop(
         &format!("interval_ms={}", reg.interval_ms),
     );
 
-    // Restore the persisted cursor so a long sweep resumes where the last
-    // instance (or host process) left off.
-    let mut cursor: Option<String> = None;
+    // Restore the persisted chains so a long sweep resumes where the last
+    // instance (or host process) left off, still bound to its user.
+    let mut stored = None;
     if let Some(storage) = &storage {
         match storage.plugin_task_state(&plugin_id, &reg.name).await {
-            Ok(Some(state)) => cursor = state.cursor,
+            Ok(Some(state)) => stored = state.cursor,
             Ok(None) => {}
             Err(e) => {
                 tracing::warn!(plugin = %plugin_id, task = %reg.name, error = %e,
@@ -126,11 +207,8 @@ async fn run_task_loop(
             }
         }
     }
+    let mut chains = Chains::decode(stored);
     let mut consecutive_failures: u32 = 0;
-    // Principal of the `more(cursor)` chain in flight: the user whose call
-    // enqueued the payload that started it. In memory only — a chain that
-    // resumes from a persisted cursor after a restart runs unbound.
-    let mut chain_user: Option<noflex_core::UserId> = None;
 
     // Delay on missed ticks: a slow invocation shifts the schedule instead
     // of bursting catch-up calls.
@@ -140,18 +218,17 @@ async fn run_task_loop(
     // scheduled fire happens one full interval after load.
     interval.tick().await;
 
-    // Set when the guest answered `more(cursor)`: re-invoke promptly,
-    // skipping the interval wait, so chunked sweeps keep moving.
-    let mut prompt = false;
+    // Chains whose guest answered `more(cursor)`: re-invoked promptly,
+    // skipping the interval wait, so chunked sweeps keep moving. A user's
+    // restored chain resumes at once, as whatever it waits on is theirs.
+    let mut prompt_unbound = false;
+    let mut prompt_users: HashSet<noflex_core::UserId> = chains.users.keys().copied().collect();
 
     let end_reason = loop {
-        let mut due = false;
-        if prompt {
-            due = true;
-            prompt = false;
-        } else {
+        let mut tick = false;
+        if !prompt_unbound && prompt_users.is_empty() {
             tokio::select! {
-                _ = interval.tick() => due = true,
+                _ = interval.tick() => tick = true,
                 _ = tokio::time::sleep(QUEUE_POLL) => {}
             }
         }
@@ -163,12 +240,14 @@ async fn run_task_loop(
             break "instance stopped";
         }
 
+        let changed =
+            !cancelled_users(&plugin, &reg.name, &mut chains, &mut prompt_users).is_empty();
+
         // Dynamic payloads (host-tasks.enqueue) take priority over the
-        // scheduled payload; a dequeue hit makes this iteration due even
-        // when the interval didn't fire.
+        // scheduled payload on their chain.
         let dequeued = match &storage {
             Some(storage) => match storage.dequeue_plugin_task(&plugin_id, &reg.name).await {
-                Ok(p) => p,
+                Ok(p) => p.map(|p| decode_queued(p.payload)),
                 Err(e) => {
                     tracing::warn!(plugin = %plugin_id, task = %reg.name, error = %e,
                         "task queue dequeue failed");
@@ -177,67 +256,118 @@ async fn run_task_loop(
             },
             None => None,
         };
-        due = due || dequeued.is_some();
-        if !due {
+
+        let mut runs: Vec<Run> = Vec::new();
+        if let Some((user, payload)) = dequeued {
+            runs.push(Run {
+                user,
+                cursor: chains.cursor(user),
+                payload,
+            });
+        }
+        let covered = |runs: &[Run], user| runs.iter().any(|r| r.user == user);
+        if (tick || prompt_unbound) && !covered(&runs, None) {
+            runs.push(Run {
+                user: None,
+                cursor: chains.unbound.clone(),
+                payload: reg.payload.clone(),
+            });
+        }
+        // A tick also retries user chains an error left waiting.
+        let users: Vec<_> = if tick {
+            chains.users.keys().copied().collect()
+        } else {
+            prompt_users.iter().copied().collect()
+        };
+        for user in users {
+            if !covered(&runs, Some(user)) {
+                runs.push(Run {
+                    user: Some(user),
+                    cursor: chains.cursor(Some(user)),
+                    payload: reg.payload.clone(),
+                });
+            }
+        }
+        prompt_unbound = false;
+        prompt_users.clear();
+
+        if runs.is_empty() {
+            if changed {
+                persist(
+                    &storage,
+                    &plugin_id,
+                    &reg.name,
+                    &chains,
+                    None,
+                    consecutive_failures,
+                )
+                .await;
+            }
             continue;
         }
-        let (user, payload) = match dequeued {
-            Some(p) => decode_queued(p.payload),
-            None => (chain_user, reg.payload.clone()),
-        };
 
-        let outcome = plugin
-            .call_run_task_as(user, reg.name.clone(), cursor.clone(), payload)
-            .await;
+        let outcomes = futures::future::join_all(runs.iter().map(|run| {
+            plugin.call_run_task_as(
+                run.user,
+                reg.name.clone(),
+                run.cursor.clone(),
+                run.payload.clone(),
+            )
+        }))
+        .await;
         let now = OffsetDateTime::now_utc();
-        match outcome {
-            Ok(Ok(TaskOutcome::Done)) => {
-                cursor = None;
-                chain_user = None;
-                consecutive_failures = 0;
+        // Cancelled mid-run: their run's outcome no longer has a chain to land in.
+        let cancelled = cancelled_users(&plugin, &reg.name, &mut chains, &mut prompt_users);
+
+        let mut failed = false;
+        for (run, outcome) in runs.iter().zip(outcomes) {
+            if run.user.is_some_and(|user| cancelled.contains(&user)) {
+                continue;
             }
-            Ok(Ok(TaskOutcome::More(next))) => {
-                cursor = Some(next);
-                chain_user = user;
-                consecutive_failures = 0;
-                prompt = true;
-            }
-            // A plugin-error keeps the cursor: the sweep retries from the
-            // same position on the next fire.
-            Ok(Err(e)) => {
-                consecutive_failures += 1;
-                tracing::warn!(plugin = %plugin_id, task = %reg.name, error = ?e,
-                    "background task returned an error");
-            }
-            Err(e) => {
-                consecutive_failures += 1;
-                tracing::warn!(plugin = %plugin_id, task = %reg.name, error = %e,
-                    "background task dispatch failed");
+            match outcome {
+                Ok(Ok(TaskOutcome::Done)) => chains.set(run.user, None),
+                Ok(Ok(TaskOutcome::More(next))) => {
+                    chains.set(run.user, Some(next));
+                    match run.user {
+                        None => prompt_unbound = true,
+                        Some(user) => {
+                            prompt_users.insert(user);
+                        }
+                    }
+                }
+                // A plugin-error keeps the chain's cursor: it retries from
+                // the same position on the next tick.
+                Ok(Err(e)) => {
+                    failed = true;
+                    tracing::warn!(plugin = %plugin_id, task = %reg.name, error = ?e,
+                        "background task returned an error");
+                }
+                Err(e) => {
+                    failed = true;
+                    tracing::warn!(plugin = %plugin_id, task = %reg.name, error = %e,
+                        "background task dispatch failed");
+                }
             }
         }
+        consecutive_failures = if failed { consecutive_failures + 1 } else { 0 };
 
         {
             let mut h = health.write().expect("health lock poisoned");
             if let Some(t) = h.tasks.get_mut(&reg.name) {
                 t.last_run_at = Some(now);
                 t.consecutive_failures = consecutive_failures;
-                t.total_runs += 1;
+                t.total_runs += runs.len() as u64;
             }
         }
-
-        if let Some(storage) = &storage {
-            let state = PluginTaskState {
-                plugin_id: plugin_id.clone(),
-                task: reg.name.clone(),
-                cursor: cursor.clone(),
-                last_run_at: Some(now),
-                consecutive_failures,
-            };
-            if let Err(e) = storage.set_plugin_task_state(&state).await {
-                tracing::warn!(plugin = %plugin_id, task = %reg.name, error = %e,
-                    "task state persist failed");
-            }
-        }
+        persist(
+            &storage,
+            &plugin_id,
+            &reg.name,
+            &chains,
+            Some(now),
+            consecutive_failures,
+        )
+        .await;
 
         if plugin.instance_closed() {
             break "instance stopped";
@@ -245,6 +375,56 @@ async fn run_task_loop(
     };
 
     audit::task_run(&plugin_id, &reg.name, "end", end_reason);
+}
+
+/// Apply the cancellations waiting for `task`: drop each user's chain and
+/// answer the canceller. Returns the users whose chains were cancelled.
+fn cancelled_users(
+    plugin: &LoadedPlugin,
+    task: &str,
+    chains: &mut Chains,
+    prompt_users: &mut HashSet<noflex_core::UserId>,
+) -> HashSet<noflex_core::UserId> {
+    let mut users = HashSet::new();
+    for (user, ack) in plugin.take_task_cancels(task) {
+        chains.users.remove(&user);
+        prompt_users.remove(&user);
+        users.insert(user);
+        // The canceller may have stopped waiting.
+        let _ = ack.send(());
+    }
+    users
+}
+
+async fn persist(
+    storage: &Option<Arc<dyn Storage>>,
+    plugin_id: &str,
+    task: &str,
+    chains: &Chains,
+    last_run_at: Option<OffsetDateTime>,
+    consecutive_failures: u32,
+) {
+    let Some(storage) = storage else {
+        return;
+    };
+    let last_run_at = match last_run_at {
+        Some(at) => Some(at),
+        None => match storage.plugin_task_state(plugin_id, task).await {
+            Ok(state) => state.and_then(|s| s.last_run_at),
+            Err(_) => None,
+        },
+    };
+    let state = PluginTaskState {
+        plugin_id: plugin_id.to_string(),
+        task: task.to_string(),
+        cursor: chains.encode(),
+        last_run_at,
+        consecutive_failures,
+    };
+    if let Err(e) = storage.set_plugin_task_state(&state).await {
+        tracing::warn!(plugin = %plugin_id, task = %task, error = %e,
+            "task state persist failed");
+    }
 }
 
 #[cfg(test)]
@@ -258,6 +438,36 @@ mod tests {
         assert_eq!(decode_queued(row), (Some(user), Some("{\"x\":1}".into())));
         assert_eq!(encode_queued(None, None), None);
         assert_eq!(decode_queued(None), (None, None));
+    }
+
+    #[test]
+    fn chains_round_trip_with_their_users() {
+        let user = noflex_core::UserId::from_uuid(uuid::Uuid::now_v7());
+        let mut chains = Chains::default();
+        assert_eq!(chains.encode(), None);
+        chains.set(None, Some("7".into()));
+        assert_eq!(
+            chains.encode().as_deref(),
+            Some("7"),
+            "unbound alone stays plain"
+        );
+        chains.set(Some(user), Some("{\"poll\":1}".into()));
+        assert_eq!(Chains::decode(chains.encode()), chains);
+        chains.set(Some(user), None);
+        assert_eq!(chains.encode().as_deref(), Some("7"));
+    }
+
+    #[test]
+    fn a_guest_cursor_never_binds_a_chain() {
+        let victim = noflex_core::UserId::from_uuid(uuid::Uuid::now_v7());
+        let forged = format!(
+            "{CHAINS_ENVELOPE_PREFIX}{{\"unbound\":null,\"users\":{{\"{victim}\":\"x\"}}}}"
+        );
+        let mut chains = Chains::default();
+        chains.set(None, Some(forged.clone()));
+        let restored = Chains::decode(chains.encode());
+        assert!(restored.users.is_empty());
+        assert_eq!(restored.unbound, Some(forged));
     }
 
     #[test]

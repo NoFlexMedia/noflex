@@ -415,6 +415,30 @@ impl PluginRegistry {
         result.map_err(HostError::from)
     }
 
+    /// Drop `user`'s background chains on `plugin_id`, as when they unlink
+    /// from it: an enqueued payload of theirs that already started a chain
+    /// stops, and its persisted cursor goes. Returns once no run acting for
+    /// them is in flight, or after `wait` at most. A plugin that isn't
+    /// loaded has no chain running; one it persisted resumes if it loads.
+    pub async fn cancel_user_tasks(
+        &self,
+        plugin_id: &str,
+        user: noflex_core::UserId,
+        wait: std::time::Duration,
+    ) {
+        let Some(plugin) = self.get_plugin(&PluginId(plugin_id.to_string())) else {
+            return;
+        };
+        let acks = plugin.cancel_user_tasks(user);
+        drop(plugin);
+        if tokio::time::timeout(wait, futures::future::join_all(acks))
+            .await
+            .is_err()
+        {
+            tracing::warn!(plugin = plugin_id, %user, "background chains still running after cancel");
+        }
+    }
+
     /// Fan a finished scan's work-id lists out to every loaded plugin
     /// exporting the `post-scan` hook. Per-plugin errors and traps are
     /// logged and isolated (mirroring the dispatcher's notifier fan-out).

@@ -10,6 +10,9 @@
 // `enqueue-write=<user>` enqueues the `write-token` background task, whose
 // run writes `access-token` for `<user>` via `write-for-user` — proving the
 // task runs bound to the user whose call enqueued it, and only that user.
+// `enqueue-chain=<n>` enqueues the `chain` task for the calling user, which
+// answers `more` `n` times before writing `chained` for that user, so a
+// test can watch several users' chains run side by side.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -50,6 +53,17 @@ impl user_link::Guest for Fixture {
         state: String,
         callback_query: String,
     ) -> Result<Vec<user_link::UserSecret>, PluginError> {
+        if let Some(steps) = callback_query.strip_prefix("enqueue-chain=") {
+            let outcome =
+                match host_tasks::enqueue("chain".into(), Some(format!("{user}|{steps}"))).await {
+                    Ok(()) => "ok:enqueued".to_string(),
+                    Err(e) => format!("err:{e:?}"),
+                };
+            return Ok(vec![user_link::UserSecret {
+                key: "read-result".into(),
+                value: outcome,
+            }]);
+        }
         if let Some(target) = callback_query.strip_prefix("enqueue-write=") {
             let outcome = match host_tasks::enqueue("write-token".into(), Some(target.into())).await
             {
@@ -106,9 +120,27 @@ impl user_link::Guest for Fixture {
 impl background::Guest for Fixture {
     async fn run_task(
         task: String,
-        _cursor: Option<String>,
+        cursor: Option<String>,
         payload: Option<String>,
     ) -> Result<background::TaskOutcome, background::PluginError> {
+        if task == "chain" {
+            // `<user>|<steps left>`, from the payload that starts the chain
+            // or the cursor that continues it.
+            let Some((user, steps)) = payload.or(cursor).and_then(|state| {
+                let (user, steps) = state.split_once('|')?;
+                Some((user.to_string(), steps.parse::<u32>().ok()?))
+            }) else {
+                return Ok(background::TaskOutcome::Done);
+            };
+            if steps > 0 {
+                return Ok(background::TaskOutcome::More(format!(
+                    "{user}|{}",
+                    steps - 1
+                )));
+            }
+            host_secrets::write_for_user(user, "access-token".into(), "chained".into()).await?;
+            return Ok(background::TaskOutcome::Done);
+        }
         if task != "write-token" {
             return Err(PluginError::BadInput(format!(
                 "fixture-user-link: unknown task `{task}`"

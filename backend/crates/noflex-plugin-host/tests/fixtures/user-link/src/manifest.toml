@@ -14,3 +14,8 @@ license = "AGPL-3.0-only"
 [[tasks]]
 name = "write-token"
 interval_ms = 600000
+
+# A multi-run chain per user, enqueued from `link-complete`.
+[[tasks]]
+name = "chain"
+interval_ms = 600000

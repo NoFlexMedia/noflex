@@ -606,6 +606,10 @@ impl StreamConsumer<PluginCtx> for ByteCollector {
     }
 }
 
+/// A user whose background chain a task loop is to drop, and the sender it
+/// answers once it has.
+pub(crate) type TaskCancel = (noflex_core::UserId, oneshot::Sender<()>);
+
 /// A loaded plugin — its WASM component plus the host's view of what it
 /// exports. One instance services every hook call; callers reach it
 /// through the async `call_*` methods.
@@ -624,6 +628,8 @@ pub struct LoadedPlugin {
     /// state. Shared with the instance task and the task scheduler; the
     /// registry reads it for GraphQL snapshots.
     pub health: Arc<RwLock<PluginHealth>>,
+    /// Users whose background chains the task loops are to drop, per task.
+    task_cancels: std::sync::Mutex<BTreeMap<String, Vec<TaskCancel>>>,
     instance: PluginInstance,
 }
 
@@ -959,6 +965,37 @@ impl LoadedPlugin {
             .map_err(|_| HostError::Wasm(format!("{}: instance dropped the call", self.id)))?
     }
 
+    /// Ask every task loop to drop `user`'s chain. Each receiver answers
+    /// once its loop has, which is never while a run for `user` is in
+    /// flight; it errors instead if the loop is gone.
+    pub(crate) fn cancel_user_tasks(
+        &self,
+        user: noflex_core::UserId,
+    ) -> Vec<oneshot::Receiver<()>> {
+        let mut cancels = self.task_cancels.lock().expect("task cancels poisoned");
+        self.manifest
+            .tasks
+            .iter()
+            .map(|task| {
+                let (ack, done) = oneshot::channel();
+                cancels
+                    .entry(task.name.clone())
+                    .or_default()
+                    .push((user, ack));
+                done
+            })
+            .collect()
+    }
+
+    /// The cancellations [`Self::cancel_user_tasks`] left for `task`'s loop.
+    pub(crate) fn take_task_cancels(&self, task: &str) -> Vec<TaskCancel> {
+        self.task_cancels
+            .lock()
+            .expect("task cancels poisoned")
+            .remove(task)
+            .unwrap_or_default()
+    }
+
     /// True once the instance channel has closed for good (plugin unloaded
     /// or circuit opened and drained). The scheduler uses this to retire
     /// its per-task loops.
@@ -1081,6 +1118,7 @@ impl LoadedPlugin {
             component,
             config_toml,
             health,
+            task_cancels: std::sync::Mutex::default(),
             instance,
         })
     }

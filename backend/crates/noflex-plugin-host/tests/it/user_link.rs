@@ -346,3 +346,130 @@ async fn concurrent_user_bound_calls_each_see_only_their_own_principal() {
         assert_eq!(value, format!("ok:token-{user}"));
     }
 }
+
+async fn enqueue_chain(plugin: &LoadedPlugin, user: UserId, steps: u32) {
+    let outcome = plugin
+        .call_link_complete(
+            user.to_string(),
+            FIXTURE_STATE.to_string(),
+            format!("enqueue-chain={steps}"),
+        )
+        .await
+        .expect("dispatch succeeds")
+        .expect("probe succeeds");
+    assert_eq!(outcome[0].value, "ok:enqueued");
+}
+
+/// Wait until `user`'s stored `access-token` is `value`.
+async fn wait_for_token(storage: &Arc<dyn Storage>, user: UserId, value: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while stored_token(storage, user).await.as_deref() != Some(value) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{user} never got `{value}`"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
+async fn chain_state(storage: &Arc<dyn Storage>) -> String {
+    storage
+        .plugin_task_state(PLUGIN_ID, "chain")
+        .await
+        .expect("read task state")
+        .and_then(|state| state.cursor)
+        .unwrap_or_default()
+}
+
+fn chain_runs(plugin: &LoadedPlugin) -> u64 {
+    plugin.health.read().unwrap().tasks["chain"].total_runs
+}
+
+#[tokio::test]
+async fn users_link_side_by_side_on_their_own_chains() {
+    let Some(wasm) = crate::fixtures::wasm("user-link") else {
+        eprintln!("skipping: could not build the fixture-user-link plugin");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (alice, bob) = (UserId::new(), UserId::new());
+    let storage = seeded_store(dir.path(), &[alice, bob]).await;
+    let (_registry, plugin) = registry_with(Some(Arc::clone(&storage)), &wasm);
+
+    // Bob starting his chain must not take over Alice's.
+    enqueue_chain(&plugin, alice, 20).await;
+    enqueue_chain(&plugin, bob, 5).await;
+    wait_for_token(&storage, alice, "chained").await;
+    wait_for_token(&storage, bob, "chained").await;
+}
+
+#[tokio::test]
+async fn a_users_chain_resumes_bound_to_them_after_a_restart() {
+    let Some(wasm) = crate::fixtures::wasm("user-link") else {
+        eprintln!("skipping: could not build the fixture-user-link plugin");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let alice = UserId::new();
+    let storage = seeded_store(dir.path(), &[alice]).await;
+    // What a host stopped mid-chain left behind.
+    let envelope = serde_json::json!({
+        "unbound": null,
+        "users": { alice.to_string(): format!("{alice}|1") },
+    });
+    storage
+        .set_plugin_task_state(&noflex_storage::PluginTaskState {
+            plugin_id: PLUGIN_ID.into(),
+            task: "chain".into(),
+            cursor: Some(format!("noflex-chains/1:{envelope}")),
+            last_run_at: None,
+            consecutive_failures: 0,
+        })
+        .await
+        .expect("seed task state");
+
+    let (_registry, _plugin) = registry_with(Some(Arc::clone(&storage)), &wasm);
+    wait_for_token(&storage, alice, "chained").await;
+}
+
+#[tokio::test]
+async fn cancelling_drops_only_that_users_chain() {
+    let Some(wasm) = crate::fixtures::wasm("user-link") else {
+        eprintln!("skipping: could not build the fixture-user-link plugin");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (alice, bob) = (UserId::new(), UserId::new());
+    let storage = seeded_store(dir.path(), &[alice, bob]).await;
+    let (registry, plugin) = registry_with(Some(Arc::clone(&storage)), &wasm);
+
+    enqueue_chain(&plugin, alice, u32::MAX).await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !chain_state(&storage).await.contains(&alice.to_string()) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "alice's chain never ran"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+
+    // An administrator's unbound run neither replaces her chain nor acts for anyone.
+    registry
+        .enqueue_task(PLUGIN_ID, "chain", Some(format!("{bob}|0")))
+        .await
+        .expect("host enqueue");
+    let runs = chain_runs(&plugin);
+    while chain_runs(&plugin) < runs + 5 {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(chain_state(&storage).await.contains(&alice.to_string()));
+    assert_eq!(stored_token(&storage, bob).await, None);
+
+    registry
+        .cancel_user_tasks(PLUGIN_ID, alice, std::time::Duration::from_secs(5))
+        .await;
+    assert!(!chain_state(&storage).await.contains(&alice.to_string()));
+    let after = chain_runs(&plugin);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(chain_runs(&plugin), after, "nothing runs once she's gone");
+}

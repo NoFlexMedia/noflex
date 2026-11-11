@@ -8,6 +8,7 @@ query Account {
   myRestrictions { userId allowedParentalRatingIds allowUnrated maxStreamBitrateBps maxConcurrentTranscodes }
   myExternalIdentities @list(name: "MyExternalIdentities") { pluginId issuer subject userId username displayName email linkedAt }
   externalAuthProviders { id displayName }
+  accountDeletion { passwordRequired }
   myPluginLinks @list(name: "MyPluginLinks") { pluginId keys updatedAt }
   exportJobs(first: 100) @list(name: "ExportJobs") { edges { node { ...ExportJobFields } } }
 }

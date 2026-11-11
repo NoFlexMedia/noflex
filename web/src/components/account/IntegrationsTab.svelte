@@ -10,6 +10,7 @@
   import { date } from "$lib/format.js";
   import { fetchQuery, refetch } from "$lib/graphql.js";
   import { app } from "$lib/session.svelte.js";
+  import { ApiError } from "$lib/tokens.js";
   import { attempt, confirmAction, toast } from "$lib/ui.svelte.js";
 
   let { account } = $props();
@@ -41,6 +42,8 @@
   let identities = $derived(data?.myExternalIdentities ?? []);
   let providers = $derived(data?.externalAuthProviders ?? []);
   let unlinked = $derived(providers.filter((provider) => !identities.some((identity) => identity.pluginId === provider.id)));
+  // An account made by signing in through a provider has no password.
+  let hasPassword = $derived(data?.accountDeletion.passwordRequired ?? true);
   let links = $derived(data?.myPluginLinks ?? []);
   let linkable = $derived.by(() => {
     if (!$plugins.data) return null;
@@ -61,10 +64,28 @@
     busy = "";
   }
 
+  const onlySignIn = (name) => unlinked.length
+    ? `${name} is the only way you can sign in. Link another provider before disconnecting it.`
+    : `${name} is the only way you can sign in, so it can’t be disconnected.`;
+
   async function revokeIdentity(identity) {
     const name = providerName(identity.pluginId);
-    if (!(await confirmAction({ title: `Disconnect ${name}?`, message: "You won’t be able to sign in with it until you link it again. Your password still works.", confirmLabel: "Disconnect", danger: true }))) return;
-    await attempt(() => revokeIdentityMutation.mutate({ provider: identity.pluginId }), `${name} disconnected`);
+    const others = identities.filter((other) => other.pluginId !== identity.pluginId).map((other) => providerName(other.pluginId));
+    if (!hasPassword && !others.length) { toast(onlySignIn(name), "error"); return; }
+    const still = hasPassword ? "Your password still works." : `You can still sign in with ${others.join(" or ")}.`;
+    if (!(await confirmAction({ title: `Disconnect ${name}?`, message: `You won’t be able to sign in with it until you link it again. ${still}`, confirmLabel: "Disconnect", danger: true }))) return;
+    try {
+      await revokeIdentityMutation.mutate({ provider: identity.pluginId });
+      toast(`${name} disconnected`, "success");
+    } catch (cause) {
+      // Another identity went meanwhile, from another tab or device.
+      if (cause instanceof ApiError && cause.codes.includes("LAST_SIGN_IN_METHOD")) {
+        toast(onlySignIn(name), "error");
+        refetch(account);
+      } else {
+        toast(cause instanceof Error ? cause.message : String(cause), "error");
+      }
+    }
   }
 
   async function connect(row) {

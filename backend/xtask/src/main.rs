@@ -13,6 +13,7 @@
 //     server picks it up via hot-reload.
 //   - `ffmpeg-build <target> <out>` — compile the pinned ffmpeg for a target.
 //   - `ffmpeg-verify <target> <dir>` — check an ffmpeg has what we require.
+//   - `ffmpeg-source <out>` — gather the pinned ffmpeg's corresponding source.
 //   - `model-fetch <assets_dir>` — download the pinned embedding model.
 //   - `bundle <target>` — assemble a release bundle under `dist/`.
 //   - `third-party check|sync|source <out>` — the third-party code the apps
@@ -44,6 +45,7 @@ fn main() -> ExitCode {
         Some("ffmpeg-verify") => ffmpeg_command(&args[1..], |_, pin, target, dir| {
             ffmpeg::verify(pin, target, dir)
         }),
+        Some("ffmpeg-source") => ffmpeg_source(&args[1..]),
         Some("model-fetch") => model_fetch(&args[1..]),
         Some("bundle") => bundle_command(&args[1..]),
         Some("third-party") => third_party_command(&args[1..]),
@@ -85,6 +87,9 @@ COMMANDS:
     ffmpeg-verify <target> <dir>
                                Check the ffmpeg in <dir> has every encoder,
                                filter and muxer that target requires.
+    ffmpeg-source <out>        Gather the source of that ffmpeg and everything
+                               it links, as the GPL asks a release to offer.
+                               Needs Docker or Podman.
     model-fetch <assets_dir>   Download the embedding model pinned in
                                packaging/model.toml, checking its hashes.
     bundle <target> [--ffmpeg <dir>] [--profile <profile>]
@@ -121,6 +126,14 @@ fn ffmpeg_command(
     };
     let root = checkout_root()?;
     run(&root, &ffmpeg::Pin::load(&root)?, target, Path::new(dir))
+}
+
+fn ffmpeg_source(args: &[String]) -> Result<()> {
+    let [out] = args else {
+        bail!("expected <out>");
+    };
+    let root = checkout_root()?;
+    ffmpeg::source(&root, &ffmpeg::Pin::load(&root)?, Path::new(out))
 }
 
 fn model_fetch(args: &[String]) -> Result<()> {

@@ -95,6 +95,21 @@ pub fn build(root: &Path, pin: &Pin, target: &str, out: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Gather ffmpeg's corresponding source into `out`: ffmpeg at the pinned commit,
+/// every dependency the pipeline pins, and the scripts that build them. Needs
+/// Docker or Podman, as the pipeline's base image does the fetching.
+pub fn source(root: &Path, pin: &Pin, out: &Path) -> Result<()> {
+    let status = Command::new(root.join("packaging/ffmpeg/source.sh"))
+        .arg(&pin.ffmpeg_commit)
+        .arg(out)
+        .status()
+        .context("run packaging/ffmpeg/source.sh")?;
+    if !status.success() {
+        bail!("gathering ffmpeg's source failed");
+    }
+    Ok(())
+}
+
 /// Check the ffmpeg in `dir` has everything `target` requires. Runs the binary,
 /// so `target` must be one this host can execute.
 pub fn verify(pin: &Pin, target: &str, dir: &Path) -> Result<()> {

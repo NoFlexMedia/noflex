@@ -421,6 +421,89 @@ async fn set_collection_items_rejects_works_from_other_libraries() {
 }
 
 #[tokio::test]
+async fn plugin_collections_are_edited_only_after_detaching() {
+    let (schema, jwt, store) = authed_schema().await;
+    let admin = setup_admin(&schema, &jwt).await;
+    let films = seed_library(&store, "Films").await;
+    let alien = seed_work(films.id, "Alien");
+    store.upsert_work(&alien).await.expect("alien");
+    let synced = store
+        .sync_plugin_collection(&noflex_storage::domain::PluginCollectionSync {
+            plugin_id: "trakt".into(),
+            key: "watchlist".into(),
+            title: "Watchlist".into(),
+            overview: None,
+            works: vec![alien.id],
+        })
+        .await
+        .expect("sync");
+    let id = synced[0].id;
+    let run = |query: String| {
+        let schema = schema.clone();
+        async move {
+            schema
+                .execute(Request::new(query).data(admin).data(as_request_user(admin)))
+                .await
+        }
+    };
+    let code = |resp: &async_graphql::Response| {
+        resp.errors
+            .first()
+            .and_then(|e| e.extensions.as_ref())
+            .and_then(|ext| ext.get("code").cloned())
+    };
+
+    let resp = run(format!(
+        r#"{{ collection(id: "{id}") {{ title pluginId }} }}"#
+    ))
+    .await;
+    assert_eq!(
+        resp.data.into_json().unwrap()["collection"]["pluginId"],
+        "trakt"
+    );
+    for edit in [
+        format!(r#"mutation {{ setCollectionItems(id: "{id}", workIds: []) {{ id }} }}"#),
+        format!(r#"mutation {{ updateCollection(id: "{id}", title: "Mine") {{ id }} }}"#),
+    ] {
+        let resp = run(edit).await;
+        assert_eq!(
+            code(&resp),
+            Some(async_graphql::Value::from("PLUGIN_OWNED_COLLECTION")),
+            "{:?}",
+            resp.errors
+        );
+    }
+
+    let resp = run(format!(
+        r#"mutation {{ detachCollection(id: "{id}") {{ id pluginId }} }}"#
+    ))
+    .await;
+    assert!(resp.errors.is_empty(), "detach: {:?}", resp.errors);
+    assert!(resp.data.into_json().unwrap()["detachCollection"]["pluginId"].is_null());
+    let resp = run(format!(
+        r#"mutation {{ updateCollection(id: "{id}", title: "Mine") {{ title }} }}"#
+    ))
+    .await;
+    assert!(
+        resp.errors.is_empty(),
+        "edit after detach: {:?}",
+        resp.errors
+    );
+
+    let resp = run(
+        r#"mutation { removePluginData(pluginId: "trakt") { tagAssignments collections } }"#.into(),
+    )
+    .await;
+    assert!(resp.errors.is_empty(), "remove: {:?}", resp.errors);
+    assert_eq!(
+        resp.data.into_json().unwrap()["removePluginData"]["collections"],
+        0,
+        "a detached collection is the administrator's"
+    );
+    assert!(store.get_collection(id).await.expect("get").is_some());
+}
+
+#[tokio::test]
 async fn collection_items_hide_forbidden_works() {
     let (schema, jwt, store) = authed_schema().await;
     let admin = setup_admin(&schema, &jwt).await;

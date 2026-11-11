@@ -2287,8 +2287,7 @@ pub struct PluginCollectionSync {
     pub works: Vec<WorkId>,
 }
 
-/// What [`Storage::remove_plugin_data`][crate::Storage::remove_plugin_data]
-/// deleted.
+/// What removing a plugin's library data deleted.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, SimpleObject)]
 #[graphql(name = "PluginDataRemoval")]
 pub struct PluginDataRemoval {

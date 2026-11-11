@@ -1981,8 +1981,15 @@ type Mutation {
 	"""
 	updateCollection(id: ID!, title: String, sortTitle: String, overview: String): Collection!
 	"""
+	Make a collection a plugin syncs an ordinary one an administrator
+	curates. The plugin never writes its list to this library again, and
+	what it holds now stays. Admin only.
+	"""
+	detachCollection(id: ID!): Collection!
+	"""
 	Delete a collection and its membership list. Returns it, or null
-	when the id didn't exist. Admin only.
+	when the id didn't exist. A collection a plugin syncs comes back at
+	its next sync unless it's detached first. Admin only.
 	"""
 	deleteCollection(id: ID!): Collection
 	"""
@@ -2156,6 +2163,14 @@ type Mutation {
 	them unchanged. Secret writes go in the audit log by key. Admin only.
 	"""
 	setPluginSettings(pluginId: String!, values: [PluginSettingInput!]!): Plugin!
+	"""
+	Delete what a plugin wrote to the library: its tags, and the
+	collections it syncs that nobody detached. Watch state it imported
+	is its users' own and stays. Works for a plugin that's no longer
+	installed; one that still is writes its data again at its next sync.
+	Admin only.
+	"""
+	removePluginData(pluginId: String!): PluginDataRemoval!
 	"""
 	Revoke one session: the caller's own, or anyone's as admin. Its
 	refresh token and every access token minted from it stop working
@@ -2795,6 +2810,20 @@ type Plugin {
 	and where that comes from. A secret's value is never included.
 	"""
 	settings: [PluginSetting!]!
+}
+
+"""
+What removing a plugin's library data deleted.
+"""
+type PluginDataRemoval {
+	"""
+	Tag assignments the plugin had made.
+	"""
+	tagAssignments: Int!
+	"""
+	Collections it still owned. Detached ones are left alone.
+	"""
+	collections: Int!
 }
 
 """

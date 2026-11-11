@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use async_graphql::{Context, ErrorExtensions as _, InputObject, Object};
 use noflex_plugin_host::{Plugin, PluginId, PluginRegistry};
+use noflex_storage::{Storage, domain::PluginDataRemoval};
 
 use crate::access;
 
@@ -59,5 +60,33 @@ impl PluginSettingsMutation {
                     async_graphql::Error::new("saving plugin settings failed")
                 }
             })
+    }
+
+    /// Delete what a plugin wrote to the library: its tags, and the
+    /// collections it syncs that nobody detached. Watch state it imported
+    /// is its users' own and stays. Works for a plugin that's no longer
+    /// installed; one that still is writes its data again at its next sync.
+    /// Admin only.
+    async fn remove_plugin_data(
+        &self,
+        ctx: &Context<'_>,
+        plugin_id: String,
+    ) -> async_graphql::Result<PluginDataRemoval> {
+        let admin = access::require_admin(ctx)?;
+        let storage = ctx
+            .data::<Arc<dyn Storage>>()
+            .map_err(|_| async_graphql::Error::new("storage not configured"))?;
+        let removal = storage.remove_plugin_data(&plugin_id).await.map_err(|e| {
+            tracing::warn!(plugin = %plugin_id, error = %e, "removing plugin data failed");
+            async_graphql::Error::new("removing the plugin's data failed")
+        })?;
+        tracing::info!(
+            plugin = %plugin_id,
+            admin = %admin.user_id,
+            tag_assignments = removal.tag_assignments,
+            collections = removal.collections,
+            "plugin data removed"
+        );
+        Ok(removal)
     }
 }

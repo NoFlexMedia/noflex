@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use async_graphql::{Context, Object, connection::Connection};
+use async_graphql::{Context, ErrorExtensions as _, Object, connection::Connection};
 use noflex_core::{CollectionId, LibraryId, PlayTarget, PlaylistId, WorkId};
 use noflex_storage::{
     Storage, StorageError,
@@ -26,6 +26,20 @@ fn storage<'a>(ctx: &'a Context<'a>) -> async_graphql::Result<&'a Arc<dyn Storag
 
 fn gql_err(e: impl std::fmt::Display) -> async_graphql::Error {
     async_graphql::Error::new(e.to_string())
+}
+
+/// An edit to a collection a plugin syncs, which would be overwritten at its
+/// next sync: detach it first.
+pub const PLUGIN_OWNED_COLLECTION: &str = "PLUGIN_OWNED_COLLECTION";
+
+fn refuse_plugin_owned(collection: &Collection) -> async_graphql::Result<()> {
+    match &collection.plugin_id {
+        Some(plugin) => Err(async_graphql::Error::new(format!(
+            "this collection is synced by the {plugin} plugin; detach it to edit it"
+        ))
+        .extend_with(|_, ext| ext.set("code", PLUGIN_OWNED_COLLECTION))),
+        None => Ok(()),
+    }
 }
 
 /// The playlist the caller is allowed to touch: it must exist, and the
@@ -258,6 +272,7 @@ impl CollectionsMutation {
             .await
             .map_err(gql_err)?
             .ok_or_else(|| async_graphql::Error::new("collection not found"))?;
+        refuse_plugin_owned(&collection)?;
         if let Some(title) = title {
             if title.trim().is_empty() {
                 return Err(async_graphql::Error::new("title cannot be empty"));
@@ -278,8 +293,29 @@ impl CollectionsMutation {
         Ok(collection)
     }
 
+    /// Make a collection a plugin syncs an ordinary one an administrator
+    /// curates. The plugin never writes its list to this library again, and
+    /// what it holds now stays. Admin only.
+    async fn detach_collection(
+        &self,
+        ctx: &Context<'_>,
+        id: CollectionId,
+    ) -> async_graphql::Result<Collection> {
+        let admin = access::require_admin(ctx)?;
+        match storage(ctx)?.detach_collection(id).await {
+            Ok(collection) => {
+                tracing::info!(collection = %id, admin = %admin.user_id, "collection detached from its plugin");
+                Ok(collection)
+            }
+            Err(StorageError::NotFound) => Err(async_graphql::Error::new("collection not found")),
+            Err(StorageError::InvalidInput(reason)) => Err(async_graphql::Error::new(reason)),
+            Err(e) => Err(gql_err(e)),
+        }
+    }
+
     /// Delete a collection and its membership list. Returns it, or null
-    /// when the id didn't exist. Admin only.
+    /// when the id didn't exist. A collection a plugin syncs comes back at
+    /// its next sync unless it's detached first. Admin only.
     async fn delete_collection(
         &self,
         ctx: &Context<'_>,
@@ -313,6 +349,7 @@ impl CollectionsMutation {
             .await
             .map_err(gql_err)?
             .ok_or_else(|| async_graphql::Error::new("collection not found"))?;
+        refuse_plugin_owned(&collection)?;
         check_item_count(work_ids.len())?;
         let ids = work_ids;
         let hydrated = storage.get_works(&ids).await.map_err(gql_err)?;

@@ -34,6 +34,7 @@ export interface SubtitleDelivery { index: number; language?: string | null; tit
 
 export interface Session {
   sessionId: string;
+  progressToken?: string | null;
   route: string;
   url: string;
   jobId?: string | null;

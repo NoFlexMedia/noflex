@@ -38,6 +38,9 @@ pub struct PlaybackSession {
     /// Handle for `stopPlaybackSession`; equals `jobId` on the
     /// transcode route.
     pub session_id: ID,
+    /// Expiring grant to report only this playback's progress without a login
+    /// credential. Absent for sessionless callers and live TV.
+    pub progress_token: Option<String>,
     pub route: PlaybackRouteKind,
     /// Where to point the player.
     pub url: String,
@@ -131,6 +134,14 @@ pub struct ActiveStream {
     pub transcode: Option<TranscodeProgress>,
 }
 
+/// Identity and reporting context resolved from a playback progress grant.
+#[derive(Debug, Clone)]
+pub struct PlaybackProgress {
+    pub user: UserId,
+    pub target: PlayTarget,
+    pub device: Option<String>,
+}
+
 /// See [`PlaybackSessionService::smart_download`].
 #[derive(Debug, Clone)]
 pub struct SmartDownloadFile {
@@ -212,6 +223,19 @@ pub trait PlaybackSessionService: Send + Sync {
         state: PlaybackState,
     ) {
         let _ = (user, target, position_ms, state);
+    }
+
+    /// Validate a narrow progress grant against its live login, playback and
+    /// current media access, then heartbeat only that playback. `Stopped`
+    /// cleans up that session's job, if any. Never accepts a general credential.
+    async fn report_granted_progress(
+        &self,
+        token: &str,
+        position_ms: i64,
+        state: PlaybackState,
+    ) -> anyhow::Result<PlaybackProgress> {
+        let _ = (token, position_ms, state);
+        anyhow::bail!("playback progress grants unavailable")
     }
 
     /// Every session still active, idle ones pruned first.

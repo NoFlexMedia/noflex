@@ -26,8 +26,9 @@ use noflex_core::{
     SessionId, SubtitleCodec, UserId, VideoCodec, WorkId,
 };
 use noflex_graphql::{
-    ActiveStreamRecord, PlaybackRouteKind, PlaybackSession, PlaybackSessionService, PlaybackStart,
-    PlaybackState, SmartDownloadFile, StreamQuality, SubtitleDelivery, TranscodeProgress,
+    ActiveStreamRecord, PlaybackProgress, PlaybackRouteKind, PlaybackSession,
+    PlaybackSessionService, PlaybackStart, PlaybackState, SmartDownloadFile, StreamQuality,
+    SubtitleDelivery, TranscodeProgress,
 };
 use noflex_plugin_host::SubtitleService;
 use noflex_storage::{
@@ -579,6 +580,7 @@ const ON_DEMAND_IDLE: time::Duration = time::Duration::minutes(30);
 #[derive(Debug, Clone)]
 struct ActiveSession {
     user: UserId,
+    login: Option<SessionId>,
     work: Option<WorkId>,
     edition: Option<EditionId>,
     media_file: MediaFileId,
@@ -589,6 +591,7 @@ struct ActiveSession {
     position_ms: Option<i64>,
     /// What the last progress report said, so a pause is told once.
     paused: bool,
+    stopped: bool,
     decision: PlaybackDecisionInfo,
     /// Equal to the session id when set.
     job: Option<String>,
@@ -903,6 +906,89 @@ impl ServerPlaybackSessions {
         self.active.lock().await.insert(id, session);
     }
 
+    /// Scope receiver heartbeats to one session; authenticated senders keep
+    /// their target-based reporting. Return whether a live session admitted
+    /// the report under the registry lock.
+    async fn heartbeat_matching(
+        &self,
+        user: UserId,
+        target: PlayTarget,
+        session_id: Option<&str>,
+        position_ms: i64,
+        state: PlaybackState,
+    ) -> bool {
+        let now = OffsetDateTime::now_utc();
+        let mut matched = false;
+        let mut ended = Vec::new();
+        let mut turned = Vec::new();
+        {
+            let mut active = self.active.lock().await;
+            for (id, session) in active.iter_mut() {
+                let matches = session.user == user
+                    && session_id.is_none_or(|session_id| session_id == id)
+                    && match target {
+                        PlayTarget::Work(work) => session.work == Some(work),
+                        PlayTarget::Edition(edition) => session.edition == Some(edition),
+                    };
+                if !matches || session.stopped {
+                    continue;
+                }
+                matched = true;
+                session.last_active_at = now;
+                session.position_ms = Some(position_ms);
+                let paused = match state {
+                    PlaybackState::Playing => false,
+                    PlaybackState::Paused => true,
+                    PlaybackState::Stopped => session.paused,
+                };
+                if paused != session.paused {
+                    session.paused = paused;
+                    if let Some(edition) = session.edition {
+                        turned.push((edition, session.media_file, paused));
+                    }
+                }
+                if state == PlaybackState::Stopped {
+                    session.stopped = true;
+                    // A receiver explicitly stops its one session below, also
+                    // cancelling a transcode; sender heartbeats retain theirs.
+                    if session_id.is_none() && session.job.is_none() {
+                        ended.push(id.clone());
+                    }
+                }
+            }
+            for id in &ended {
+                active.remove(id);
+            }
+        }
+        let Some(bus) = &self.events else {
+            return matched;
+        };
+        let position_ms = u64::try_from(position_ms).unwrap_or(0);
+        for (edition, media_file, paused) in turned {
+            let Some((work, title)) = self.resolve_event_work(edition).await else {
+                continue;
+            };
+            bus.emit(if paused {
+                DomainEvent::PlaybackPaused {
+                    user,
+                    work,
+                    title,
+                    media_file,
+                    position_ms,
+                }
+            } else {
+                DomainEvent::PlaybackResumed {
+                    user,
+                    work,
+                    title,
+                    media_file,
+                    position_ms,
+                }
+            });
+        }
+        matched
+    }
+
     /// Server-side encode preferences: `encode_video`, then the configured
     /// ladder's audio codecs, with AAC as the universal fallback.
     fn decide_options(&self, burn_subtitle: bool) -> DecideOptions {
@@ -1108,6 +1194,7 @@ impl ServerPlaybackSessions {
             handle.id.clone(),
             ActiveSession {
                 user,
+                login: None,
                 work: None,
                 edition: None,
                 media_file,
@@ -1117,6 +1204,7 @@ impl ServerPlaybackSessions {
                 last_active_at: now,
                 position_ms: None,
                 paused: false,
+                stopped: false,
                 decision: decision.clone(),
                 job: Some(handle.id.clone()),
             },
@@ -1124,6 +1212,7 @@ impl ServerPlaybackSessions {
         .await;
         Ok(PlaybackSession {
             session_id: ID::from(handle.id.clone()),
+            progress_token: None,
             route: PlaybackRouteKind::Transcode,
             url: format!("/stream/job/{}/master.m3u8?token={token}", handle.id),
             file_url: None,
@@ -1331,6 +1420,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
         let now = OffsetDateTime::now_utc();
         let mut active = ActiveSession {
             user,
+            login,
             work: Some(work.id),
             edition: Some(media.edition_id),
             media_file: media.id,
@@ -1340,6 +1430,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
             last_active_at: now,
             position_ms: None,
             paused: false,
+            stopped: false,
             decision: PlaybackDecisionInfo::new(&probe, &decision, Encoder::Software264, None),
             job: None,
         };
@@ -1350,7 +1441,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
             }
             _ => None,
         };
-        let session = match (&decision.route, prepared) {
+        let mut session = match (&decision.route, prepared) {
             (_, Some(version)) => {
                 let session_id = uuid::Uuid::now_v7().to_string();
                 let token = self.media_token(user, login, &format!("optimized:{}", version.id))?;
@@ -1358,6 +1449,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                 self.register(session_id.clone(), active.clone()).await;
                 PlaybackSession {
                     session_id: ID::from(session_id),
+                    progress_token: None,
                     route: PlaybackRouteKind::Optimized,
                     url: format!("/optimized/{}/master.m3u8?token={token}", version.id),
                     file_url: Some(format!("/optimized/{}/file?token={token}", version.id)),
@@ -1375,6 +1467,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                 self.register(session_id.clone(), active.clone()).await;
                 PlaybackSession {
                     session_id: ID::from(session_id),
+                    progress_token: None,
                     route: PlaybackRouteKind::Direct,
                     url: format!("/stream/{media_file_id}/file?token={token}"),
                     file_url: None,
@@ -1590,6 +1683,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                 self.register(handle.id.clone(), active.clone()).await;
                 PlaybackSession {
                     session_id: ID::from(handle.id.clone()),
+                    progress_token: None,
                     route: PlaybackRouteKind::Transcode,
                     url: format!("/stream/job/{}/master.m3u8?token={token}", handle.id),
                     file_url: None,
@@ -1602,6 +1696,15 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                 }
             }
         };
+        session.progress_token = login
+            .map(|_| {
+                self.media_token(
+                    user,
+                    login,
+                    &format!("progress:{}", session.session_id.as_str()),
+                )
+            })
+            .transpose()?;
         if let Some(bus) = &self.events
             && let Some((work, title)) = self.resolve_event_work(media.edition_id).await
         {
@@ -1619,14 +1722,15 @@ impl PlaybackSessionService for ServerPlaybackSessions {
     /// already-terminal job is a no-op success — the registry keeps
     /// its terminal status.
     async fn stop(&self, user: UserId, session_id: &str) -> anyhow::Result<()> {
-        let registered = self.active.lock().await.get(session_id).cloned();
-        if let Some(session) = &registered
-            && session.job.is_none()
-        {
-            if session.user != user {
-                anyhow::bail!("session not found");
+        let direct = {
+            let mut active = self.active.lock().await;
+            match active.get(session_id) {
+                Some(session) if session.user != user => anyhow::bail!("session not found"),
+                Some(session) if session.job.is_none() => active.remove(session_id),
+                _ => None,
             }
-            self.active.lock().await.remove(session_id);
+        };
+        if let Some(session) = direct {
             if let Some(edition) = session.edition {
                 self.emit_stopped(user, edition, session.media_file).await;
             }
@@ -1659,21 +1763,13 @@ impl PlaybackSessionService for ServerPlaybackSessions {
             .await
             .jobs
             .remove(session_id);
-        self.active.lock().await.remove(session_id);
-        // Live jobs carry no edition; a session pruned from the
-        // registry still resolves through its media file.
-        let edition = match &registered {
-            Some(session) => session.edition,
-            None => match self.storage.media_file_by_id(job.media).await {
-                Ok(media) => media.map(|m| m.edition_id),
-                Err(e) => {
-                    tracing::warn!(error = %e, "event: media file lookup failed; skipping");
-                    None
-                }
-            },
-        };
-        if let Some(edition) = edition {
-            self.emit_stopped(user, edition, job.media).await;
+        // Only the caller that removes the session emits its stop. A sender
+        // and receiver can both be waiting for the same job to finish.
+        let stopped = self.active.lock().await.remove(session_id);
+        if let Some(session) = stopped
+            && let Some(edition) = session.edition
+        {
+            self.emit_stopped(user, edition, session.media_file).await;
         }
         Ok(())
     }
@@ -1685,68 +1781,79 @@ impl PlaybackSessionService for ServerPlaybackSessions {
         position_ms: i64,
         state: PlaybackState,
     ) {
-        let now = OffsetDateTime::now_utc();
-        let mut ended = Vec::new();
-        // (edition, media file, now paused) for each session that changed.
-        let mut turned = Vec::new();
+        self.heartbeat_matching(user, target, None, position_ms, state)
+            .await;
+    }
+
+    async fn report_granted_progress(
+        &self,
+        token: &str,
+        position_ms: i64,
+        state: PlaybackState,
+    ) -> anyhow::Result<PlaybackProgress> {
+        let claims = verify_media_token(&self.jwt, token)
+            .ok_or_else(|| anyhow::anyhow!("invalid progress token"))?;
+        let session_id = claims
+            .target
+            .strip_prefix("progress:")
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("invalid progress scope"))?;
+        let login = claims
+            .session
+            .ok_or_else(|| anyhow::anyhow!("progress grant requires a login"))?;
+        let (principal, _) = byte_route_principal(
+            self.storage.as_ref(),
+            &Principal::default(),
+            &self.jwt,
+            Some(token),
+            &claims.target,
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("progress login unavailable"))?;
+        let session = self
+            .active
+            .lock()
+            .await
+            .get(session_id)
+            .filter(|session| {
+                session.user == principal.user_id
+                    && session.login == Some(login)
+                    && (!session.stopped || state == PlaybackState::Stopped)
+            })
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("playback session not found"))?;
+        media_access(self.storage.as_ref(), &principal, session.media_file)
+            .await
+            .map_err(|_| anyhow::anyhow!("progress media unavailable"))?;
+        let work = session
+            .work
+            .ok_or_else(|| anyhow::anyhow!("playback has no progress target"))?;
+        work_access(self.storage.as_ref(), &principal, work)
+            .await
+            .map_err(|_| anyhow::anyhow!("progress target unavailable"))?;
+        let target = PlayTarget::Work(work);
+        let admitted = self
+            .heartbeat_matching(
+                principal.user_id,
+                target,
+                Some(session_id),
+                position_ms,
+                state,
+            )
+            .await;
+        if !admitted {
+            anyhow::bail!("playback session not found");
+        }
+        if state == PlaybackState::Stopped
+            && let Err(error) = self.stop(principal.user_id, session_id).await
         {
-            let mut active = self.active.lock().await;
-            for (id, session) in active.iter_mut() {
-                let matches = session.user == user
-                    && match target {
-                        PlayTarget::Work(work) => session.work == Some(work),
-                        PlayTarget::Edition(edition) => session.edition == Some(edition),
-                    };
-                if !matches {
-                    continue;
-                }
-                session.last_active_at = now;
-                session.position_ms = Some(position_ms);
-                let paused = match state {
-                    PlaybackState::Playing => false,
-                    PlaybackState::Paused => true,
-                    PlaybackState::Stopped => session.paused,
-                };
-                if paused != session.paused {
-                    session.paused = paused;
-                    if let Some(edition) = session.edition {
-                        turned.push((edition, session.media_file, paused));
-                    }
-                }
-                if state == PlaybackState::Stopped && session.job.is_none() {
-                    ended.push(id.clone());
-                }
-            }
-            for id in &ended {
-                active.remove(id);
-            }
+            tracing::warn!(%error, "receiver playback cleanup failed");
         }
-        let Some(bus) = &self.events else {
-            return;
-        };
-        let position_ms = u64::try_from(position_ms).unwrap_or(0);
-        for (edition, media_file, paused) in turned {
-            let Some((work, title)) = self.resolve_event_work(edition).await else {
-                continue;
-            };
-            bus.emit(if paused {
-                DomainEvent::PlaybackPaused {
-                    user,
-                    work,
-                    title,
-                    media_file,
-                    position_ms,
-                }
-            } else {
-                DomainEvent::PlaybackResumed {
-                    user,
-                    work,
-                    title,
-                    media_file,
-                    position_ms,
-                }
-            });
-        }
+        Ok(PlaybackProgress {
+            user: principal.user_id,
+            target,
+            device: session.device,
+        })
     }
 
     async fn smart_download(

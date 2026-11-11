@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
-// NoFlex's Cast receiver. It plays what a sender loads and nothing else: it makes
-// no requests to a NoFlex server, so it works whatever the server's address or
-// scheme, and nothing it is sent can be mistaken for a credential. The sender
-// (web/src/lib/cast.svelte.ts) owns the session, resumes from the viewer's place,
-// reports progress and decides quality; this answers what the device decodes,
-// draws NoFlex's own player over a plain <video>, and tells the sender how
-// playback is going. `customData.protocol` says which dialect a sender speaks.
+// NoFlex's Cast receiver plays what a sender loads, draws our player and reports
+// device health. The sender owns sessions, resume and quality; an optional scoped
+// grant lets this screen report progress too, when the server is reachable.
+// `customData.protocol` says which dialect a sender speaks.
 
 const SUPPORTED_PROTOCOL = 1;
 /** Where a sender asks this device what it decodes, and hears how playback goes. */
@@ -125,6 +122,7 @@ let chromeTimer;
 /** Bring the controls up; while playing they leave again after a moment. */
 function showChrome() {
   body.classList.add("chrome-on");
+  showProgressWarning();
   clearTimeout(chromeTimer);
   if (player.getPlayerState() === messages.PlayerState.PLAYING) {
     chromeTimer = setTimeout(() => body.classList.remove("chrome-on"), CHROME_MS);
@@ -140,12 +138,42 @@ function pulse(path) {
 }
 
 let noticeTimer;
-function notice(text) {
+let noticeOwner = null;
+const warnedWorks = new Set();
+function notice(text, owner = "sender") {
+  if (owner === "sender" && noticeOwner && noticeOwner !== "sender") return;
   const element = $("notice");
   element.textContent = text;
   element.classList.add("on");
+  element.classList.toggle("warning", owner !== "sender");
+  noticeOwner = owner;
   clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => element.classList.remove("on"), 5000);
+  noticeTimer = setTimeout(() => {
+    element.classList.remove("on", "warning");
+    noticeOwner = null;
+    showProgressWarning();
+  }, 5000);
+}
+
+function clearProgressWarning(load) {
+  load.warningPending = false;
+  if (noticeOwner !== load) return;
+  clearTimeout(noticeTimer);
+  $("notice").classList.remove("on", "warning");
+  $("notice").textContent = "";
+  noticeOwner = null;
+}
+
+function showProgressWarning() {
+  const state = player.getPlayerState();
+  if (!loaded || !loaded.warningPending || !loaded.reportingStarted || !loaded.started || buffering ||
+      !body.classList.contains("chrome-on") ||
+      (state !== messages.PlayerState.PLAYING && state !== messages.PlayerState.PAUSED)) return;
+  loaded.warningPending = false;
+  if (loaded.warningShown || (loaded.workId && warnedWorks.has(loaded.workId))) return;
+  loaded.warningShown = true;
+  if (loaded.workId) warnedWorks.add(loaded.workId);
+  notice("This screen can’t save your place on its own. Keep NoFlex open on your phone or computer.", loaded);
 }
 
 const rate = (bps) => (bps ? `${(bps / 1e6).toFixed(bps >= 1e7 ? 0 : 1)} Mb/s` : "—");
@@ -186,6 +214,7 @@ function toggleStats(show) {
 function drawState() {
   const state = player.getPlayerState();
   const idle = state === messages.PlayerState.IDLE && !loaded;
+  if (loaded && noticeOwner === loaded && state === messages.PlayerState.BUFFERING) clearProgressWarning(loaded);
   body.classList.toggle("idle", idle);
   body.classList.toggle("loading", !!loaded && !loaded.started);
   body.classList.toggle("waiting", state === messages.PlayerState.BUFFERING || (!!loaded && state === messages.PlayerState.IDLE));
@@ -215,11 +244,127 @@ function health(kind) {
   });
 }
 
+// ---- best-effort source progress --------------------------------------------
+
+let progressReports = Promise.resolve();
+
+function progressGrant(value) {
+  if (!value || typeof value.token !== "string" || !value.token || typeof value.url !== "string") return null;
+  try {
+    const url = new URL(value.url);
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password) return null;
+    return { url: url.href, token: value.token, pending: null, busy: false };
+  } catch {
+    return null;
+  }
+}
+
+function captureProgress(load, allowZero = false) {
+  if (!load || load !== loaded || !load.reportingStarted || load.ended) return;
+  const state = player.getPlayerState();
+  if (state !== messages.PlayerState.PLAYING && state !== messages.PlayerState.PAUSED) return;
+  const seconds = player.getCurrentTimeSec();
+  // CAF can briefly report zero before resuming or while tearing down media.
+  if (!Number.isFinite(seconds) || seconds < 0 || (seconds === 0 && !allowZero)) return;
+  const position = Math.round((load.offsetMs || 0) + seconds * 1000);
+  if (Number.isFinite(position) && position >= 0) load.lastPositionMs = Math.min(2147483647, position);
+  const duration = load.durationMs || (load.offsetMs || 0) + player.getDurationSec() * 1000;
+  if (Number.isFinite(duration) && duration > 0) load.lastDurationMs = duration;
+}
+
+function reportProgress(load, state) {
+  const grant = load && load.progress;
+  if (!grant || !load.reportingStarted || load.lastPositionMs === null) return;
+  grant.pending = { positionMs: load.lastPositionMs, state };
+  if (!grant.busy) {
+    grant.busy = true;
+    // Keep replacement reports behind the old title's final attempt.
+    progressReports = progressReports.then(() => sendProgress(load, grant));
+  }
+}
+
+async function sendProgress(load, grant) {
+  while (grant.pending) {
+    const sample = grant.pending;
+    grant.pending = null;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    let reporting = false;
+    try {
+      const response = await fetch(grant.url, {
+        method: "POST",
+        mode: "cors",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: "mutation ReceiverProgress($token:String!,$positionMs:Int!,$state:PlaybackState!){reportPlaybackProgress(token:$token,positionMs:$positionMs,state:$state){positionMs}}",
+          variables: { token: grant.token, ...sample },
+        }),
+        signal: controller.signal,
+        keepalive: true,
+      });
+      const result = await response.json();
+      reporting = response.ok && !result.errors?.length && Number.isFinite(result.data?.reportPlaybackProgress?.positionMs);
+    } catch {
+      // Mixed content, local-network policy and CORS may all leave reporting to the sender.
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (loaded === load && !load.ended) {
+      if (reporting) clearProgressWarning(load);
+      else {
+        load.warningPending = true;
+        showProgressWarning();
+      }
+      try { context.sendCustomMessage(NAMESPACE, undefined, { type: "progress", reporting }); } catch {}
+    }
+  }
+  grant.busy = false;
+  if (load.ended) {
+    grant.token = null;
+    grant.url = null;
+  }
+}
+
+function playbackProgress(event) {
+  if (!loaded || !loaded.started || loaded.ended) return;
+  const state = event?.type === EventType.PAUSE ? messages.PlayerState.PAUSED
+    : event?.type === EventType.PLAYING ? messages.PlayerState.PLAYING : player.getPlayerState();
+  if (state !== messages.PlayerState.PLAYING && state !== messages.PlayerState.PAUSED) return;
+  loaded.reportingStarted = true;
+  captureProgress(loaded);
+  const progressState = state === messages.PlayerState.PAUSED ? "PAUSED" : "PLAYING";
+  if (loaded.progressState !== progressState) {
+    loaded.progressState = progressState;
+    reportProgress(loaded, progressState);
+  }
+  showProgressWarning();
+}
+
+function finishProgress(load, natural = false) {
+  if (!load || load.ended) return;
+  if (natural && load.reportingStarted && load.lastDurationMs > 0) {
+    load.lastPositionMs = Math.min(2147483647, Math.round(load.lastDurationMs));
+  }
+  reportProgress(load, "STOPPED");
+  load.ended = true;
+  clearProgressWarning(load);
+  const grant = load.progress;
+  load.progress = null;
+  if (grant && !grant.busy) {
+    grant.token = null;
+    grant.url = null;
+  }
+}
+
 // ---- steering from the device itself ----------------------------------------
 
 function seekBy(seconds) {
   const now = player.getCurrentTimeSec() || 0;
-  player.seek(Math.max(0, now + seconds));
+  const target = Math.max(0, now + seconds);
+  if (loaded) loaded.zeroSeek = target === 0;
+  player.seek(target);
   pulse(seconds > 0 ? $("forward").querySelector("path").getAttribute("d") : $("back").querySelector("path").getAttribute("d"));
   showChrome();
 }
@@ -257,7 +402,17 @@ player.setMessageInterceptor(messages.MessageType.LOAD, (request) => {
     // A newer sender than this receiver: play what it asked, as the media message alone says.
     console.warn("sender speaks protocol", data.protocol, "; this receiver speaks", SUPPORTED_PROTOCOL);
   }
-  loaded = { offsetMs: data.offsetMs || 0, durationMs: data.durationMs || null, backdrop: data.backdrop || null, stream: data.stream || null, level: null, started: false };
+  captureProgress(loaded);
+  finishProgress(loaded);
+  const offsetMs = Number.isFinite(data.offsetMs) ? Math.max(0, data.offsetMs) : 0;
+  const resumeMs = Number.isFinite(request.currentTime) ? Math.max(0, request.currentTime * 1000) : 0;
+  loaded = {
+    offsetMs, durationMs: data.durationMs || null, backdrop: data.backdrop || null,
+    stream: data.stream || null, level: null, started: false, workId: data.workId || null,
+    progress: progressGrant(data.progress), reportingStarted: false,
+    lastPositionMs: Math.min(2147483647, Math.round(offsetMs + resumeMs)),
+    lastDurationMs: data.durationMs || null, ended: false, warningPending: false, warningShown: false,
+  };
   // A growing transcode is still a film, not a live stream: seeking and the timeline must work.
   media.streamType = messages.StreamType.BUFFERED;
   if (/mpegurl/i.test(media.contentType || "") && data.stream) {
@@ -270,8 +425,14 @@ player.setMessageInterceptor(messages.MessageType.LOAD, (request) => {
   return request;
 });
 
+player.setMessageInterceptor(messages.MessageType.SEEK, (request) => {
+  if (loaded) loaded.zeroSeek = request.currentTime === 0;
+  return request;
+});
+
 player.addEventListener(EventType.PLAYER_LOAD_COMPLETE, () => {
   if (loaded) loaded.started = true;
+  playbackProgress();
   drawNowPlaying();
   drawState();
   health("loaded");
@@ -282,7 +443,15 @@ player.addEventListener(EventType.BUFFERING, (event) => {
   health(buffering ? "stalled" : "resumed");
 });
 player.addEventListener(EventType.SEEKING, () => { body.classList.add("seeking"); showChrome(); });
-player.addEventListener(EventType.SEEKED, () => { body.classList.remove("seeking"); drawTime(); });
+player.addEventListener(EventType.SEEKED, () => {
+  body.classList.remove("seeking");
+  captureProgress(loaded, loaded?.zeroSeek === true);
+  if (loaded) {
+    loaded.zeroSeek = false;
+    reportProgress(loaded, player.getPlayerState() === messages.PlayerState.PAUSED ? "PAUSED" : "PLAYING");
+  }
+  drawTime();
+});
 player.addEventListener(EventType.BITRATE_CHANGED, (event) => {
   if (!loaded) return;
   const stats = player.getStats() || {};
@@ -292,16 +461,42 @@ player.addEventListener(EventType.BITRATE_CHANGED, (event) => {
   void event;
 });
 player.addEventListener([EventType.PLAY, EventType.PAUSE, EventType.PLAYING, EventType.ENDED, EventType.MEDIA_FINISHED], drawState);
-player.addEventListener(EventType.MEDIA_FINISHED, () => { loaded = null; drawState(); });
+player.addEventListener([EventType.PLAYING, EventType.PAUSE], playbackProgress);
+player.addEventListener(EventType.MEDIA_FINISHED, (event) => {
+  // LOAD installs the replacement before CAF finishes interrupting the old media.
+  if (loaded && !loaded.started && event.endedReason === cast.framework.events.EndedReason.INTERRUPTED) return;
+  if (loaded && loaded.reportingStarted && Number.isFinite(event.currentMediaTime) && event.currentMediaTime > 0) {
+    loaded.lastPositionMs = Math.min(2147483647, Math.round(loaded.offsetMs + event.currentMediaTime * 1000));
+  }
+  finishProgress(loaded, event.endedReason === cast.framework.events.EndedReason.END_OF_STREAM);
+  loaded = null;
+  drawState();
+});
 
 setInterval(() => {
   if (!loaded) return;
+  captureProgress(loaded);
   drawTime();
   drawStats();
 }, 1000);
 setInterval(() => {
   if (loaded && player.getPlayerState() === messages.PlayerState.PLAYING) health("tick");
 }, HEALTH_MS);
+setInterval(() => {
+  const state = player.getPlayerState();
+  if (loaded && (state === messages.PlayerState.PLAYING || state === messages.PlayerState.PAUSED)) {
+    captureProgress(loaded);
+    reportProgress(loaded, state === messages.PlayerState.PAUSED ? "PAUSED" : "PLAYING");
+  }
+}, 15000);
+
+function flushProgress() {
+  captureProgress(loaded);
+  finishProgress(loaded);
+}
+window.addEventListener("pagehide", flushProgress);
+window.addEventListener("beforeunload", flushProgress);
+context.addEventListener(cast.framework.system.EventType.SHUTDOWN, flushProgress);
 
 context.addCustomMessageListener(NAMESPACE, (event) => {
   const message = event.data || {};

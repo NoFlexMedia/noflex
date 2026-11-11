@@ -16,7 +16,7 @@ import { request, writeUserData } from "$lib/graphql.js";
 import { pickImage } from "$lib/images.js";
 import { qualityChoice, rememberQuality, resolvePlayable, startSession, stopSession, subtitleFor, type PlaybackDecision } from "$lib/playback.svelte.js";
 import { app } from "$lib/session.svelte.js";
-import { mediaUrl } from "$lib/tokens.js";
+import { activeGraphqlUrl, mediaUrl } from "$lib/tokens.js";
 import { toast } from "$lib/ui.svelte.js";
 
 const SDK = "https://www.gstatic.com/cast/sdk/libs/sender/1.0/cast_framework.js?loadCastFramework=1";
@@ -79,6 +79,7 @@ class Cast {
   #auto = new AutoQuality();
   /** The receiver's latest report on playback. */
   #health: { estimatedBandwidthBps?: number | null } | null = null;
+  #progressReportedAt = 0;
   #switching = false;
   #loaded: Loaded | null = null;
   #remote: any = null;
@@ -87,6 +88,7 @@ class Cast {
   #last: "PLAYING" | "PAUSED" | null = null;
   /** Where the device last said it was, for when it stops saying: an idle or lost device reads 0. */
   #heardMs = 0;
+  #awaitingPosition = false;
   /** The server session of a title being taken up, so it's tried once. */
   #adopting: string | null = null;
   #started = false;
@@ -131,9 +133,11 @@ class Cast {
         if (device && event.sessionState === SessionState.SESSION_STARTED) connect.setTarget(this.#id(device));
         if (session && APP_ID !== DEFAULT_RECEIVER) {
           session.addMessageListener(NAMESPACE, (_namespace: string, data: string) => {
+            if (session !== this.#session()) return;
             try {
               const message = JSON.parse(data);
               if (message.type === "health") this.#onHealth(message);
+              else if (message.type === "progress") this.#onProgress(message.reporting === true);
               else this.#replies.get(message.id)?.(message);
             } catch { /* not ours to read */ }
           });
@@ -151,6 +155,14 @@ class Cast {
   }
 
   #session(): any { return sdk().cast.framework.CastContext.getInstance().getCurrentSession(); }
+
+  #onProgress(reporting: boolean): void {
+    const suppressed = this.#progressReportedAt !== 0;
+    this.#progressReportedAt = reporting && this.#loaded ? Date.now() : 0;
+    if (!reporting && suppressed && this.#remote?.isMediaLoaded) {
+      this.#report(this.#remote.isPaused ? "PAUSED" : "PLAYING");
+    }
+  }
 
   #onHealth(health: any): void {
     this.#health = health;
@@ -236,7 +248,10 @@ class Cast {
   /** Source time now, in milliseconds. */
   #positionMs(): number {
     const loaded = this.#loaded;
-    return Math.max(0, Math.round((loaded?.offsetMs ?? 0) + (this.#remote?.currentTime ?? 0) * 1000));
+    const seconds = this.#remote?.currentTime;
+    if (!Number.isFinite(seconds) || seconds < 0 || (seconds === 0 && this.#awaitingPosition)) return this.#heardMs;
+    if (seconds > 0) this.#awaitingPosition = false;
+    return Math.max(0, Math.round((loaded?.offsetMs ?? 0) + seconds * 1000));
   }
 
   /** Tell the shared list what the Cast device is doing. */
@@ -281,9 +296,13 @@ class Cast {
   #report(state: "PLAYING" | "PAUSED" | "STOPPED"): void {
     const loaded = this.#loaded;
     if (!loaded?.work?.id) return;
-    const position = this.#remote?.isMediaLoaded ? this.#positionMs() : this.#heardMs;
+    if (state !== "STOPPED" && this.#progressReportedAt && Date.now() - this.#progressReportedAt < 30_000) return;
+    this.#progressReportedAt = 0;
+    const position = state !== "STOPPED" && this.#remote?.isMediaLoaded ? this.#positionMs() : this.#heardMs;
     request(new ReportProgressStore(), { id: loaded.work.id, position, state })
-      .then((data) => writeUserData(loaded.work.id, data.reportProgress), () => {});
+      .then((data) => {
+        if (this.#loaded === loaded || (state === "STOPPED" && !this.#loaded)) writeUserData(loaded.work.id, data.reportProgress);
+      }, () => {});
   }
 
   /** Take up a title cast before this page loaded, from what its load request carried. */
@@ -297,6 +316,8 @@ class Cast {
       const detail = await request(new WorkDetailStore(), { id: custom.workId }, { policy: CachePolicy.NetworkOnly });
       if (!detail.work || this.#loaded || this.#preparing || !this.#remote?.isMediaLoaded) return;
       const quality = decodeChoice(sender.quality);
+      this.#progressReportedAt = 0;
+      this.#awaitingPosition = false;
       this.#loaded = {
         work: detail.work, mediaFileId: sender.mediaFileId, editionId: sender.editionId, sessionId: sender.sessionId,
         transcode: !!sender.transcode, offsetMs: custom.offsetMs ?? 0, durationMs: custom.durationMs ?? null,
@@ -316,18 +337,22 @@ class Cast {
 
   #startBeat(): void {
     clearInterval(this.#beat);
-    this.#beat = setInterval(() => { if (this.#last === "PLAYING") this.#report("PLAYING"); }, REPORT_MS);
+    this.#beat = setInterval(() => {
+      if (this.#last && (this.#last === "PLAYING" || this.#progressReportedAt)) this.#report(this.#last);
+    }, REPORT_MS);
   }
 
   /** End what was playing: its last position, its watched mark if it ran out, and its server session. */
   async #finish(ended: boolean): Promise<void> {
     const loaded = this.#loaded;
+    this.#progressReportedAt = 0;
     if (!loaded) return;
+    if (ended && loaded.durationMs) this.#heardMs = loaded.durationMs;
+    this.#report("STOPPED");
     this.#loaded = null;
     this.#last = null;
     this.qualities = [];
     clearInterval(this.#beat);
-    this.#report("STOPPED");
     if (ended) request(new MarkPlayedStore(), { id: loaded.work.id }).then((data) => writeUserData(loaded.work.id, data.markPlayed), () => {});
     await stopSession(loaded.sessionId);
   }
@@ -356,7 +381,9 @@ class Cast {
       // From here the bar shows it loading, through opening the session and the encoder's first segments.
       this.#preparing = { work: playable.detail.work ?? work, positionMs: playable.resume };
       this.#publish();
-      const stream = await startSession(playable.mediaFileId, playable.burnedSubtitle, playable.resume, playable.audioStream, await this.#profile(session), sessionQuality(quality, original, leftOriginal));
+      const profile = await this.#profile(session);
+      const progressUrl = new URL(activeGraphqlUrl(), location.origin).href;
+      const stream = await startSession(playable.mediaFileId, playable.burnedSubtitle, playable.resume, playable.audioStream, profile, sessionQuality(quality, original, leftOriginal));
       const url = absolute(stream.url);
       const transcode = stream.route === "TRANSCODE";
       if (stream.route !== "DIRECT") await playlistReady(url);
@@ -393,6 +420,7 @@ class Cast {
       const pinned = quality.kind === "pinned" ? ladder.find((step) => step.bitrateBps === quality.bitrateBps)?.label : null;
       info.customData = {
         protocol: PROTOCOL,
+        ...(stream.progressToken != null ? { progress: { url: progressUrl, token: stream.progressToken } } : {}),
         workId: detail.id,
         offsetMs,
         durationMs: runtime,
@@ -438,6 +466,7 @@ class Cast {
       this.qualities = ladder;
       this.choice = quality;
       this.#heardMs = playable.resume;
+      this.#awaitingPosition = true;
       await session.loadMedia(request_);
       this.#preparing = null;
       this.#startBeat();
@@ -458,6 +487,7 @@ class Cast {
     const controller = this.#controller;
     if (!loaded || !controller) return;
     if (action === "STOP") {
+      this.#heardMs = this.#positionMs();
       controller.stop();
       await this.#finish(false);
       this.#publish();
@@ -472,6 +502,8 @@ class Cast {
         return;
       }
       this.#auto.settle();
+      this.#heardMs = positionMs;
+      this.#awaitingPosition = false;
       this.#remote.currentTime = local;
       controller.seek();
     } else if ((action === "PAUSE") !== this.#remote.isPaused) {

@@ -3,10 +3,8 @@
 // Playback reporting. The Jellyfin shim used to carry these writes;
 // with it gone this mutation set is the only path that lands rows in
 // `user_data`, so without it continue-watching stays empty.
-// Every mutation is authenticated against the per-request `Principal`
-// (the axum auth middleware attaches it as request data) and returns the
-// freshly-read `UserData` so clients update local state without a
-// follow-up query.
+// Writes use the per-request principal or a playback-scoped progress
+// grant and return fresh `UserData` so clients need no follow-up query.
 
 use std::{
     collections::{HashMap, hash_map::Entry},
@@ -25,7 +23,7 @@ use noflex_transcoder::ClientCapabilities;
 use time::OffsetDateTime;
 
 use crate::playback_session::{
-    ActiveStream, PlaybackSession, PlaybackSessionService, PlaybackStart,
+    ActiveStream, PlaybackProgress, PlaybackSession, PlaybackSessionService, PlaybackStart,
 };
 
 /// Client-reported playback state. `Stopped` closes out the session in the
@@ -213,6 +211,72 @@ fn completion_point(runtime_ms: i64, credits_start_ms: Option<i64>) -> Option<i6
     )
 }
 
+/// Persist progress through the same completion, history and event path for
+/// authenticated clients and receivers holding a playback-scoped grant.
+async fn record_progress(
+    ctx: &Context<'_>,
+    storage: &Arc<dyn Storage>,
+    progress: PlaybackProgress,
+    position_ms: i64,
+    state: PlaybackState,
+) -> async_graphql::Result<UserData> {
+    let PlaybackProgress {
+        user,
+        target,
+        device,
+    } = progress;
+    storage
+        .record_playback_progress(user, target, position_ms)
+        .await
+        .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+    // Done here rather than in clients so every client agrees on what
+    // "finished" means. Viewers rarely sit through the credits, so
+    // waiting for an explicit markPlayed would strand the next episode.
+    if past_completion_point(storage, target, position_ms).await
+        && !storage
+            .user_data(user, target)
+            .await
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?
+            .played
+    {
+        complete_play(ctx, storage, user, target).await?;
+    }
+    // Play history is analytics: a failure there must not lose the
+    // resume position the client is waiting on.
+    if let Err(error) = crate::stats::record_heartbeat(
+        storage.as_ref(),
+        user,
+        target,
+        position_ms,
+        state,
+        async || device,
+        OffsetDateTime::now_utc(),
+    )
+    .await
+    {
+        tracing::warn!(%error, %user, "play history: heartbeat not recorded");
+    }
+    if state == PlaybackState::Stopped {
+        log_play_activity(storage, ActivityKind::PlayProgress, user, target).await?;
+        // Heartbeats stay silent; only the terminal stop pays for the
+        // title-resolution reads.
+        if let Some(bus) = event_bus(ctx)
+            && let Some((work, title)) = resolve_event_work(storage, target).await
+        {
+            bus.emit(DomainEvent::ProgressAtStop {
+                user,
+                work,
+                title,
+                position_ms: u64::try_from(position_ms).unwrap_or(0),
+            });
+        }
+    }
+    storage
+        .user_data(user, target)
+        .await
+        .map_err(|e| async_graphql::Error::new(e.to_string()))
+}
+
 /// Playback half of the mutation root; merged into `Mutation` in
 /// `lib.rs` (async-graphql can't split one `#[Object] impl` across
 /// modules, so roots compose via `MergedObject`).
@@ -237,59 +301,47 @@ impl PlaybackMutation {
             .map_err(|_| async_graphql::Error::new("storage not configured"))?;
         let target = target.to_play_target()?;
         authorize_target(ctx, storage, target).await?;
-        storage
-            .record_playback_progress(user, target, position_ms)
-            .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        // Done here rather than in clients so every client agrees on what
-        // "finished" means. Viewers rarely sit through the credits, so
-        // waiting for an explicit markPlayed would strand the next episode.
-        if past_completion_point(storage, target, position_ms).await
-            && !storage
-                .user_data(user, target)
-                .await
-                .map_err(|e| async_graphql::Error::new(e.to_string()))?
-                .played
-        {
-            complete_play(ctx, storage, user, target).await?;
-        }
-        // Play history is analytics: a failure there must not lose the
-        // resume position the client is waiting on.
-        if let Err(error) = crate::stats::record_heartbeat(
-            storage.as_ref(),
-            user,
-            target,
-            position_ms,
-            state,
-            async || caller_device(ctx).await,
-            OffsetDateTime::now_utc(),
-        )
-        .await
-        {
-            tracing::warn!(%error, %user, "play history: heartbeat not recorded");
-        }
         if let Ok(service) = ctx.data::<Arc<dyn PlaybackSessionService>>() {
             service.heartbeat(user, target, position_ms, state).await;
         }
-        if state == PlaybackState::Stopped {
-            log_play_activity(storage, ActivityKind::PlayProgress, user, target).await?;
-            // Heartbeats stay silent; only the terminal stop pays for the
-            // title-resolution reads.
-            if let Some(bus) = event_bus(ctx)
-                && let Some((work, title)) = resolve_event_work(storage, target).await
-            {
-                bus.emit(DomainEvent::ProgressAtStop {
-                    user,
-                    work,
-                    title,
-                    position_ms: u64::try_from(position_ms).unwrap_or(0),
-                });
-            }
-        }
-        storage
-            .user_data(user, target)
+        record_progress(
+            ctx,
+            storage,
+            PlaybackProgress {
+                user,
+                target,
+                device: caller_device(ctx).await,
+            },
+            position_ms,
+            state,
+        )
+        .await
+    }
+
+    /// Report progress using only the grant from `startPlaybackSession`.
+    /// The grant fixes the user, target and playback session; STOPPED cleans
+    /// up only that playback. No access or refresh credential is needed.
+    async fn report_playback_progress(
+        &self,
+        ctx: &Context<'_>,
+        token: String,
+        position_ms: i64,
+        state: PlaybackState,
+    ) -> async_graphql::Result<UserData> {
+        let storage = ctx
+            .data::<Arc<dyn Storage>>()
+            .map_err(|_| async_graphql::Error::new("storage not configured"))?;
+        let service = ctx
+            .data::<Arc<dyn PlaybackSessionService>>()
+            .map_err(|_| async_graphql::Error::new("playback sessions unavailable"))?;
+        let progress = service
+            .report_granted_progress(&token, position_ms, state)
             .await
-            .map_err(|e| async_graphql::Error::new(e.to_string()))
+            .map_err(|error| {
+                tracing::debug!(%error, "playback progress grant refused");
+                async_graphql::Error::new("invalid playback progress grant")
+            })?;
+        record_progress(ctx, storage, progress, position_ms, state).await
     }
 
     /// Flag a work or edition as fully played.

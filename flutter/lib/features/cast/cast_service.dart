@@ -102,6 +102,7 @@ class _Media {
   int? id;
   String playerState = 'IDLE';
   double currentTime = 0;
+  bool awaitingPosition = true;
   double? duration;
   DateTime heardAt = DateTime.now();
 
@@ -244,6 +245,7 @@ class CastService implements RemoteRoute {
 
   /// The receiver's latest report on playback.
   Map<String, dynamic>? _health;
+  var _progressReportedAt = 0;
   var _switching = false;
   GPlaybackState? _last;
   Timer? _beat;
@@ -468,7 +470,8 @@ class CastService implements RemoteRoute {
     if (card == null || _session != session || _loaded != null) return;
     final stream = custom['stream'] as Map<String, dynamic>?;
     final quality = decodeChoice(sender['quality'] as String?);
-    _media = _Media();
+    _progressReportedAt = 0;
+    _media = _Media()..awaitingPosition = false;
     _loaded = _Loaded(
       work: WorkSummary.fromCard(card, server: server),
       mediaFileId: sender['mediaFileId'] as String,
@@ -627,6 +630,20 @@ class CastService implements RemoteRoute {
         _onMediaStatus(session, event.data);
       case (_noflexNamespace, 'health'):
         _onHealth(event.data);
+      case (_noflexNamespace, 'progress') when _session == session:
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final suppressed = _progressReportedAt != 0;
+        final reporting = event.data['reporting'] == true;
+        _progressReportedAt = reporting && _loaded != null ? now : 0;
+        if (!reporting && suppressed && _media.playerState != 'IDLE') {
+          unawaited(
+            _report(
+              _media.playerState == 'PAUSED'
+                  ? GPlaybackState.PAUSED
+                  : GPlaybackState.PLAYING,
+            ),
+          );
+        }
       case (_receiverNamespace, 'RECEIVER_STATUS'):
         final applications = event.data['status']?['applications'];
         final ours =
@@ -649,7 +666,9 @@ class CastService implements RemoteRoute {
     if (statuses.isEmpty) {
       // Nothing loaded any more: stopped from the device or another sender.
       if (media.id != null) {
-        media.playerState = 'IDLE';
+        media
+          ..currentTime = media.now
+          ..playerState = 'IDLE';
         unawaited(_finish(ended: false));
       }
     }
@@ -667,11 +686,17 @@ class CastService implements RemoteRoute {
         unawaited(_finish(ended: status['idleReason'] == 'FINISHED'));
         continue;
       }
+      final currentTime = (status['currentTime'] as num?)?.toDouble();
       media
         ..playerState = state
         ..currentTime =
-            (status['currentTime'] as num?)?.toDouble() ?? media.currentTime
+            currentTime != null && (currentTime > 0 || !media.awaitingPosition)
+            ? currentTime
+            : media.currentTime
         ..heardAt = DateTime.now();
+      if (currentTime != null && currentTime > 0) {
+        media.awaitingPosition = false;
+      }
       final duration = (status['media']?['duration'] as num?)?.toDouble();
       if (duration != null && duration > 0) media.duration = duration;
     }
@@ -884,10 +909,20 @@ class CastService implements RemoteRoute {
     ];
   }
 
-  Future<void> _report(GPlaybackState state, [_Loaded? title]) async {
+  Future<void> _report(
+    GPlaybackState state, [
+    _Loaded? title,
+    int? capturedPositionMs,
+  ]) async {
     final loaded = title ?? _loaded;
     if (loaded == null) return;
-    final positionMs = _positionMs(loaded);
+    if (state != GPlaybackState.STOPPED &&
+        _progressReportedAt != 0 &&
+        DateTime.now().millisecondsSinceEpoch - _progressReportedAt < 30000) {
+      return;
+    }
+    _progressReportedAt = 0;
+    final positionMs = capturedPositionMs ?? _positionMs(loaded);
     try {
       final data = await _graphql.run(
         GReportProgressReq(
@@ -898,6 +933,10 @@ class CastService implements RemoteRoute {
         ),
         server: loaded.work.server,
       );
+      if (_loaded != loaded &&
+          !(state == GPlaybackState.STOPPED && _loaded == null)) {
+        return;
+      }
       final answer = data.reportProgress;
       getIt<WatchStateService>().set(
         loaded.work.id,
@@ -916,6 +955,7 @@ class CastService implements RemoteRoute {
   /// and, unless it may still be playing, its server session.
   Future<void> _finish({required bool ended, bool stopServer = true}) async {
     final loaded = _loaded;
+    _progressReportedAt = 0;
     if (loaded == null) return;
     // Taken at once, so a second idle status in the meantime finds nothing to end.
     _loaded = null;
@@ -924,7 +964,10 @@ class CastService implements RemoteRoute {
     _beat?.cancel();
     _steer?.cancel();
     _poll?.cancel();
-    await _report(GPlaybackState.STOPPED, loaded);
+    final positionMs = ended
+        ? loaded.durationMs ?? _positionMs(loaded)
+        : _positionMs(loaded);
+    await _report(GPlaybackState.STOPPED, loaded, positionMs);
     if (ended) {
       try {
         await _graphql.run(
@@ -1026,8 +1069,11 @@ class CastService implements RemoteRoute {
     _poll?.cancel();
     _beat = Timer.periodic(_reportEvery, (_) {
       // Out of reach, the device's last word has been reported already.
-      if (_session != null && _last == GPlaybackState.PLAYING) {
-        unawaited(_report(GPlaybackState.PLAYING));
+      final state = _last;
+      if (_session != null &&
+          state != null &&
+          (state == GPlaybackState.PLAYING || _progressReportedAt != 0)) {
+        unawaited(_report(state));
       }
     });
     _steer = Timer.periodic(const Duration(seconds: 1), (_) => _steerAuto());
@@ -1081,6 +1127,7 @@ class CastService implements RemoteRoute {
       );
       return false;
     }
+    final progressUrl = absolute('/graphql');
     SessionInfo? opened;
     try {
       final session = await _connectTo(info);
@@ -1180,6 +1227,8 @@ class CastService implements RemoteRoute {
             ],
             'customData': {
               'protocol': _protocol,
+              if (stream.progressToken != null)
+                'progress': {'url': progressUrl, 'token': stream.progressToken},
               'workId': work.id,
               'offsetMs': offsetMs,
               'durationMs': playable.runtimeMs,
@@ -1241,7 +1290,8 @@ class CastService implements RemoteRoute {
           'That Cast device couldn’t play this (${reply.data['reason'] ?? reply.type}).',
         );
       }
-      _media = _Media();
+      _media = _Media()
+        ..currentTime = math.max(0, playable.resume - offsetMs) / 1000;
       session.owned = true;
       _loaded = _Loaded(
         work: work,
@@ -1317,6 +1367,7 @@ class CastService implements RemoteRoute {
         _auto.settle();
         media
           ..currentTime = local
+          ..awaitingPosition = false
           ..heardAt = DateTime.now();
         send('SEEK', {'currentTime': local});
       case GDeviceControl.PAUSE:

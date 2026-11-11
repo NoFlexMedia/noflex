@@ -514,6 +514,158 @@ async fn session_start_direct_when_probe_matches_caps() {
 }
 
 #[tokio::test]
+async fn receiver_progress_is_scoped_and_revocable() {
+    let dir = temp_dir("receiver-progress");
+    let (store, edition, user) = seed_store().await;
+    let (media, _) = insert_media_file(
+        &store,
+        edition,
+        &dir,
+        b"fake mp4",
+        serde_json::to_value(web_matching_probe()).expect("probe"),
+    )
+    .await;
+    let now = OffsetDateTime::now_utc();
+    let login = noflex_core::SessionId::new();
+    store
+        .create_session(&noflex_storage::domain::Session {
+            id: login,
+            user_id: user,
+            client: None,
+            device: None,
+            device_id: None,
+            app_version: None,
+            remote_addr: None,
+            created_at: now,
+            last_seen_at: now,
+            expires_at: now + time::Duration::days(1),
+            refresh_token_hash: None,
+            locked_at: None,
+        })
+        .await
+        .expect("login");
+    let transcoder = Arc::new(FfmpegJobManager::new(
+        make_mock_ffmpeg(&dir),
+        dir.join("cache"),
+    ));
+    let service = Arc::new(session_service(&store, &transcoder));
+    let request = PlaybackStart::new(media, ClientCapabilities::web());
+    let playback = service
+        .start(user, Some(login), request.clone())
+        .await
+        .expect("start");
+    let other = service
+        .start(user, Some(login), request)
+        .await
+        .expect("other playback");
+    let token = playback.progress_token.expect("progress grant");
+    assert!(noflex_auth::verify_jwt(&test_jwt(), &token).is_err());
+    let schema = noflex_graphql::build_schema(noflex_graphql::SchemaContext {
+        storage: Some(store.clone()),
+        playback_sessions: Some(service.clone()),
+        ..Default::default()
+    });
+    let report = |state: &str| {
+        format!(
+            r#"mutation {{ reportPlaybackProgress(token: "{token}", positionMs: 4200, state: {state}) {{ positionMs }} }}"#
+        )
+    };
+    let response = schema.execute(report("PLAYING")).await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    assert_eq!(
+        response.data.into_json().unwrap()["reportPlaybackProgress"]["positionMs"],
+        4200
+    );
+    let streams = service.active_streams().await.expect("streams");
+    assert_eq!(
+        streams
+            .iter()
+            .find(|s| s.id == other.session_id.as_str())
+            .unwrap()
+            .position_ms,
+        None
+    );
+
+    let wrong_owner = issue_media_token(
+        &test_jwt(),
+        noflex_core::UserId::new(),
+        Some(login),
+        &format!("progress:{}", playback.session_id.as_str()),
+        Duration::from_secs(60),
+    )
+    .expect("wrong-owner grant");
+    let media_token = playback.url.split_once("?token=").unwrap().1;
+    for invalid in [wrong_owner.as_str(), media_token] {
+        assert!(
+            service
+                .report_granted_progress(invalid, 9999, PlaybackState::Playing)
+                .await
+                .is_err()
+        );
+    }
+    store.lock_session(login, now).await.expect("lock");
+    assert!(!schema.execute(report("PLAYING")).await.errors.is_empty());
+    store.unlock_session(login).await.expect("unlock");
+    let work = store.work_for_edition(edition).await.unwrap().unwrap();
+    store
+        .revoke_library_access(user, work.library_id)
+        .await
+        .expect("remove access");
+    assert!(!schema.execute(report("PLAYING")).await.errors.is_empty());
+    store
+        .grant_library_access(user, work.library_id)
+        .await
+        .expect("restore access");
+
+    let response = schema.execute(report("STOPPED")).await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let streams = service.active_streams().await.expect("streams");
+    assert_eq!(streams.len(), 1);
+    assert_eq!(streams[0].id, other.session_id.as_str());
+    assert!(!schema.execute(report("STOPPED")).await.errors.is_empty());
+    store.revoke_session(login).await.expect("revoke login");
+    assert!(
+        service
+            .report_granted_progress(
+                other.progress_token.as_deref().unwrap(),
+                9999,
+                PlaybackState::Playing
+            )
+            .await
+            .is_err()
+    );
+    service
+        .stop(user, &other.session_id)
+        .await
+        .expect("stop other");
+
+    // Target-based reporting still logs a stop without a registered playback.
+    let response = schema.execute(async_graphql::Request::new(format!(
+        r#"mutation {{ reportProgress(target: {{kind: WORK, id: "{}"}}, positionMs: 4200, state: STOPPED) {{ positionMs }} }}"#,
+        work.id,
+    )).data(noflex_storage::RequestUser { user_id: user, is_admin: false })).await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let activity = store
+        .list_activity(
+            &[noflex_storage::domain::ActivityKind::PlayProgress],
+            None,
+            10,
+            None,
+        )
+        .await
+        .expect("activity");
+    assert_eq!(activity.items.len(), 2);
+    assert_eq!(
+        store
+            .user_data(user, noflex_core::PlayTarget::Work(work.id))
+            .await
+            .unwrap()
+            .position_ms,
+        Some(4200)
+    );
+}
+
+#[tokio::test]
 async fn session_start_unknown_media_errors() {
     let (store, _edition, _user) = seed_store().await;
     let ffmpeg_dir = temp_dir("session-404-ffmpeg");

@@ -12,6 +12,7 @@
   --accent: #d4ff5a;
   --accent-soft: rgb(212 255 90 / 0.14);
   --accent-ink: #10150a;
+  --warning: #ffc164;
   --r-s: 0.9vh;
   --r: 1.3vh;
   --r-l: 1.8vh;
@@ -93,6 +94,7 @@ body.stats-on .stats { opacity: 1; transform: none; }
 
 .notice { position: fixed; top: var(--gutter); left: var(--gutter); max-width: 60vw; padding: 1.4vh 2.2vh; border-radius: var(--r); background: rgb(9 10 14 / 0.82); border: 1px solid var(--line-strong); font-size: 2vh; opacity: 0; transform: translateY(-1vh); transition: opacity var(--t) var(--ease-out), transform var(--t) var(--ease-out); }
 .notice.on { opacity: 1; transform: none; }
+.notice.warning { color: var(--warning); border-color: rgb(255 193 100 / 0.28); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }

@@ -1052,6 +1052,7 @@ impl PlaybackSessionService for StubPlaybackSessions {
     ) -> anyhow::Result<PlaybackSession> {
         Ok(PlaybackSession {
             session_id: async_graphql::ID("job-1".to_string()),
+            progress_token: None,
             route: PlaybackRouteKind::Transcode,
             url: "/stream/job/job-1/master.m3u8".to_string(),
             file_url: None,

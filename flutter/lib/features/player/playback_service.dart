@@ -65,6 +65,7 @@ class DeliveredSubtitle {
 class SessionInfo {
   const SessionInfo({
     required this.sessionId,
+    this.progressToken,
     required this.route,
     required this.url,
     this.fileUrl,
@@ -76,6 +77,7 @@ class SessionInfo {
   });
 
   final String sessionId;
+  final String? progressToken;
   final GPlaybackRouteKind route;
   final String url;
 
@@ -321,6 +323,7 @@ class PlaybackService {
     final session = data.startPlaybackSession;
     return SessionInfo(
       sessionId: session.sessionId,
+      progressToken: session.progressToken,
       route: session.route,
       url: _absolute(session.url, server),
       fileUrl: switch (session.fileUrl) {

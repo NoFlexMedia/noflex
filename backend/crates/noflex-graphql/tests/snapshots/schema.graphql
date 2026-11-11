@@ -1676,6 +1676,12 @@ type Mutation {
 	"""
 	reportProgress(target: PlayTargetInput!, positionMs: Int!, state: PlaybackState!): UserData!
 	"""
+	Report progress using only the grant from `startPlaybackSession`.
+	The grant fixes the user, target and playback session; STOPPED cleans
+	up only that playback. No access or refresh credential is needed.
+	"""
+	reportPlaybackProgress(token: String!, positionMs: Int!, state: PlaybackState!): UserData!
+	"""
 	Flag a work or edition as fully played.
 	"""
 	markPlayed(target: PlayTargetInput!): UserData!
@@ -2591,6 +2597,11 @@ type PlaybackSession {
 	transcode route.
 	"""
 	sessionId: ID!
+	"""
+	Expiring grant to report only this playback's progress without a login
+	credential. Absent for sessionless callers and live TV.
+	"""
+	progressToken: String
 	route: PlaybackRouteKind!
 	"""
 	Where to point the player.

@@ -15,7 +15,7 @@
     { slug: "sprite-fright", title: "Sprite Fright", year: 2021, credit: "Blender Studio", license: by4 },
     { slug: "charge", title: "Charge", year: 2022, credit: "Blender Studio", license: by4 },
   ];
-  const toc = [["artwork", "Artwork"], ["metadata", "Metadata"], ["type-and-icons", "Type and icons"], ["software", "Software"]];
+  const toc = [["artwork", "Artwork"], ["metadata", "Metadata"], ["type-and-icons", "Type and icons"], ["software", "Software"], ["trademarks", "Trademarks"]];
 </script>
 
 <svelte:head>
@@ -51,6 +51,9 @@
 
   <h2 id="software">Software</h2>
   <p>This site is built with <a href="https://svelte.dev/">SvelteKit</a>, under the MIT License. The apps and the server list every third-party component they ship, with its license, under About in each app and in the notices that come with each release. The <a href={links.repo}>source repository</a> has the whole picture.</p>
+
+  <h2 id="trademarks">Trademarks</h2>
+  <p>Plex is a trademark of Plex, Inc. NoFlex reads folders laid out the way Plex names them, and isn't affiliated with or endorsed by Plex. Other product names and marks on this site belong to their owners and are used only to say what NoFlex works with.</p>
 </Doc>
 
 <style>

@@ -84,7 +84,7 @@ async fn a_disabled_plugin_never_loads() {
     let mut events = bus.subscribe();
 
     let search_path = SearchPath::from_explicit([dir.path()]);
-    watcher::sync_once_with_config(&registry, &bus, &search_path, &HashMap::new());
+    watcher::sync_once(&registry, &bus, &search_path).await;
     assert!(registry.snapshot().is_empty());
     assert!(
         events.try_recv().is_err(),

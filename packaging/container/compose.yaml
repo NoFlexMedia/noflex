@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# NoFlex with Docker Compose: copy this beside where its folders should live,
+# point the media volume at your library, then `docker compose up -d` and open
+# http://this-machine:8096. Settings go in config/noflex/config.toml; see
+# https://github.com/NoFlexMedia/noflex/blob/main/docs/CONFIGURATION.md
+
+services:
+  noflex:
+    image: ghcr.io/noflexmedia/noflex:latest
+    # Whose files these are on the host: `id -u` and `id -g`.
+    user: "1000:1000"
+    ports:
+      - "8096:8096"
+    volumes:
+      - ./config:/config
+      - ./data:/data
+      - ./cache:/cache
+      - /path/to/media:/media:ro
+    restart: unless-stopped
+
+    # Intel and AMD GPUs: pass the render node, and the group that owns it on
+    # the host (`stat -c %g /dev/dri/renderD128`).
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "993"
+
+    # Nvidia GPUs, with the NVIDIA Container Toolkit installed:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, video, graphics]

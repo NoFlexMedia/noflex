@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The server as an image, around the Linux bundle `cargo xtask bundle` makes.
+# The build context holds one unpacked bundle per architecture, as amd64/ and
+# arm64/; the release workflow builds both into one image from dist/image:
+#
+#   docker buildx build --platform linux/amd64,linux/arm64 -f packaging/container/Containerfile dist/image
+#
+# /config holds config.toml, plugins/ and secrets/ (under noflex/, as for any
+# user), /data the database, /cache what can be made again.
+
+FROM docker.io/library/debian:trixie-slim
+
+ARG TARGETARCH
+
+# What the bundle's ffmpeg loads when it finds it: VAAPI with Mesa's and Intel's
+# drivers, the oneVPL runtime for QSV, which Intel ships only for x86, and a
+# Vulkan driver for tone-mapping. Nvidia's libraries come from the host, through
+# the NVIDIA Container Toolkit.
+RUN set -eux; \
+    sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates tini \
+        libva2 libva-drm2 mesa-va-drivers libvulkan1 mesa-vulkan-drivers \
+        $(if [ "$TARGETARCH" = amd64 ]; then echo intel-media-va-driver-non-free libvpl2 libmfx-gen1.2; fi); \
+    rm -rf /var/lib/apt/lists/*
+
+COPY ${TARGETARCH}/ /opt/noflex/
+
+ENV NOFLEX_BIND=0.0.0.0:8096 \
+    NOFLEX_DATA_DIR=/data \
+    NOFLEX_CACHE_DIR=/cache \
+    XDG_CONFIG_HOME=/config \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,video,graphics,utility
+
+EXPOSE 8096
+# tini reaps what the server's ffmpeg children leave behind, which PID 1 must.
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/noflex/noflex-server"]

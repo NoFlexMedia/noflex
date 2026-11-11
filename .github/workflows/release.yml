@@ -34,6 +34,9 @@ jobs:
           flake=$(nix develop .#flutter-check --command flutter --version --machine | sed -n 's/.*"frameworkVersion": "\(.*\)".*/\1/p')
           echo "flake has $flake, this workflow $FLUTTER_VERSION"
           test "$flake" = "$FLUTTER_VERSION"
+      # CI runs this as a test, but a tag can be pushed on a commit CI failed.
+      - name: Check the record of third-party code against the app
+        run: nix develop .#no-flutter --command sh -c 'cd backend && cargo xtask third-party check'
       - run: nix develop .#flutter-check --command sh -c 'cd flutter && flutter pub get && dart run build_runner build && flutter analyze --no-pub && flutter test --no-pub'
 
   android:

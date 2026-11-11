@@ -18,7 +18,7 @@ Flutter's license registry covers Dart packages and the engine by itself. `third
 
 | Command | Network | What it does |
 | --- | --- | --- |
-| `cargo xtask third-party check` | no | Fails if `flutter/pubspec.lock` pins another media_kit commit than `media_kit` names, the record names something missing, an iOS or macOS build lists a GPL library, or `flutter/assets/licenses/` differs from what the record makes. A test (`the_record_matches_the_app`) runs it, so CI does. |
+| `cargo xtask third-party check` | no | Fails if `flutter/pubspec.lock` pins another media_kit commit than `media_kit` names, the record names something missing, an iOS or macOS build lists a GPL library, or `flutter/assets/licenses/` differs from what the record makes. A test (`the_record_matches_the_app`) runs it, so CI does, and the release workflow runs it before building. |
 | `cargo xtask third-party sync` | yes | Writes `flutter/assets/licenses/`: every text, and `manifest.json`, which `services/licenses.dart` reads. Never edit those files by hand. |
 | `cargo xtask third-party source <out>` | yes | Gathers each build's scripts and every pinned library source, with a README. The release workflow attaches it as the LGPL's corresponding source. Prints the sha256 of any `url` that lacks one. |
 

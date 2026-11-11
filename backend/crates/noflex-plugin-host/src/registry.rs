@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
 };
@@ -147,6 +147,8 @@ pub struct PluginRegistry {
     /// Domain-event dispatcher loop, if [`Self::with_event_bus`] was
     /// used. Detaches on drop like the scheduler handles.
     dispatcher_handle: Mutex<Option<JoinHandle<()>>>,
+    /// Plugin ids an operator disabled, which never load.
+    disabled: HashSet<String>,
 }
 
 impl PluginRegistry {
@@ -173,7 +175,20 @@ impl PluginRegistry {
             embedder_changed: Arc::new(Notify::new()),
             task_handles: Mutex::new(HashMap::new()),
             dispatcher_handle: Mutex::new(None),
+            disabled: HashSet::new(),
         })
+    }
+
+    /// Never load the plugins with these ids: they get no instance, so no
+    /// hook, task or event reaches them. Applies to loads after the call.
+    pub fn with_disabled(mut self, ids: impl IntoIterator<Item = String>) -> Self {
+        self.disabled = ids.into_iter().collect();
+        self
+    }
+
+    /// Whether an operator disabled `id`.
+    pub fn is_disabled(&self, id: &str) -> bool {
+        self.disabled.contains(id)
     }
 
     /// Give the registry (and every plugin it loads) a storage handle.
@@ -226,11 +241,22 @@ impl PluginRegistry {
 
     /// Load a plugin and attach a per-plugin config blob. The blob
     /// is rendered back to the guest through `host-config::read`.
+    ///
+    /// # Errors
+    /// [`HostError::Disabled`] for a plugin [`Self::with_disabled`] names,
+    /// before any of it is instantiated; otherwise whatever
+    /// [`LoadedPlugin::load_with_context`] rejects it for.
     pub fn load_from_with_config(
         &self,
         path: &Path,
         config_toml: String,
     ) -> Result<Plugin, HostError> {
+        let manifest = crate::plugin::extract_manifest(&std::fs::read(path)?, path)?;
+        if self.is_disabled(&manifest.plugin_id) {
+            return Err(HostError::Disabled {
+                id: manifest.plugin_id,
+            });
+        }
         let plugin = LoadedPlugin::load_with_context(
             &self.engine,
             &self.linker,

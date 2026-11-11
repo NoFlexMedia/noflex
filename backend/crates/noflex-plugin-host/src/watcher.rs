@@ -117,6 +117,7 @@ struct Candidate {
 
 /// Reconcile one discovered snapshot. Later search-path tiers win. Unchanged
 /// path, binary, and config triples keep their existing component and store.
+/// A plugin the registry has disabled counts as absent, so it never loads.
 pub fn sync_once_with_config(
     registry: &PluginRegistry,
     bus: &LifecycleBus,
@@ -135,6 +136,14 @@ pub fn sync_once_with_config(
                 Ok((manifest, crate::plugin::binary_sha256(&bytes)))
             });
         match parsed {
+            Ok((manifest, _)) if registry.is_disabled(&manifest.plugin_id) => {
+                tracing::debug!(
+                    target: "noflex_plugin::lifecycle",
+                    plugin = %manifest.plugin_id,
+                    path = %path.display(),
+                    "plugin disabled in config; not loading"
+                );
+            }
             Ok((manifest, sha256)) => {
                 candidates.insert(
                     PluginId(manifest.plugin_id.clone()),

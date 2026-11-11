@@ -50,6 +50,9 @@ pub enum HostError {
     #[error("plugin {id} not found in registry")]
     Unknown { id: String },
 
+    #[error("plugin {id} is disabled in the server config")]
+    Disabled { id: String },
+
     #[error("plugin {id} is unhealthy (too many traps); not dispatching")]
     Unhealthy { id: String },
 

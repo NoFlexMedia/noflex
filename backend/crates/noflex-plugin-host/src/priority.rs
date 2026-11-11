@@ -27,11 +27,6 @@ pub struct Overrides {
     /// fall back to the plugin's manifest defaults.
     #[serde(default)]
     pub by_plugin: HashMap<String, PluginOverride>,
-    /// Plugins listed here are excluded from dispatch entirely, regardless
-    /// of priority. Useful for "I want this plugin loaded for inspection
-    /// but not actively used."
-    #[serde(default)]
-    pub disabled: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -56,7 +51,7 @@ pub struct PriorityTable {
     /// Admin overrides from [`PriorityTable::set`], including ones for
     /// plugins not currently loaded (they apply when the plugin loads).
     admin: HashMap<(PluginId, HookKind, WorkKindFilter), i32>,
-    /// Plugins the table was built over (minus disabled ones).
+    /// Plugins the table was built over.
     loaded: HashSet<PluginId>,
 }
 
@@ -85,9 +80,6 @@ impl PriorityTable {
         let mut loaded = HashSet::new();
 
         for (id, manifest) in plugins {
-            if overrides.disabled.iter().any(|d| d == &id.0) {
-                continue;
-            }
             loaded.insert(id.clone());
             // Manifest's per-hook default.
             for (hook_name, pri) in &manifest.priority {
@@ -360,26 +352,6 @@ mod tests {
         // For movies, manifest default still applies — AniDB has no movie override.
         let ranked_movies = table.ranked(HookKind::Metadata, WorkKindFilter::Movie);
         assert_eq!(ranked_movies[0].0.0, "tmdb");
-    }
-
-    #[test]
-    fn disabled_plugin_is_excluded() {
-        let tmdb = (
-            PluginId("tmdb".into()),
-            manifest_with_priority("tmdb", "metadata", 100),
-        );
-        let mut overrides = Overrides::default();
-        overrides.disabled.push("tmdb".to_string());
-        let table = PriorityTable::build([(&tmdb.0, &tmdb.1)], &overrides);
-        assert_eq!(
-            table.priority(&tmdb.0, HookKind::Metadata, WorkKindFilter::Movie),
-            0
-        );
-        assert!(
-            table
-                .ranked(HookKind::Metadata, WorkKindFilter::Movie)
-                .is_empty()
-        );
     }
 
     #[test]

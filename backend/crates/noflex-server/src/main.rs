@@ -193,7 +193,15 @@ async fn run(
             // Assets root for `host-assets.read-file` (model weights).
             .with_assets_dir(cfg.plugin.assets_dir.clone())
             // Fan domain events out to notifier plugins.
-            .with_event_bus(event_bus.clone()),
+            .with_event_bus(event_bus.clone())
+            // `[plugin.overrides.<id>] disabled = true` keeps a plugin from loading.
+            .with_disabled(
+                cfg.plugin
+                    .overrides
+                    .iter()
+                    .filter(|(_, o)| o.disabled)
+                    .map(|(id, _)| id.clone()),
+            ),
     );
     let plugin_links = Arc::new(noflex_server::plugin_links::ServerPluginLinks::new(
         plugin_registry.clone(),
@@ -837,13 +845,9 @@ fn init_tracing(
 }
 
 fn build_host_overrides(cfg: &PluginConfig) -> noflex_plugin_host::Overrides {
-    let mut disabled: Vec<String> = Vec::new();
     let mut by_plugin: std::collections::HashMap<String, noflex_plugin_host::PluginOverride> =
         std::collections::HashMap::new();
     for (plugin_id, override_) in &cfg.overrides {
-        if override_.disabled {
-            disabled.push(plugin_id.clone());
-        }
         if !override_.priorities.is_empty() {
             by_plugin.insert(
                 plugin_id.clone(),
@@ -853,10 +857,7 @@ fn build_host_overrides(cfg: &PluginConfig) -> noflex_plugin_host::Overrides {
             );
         }
     }
-    noflex_plugin_host::Overrides {
-        by_plugin,
-        disabled,
-    }
+    noflex_plugin_host::Overrides { by_plugin }
 }
 
 async fn health(State(state): State<AppState>) -> impl IntoResponse {

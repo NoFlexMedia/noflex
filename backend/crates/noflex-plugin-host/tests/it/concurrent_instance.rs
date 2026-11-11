@@ -67,6 +67,34 @@ async fn hot_reload_reuses_unchanged_plugin_and_retains_config() {
 }
 
 #[tokio::test]
+async fn a_disabled_plugin_never_loads() {
+    let Some(wasm) = crate::fixtures::wasm("concurrency") else {
+        eprintln!("skipping: could not build the concurrency fixture plugin");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(&wasm, dir.path().join("fixture.wasm")).unwrap();
+    let engine = build_engine(&EngineConfig::default()).expect("engine builds");
+    let registry = PluginRegistry::new(engine)
+        .expect("registry")
+        .with_disabled(["concurrency-fixture".to_string()]);
+    let bus = LifecycleBus::default();
+    let mut events = bus.subscribe();
+
+    let search_path = SearchPath::from_explicit([dir.path()]);
+    watcher::sync_once_with_config(&registry, &bus, &search_path, &HashMap::new());
+    assert!(registry.snapshot().is_empty());
+    assert!(
+        events.try_recv().is_err(),
+        "a disabled plugin is no load failure"
+    );
+    assert!(matches!(
+        registry.load_from(&wasm),
+        Err(noflex_plugin_host::HostError::Disabled { .. })
+    ));
+}
+
+#[tokio::test]
 async fn concurrent_search_calls_overlap_on_one_instance() {
     let Some(wasm) = crate::fixtures::wasm("concurrency") else {
         eprintln!("skipping: could not build the concurrency fixture plugin");

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# NoFlex as a system service, in /etc/noflex/config.toml. Every setting is in
+# docs/CONFIGURATION.md: https://github.com/NoFlexMedia/noflex/blob/main/docs/CONFIGURATION.md
+
+bind = "0.0.0.0:8096"
+data_dir = "/var/lib/noflex"
+cache_dir = "/var/cache/noflex"

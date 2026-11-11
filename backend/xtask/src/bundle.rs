@@ -204,6 +204,14 @@ pub fn bundle(root: &Path, options: &BundleOptions) -> Result<()> {
     model_fetch(root, &model_cache)?;
     run_cp(&model_cache, &out.join("assets"))?;
 
+    if linux {
+        let service = out.join("linux");
+        std::fs::create_dir_all(&service)?;
+        for file in LINUX_SERVICE {
+            std::fs::copy(root.join("packaging/linux").join(file), service.join(file))?;
+        }
+    }
+
     std::fs::copy(root.join("LICENSE"), out.join("LICENSE"))?;
     std::fs::write(out.join("README.txt"), NOTICE)?;
 
@@ -226,11 +234,15 @@ pub fn bundle(root: &Path, options: &BundleOptions) -> Result<()> {
     Ok(())
 }
 
+/// What runs a Linux bundle as a system service, from `packaging/linux/`.
+const LINUX_SERVICE: [&str; 3] = ["noflex.service", "noflex.sysusers", "config.toml"];
+
 const NOTICE: &str = "\
 NoFlex, AGPL-3.0-only: https://github.com/NoFlexMedia/noflex
 
 Run ./noflex-server, then open http://127.0.0.1:8096. docs/PACKAGING.md in the
-source explains what each hardware accelerator needs from this machine.
+source explains what each hardware accelerator needs from this machine, and
+docs/DEPLOYMENT.md how to run this as a service, with what's in linux/ on Linux.
 
 Third-party software in this bundle, under its own license:
 

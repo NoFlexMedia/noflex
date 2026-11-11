@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# NoFlex as a system service, for a bundle at /opt/noflex. The .deb and .rpm
+# install it as it is. Settings go in /etc/noflex/config.toml, and directories
+# beyond its own that the server should write to in `systemctl edit noflex`:
+#
+#   [Service]
+#   ReadWritePaths=/srv/backups
+
+[Unit]
+Description=NoFlex media server
+Documentation=https://github.com/NoFlexMedia/noflex/blob/main/docs/DEPLOYMENT.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/opt/noflex/noflex-server
+User=noflex
+Group=noflex
+# VAAPI and QSV open the GPU's render node.
+SupplementaryGroups=render video
+Restart=on-failure
+RestartSec=5s
+StateDirectory=noflex
+CacheDirectory=noflex
+
+# Reads media anywhere, writes only its own directories.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

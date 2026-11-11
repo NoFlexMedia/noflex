@@ -9,7 +9,7 @@ use std::{sync::Arc, time::Duration};
 
 use noflex_auth::{JwtConfig, Principal, issue_media_token};
 use noflex_core::{AudioCodec, HdrTransfer, PixelFormat, VideoCodec, VideoProfile};
-use noflex_graphql::{PlaybackRouteKind, PlaybackSessionService, PlaybackStart};
+use noflex_graphql::{PlaybackRouteKind, PlaybackSessionService, PlaybackStart, PlaybackState};
 use noflex_server::stream::{
     ServerPlaybackSessions, byte_route_principal, master_playlist, propagate_token_to_playlist,
     serve_job_file, serve_media_file, serve_subtitle,
@@ -1102,7 +1102,7 @@ async fn direct_session_delivers_text_subtitles_and_tracks_activity() {
             user,
             noflex_core::PlayTarget::Edition(edition),
             4_200,
-            false,
+            PlaybackState::Playing,
         )
         .await;
     let streams = service.active_streams().await.expect("streams");
@@ -1120,9 +1120,81 @@ async fn direct_session_delivers_text_subtitles_and_tracks_activity() {
         .expect_err("foreign stop");
     assert!(err.to_string().contains("session not found"));
     service
-        .heartbeat(user, noflex_core::PlayTarget::Edition(edition), 5_000, true)
+        .heartbeat(
+            user,
+            noflex_core::PlayTarget::Edition(edition),
+            5_000,
+            PlaybackState::Stopped,
+        )
         .await;
     assert!(service.active_streams().await.expect("streams").is_empty());
+}
+
+#[tokio::test]
+async fn pausing_and_resuming_are_told_once_per_change() {
+    let dir = temp_dir("session-pause");
+    let (store, edition, user) = seed_store().await;
+    let probe = serde_json::to_value(web_matching_probe()).expect("probe json");
+    let (id, _path) =
+        insert_media_file_with_tracks(&store, edition, &dir, b"fake mp4", probe, Vec::new()).await;
+    let ffmpeg_dir = temp_dir("session-pause-ffmpeg");
+    let transcoder = Arc::new(FfmpegJobManager::new(
+        make_mock_ffmpeg(&ffmpeg_dir),
+        ffmpeg_dir.join("cache"),
+    ));
+    let bus = noflex_core::DomainEventBus::new(64);
+    let mut events = bus.subscribe();
+    let service = session_service(&store, &transcoder).with_events(bus);
+    service
+        .start(
+            user,
+            None,
+            PlaybackStart::new(id, ClientCapabilities::web()),
+        )
+        .await
+        .expect("start");
+
+    let target = noflex_core::PlayTarget::Edition(edition);
+    for (position_ms, state) in [
+        (1_000, PlaybackState::Playing),
+        (2_000, PlaybackState::Playing),
+        (3_000, PlaybackState::Paused),
+        (3_000, PlaybackState::Paused),
+        (3_000, PlaybackState::Paused),
+        (3_500, PlaybackState::Playing),
+        (4_000, PlaybackState::Playing),
+    ] {
+        service.heartbeat(user, target, position_ms, state).await;
+    }
+
+    let mut told = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        match event {
+            noflex_core::DomainEvent::PlaybackStarted { media_file, .. } => {
+                told.push(("started", media_file, None));
+            }
+            noflex_core::DomainEvent::PlaybackPaused {
+                media_file,
+                position_ms,
+                ..
+            } => told.push(("paused", media_file, Some(position_ms))),
+            noflex_core::DomainEvent::PlaybackResumed {
+                media_file,
+                position_ms,
+                ..
+            } => told.push(("resumed", media_file, Some(position_ms))),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+    assert_eq!(
+        told,
+        vec![
+            ("started", id, None),
+            ("paused", id, Some(3_000)),
+            ("resumed", id, Some(3_500)),
+        ],
+        "heartbeats in the same state stay quiet"
+    );
 }
 
 fn hevc_hdr10_truehd_mkv_probe() -> ProbeReport {

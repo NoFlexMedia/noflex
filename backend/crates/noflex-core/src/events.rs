@@ -59,6 +59,23 @@ pub enum DomainEvent {
         title: String,
         media_file: MediaFileId,
     },
+    /// A playing session's progress reports turned to paused. Once per
+    /// transition, never per heartbeat.
+    PlaybackPaused {
+        user: UserId,
+        work: WorkId,
+        title: String,
+        media_file: MediaFileId,
+        position_ms: u64,
+    },
+    /// A paused session's progress reports turned back to playing.
+    PlaybackResumed {
+        user: UserId,
+        work: WorkId,
+        title: String,
+        media_file: MediaFileId,
+        position_ms: u64,
+    },
     /// A library scan began.
     ScanStarted {
         library: LibraryId,
@@ -91,6 +108,8 @@ impl DomainEvent {
             DomainEvent::Favorite { .. } => "favorite",
             DomainEvent::PlaybackStarted { .. } => "playback-started",
             DomainEvent::PlaybackStopped { .. } => "playback-stopped",
+            DomainEvent::PlaybackPaused { .. } => "playback-paused",
+            DomainEvent::PlaybackResumed { .. } => "playback-resumed",
             DomainEvent::ScanStarted { .. } => "scan-started",
             DomainEvent::ScanCompleted { .. } => "scan-completed",
         }

@@ -13,8 +13,8 @@
 //   lookups of their own. An event whose work row is already gone
 //   (delete race) is skipped.
 // - Delivery is per-user: a plugin is skipped for an event when the
-//   acting user holds no secrets for it (never linked an account). All
-//   three event kinds reach every linked scrobbler unconditionally —
+//   acting user holds no secrets for it (never linked an account). Every
+//   playback-derived kind reaches every linked scrobbler unconditionally —
 //   there is no manifest `events` filter on this path.
 //
 // A session stopping carries no position, and progress-at-stop follows it
@@ -65,7 +65,7 @@ pub fn spawn_scrobble_dispatcher(
 }
 
 /// One scrobble occurrence before enrichment: who, which work, the state
-/// transition, and the stop position when the event carries one.
+/// transition, and the position when the event carries one.
 struct Occurrence {
     user: UserId,
     work: WorkId,
@@ -76,9 +76,10 @@ struct Occurrence {
 
 impl Occurrence {
     /// Map a domain event onto a scrobble occurrence, or `None` when it
-    /// isn't one: scrobblers see session start, progress-at-stop, and
-    /// manual mark-played, the last as `stopped` with no position, which
-    /// means watched to the end.
+    /// isn't one: scrobblers see session start, pause (`paused`) and resume
+    /// (`started` again, with a position), progress-at-stop, and manual
+    /// mark-played, the last as `stopped` with no position, which means
+    /// watched to the end.
     fn from_event(event: &DomainEvent) -> Option<Self> {
         match event {
             DomainEvent::PlaybackStarted {
@@ -89,6 +90,33 @@ impl Occurrence {
                 title: title.clone(),
                 action: wit::ScrobbleAction::Started,
                 position_ms: None,
+            }),
+            DomainEvent::PlaybackPaused {
+                user,
+                work,
+                title,
+                position_ms,
+                ..
+            } => Some(Self {
+                user: *user,
+                work: *work,
+                title: title.clone(),
+                action: wit::ScrobbleAction::Paused,
+                position_ms: Some(*position_ms),
+            }),
+            // Trakt-style scrobbling resumes with another start.
+            DomainEvent::PlaybackResumed {
+                user,
+                work,
+                title,
+                position_ms,
+                ..
+            } => Some(Self {
+                user: *user,
+                work: *work,
+                title: title.clone(),
+                action: wit::ScrobbleAction::Started,
+                position_ms: Some(*position_ms),
             }),
             DomainEvent::ProgressAtStop {
                 user,
@@ -324,6 +352,31 @@ mod tests {
         .expect("progress-at-stop maps");
         assert!(matches!(occ.action, wit::ScrobbleAction::Stopped));
         assert_eq!(occ.position_ms, Some(42_000));
+
+        let occ = Occurrence::from_event(&DomainEvent::PlaybackPaused {
+            user,
+            work,
+            title: title.clone(),
+            media_file: file,
+            position_ms: 61_000,
+        })
+        .expect("pause maps");
+        assert!(matches!(occ.action, wit::ScrobbleAction::Paused));
+        assert_eq!(occ.position_ms, Some(61_000));
+
+        let occ = Occurrence::from_event(&DomainEvent::PlaybackResumed {
+            user,
+            work,
+            title: title.clone(),
+            media_file: file,
+            position_ms: 61_000,
+        })
+        .expect("resume maps");
+        assert!(
+            matches!(occ.action, wit::ScrobbleAction::Started),
+            "a resume starts the scrobble again"
+        );
+        assert_eq!(occ.position_ms, Some(61_000));
 
         let occ = Occurrence::from_event(&DomainEvent::WorkPlayed {
             user,

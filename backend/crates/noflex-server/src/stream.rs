@@ -27,7 +27,7 @@ use noflex_core::{
 };
 use noflex_graphql::{
     ActiveStreamRecord, PlaybackRouteKind, PlaybackSession, PlaybackSessionService, PlaybackStart,
-    SmartDownloadFile, StreamQuality, SubtitleDelivery, TranscodeProgress,
+    PlaybackState, SmartDownloadFile, StreamQuality, SubtitleDelivery, TranscodeProgress,
 };
 use noflex_storage::{
     Storage,
@@ -547,6 +547,8 @@ struct ActiveSession {
     started_at: OffsetDateTime,
     last_active_at: OffsetDateTime,
     position_ms: Option<i64>,
+    /// What the last progress report said, so a pause is told once.
+    paused: bool,
     decision: PlaybackDecisionInfo,
     /// Equal to the session id when set.
     job: Option<String>,
@@ -671,8 +673,8 @@ impl ServerPlaybackSessions {
         self
     }
 
-    /// Domain-event sink for session start/stop. Optional so tests and
-    /// lean embeddings stay silent.
+    /// Domain-event sink for session start, pause, resume and stop. Optional
+    /// so tests and lean embeddings stay silent.
     pub fn with_events(mut self, events: DomainEventBus) -> Self {
         self.events = Some(events);
         self
@@ -1058,6 +1060,7 @@ impl ServerPlaybackSessions {
                 started_at: now,
                 last_active_at: now,
                 position_ms: None,
+                paused: false,
                 decision: decision.clone(),
                 job: Some(handle.id.clone()),
             },
@@ -1269,6 +1272,7 @@ impl PlaybackSessionService for ServerPlaybackSessions {
             started_at: now,
             last_active_at: now,
             position_ms: None,
+            paused: false,
             decision: PlaybackDecisionInfo::new(&probe, &decision, Encoder::Software264, None),
             job: None,
         };
@@ -1607,9 +1611,17 @@ impl PlaybackSessionService for ServerPlaybackSessions {
         Ok(())
     }
 
-    async fn heartbeat(&self, user: UserId, target: PlayTarget, position_ms: i64, stopped: bool) {
+    async fn heartbeat(
+        &self,
+        user: UserId,
+        target: PlayTarget,
+        position_ms: i64,
+        state: PlaybackState,
+    ) {
         let now = OffsetDateTime::now_utc();
         let mut ended = Vec::new();
+        // (edition, media file, now paused) for each session that changed.
+        let mut turned = Vec::new();
         {
             let mut active = self.active.lock().await;
             for (id, session) in active.iter_mut() {
@@ -1623,13 +1635,50 @@ impl PlaybackSessionService for ServerPlaybackSessions {
                 }
                 session.last_active_at = now;
                 session.position_ms = Some(position_ms);
-                if stopped && session.job.is_none() {
+                let paused = match state {
+                    PlaybackState::Playing => false,
+                    PlaybackState::Paused => true,
+                    PlaybackState::Stopped => session.paused,
+                };
+                if paused != session.paused {
+                    session.paused = paused;
+                    if let Some(edition) = session.edition {
+                        turned.push((edition, session.media_file, paused));
+                    }
+                }
+                if state == PlaybackState::Stopped && session.job.is_none() {
                     ended.push(id.clone());
                 }
             }
             for id in &ended {
                 active.remove(id);
             }
+        }
+        let Some(bus) = &self.events else {
+            return;
+        };
+        let position_ms = u64::try_from(position_ms).unwrap_or(0);
+        for (edition, media_file, paused) in turned {
+            let Some((work, title)) = self.resolve_event_work(edition).await else {
+                continue;
+            };
+            bus.emit(if paused {
+                DomainEvent::PlaybackPaused {
+                    user,
+                    work,
+                    title,
+                    media_file,
+                    position_ms,
+                }
+            } else {
+                DomainEvent::PlaybackResumed {
+                    user,
+                    work,
+                    title,
+                    media_file,
+                    position_ms,
+                }
+            });
         }
     }
 

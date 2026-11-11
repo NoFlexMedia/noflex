@@ -208,8 +208,9 @@ interface types {
     }
 
     /// Scrobble state machine (the Trakt `/scrobble/start|pause|stop`
-    /// shape). `paused` is on the wire but not emitted yet —
-    /// Playing/Paused heartbeats are too hot to broadcast.
+    /// shape). `paused` comes once when a session's progress reports turn
+    /// from playing to paused, and `started` again when they turn back,
+    /// never per heartbeat.
     enum scrobble-action {
         started,
         paused,
@@ -235,8 +236,9 @@ interface types {
         season-number: option<u32>,
         episode-number: option<u32>,
         action: scrobble-action,
-        /// Playback position, on progress-at-stop. A `stopped` without one
-        /// is a title marked played; `started` never carries one.
+        /// Playback position, on a pause, a resume (a `started` with one) and
+        /// progress-at-stop. A `stopped` without one is a title marked
+        /// played; a session's first `started` never carries one.
         position-ms: option<u64>,
         /// Edition runtime when known; the plugin derives its own
         /// progress percent and watched threshold.

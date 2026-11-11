@@ -30,7 +30,7 @@ Some have their own README with setup steps (`noflex-embeddings`, `noflex-webhoo
 | `notifier`      | Library events and plugin lifecycle                              | unit                                         |
 | `user-link`     | A user links or unlinks an upstream account (OAuth, device flow) | `LinkChallenge`; per-user secrets            |
 | `external-auth` | Interactive login through an external IdP                        | authorization URL; `VerifiedIdentity`        |
-| `scrobbler`     | Playback start, progress at stop, mark played                    | unit                                         |
+| `scrobbler`     | Playback start, pause and resume; progress at stop; mark played  | unit                                         |
 | `embedder`      | Work texts at scan time, queries at search time                  | one vector per text                          |
 | `background`    | A manifest `[[tasks]]` schedule or `host-tasks.enqueue`          | `done` / `more(cursor)`                      |
 

@@ -151,7 +151,8 @@ pub(crate) async fn post_scan_fanout(
 }
 
 /// Map a domain event onto the notifier hook's wire shape, or `None` for
-/// one notifiers don't hear. IDs cross as hyphenated UUID strings.
+/// one notifiers don't hear: pauses and resumes are for scrobblers, and a
+/// scan's changes go to `post-scan`. IDs cross as hyphenated UUID strings.
 /// `WorkAdded`'s `library` has no counterpart in the WIT record and is
 /// dropped by design.
 fn to_notify_event(event: &DomainEvent) -> Option<wit::NotifyEvent> {
@@ -203,7 +204,10 @@ fn to_notify_event(event: &DomainEvent) -> Option<wit::NotifyEvent> {
             title,
             media_file,
         } => wit::NotifyEvent::PlaybackStopped(playback_event(user, work, title, media_file)),
-        DomainEvent::ScanStarted { .. } | DomainEvent::ScanCompleted { .. } => return None,
+        DomainEvent::PlaybackPaused { .. }
+        | DomainEvent::PlaybackResumed { .. }
+        | DomainEvent::ScanStarted { .. }
+        | DomainEvent::ScanCompleted { .. } => return None,
     })
 }
 

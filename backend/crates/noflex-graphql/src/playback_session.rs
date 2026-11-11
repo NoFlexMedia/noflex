@@ -13,6 +13,8 @@ pub use noflex_transcoder::PlaybackRouteKind;
 use noflex_transcoder::{ClientCapabilities, PlaybackDecisionInfo};
 use time::OffsetDateTime;
 
+pub use crate::playback::PlaybackState;
+
 /// A text subtitle track the client renders itself, converted
 /// server-side to a format it declared in `subtitleCodecs`.
 #[derive(SimpleObject, Debug, Clone, PartialEq, Eq)]
@@ -199,10 +201,17 @@ pub trait PlaybackSessionService: Send + Sync {
     async fn stop(&self, user: UserId, session_id: &str) -> anyhow::Result<()>;
 
     /// A progress report from `user` for `target`: keeps their matching
-    /// sessions alive, and `stopped` ends their direct sessions. Never
-    /// fails the report.
-    async fn heartbeat(&self, user: UserId, target: PlayTarget, position_ms: i64, stopped: bool) {
-        let _ = (user, target, position_ms, stopped);
+    /// sessions alive, tells scrobblers when one turns between playing and
+    /// paused, and `Stopped` ends their direct sessions. Never fails the
+    /// report.
+    async fn heartbeat(
+        &self,
+        user: UserId,
+        target: PlayTarget,
+        position_ms: i64,
+        state: PlaybackState,
+    ) {
+        let _ = (user, target, position_ms, state);
     }
 
     /// Every session still active, idle ones pruned first.

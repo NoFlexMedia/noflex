@@ -195,7 +195,8 @@ interface notifier {
 }
 
 /// Per-user scrobbling (Trakt, ...). Events derive from the domain bus:
-/// playback-session start, progress-at-stop, and manual mark-played. The host enriches each event from storage, so
+/// playback-session start, pause and resume, progress-at-stop, and manual
+/// mark-played. The host enriches each event from storage, so
 /// the plugin's only lookup is `host-secrets.read-for-user` for the
 /// acting user's token; users who never linked are skipped.
 interface scrobbler {

@@ -28,10 +28,10 @@ use crate::playback_session::{
     ActiveStream, PlaybackSession, PlaybackSessionService, PlaybackStart,
 };
 
-/// Client-reported playback state. `Stopped` is the only variant the
-/// server treats specially (it closes out the session in the activity
-/// log); `Playing`/`Paused` are recorded as-is for future session
-/// analytics.
+/// Client-reported playback state. `Stopped` closes out the session in the
+/// activity log. A session turning from `Playing` to `Paused` or back is
+/// passed on to scrobblers once per change, so report the state every
+/// heartbeat carries.
 #[derive(Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaybackState {
     Playing,
@@ -269,9 +269,7 @@ impl PlaybackMutation {
             tracing::warn!(%error, %user, "play history: heartbeat not recorded");
         }
         if let Ok(service) = ctx.data::<Arc<dyn PlaybackSessionService>>() {
-            service
-                .heartbeat(user, target, position_ms, state == PlaybackState::Stopped)
-                .await;
+            service.heartbeat(user, target, position_ms, state).await;
         }
         if state == PlaybackState::Stopped {
             log_play_activity(storage, ActivityKind::PlayProgress, user, target).await?;

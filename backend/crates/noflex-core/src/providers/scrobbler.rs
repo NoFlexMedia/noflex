@@ -10,8 +10,8 @@ use crate::{
 };
 
 /// Scrobble state machine (the Trakt `/scrobble/start|pause|stop` shape).
-/// `Paused` exists on the wire but is not emitted yet — Playing/Paused
-/// heartbeats are too hot to broadcast.
+/// `Paused` comes once when a session turns from playing to paused, and
+/// `Started` again when it turns back, never per heartbeat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ScrobbleAction {
     Started,
@@ -21,10 +21,10 @@ pub enum ScrobbleAction {
 
 /// One scrobble occurrence, enriched by the host from storage so scrobbler
 /// plugins need no library lookups of their own. `position_ms` is present
-/// only for progress-at-stop, and a `Stopped` without it is a title marked
-/// played; `runtime_ms` is the edition runtime when the host could resolve
-/// one — the plugin derives its own progress percent and watched threshold
-/// from the pair.
+/// for a pause, a resume and progress-at-stop, and a `Stopped` without it is
+/// a title marked played; `runtime_ms` is the edition runtime when the host
+/// could resolve one — the plugin derives its own progress percent and
+/// watched threshold from the pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScrobbleEvent {
     pub user: UserId,

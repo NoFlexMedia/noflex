@@ -125,15 +125,24 @@ pub trait Storage: Send + Sync + 'static {
     ) -> StorageResult<()>;
 
     /// Records that detector `plugin_id` has scanned `edition`,
-    /// stamping the row with the current time and whether the plugin
-    /// returned markers. Upserts on (edition, plugin): re-recording
-    /// refreshes the timestamp and `found` instead of erroring.
+    /// stamping the row with the current time and, when the plugin
+    /// returned markers, the confidence it gave them (`None`: it found
+    /// nothing). Upserts on (edition, plugin): re-recording refreshes
+    /// the row instead of erroring.
     async fn record_intro_scan(
         &self,
         edition: EditionId,
         plugin_id: &str,
-        found: bool,
+        found: Option<f32>,
     ) -> StorageResult<()>;
+
+    /// The highest confidence any detector other than `plugin_id` found
+    /// markers for `edition` with, or `None` when no other detector has.
+    async fn rival_intro_confidence(
+        &self,
+        edition: EditionId,
+        plugin_id: &str,
+    ) -> StorageResult<Option<f32>>;
 
     /// Editions with no scan row for `plugin_id`, keyset-paginated by
     /// edition id. The intro-detection sweep pages through this to

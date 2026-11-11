@@ -155,10 +155,11 @@ async fn sweep_plugin(plugin: &Arc<LoadedPlugin>, storage: &Arc<dyn Storage>) {
 }
 
 /// Detect one edition and persist the outcome. `Some(detection)` writes
-/// the markers and records a found scan; `None` records a not-found
-/// scan. A plugin error records nothing — the edition stays missing and
-/// is retried on the next sweep. Persist failures are logged and leave
-/// the edition missing for the same reason.
+/// the markers, unless another detector already found some with more
+/// confidence, and records a found scan; `None` records a not-found scan.
+/// Ties keep the markers already there. A plugin error records nothing —
+/// the edition stays missing and is retried on the next sweep. Persist
+/// failures are logged and leave the edition missing for the same reason.
 async fn detect_one(plugin: &Arc<LoadedPlugin>, storage: &Arc<dyn Storage>, edition: Edition) {
     let plugin_id = plugin.id.0.as_str();
     let detection = match plugin.call_detect_intro(edition.id.to_string()).await {
@@ -176,28 +177,36 @@ async fn detect_one(plugin: &Arc<LoadedPlugin>, storage: &Arc<dyn Storage>, edit
     };
     match detection {
         Some(d) => {
-            // The WIT `confidence` is informational; only the marker
-            // columns persist.
-            let markers = IntroMarkers {
-                intro_start_ms: d.intro_start_ms,
-                intro_end_ms: d.intro_end_ms,
-                credits_start_ms: d.credits_start_ms,
+            let rival = match storage.rival_intro_confidence(edition.id, plugin_id).await {
+                Ok(rival) => rival,
+                Err(e) => {
+                    tracing::warn!(plugin = %plugin_id, edition = %edition.id, error = %e,
+                        "intro-detection: rival lookup failed");
+                    return;
+                }
             };
-            if let Err(e) = storage.set_intro_markers(edition.id, markers).await {
-                tracing::warn!(plugin = %plugin_id, edition = %edition.id, error = %e,
-                    "intro-detection: marker persist failed");
-                return;
+            if rival.is_none_or(|r| d.confidence > r) {
+                let markers = IntroMarkers {
+                    intro_start_ms: d.intro_start_ms,
+                    intro_end_ms: d.intro_end_ms,
+                    credits_start_ms: d.credits_start_ms,
+                };
+                if let Err(e) = storage.set_intro_markers(edition.id, markers).await {
+                    tracing::warn!(plugin = %plugin_id, edition = %edition.id, error = %e,
+                        "intro-detection: marker persist failed");
+                    return;
+                }
             }
-            if let Err(e) = storage.record_intro_scan(edition.id, plugin_id, true).await {
+            if let Err(e) = storage
+                .record_intro_scan(edition.id, plugin_id, Some(d.confidence))
+                .await
+            {
                 tracing::warn!(plugin = %plugin_id, edition = %edition.id, error = %e,
                     "intro-detection: scan record failed");
             }
         }
         None => {
-            if let Err(e) = storage
-                .record_intro_scan(edition.id, plugin_id, false)
-                .await
-            {
+            if let Err(e) = storage.record_intro_scan(edition.id, plugin_id, None).await {
                 tracing::warn!(plugin = %plugin_id, edition = %edition.id, error = %e,
                     "intro-detection: scan record failed");
             }

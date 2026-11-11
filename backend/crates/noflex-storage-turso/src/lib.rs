@@ -291,11 +291,19 @@ impl Storage for TursoStore {
         &self,
         edition: EditionId,
         plugin_id: &str,
-        found: bool,
+        found: Option<f32>,
     ) -> StorageResult<()> {
         transact!(self, Lane::Concurrent, |conn| {
             repo::editions::record_intro_scan(conn, edition, plugin_id, found)
         })
+    }
+    async fn rival_intro_confidence(
+        &self,
+        edition: EditionId,
+        plugin_id: &str,
+    ) -> StorageResult<Option<f32>> {
+        let (_schema, conn) = self.reader().await?;
+        repo::editions::rival_intro_confidence(&conn, edition, plugin_id).await
     }
     async fn editions_missing_intro_scan(
         &self,

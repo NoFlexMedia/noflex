@@ -176,8 +176,9 @@ interface intro-detector {
         intro-start-ms: option<s64>,
         intro-end-ms: option<s64>,
         credits-start-ms: option<s64>,
-        /// Detector-specific confidence in [0.0, 1.0]; informational —
-        /// the host persists any returned detection regardless.
+        /// Detector-specific confidence in [0.0, 1.0]. With several
+        /// detectors loaded, an edition keeps the markers found with the
+        /// most confidence; ties keep the first found.
         confidence: f32,
     }
 

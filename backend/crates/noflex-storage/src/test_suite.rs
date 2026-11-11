@@ -157,6 +157,7 @@ where
     get_edition_round_trip(store).await;
     set_intro_markers_round_trip(store).await;
     intro_scan_record_and_sweep(store).await;
+    intro_scan_rival_confidence(store).await;
     intro_scan_rows_cascade_with_edition(store).await;
     trickplay_round_trip_sweep_and_staleness(store).await;
     play_sessions_round_trip_filter_and_page(store).await;
@@ -8469,6 +8470,35 @@ async fn set_intro_markers_round_trip<S: Storage + ?Sized>(store: &S) {
     store.delete_library(lib.id).await.ok();
 }
 
+/// A detector's rivals are the other detectors that found markers: its own
+/// scan and not-found scans don't count, and the strongest one does.
+async fn intro_scan_rival_confidence<S: Storage + ?Sized>(store: &S) {
+    let lib = test_library("Intro Rival Lib");
+    store.upsert_library(&lib).await.expect("library");
+    let work = make_work(lib.id, "Intro Rival Movie", OffsetDateTime::now_utc());
+    store.upsert_work(&work).await.expect("work");
+    let edition = make_edition(work.id, "Theatrical");
+    store.upsert_edition(&edition).await.expect("edition");
+
+    let rival = |plugin: &'static str| store.rival_intro_confidence(edition.id, plugin);
+    assert_eq!(rival("det-a").await.expect("none yet"), None);
+    store
+        .record_intro_scan(edition.id, "det-a", Some(0.5))
+        .await
+        .expect("a");
+    store
+        .record_intro_scan(edition.id, "det-b", Some(0.75))
+        .await
+        .expect("b");
+    store
+        .record_intro_scan(edition.id, "det-c", None)
+        .await
+        .expect("c");
+    assert_eq!(rival("det-a").await.expect("a"), Some(0.75));
+    assert_eq!(rival("det-b").await.expect("b"), Some(0.5));
+    assert_eq!(rival("det-c").await.expect("c"), Some(0.75));
+}
+
 /// Detection sweep: every edition is missing for an unseen plugin, then
 /// `record_intro_scan` drops it out of that plugin's sweep only — other
 /// plugins still see it. Re-recording upserts instead of duplicating,
@@ -8501,7 +8531,7 @@ async fn intro_scan_record_and_sweep<S: Storage + ?Sized>(store: &S) {
 
     // Recording a's scan drops it from det-a's sweep; det-b is untouched.
     store
-        .record_intro_scan(a.id, "det-a", true)
+        .record_intro_scan(a.id, "det-a", Some(0.9))
         .await
         .expect("record a");
     let det_a = store
@@ -8521,7 +8551,7 @@ async fn intro_scan_record_and_sweep<S: Storage + ?Sized>(store: &S) {
     // Re-recording the same (edition, plugin) upserts: no error, no
     // duplicate row, and a stays out of det-a's sweep.
     store
-        .record_intro_scan(a.id, "det-a", false)
+        .record_intro_scan(a.id, "det-a", None)
         .await
         .expect("re-record a");
     let det_a = store
@@ -8581,7 +8611,7 @@ async fn intro_scan_rows_cascade_with_edition<S: Storage + ?Sized>(store: &S) {
     let edition = make_edition(work.id, "Default");
     store.upsert_edition(&edition).await.expect("edition");
     store
-        .record_intro_scan(edition.id, "det-a", true)
+        .record_intro_scan(edition.id, "det-a", Some(0.9))
         .await
         .expect("record");
 

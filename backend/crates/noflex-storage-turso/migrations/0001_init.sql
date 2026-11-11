@@ -570,12 +570,14 @@ CREATE TABLE IF NOT EXISTS user_plugin_secrets (
 -- Scan bookkeeping for plugin-driven intro/credits detection, one row
 -- per (edition, detector plugin); the host sweep worker is the only
 -- writer. `found` distinguishes "scanned, nothing there" from "never
--- scanned".
+-- scanned"; `confidence` is what a found detection claimed, so a weaker
+-- detector never replaces a stronger one's markers.
 CREATE TABLE IF NOT EXISTS edition_intro_scans (
     edition_id BLOB NOT NULL REFERENCES editions(id) ON DELETE CASCADE,
     plugin_id  TEXT NOT NULL,
     scanned_at TEXT NOT NULL,
     found      INTEGER NOT NULL,
+    confidence REAL,
     PRIMARY KEY (edition_id, plugin_id)
 );
 

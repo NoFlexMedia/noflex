@@ -13,8 +13,8 @@ use turso::{Connection, Value};
 
 use crate::{
     convert::{
-        blob_to_uuid, col_blob, col_int_opt, col_text, dt_to_text, parse_json, to_json,
-        uuid_to_blob,
+        blob_to_uuid, col_blob, col_int_opt, col_real_opt, col_text, dt_to_text, parse_json,
+        to_json, uuid_to_blob,
     },
     error::{backend_msg, map_turso},
     repo::search::parse_missing_cursor,
@@ -59,11 +59,15 @@ const SET_INTRO_MARKERS: &str = "UPDATE editions SET \
     intro_start_ms = ?1, intro_end_ms = ?2, credits_start_ms = ?3 \
     WHERE id = ?4";
 
-const RECORD_INTRO_SCAN: &str = "INSERT INTO edition_intro_scans (edition_id, plugin_id, scanned_at, found) \
-    VALUES (?1, ?2, ?3, ?4) \
+const RECORD_INTRO_SCAN: &str = "INSERT INTO edition_intro_scans (edition_id, plugin_id, scanned_at, found, confidence) \
+    VALUES (?1, ?2, ?3, ?4, ?5) \
     ON CONFLICT(edition_id, plugin_id) DO UPDATE SET \
         scanned_at = excluded.scanned_at, \
-        found = excluded.found";
+        found = excluded.found, \
+        confidence = excluded.confidence";
+
+const RIVAL_INTRO_CONFIDENCE: &str = "SELECT MAX(confidence) FROM edition_intro_scans \
+    WHERE edition_id = ?1 AND plugin_id != ?2 AND found = 1";
 
 // Anti-join on `edition_intro_scans` for the detection sweep. Column
 // list matches GET (e.-prefixed) so `row_to_edition` decoding is
@@ -214,7 +218,7 @@ pub(crate) async fn record_intro_scan(
     conn: &Connection,
     id: EditionId,
     plugin_id: &str,
-    found: bool,
+    found: Option<f32>,
 ) -> StorageResult<()> {
     let scanned_at = dt_to_text(OffsetDateTime::now_utc())?;
     conn.execute(
@@ -223,12 +227,34 @@ pub(crate) async fn record_intro_scan(
             Value::Blob(uuid_to_blob(id.into_uuid())),
             Value::Text(plugin_id.to_string()),
             Value::Text(scanned_at),
-            Value::Integer(i64::from(found)),
+            Value::Integer(i64::from(found.is_some())),
+            found.map_or(Value::Null, |c| Value::Real(f64::from(c))),
         ],
     )
     .await
     .map_err(map_turso)?;
     Ok(())
+}
+
+pub(crate) async fn rival_intro_confidence(
+    conn: &Connection,
+    id: EditionId,
+    plugin_id: &str,
+) -> StorageResult<Option<f32>> {
+    let mut rows = conn
+        .query(
+            RIVAL_INTRO_CONFIDENCE,
+            vec![
+                Value::Blob(uuid_to_blob(id.into_uuid())),
+                Value::Text(plugin_id.to_string()),
+            ],
+        )
+        .await
+        .map_err(map_turso)?;
+    let Some(row) = rows.next().await.map_err(map_turso)? else {
+        return Ok(None);
+    };
+    col_real_opt(&row.get_value(0).map_err(map_turso)?)
 }
 
 pub(crate) async fn missing_intro_scan(

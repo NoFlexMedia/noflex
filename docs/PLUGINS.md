@@ -32,7 +32,7 @@ Some have their own README with setup steps (`noflex-embeddings`, `noflex-webhoo
 | `user-link`      | A user links an upstream account (OAuth, device flow)  | `LinkChallenge`; per-user secrets           |
 | `external-auth`  | Interactive login through an external IdP              | authorization URL; `VerifiedIdentity`       |
 | `scrobbler`      | Playback start/stop, progress at stop, mark played     | unit                                        |
-| `intro-detector` | A host sweep over editions never scanned for markers   | `IntroDetection` or none                    |
+| `intro-detector` | A host sweep over editions a detector hasn't scanned  | `IntroDetection` or none; the most confident wins |
 | `embedder`       | Work texts at scan time, queries at search time        | one vector per text                         |
 | `background`     | A manifest `[[tasks]]` schedule or `host-tasks.enqueue`| `done` / `more(cursor)`                     |
 

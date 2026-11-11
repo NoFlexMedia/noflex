@@ -103,6 +103,12 @@ fn main() -> anyhow::Result<()> {
 fn serve() -> anyhow::Result<()> {
     let cfg = Config::load().context("load config")?;
     let log_buffer = init_tracing(&cfg.log);
+    // A panic's report goes to stderr, which a service or `log.file` loses.
+    let report = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        tracing::error!(%panic, "panicked");
+        report(panic);
+    }));
     loop {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()

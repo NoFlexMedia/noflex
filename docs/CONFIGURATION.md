@@ -141,11 +141,12 @@ crate noise down while debugging NoFlex itself.
 
 ### `log.file`
 - **Type:** path (optional)
-- **Default:** stderr
+- **Default:** stdout
 - **Env:** `NOFLEX_LOG_FILE`
 
-When set, log lines go to this file instead of stderr. The file is not
-rotated; use logrotate or journald for that. The parent directory must exist.
+When set, log lines go to this file instead of stdout, appended to what's
+there, and its directory is made if it's missing. The file is not rotated; use
+logrotate, or leave it unset under systemd for the journal.
 
 ### `transcoder.hwaccel`
 - **Type:** enum: `none | auto | vaapi | videotoolbox | mf | nvenc | qsv | amf`

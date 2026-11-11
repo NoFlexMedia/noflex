@@ -830,23 +830,40 @@ fn init_tracing(
     let filter = EnvFilter::try_from_env("NOFLEX_LOG")
         .or_else(|_| EnvFilter::try_new("info,noflex=debug"))
         .expect("static filter parses");
-    let fmt_layer = fmt::layer().with_target(true).with_thread_ids(false);
-    // When `log.file` is set, create its parent directory and touch the file
-    // so deployers can validate that the configured path is honored. Events
-    // continue to go to stdout until a rotating file writer is configured.
-    if let Some(path) = log_cfg.file.as_ref() {
+    // `log.file` replaces stdout, which a Windows service doesn't have.
+    let file = log_cfg.file.as_ref().and_then(|path| {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = std::fs::OpenOptions::new()
+        std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(path);
-    }
+            .open(path)
+            .inspect_err(|error| {
+                eprintln!(
+                    "can't open log.file {}, logging to stdout: {error}",
+                    path.display()
+                );
+            })
+            .ok()
+    });
+    let (stdout_layer, file_layer) = match file {
+        Some(file) => (
+            None,
+            Some(
+                fmt::layer()
+                    .with_target(true)
+                    .with_ansi(false)
+                    .with_writer(std::sync::Mutex::new(file)),
+            ),
+        ),
+        None => (Some(fmt::layer().with_target(true)), None),
+    };
     let log_buffer = Arc::new(noflex_server::system_status::LogBuffer::default());
     tracing_subscriber::registry()
         .with(filter)
-        .with(fmt_layer)
+        .with(stdout_layer)
+        .with(file_layer)
         .with(log_buffer.layer())
         .init();
     log_buffer

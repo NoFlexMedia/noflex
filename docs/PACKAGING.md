@@ -126,9 +126,14 @@ ffmpeg loads these at runtime, and does without them when they're absent:
 
 The `gpl` variant is required for libx264 and libx265, so a bundle ships GPL-3.0
 software alongside AGPL-3.0 NoFlex, as separate programs. Distributing our own build
-means offering its source: `cargo xtask ffmpeg-source <out>` gathers ffmpeg at the
-pinned commit, every dependency as `pipeline/` fetches it, and the build scripts,
-about 2 GiB, and the release attaches it in parts: `cat noflex-*-ffmpeg-source.tar.* | tar -x`.
+means offering its source, which upstream already hosts at every revision we pin.
+GPL-3.0 section 6(d) allows that, provided directions sit next to the binary, so
+every bundle's `ffmpeg/SOURCE.txt` names FFmpeg's commit, this repository's
+`packaging/ffmpeg` at the commit the bundle was built from, and each library's
+repository and revision (`ffmpeg::write_source`). We stay responsible for that
+source being there for as long as a release offers the binary: if an upstream
+disappears, mirror its repository under the NoFlexMedia organization and say so in
+the notes of every release that still points at it.
 
 ## macOS
 

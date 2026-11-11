@@ -102,40 +102,6 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # The GPL's corresponding source for the ffmpeg in every bundle, in parts that
-  # fit GitHub's 2 GiB a file: `cat noflex-*-ffmpeg-source.tar.* | tar -x`.
-  ffmpeg-source:
-    needs: check
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - name: Restore the source
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: dist/ffmpeg-source
-          key: ffmpeg-source-${{ hashFiles('packaging/ffmpeg/**', 'backend/rust-toolchain.toml') }}
-      - if: steps.cache.outputs.cache-hit != 'true'
-        uses: ./.github/actions/free-disk
-      - if: steps.cache.outputs.cache-hit != 'true'
-        uses: cachix/install-nix-action@v24
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-      - if: steps.cache.outputs.cache-hit != 'true'
-        run: nix develop .#no-flutter --command sh -c 'cd backend && cargo xtask ffmpeg-source ../dist/ffmpeg-source'
-      - env:
-          VERSION: ${{ needs.check.outputs.version }}
-        run: |
-          mkdir -p dist/release
-          tar -cf - -C dist ffmpeg-source | split -b 1900M -d -a 2 - "dist/release/noflex-$VERSION-ffmpeg-source.tar."
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ffmpeg-source
-          path: dist/release/noflex-*
-          retention-days: 14
-          if-no-files-found: error
-
   # A bundle per target, smoke-tested on its own platform, then packaged: a .deb
   # and an .rpm for Linux, an installer for Windows. Linux bundles link in the Nix
   # shell against an old glibc; Windows can't use Nix, so takes Rust from rustup.
@@ -367,7 +333,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [check, android, native, third-party, server, ffmpeg-source, image]
+    needs: [check, android, native, third-party, server, image]
     if: ${{ !cancelled() && needs.check.result == 'success' && github.ref_type == 'tag' }}
     runs-on: ubuntu-latest
     permissions:
@@ -391,6 +357,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
+          # GPL-3.0 section 6(d): directions to ffmpeg's source, next to it.
+          notes="The server bundles and packages include FFmpeg under the GPL-3.0. Each one's \`ffmpeg/SOURCE.txt\` says where its source is: FFmpeg, the libraries in it, and the scripts in [packaging/ffmpeg](https://github.com/$GH_REPO/tree/$TAG/packaging/ffmpeg) that built them."
           gh release view "$TAG" >/dev/null 2>&1 ||
-            gh release create "$TAG" --draft --verify-tag --title "NoFlex ${TAG#v}" --generate-notes
+            gh release create "$TAG" --draft --verify-tag --title "NoFlex ${TAG#v}" --notes "$notes" --generate-notes
           gh release upload "$TAG" dist/* --clobber

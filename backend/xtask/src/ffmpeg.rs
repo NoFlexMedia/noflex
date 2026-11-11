@@ -95,19 +95,132 @@ pub fn build(root: &Path, pin: &Pin, target: &str, out: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Gather ffmpeg's corresponding source into `out`: ffmpeg at the pinned commit,
-/// every dependency the pipeline pins, and the scripts that build them. Needs
-/// Docker or Podman, as the pipeline's base image does the fetching.
-pub fn source(root: &Path, pin: &Pin, out: &Path) -> Result<()> {
-    let status = Command::new(root.join("packaging/ffmpeg/source.sh"))
-        .arg(&pin.ffmpeg_commit)
-        .arg(out)
-        .status()
-        .context("run packaging/ffmpeg/source.sh")?;
-    if !status.success() {
-        bail!("gathering ffmpeg's source failed");
+/// Writes `SOURCE.txt` into a bundle's `ffmpeg/`: where its corresponding source
+/// is, which the GPL asks to sit beside it. Upstream hosts every part at the
+/// revision we pin, and GPL-3.0 section 6(d) lets a third party's server hold it,
+/// so long as it stays available for as long as a release offers the binary.
+///
+/// The build scripts are named by this checkout's `HEAD`, so a bundle built with
+/// uncommitted changes under `packaging/ffmpeg` points at the wrong ones, which
+/// is only warned about.
+pub fn write_source(root: &Path, pin: &Pin, ffmpeg_dir: &Path) -> Result<()> {
+    let git = |args: &[&str]| -> Result<String> {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .output()
+            .context("run git")?;
+        if !output.status.success() {
+            bail!("git {} failed", args.join(" "));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    };
+    let head = git(&["rev-parse", "HEAD"])?;
+    if !git(&["status", "--porcelain", "--", "packaging/ffmpeg"])?.is_empty() {
+        println!("==> warning: packaging/ffmpeg has uncommitted changes SOURCE.txt can't point at");
     }
-    Ok(())
+
+    let pins = dependency_pins(&root.join("packaging/ffmpeg/pipeline/scripts.d"))?;
+    let width = pins.iter().map(|p| p.name.len()).max().unwrap_or(0);
+    let mut text = format!(
+        "\
+The source of the ffmpeg in this directory, under the GPL-3.0 (LICENSE.txt).
+
+FFmpeg, at the commit it was built from:
+  https://github.com/FFmpeg/FFmpeg/tree/{ffmpeg}
+
+The scripts and patches that built it, and each library's pin:
+  https://github.com/NoFlexMedia/noflex/tree/{head}/packaging/ffmpeg
+
+Every library those scripts can build in, at the revision they fetch:
+",
+        ffmpeg = pin.ffmpeg_commit,
+    );
+    for p in &pins {
+        text.push_str(&format!(
+            "  {:width$}  {}  {}\n",
+            p.name, p.repo, p.revision
+        ));
+    }
+    std::fs::write(ffmpeg_dir.join("SOURCE.txt"), text)
+        .with_context(|| format!("write {}", ffmpeg_dir.display()))
+}
+
+/// One repository a script in `pipeline/scripts.d` fetches.
+#[derive(Debug)]
+struct DependencyPin {
+    /// The script's name without its order prefix: `50-x264.sh` is `x264`.
+    name: String,
+    repo: String,
+    /// A commit, a tag, or an SVN revision.
+    revision: String,
+}
+
+/// Every repository the scripts under `scripts_d` pin, in script order. A script
+/// assigns `SCRIPT_REPO` and `SCRIPT_COMMIT` (or `SCRIPT_REV` for SVN), with a
+/// numeric suffix for a second repository.
+///
+/// # Errors
+///
+/// Fails on a repository without a revision, or a `SCRIPT_` variable this doesn't
+/// know, so a script that fetches some other way can't go unlisted.
+fn dependency_pins(scripts_d: &Path) -> Result<Vec<DependencyPin>> {
+    const IGNORED: [&str; 4] = ["BRANCH", "MIRROR", "SKIP", "TAGFILTER"];
+    let mut scripts = Vec::new();
+    let mut dirs = vec![scripts_d.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))? {
+            let path = entry?.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "sh") {
+                scripts.push(path);
+            }
+        }
+    }
+    scripts.sort_by_key(|path| path.file_name().map(ToOwned::to_owned));
+
+    let mut pins = Vec::new();
+    for script in scripts {
+        let stem = script
+            .file_stem()
+            .context("a script has no name")?
+            .to_string_lossy();
+        let name = stem.split_once('-').map_or(&*stem, |(_, name)| name);
+        let text = std::fs::read_to_string(&script)?;
+        // Suffix -> (repo, revision).
+        let mut found = BTreeMap::<String, (Option<String>, Option<String>)>::new();
+        for line in text.lines() {
+            let Some((key, value)) = line.strip_prefix("SCRIPT_").and_then(|l| l.split_once('='))
+            else {
+                continue;
+            };
+            let value = value.trim_matches('"').to_owned();
+            let kind = key.trim_end_matches(|c: char| c.is_ascii_digit());
+            let slot = found.entry(key[kind.len()..].to_owned()).or_default();
+            match kind {
+                "REPO" => slot.0 = Some(value),
+                "COMMIT" | "REV" => slot.1 = Some(value),
+                kind if IGNORED.contains(&kind) => {}
+                _ => bail!(
+                    "{} sets SCRIPT_{key}, which SOURCE.txt can't list",
+                    script.display()
+                ),
+            }
+        }
+        for (repo, revision) in found.into_values() {
+            match (repo, revision) {
+                (Some(repo), Some(revision)) => pins.push(DependencyPin {
+                    name: name.to_owned(),
+                    repo,
+                    revision,
+                }),
+                (Some(repo), None) => bail!("{} pins no revision of {repo}", script.display()),
+                (None, _) => {}
+            }
+        }
+    }
+    Ok(pins)
 }
 
 /// Check the ffmpeg in `dir` has everything `target` requires. Runs the binary,
@@ -190,5 +303,15 @@ mod tests {
         assert_eq!(linux.pipeline.as_deref(), Some("linux64"));
         let mac = pin.target("aarch64-apple-darwin").expect("macOS target");
         assert_eq!(mac.pipeline, None, "VideoToolbox needs a native build");
+    }
+
+    #[test]
+    fn every_dependency_script_pins_a_revision_source_txt_can_list() {
+        let scripts_d =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging/ffmpeg/pipeline/scripts.d");
+        let pins = dependency_pins(&scripts_d).expect("every script parses");
+        let lame = pins.iter().find(|p| p.name == "libmp3lame").expect("lame");
+        assert_eq!(lame.repo, "https://svn.code.sf.net/p/lame/svn/trunk/lame");
+        assert!(pins.iter().any(|p| p.name == "x264"));
     }
 }

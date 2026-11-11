@@ -5,7 +5,7 @@
 ## Layout
 
 ```
-ffmpeg/          # ffmpeg.toml and the pipeline behind `cargo xtask ffmpeg-build` and `ffmpeg-source`
+ffmpeg/          # ffmpeg.toml and the pipeline behind `cargo xtask ffmpeg-build`
 flutter/build.sh # one Flutter target into dist/, as the release workflow runs it
 linux/           # the systemd unit, account and config every Linux bundle carries; nfpm.yaml for .deb and .rpm
 container/       # the image around the Linux bundles, and compose.yaml for the docs
@@ -60,4 +60,4 @@ Flutter's license registry covers Dart packages and the engine by itself. `third
 ### Gaps
 
 - **Windows has no exact source** for most of its libraries, so `source` can only list them. Building that DLL ourselves from pinned inputs is the fix.
-- The server's ffmpeg has its own source archive, `cargo xtask ffmpeg-source`, separate from the apps'. At about 2 GiB it goes up in parts.
+- The server's ffmpeg is offered as source by pointing upstream: `ffmpeg/SOURCE.txt` in each bundle (`ffmpeg::write_source`), which GPL-3.0 §6(d) allows. A dependency script must pin `SCRIPT_REPO` with `SCRIPT_COMMIT` or `SCRIPT_REV`, or the bundle fails. If an upstream vanishes while a release still offers a build of it, mirror that repository under NoFlexMedia and add the mirror to those releases' notes.

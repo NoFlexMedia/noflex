@@ -24,11 +24,6 @@ app target:
 ffmpeg-build target out:
     cargo xtask ffmpeg-build {{ target }} {{ quote(absolute_path(join(invocation_directory(), out))) }}
 
-# Gather the source of the pinned ffmpeg and everything it links into OUT, as a release attaches it.
-[working-directory('../backend')]
-ffmpeg-source out:
-    cargo xtask ffmpeg-source {{ quote(absolute_path(join(invocation_directory(), out))) }}
-
 # Check that the ffmpeg in DIR has everything NoFlex requires.
 [working-directory('../backend')]
 ffmpeg-verify target dir:

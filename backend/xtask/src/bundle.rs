@@ -207,6 +207,7 @@ pub fn bundle(root: &Path, options: &BundleOptions) -> Result<()> {
         Some(dir) => run_cp(dir, &ffmpeg_dest)?,
         None => ffmpeg::build(root, &pin, target, &ffmpeg_dest)?,
     }
+    ffmpeg::write_source(root, &pin, &ffmpeg_dest)?;
     if target == host_target() {
         ffmpeg::verify(&pin, target, &ffmpeg_dest)?;
     } else {
@@ -266,8 +267,8 @@ docs/DEPLOYMENT.md how to run this as a service, with what's in linux/ on Linux.
 
 Third-party software in this bundle, under its own license:
 
-  ffmpeg/        FFmpeg, GPL-3.0 (ffmpeg/LICENSE.txt). Built from the commit and
-                 build environment in packaging/ffmpeg/ffmpeg.toml.
+  ffmpeg/        FFmpeg, GPL-3.0 (ffmpeg/LICENSE.txt). ffmpeg/SOURCE.txt says
+                 where its source and that of every library in it are.
   onnxruntime/   ONNX Runtime, MIT (onnxruntime/LICENSE).
   assets/        EmbeddingGemma 2, Apache-2.0, as packaged by the export named in
                  packaging/model.toml.

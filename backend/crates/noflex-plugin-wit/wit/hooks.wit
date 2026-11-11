@@ -254,36 +254,3 @@ interface embedder {
     /// Batch size is host-capped.
     embed: async func(inputs: list<embed-input>) -> result<list<list<f32>>, plugin-error>;
 }
-
-/// Recommendation provider. The host calls `recommend` with
-/// the user + a set of seed works (the user's most-recently-played
-/// for "more like this", or the partially-watched series for
-/// "continue series") and gets a ranked list back. The plugin
-/// can also return upstream "because you watched X" rules.
-interface recommendation {
-    use types.{
-        external-id, work-kind, plugin-error,
-    };
-
-    record recommendation-row {
-        external-id: external-id,
-        title: string,
-        year: option<s32>,
-        /// Plugin-assigned score in [0.0, 1.0]. The host sorts the
-        /// merged fan-out by this descending.
-        score: f32,
-        /// Short label the UI shows next to the row, e.g.
-        /// "more-like-this", "continue-series",
-        /// "because-you-watched".
-        rationale: string,
-    }
-
-    supports: func(kind: work-kind) -> bool;
-
-    recommend: func(
-        user: option<string>,
-        kind: work-kind,
-        seed: list<external-id>,
-        limit: u32,
-    ) -> result<list<recommendation-row>, plugin-error>;
-}

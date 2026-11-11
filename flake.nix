@@ -96,6 +96,7 @@
                 ./site/node_modules
                 ./site/build
                 ./site/.svelte-kit
+                ./site/.wrangler
               ])))
               ./cast/receiver
             ];
@@ -386,6 +387,12 @@
               shellHook = flutterShellHook;
             }
             // flutterAndroidEnv);
+
+          # The website and its deploy to Cloudflare. wrangler stays out of the
+          # other shells: its closure is over 2 GiB.
+          site = pkgs.mkShell {
+            packages = taskPkgs ++ webPkgs ++ [pkgs.wrangler];
+          };
 
           # What CI's analysis and tests need: no Android at all.
           flutter-check = pkgsFlutter.mkShell ({

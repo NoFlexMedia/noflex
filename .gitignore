@@ -36,6 +36,7 @@ cache/
 /web/.houdini/
 /site/build/
 /site/.svelte-kit/
+/site/.wrangler/
 /solidtv/hosts/android/.gradle/
 /solidtv/hosts/android/.kotlin/
 /solidtv/hosts/android/build/

@@ -11,6 +11,7 @@ just site install
 just site dev       # http://localhost:5175
 just check site     # svelte-check, then a build: the CI gate
 just site build     # site/build, with cast/receiver/ copied to /cast/receiver/
+just site deploy    # build, then `wrangler deploy` to Cloudflare; needs `nix develop .#site`
 ```
 
 - **The build is the link checker.** Prerendering crawls every internal link and `#anchor`, and fails on a 404 or a missing id. Add the page or the id before linking to it.
@@ -22,6 +23,7 @@ just site build     # site/build, with cast/receiver/ copied to /cast/receiver/
 - `src/lib/site.ts` — links (GitHub is the only contact), `DEMO_URL`, and the demo library's titles and tints. Link through `links`, never a hard-coded GitHub URL.
 - `src/lib/actions.ts` — `tilt` (as `web/`'s), `reveal`, `scrollProgress`, and `trackPress`, which starts a `.btn`'s press highlight where the pointer went down.
 - `src/lib/components/Doc.svelte` — the legal and help pages' layout: title block, sticky contents, `.prose`.
+- `wrangler.toml` — a Worker of static assets alone, on the `noflex.dev` custom domain, serving `404.html` for a missing path. wrangler lives only in the `site` shell, as its closure is over 2 GiB.
 - `static/_headers` — Cloudflare's response headers. `static/.well-known/security.txt` expires each year: renew `Expires`.
 - `scripts/cast-receiver.js` copies `cast/receiver/` into the build after SvelteKit writes it, so the receiver is served as is (see [`cast/AGENTS.md`](../cast/AGENTS.md)).
 

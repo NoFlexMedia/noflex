@@ -23,3 +23,9 @@ build:
 [working-directory('../site')]
 preview:
     npx vite preview --port 5175
+
+# Build the site and deploy it to Cloudflare Workers, as site/wrangler.toml says.
+[working-directory('../site')]
+deploy: build
+    @command -v wrangler >/dev/null || { echo "wrangler isn't on PATH; enter the site shell (nix develop .#site)" >&2; exit 1; }
+    wrangler deploy

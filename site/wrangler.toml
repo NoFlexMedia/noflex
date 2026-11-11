@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# noflex.dev on Cloudflare Workers, as static assets alone: no Worker script
+# runs, so every response is a file from build/ with static/_headers applied.
+# Deploy with `just site deploy`.
+
+name = "noflex-site"
+compatibility_date = "2026-11-01"
+
+routes = [{ pattern = "noflex.dev", custom_domain = true }]
+
+[assets]
+directory = "./build"
+# SvelteKit writes build/404.html as the adapter's fallback; without this a
+# missing path gets an empty 404.
+not_found_handling = "404-page"
